@@ -1183,12 +1183,15 @@ static void __cdecl mods_render(void) {
     } else if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
+
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_leave(void) {
     g_capture_active = 0;
     g_capture_mod = -1;
     g_capture_cfg = -1;
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_entry_enter(void) {

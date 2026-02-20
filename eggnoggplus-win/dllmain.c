@@ -203,6 +203,9 @@ typedef union {
 
 #define SDL_CONTROLLER_BUTTON_A            0
 #define SDL_CONTROLLER_BUTTON_B            1
+#define SDL_CONTROLLER_BUTTON_X            2
+#define SDL_CONTROLLER_BUTTON_Y            3
+#define SDL_CONTROLLER_BUTTON_BACK         4
 #define SDL_CONTROLLER_BUTTON_DPAD_UP     11
 #define SDL_CONTROLLER_BUTTON_DPAD_DOWN   12
 #define SDL_CONTROLLER_BUTTON_DPAD_LEFT   13
@@ -352,7 +355,10 @@ int SDL_PollEvent(SDL_Event* event) {
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) action = 3;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) action = 4;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_A) action = 5;
-                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_B) action = 6;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_B) action = 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_X) action = 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y) action = 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_BACK) action = 6;
 
                 if (action && hooks_mods_menu_control_action(action)) {
                     consumed = 1;

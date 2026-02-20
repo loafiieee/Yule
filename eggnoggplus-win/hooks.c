@@ -12,6 +12,7 @@
 #define ADDR_STATE_LAST               0x405DB8u
 #define ADDR_STATE_SWITCH             0x405DC0u
 #define ADDR_MAIN_UPDATE_WITH_BUTTONS 0x4340E0u
+#define ADDR_MAIN_DRAW              0x4331A0u
 #define ADDR_MENU_COMMON_RENDER       0x4334E0u
 #define ADDR_MAIN_BUTTONS_START       0x432FD0u
 #define ADDR_MAIN_CURSORS_RESET       0x431200u
@@ -124,6 +125,7 @@ static fn_state_current_t            p_state_current = (fn_state_current_t)(uint
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
 static fn_state_switch_t             p_state_switch = (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
 static fn_main_update_with_buttons_t p_main_update_with_buttons = (fn_main_update_with_buttons_t)(uintptr_t)ADDR_MAIN_UPDATE_WITH_BUTTONS;
+static fn_void_void_t                p_main_draw = (fn_void_void_t)(uintptr_t)ADDR_MAIN_DRAW;
 static fn_void_void_t                p_menu_common_render = (fn_void_void_t)(uintptr_t)ADDR_MENU_COMMON_RENDER;
 static fn_void_void_t                p_main_buttons_start = (fn_void_void_t)(uintptr_t)ADDR_MAIN_BUTTONS_START;
 static fn_main_cursors_reset_t       p_main_cursors_reset = (fn_main_cursors_reset_t)(uintptr_t)ADDR_MAIN_CURSORS_RESET;
@@ -1172,10 +1174,13 @@ static void __cdecl mods_render(void) {
     p_menu_common_render();
     render_rows();
 
-    // Flush after custom text rows so they land on top of already-queued world/menu
-    // sprites from menu_common_render. Without this, later batch flush order can
-    // place parts of the MODS text behind game tiles.
-    if (p_main_sprite_batches_draw) {
+    // In base menus, rendering is finalized via main_draw(), which flushes sprite
+    // batches and draws particles/cursors/button sprites in the expected order.
+    // Calling only main_sprite_batches_draw() skips that pipeline and causes sprite
+    // artifacts (e.g. missing glow / corrupted menu sprites).
+    if (p_main_draw) {
+        p_main_draw();
+    } else if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
 

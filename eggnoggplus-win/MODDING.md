@@ -159,6 +159,7 @@ Rules:
 - Optional numeric bounds are supported for `int`/`float` as `type[min,max]`.
   - Example: `lives: int[1,9], 3`
   - Example: `speed: float[0.25,3.0], 1.0`
+  - Spaces are fine too: `speed: float[0.5, 10], 1.0`
 - `key: action` (or `key: action, "Label"`) for buttons.
 - Strings can be quoted (recommended if they contain spaces/commas).
 

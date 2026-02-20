@@ -18,6 +18,11 @@ int hooks_text_capture_keydown(int sym, int scancode, int mod);
 // Returns 1 if consumed, else 0.
 int hooks_mods_menu_keydown(int sym, int scancode, int mod);
 
+// Handle controller-style menu actions for the custom MODS menu.
+// action: 1=up 2=down 3=left 4=right 5=activate 6=back
+// Returns 1 if consumed, else 0.
+int hooks_mods_menu_control_action(int action);
+
 #ifdef __cplusplus
 }
 #endif

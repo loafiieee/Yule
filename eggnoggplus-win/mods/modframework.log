@@ -1,0 +1,14 @@
+[23:14:17] [INFO] Mod framework initializing...
+[23:14:17] [INFO] Mod framework API version: 1
+[23:14:17] [INFO] Scanning mods/ folder...
+[23:14:17] [INFO] Loading mod: testmod (Test Mod) v1.0.0 by you
+[23:14:17] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:14:17] [INFO] [mod:testmod] Loaded! id=testmod name=Test Mod
+[23:14:17] [INFO] [mod:testmod] enabled=true
+[23:14:17] [INFO] [mod:testmod] speed=1
+[23:14:17] [INFO] Loaded mod: testmod
+[23:14:17] [INFO] Done. 1 mod folder(s) scanned.
+[23:14:17] [INFO] hooks_init: custom MODS menu ready
+[23:14:20] [INFO] MODS: entering custom mods state
+[23:15:15] [INFO] MODS: entering custom mods state
+[23:16:22] [INFO] MODS: entering custom mods state

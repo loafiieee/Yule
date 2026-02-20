@@ -1171,7 +1171,14 @@ static void __cdecl mods_update(void) {
 static void __cdecl mods_render(void) {
     p_menu_common_render();
     render_rows();
-    // main_draw() handles sprite batch flush; avoid a second flush here.
+
+    // Flush after custom text rows so they land on top of already-queued world/menu
+    // sprites from menu_common_render. Without this, later batch flush order can
+    // place parts of the MODS text behind game tiles.
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+
     mods_restore_render_state();
 }
 

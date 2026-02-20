@@ -80,6 +80,10 @@ typedef struct ConfigEntry {
     char label[64];
     int  type;              // LUA_CFG_*
     char value[256];        // current value (empty for actions)
+    int  has_min;
+    int  has_max;
+    double min_value;
+    double max_value;
 } ConfigEntry;
 
 typedef struct ConfigAction {
@@ -216,6 +220,118 @@ static int string_to_type(const char* t) {
     return LUA_CFG_NONE;
 }
 
+static void clamp_cfg_value(ConfigEntry* e) {
+    if (!e) return;
+    if (e->type != LUA_CFG_INT && e->type != LUA_CFG_FLOAT) return;
+
+    double v = atof(e->value);
+    if (e->has_min && v < e->min_value) v = e->min_value;
+    if (e->has_max && v > e->max_value) v = e->max_value;
+
+    if (e->type == LUA_CFG_INT) {
+        int iv = (int)v;
+        snprintf(e->value, sizeof(e->value), "%d", iv);
+    } else {
+        snprintf(e->value, sizeof(e->value), "%.6g", v);
+    }
+}
+
+static int parse_type_and_bounds(const char* type_src,
+                                 int* out_type,
+                                 int* out_has_min,
+                                 double* out_min,
+                                 int* out_has_max,
+                                 double* out_max) {
+    char type_buf[64];
+    char base[32];
+    char bounds[48];
+    char* lb = NULL;
+    char* rb = NULL;
+
+    if (!type_src || !out_type || !out_has_min || !out_min || !out_has_max || !out_max) return 0;
+
+    strncpy(type_buf, type_src, sizeof(type_buf) - 1);
+    type_buf[sizeof(type_buf) - 1] = '\0';
+    str_trim(type_buf);
+
+    *out_has_min = 0;
+    *out_has_max = 0;
+    *out_min = 0.0;
+    *out_max = 0.0;
+
+    lb = strchr(type_buf, '[');
+    rb = lb ? strchr(lb + 1, ']') : NULL;
+    if (lb && rb) {
+        size_t base_len = (size_t)(lb - type_buf);
+        if (base_len >= sizeof(base)) base_len = sizeof(base) - 1;
+        memcpy(base, type_buf, base_len);
+        base[base_len] = '\0';
+        str_trim(base);
+
+        {
+            size_t b_len = (size_t)(rb - (lb + 1));
+            if (b_len >= sizeof(bounds)) b_len = sizeof(bounds) - 1;
+            memcpy(bounds, lb + 1, b_len);
+            bounds[b_len] = '\0';
+            str_trim(bounds);
+        }
+    } else {
+        strncpy(base, type_buf, sizeof(base) - 1);
+        base[sizeof(base) - 1] = '\0';
+        bounds[0] = '\0';
+    }
+
+    *out_type = string_to_type(base);
+    if (*out_type == LUA_CFG_NONE) return 0;
+
+    if (bounds[0] && (*out_type == LUA_CFG_INT || *out_type == LUA_CFG_FLOAT)) {
+        char bcopy[48];
+        char* comma;
+        strncpy(bcopy, bounds, sizeof(bcopy) - 1);
+        bcopy[sizeof(bcopy) - 1] = '\0';
+
+        comma = strchr(bcopy, ',');
+        if (comma) {
+            *comma = '\0';
+            comma++;
+            str_trim(bcopy);
+            str_trim(comma);
+            if (bcopy[0]) {
+                *out_min = atof(bcopy);
+                *out_has_min = 1;
+            }
+            if (comma[0]) {
+                *out_max = atof(comma);
+                *out_has_max = 1;
+            }
+            if (*out_has_min && *out_has_max && *out_min > *out_max) {
+                double t = *out_min;
+                *out_min = *out_max;
+                *out_max = t;
+            }
+        }
+    }
+
+    return 1;
+}
+
+static void format_type_with_bounds(const ConfigEntry* e, char* out, size_t outsz) {
+    if (!out || outsz == 0) return;
+    out[0] = '\0';
+    if (!e) return;
+
+    const char* base = type_to_string(e->type);
+    if ((e->type == LUA_CFG_INT || e->type == LUA_CFG_FLOAT) && (e->has_min || e->has_max)) {
+        char minbuf[64] = {0};
+        char maxbuf[64] = {0};
+        if (e->has_min) snprintf(minbuf, sizeof(minbuf), "%.6g", e->min_value);
+        if (e->has_max) snprintf(maxbuf, sizeof(maxbuf), "%.6g", e->max_value);
+        snprintf(out, outsz, "%s[%s,%s]", base, minbuf, maxbuf);
+    } else {
+        snprintf(out, outsz, "%s", base);
+    }
+}
+
 static void mod_config_clear(lua_State* Ls, LoadedMod* mod) {
     if (!mod) return;
     if (mod->cfg_entries) {
@@ -319,7 +435,9 @@ static int mod_config_save(LoadedMod* mod) {
 
     for (int i = 0; i < mod->cfg_count; i++) {
         ConfigEntry* e = &mod->cfg_entries[i];
-        const char* t = type_to_string(e->type);
+        char tbuf[80];
+        format_type_with_bounds(e, tbuf, sizeof(tbuf));
+        const char* t = tbuf;
 
         if (e->type == LUA_CFG_ACTION) {
             if (_stricmp(e->label, e->key) != 0 && e->label[0]) {
@@ -395,14 +513,22 @@ static int mod_config_load(LoadedMod* mod) {
         str_trim(value_str);
         unquote_inplace(value_str);
 
-        int type = string_to_type(type_str);
-        if (type == LUA_CFG_NONE) continue;
+        int type = LUA_CFG_NONE;
+        int has_min = 0;
+        int has_max = 0;
+        double min_value = 0.0;
+        double max_value = 0.0;
+        if (!parse_type_and_bounds(type_str, &type, &has_min, &min_value, &has_max, &max_value)) continue;
 
         ConfigEntry e;
         memset(&e, 0, sizeof(e));
         strncpy(e.key, key, sizeof(e.key) - 1);
         strncpy(e.label, key, sizeof(e.label) - 1);
         e.type = type;
+        e.has_min = has_min;
+        e.has_max = has_max;
+        e.min_value = min_value;
+        e.max_value = max_value;
 
         if (type == LUA_CFG_ACTION) {
             // optional label after comma
@@ -416,6 +542,8 @@ static int mod_config_load(LoadedMod* mod) {
         } else {
             strncpy(e.value, value_str, sizeof(e.value) - 1);
         }
+
+        clamp_cfg_value(&e);
 
         mod_config_push_entry(mod, &e);
     }
@@ -675,11 +803,13 @@ static int lua_cfg_set(lua_State* Ls) {
         case LUA_CFG_INT: {
             int v = (int)luaL_checkinteger(Ls, 2);
             snprintf(e->value, sizeof(e->value), "%d", v);
+            clamp_cfg_value(e);
             break;
         }
         case LUA_CFG_FLOAT: {
             double v = (double)luaL_checknumber(Ls, 2);
             snprintf(e->value, sizeof(e->value), "%.6g", v);
+            clamp_cfg_value(e);
             break;
         }
         case LUA_CFG_STRING: {
@@ -1186,6 +1316,8 @@ int lua_manager_config_increment_int(int mod_index, int entry_index, int delta) 
     if (e->type != LUA_CFG_INT) return 0;
     int v = atoi(e->value);
     v += delta;
+    if (e->has_min && (double)v < e->min_value) v = (int)e->min_value;
+    if (e->has_max && (double)v > e->max_value) v = (int)e->max_value;
     snprintf(e->value, sizeof(e->value), "%d", v);
     return mod_config_save(m);
 }
@@ -1198,6 +1330,8 @@ int lua_manager_config_increment_float(int mod_index, int entry_index, double de
     if (e->type != LUA_CFG_FLOAT) return 0;
     double v = atof(e->value);
     v += delta;
+    if (e->has_min && v < e->min_value) v = e->min_value;
+    if (e->has_max && v > e->max_value) v = e->max_value;
     snprintf(e->value, sizeof(e->value), "%.6g", v);
     return mod_config_save(m);
 }

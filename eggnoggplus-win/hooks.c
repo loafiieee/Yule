@@ -339,10 +339,18 @@ static int is_mods_state_active(void) {
 
 static float approx_text_width(const char* text, float scale) {
     if (!text) return 0.0f;
-    // Empirical average advance: Eggnogg's font is wider than 4.2 at the
-    // scales we use for headers/help text. Using a slightly larger constant
-    // improves centered/right-aligned layout.
-    return (float)strlen(text) * 5.0f * scale;
+    // Eggnogg's UI font is near 8px wide per glyph at scale=1.
+    // Using an 8.0f advance keeps centered/right-aligned text stable.
+    return (float)strlen(text) * 6.0f * scale;
+}
+
+static void mods_restore_render_state(void) {
+    if (p_plot_text_set_shadow) {
+        p_plot_text_set_shadow(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    p_turtle_set_angle(0.0);
+    p_turtle_set_scale(1.0, 1.0);
+    p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
@@ -849,10 +857,14 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod) {
             return 1;
 
         case SDLK_UP:
+        case 'w':
+        case 'W':
             move_selection(-1, 1);
             return 1;
 
         case SDLK_DOWN:
+        case 's':
+        case 'S':
             move_selection(1, 1);
             return 1;
 
@@ -889,21 +901,56 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod) {
         }
 
         case SDLK_LEFT:
+        case 'a':
+        case 'A':
             apply_adjustment_on_selected(-1);
             return 1;
 
         case SDLK_RIGHT:
+        case 'd':
+        case 'D':
             apply_adjustment_on_selected(1);
             return 1;
 
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE:
+        case 'z': case 'Z':
+        case 'x': case 'X':
+        case 'c': case 'C':
+        case 'v': case 'V':
+        case 'f': case 'F':
+        case 'g': case 'G':
+        case 'h': case 'H':
+        case 'j': case 'J':
+        case 'k': case 'K':
+        case 'l': case 'L':
+        case ';':
+        case ',':
+        case '.':
+        case '/':
             activate_selected();
             return 1;
 
         default:
             return 0;
+    }
+}
+
+int hooks_mods_menu_control_action(int action) {
+    if (!is_mods_state_active()) return 0;
+    if (g_capture_active) return 1;
+
+    rebuild_rows();
+
+    switch (action) {
+        case 1: move_selection(-1, 1); return 1;
+        case 2: move_selection(1, 1); return 1;
+        case 3: apply_adjustment_on_selected(-1); return 1;
+        case 4: apply_adjustment_on_selected(1); return 1;
+        case 5: activate_selected(); return 1;
+        case 6: mods_go_back(); return 1;
+        default: return 0;
     }
 }
 
@@ -1080,17 +1127,7 @@ static void render_rows(void) {
                                0.46f, 0.54f, 0.64f, pos);
     }
 
-    if (p_plot_text_set_shadow) {
-        p_plot_text_set_shadow(0.0f, 0.0f, 0.0f, 0.0f);
-    }
-
-    // IMPORTANT: restore common turtle state so we don't leak render state into
-    // other menus (e.g. the base Settings menu title).
-    // We intentionally do NOT touch position since the game typically sets it
-    // before each draw, but scale/rgb/angle can leak.
-    p_turtle_set_angle(0.0);
-    p_turtle_set_scale(1.0, 1.0);
-    p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    mods_restore_render_state();
 }
 
 
@@ -1124,12 +1161,14 @@ static void __cdecl mods_render(void) {
     if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_leave(void) {
     g_capture_active = 0;
     g_capture_mod = -1;
     g_capture_cfg = -1;
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_entry_enter(void) {
@@ -1277,4 +1316,3 @@ void hooks_init(void) {
 
     LOG_INFO("hooks_init: custom MODS menu ready");
 }
-

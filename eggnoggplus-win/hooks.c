@@ -341,7 +341,7 @@ static float approx_text_width(const char* text, float scale) {
     if (!text) return 0.0f;
     // Eggnogg's UI font is near 8px wide per glyph at scale=1.
     // Using an 8.0f advance keeps centered/right-aligned text stable.
-    return (float)strlen(text) * 8.0f * scale;
+    return (float)strlen(text) * 6.0f * scale;
 }
 
 static void mods_restore_render_state(void) {
@@ -351,7 +351,6 @@ static void mods_restore_render_state(void) {
     p_turtle_set_angle(0.0);
     p_turtle_set_scale(1.0, 1.0);
     p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
-    p_turtle_set_pos_unscaled(0.0, 0.0);
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
@@ -916,6 +915,20 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE:
+        case 'z': case 'Z':
+        case 'x': case 'X':
+        case 'c': case 'C':
+        case 'v': case 'V':
+        case 'f': case 'F':
+        case 'g': case 'G':
+        case 'h': case 'H':
+        case 'j': case 'J':
+        case 'k': case 'K':
+        case 'l': case 'L':
+        case ';':
+        case ',':
+        case '.':
+        case '/':
             activate_selected();
             return 1;
 
@@ -1148,6 +1161,7 @@ static void __cdecl mods_render(void) {
     if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_leave(void) {

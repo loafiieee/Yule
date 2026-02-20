@@ -27,6 +27,8 @@
 #define ADDR_TURTLE_SET_POS_UNSCALED  0x409040u
 #define ADDR_TURTLE_SET_SCALE         0x409080u
 #define ADDR_TURTLE_SET_RGB           0x4091E0u
+#define ADDR_TURTLE_SET_RGBA          0x4090C0u
+#define ADDR_TURTLE_RESET             0x4092D0u
 #define ADDR_MAD_W                    0x404300u
 #define ADDR_MAD_H                    0x404320u
 #define ADDR_OPTIONS_STATE            0x448398u
@@ -114,6 +116,8 @@ typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
 typedef void  (__cdecl *fn_turtle_set_pos_unscaled_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_scale_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
+typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
+typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
@@ -134,6 +138,8 @@ static fn_turtle_set_angle_t         p_turtle_set_angle = (fn_turtle_set_angle_t
 static fn_turtle_set_pos_unscaled_t  p_turtle_set_pos_unscaled = (fn_turtle_set_pos_unscaled_t)(uintptr_t)ADDR_TURTLE_SET_POS_UNSCALED;
 static fn_turtle_set_scale_t         p_turtle_set_scale = (fn_turtle_set_scale_t)(uintptr_t)ADDR_TURTLE_SET_SCALE;
 static fn_turtle_set_rgb_t           p_turtle_set_rgb = (fn_turtle_set_rgb_t)(uintptr_t)ADDR_TURTLE_SET_RGB;
+static fn_turtle_set_rgba_t          p_turtle_set_rgba = (fn_turtle_set_rgba_t)(uintptr_t)ADDR_TURTLE_SET_RGBA;
+static fn_turtle_reset_t             p_turtle_reset = (fn_turtle_reset_t)(uintptr_t)ADDR_TURTLE_RESET;
 static fn_mad_dim_t                  p_mad_w = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_W;
 static fn_mad_dim_t                  p_mad_h = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_H;
 static fn_void_void_t                p_options_enter = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER;
@@ -339,10 +345,25 @@ static int is_mods_state_active(void) {
 
 static float approx_text_width(const char* text, float scale) {
     if (!text) return 0.0f;
-    // Empirical average advance: Eggnogg's font is wider than 4.2 at the
-    // scales we use for headers/help text. Using a slightly larger constant
-    // improves centered/right-aligned layout.
-    return (float)strlen(text) * 5.0f * scale;
+    // font8x8 atlas is 145x145 (16x16 cells with 1px gutters):
+    // effective advance is 9px per glyph at scale=1.
+    return (float)strlen(text) * 9.0f * scale;
+}
+
+static void mods_restore_render_state(void) {
+    // Reset full turtle state (including alpha) to avoid leaking text render
+    // state into sprite/glow drawing used by the rest of the UI.
+    if (p_turtle_reset) {
+        p_turtle_reset();
+        return;
+    }
+    p_turtle_set_angle(0.0);
+    p_turtle_set_scale(1.0, 1.0);
+    if (p_turtle_set_rgba) {
+        p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    } else {
+        p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    }
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
@@ -849,10 +870,14 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod) {
             return 1;
 
         case SDLK_UP:
+        case 'w':
+        case 'W':
             move_selection(-1, 1);
             return 1;
 
         case SDLK_DOWN:
+        case 's':
+        case 'S':
             move_selection(1, 1);
             return 1;
 
@@ -889,16 +914,34 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod) {
         }
 
         case SDLK_LEFT:
+        case 'a':
+        case 'A':
             apply_adjustment_on_selected(-1);
             return 1;
 
         case SDLK_RIGHT:
+        case 'd':
+        case 'D':
             apply_adjustment_on_selected(1);
             return 1;
 
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE:
+        case 'z': case 'Z':
+        case 'x': case 'X':
+        case 'c': case 'C':
+        case 'v': case 'V':
+        case 'f': case 'F':
+        case 'g': case 'G':
+        case 'h': case 'H':
+        case 'j': case 'J':
+        case 'k': case 'K':
+        case 'l': case 'L':
+        case ';':
+        case ',':
+        case '.':
+        case '/':
             activate_selected();
             return 1;
 
@@ -907,11 +950,24 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod) {
     }
 }
 
-static void render_rows(void) {
-    if (p_plot_text_set_shadow) {
-        p_plot_text_set_shadow(0.18f, 0.18f, 0.18f, 0.78f);
-    }
+int hooks_mods_menu_control_action(int action) {
+    if (!is_mods_state_active()) return 0;
+    if (g_capture_active) return 1;
 
+    rebuild_rows();
+
+    switch (action) {
+        case 1: move_selection(-1, 1); return 1;
+        case 2: move_selection(1, 1); return 1;
+        case 3: apply_adjustment_on_selected(-1); return 1;
+        case 4: apply_adjustment_on_selected(1); return 1;
+        case 5: activate_selected(); return 1;
+        case 6: mods_go_back(); return 1;
+        default: return 0;
+    }
+}
+
+static void render_rows(void) {
     rebuild_rows();
 
     ModsLayout L;
@@ -1080,17 +1136,7 @@ static void render_rows(void) {
                                0.46f, 0.54f, 0.64f, pos);
     }
 
-    if (p_plot_text_set_shadow) {
-        p_plot_text_set_shadow(0.0f, 0.0f, 0.0f, 0.0f);
-    }
-
-    // IMPORTANT: restore common turtle state so we don't leak render state into
-    // other menus (e.g. the base Settings menu title).
-    // We intentionally do NOT touch position since the game typically sets it
-    // before each draw, but scale/rgb/angle can leak.
-    p_turtle_set_angle(0.0);
-    p_turtle_set_scale(1.0, 1.0);
-    p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    mods_restore_render_state();
 }
 
 
@@ -1124,12 +1170,14 @@ static void __cdecl mods_render(void) {
     if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_leave(void) {
     g_capture_active = 0;
     g_capture_mod = -1;
     g_capture_cfg = -1;
+    mods_restore_render_state();
 }
 
 static void __cdecl mods_entry_enter(void) {
@@ -1277,4 +1325,3 @@ void hooks_init(void) {
 
     LOG_INFO("hooks_init: custom MODS menu ready");
 }
-

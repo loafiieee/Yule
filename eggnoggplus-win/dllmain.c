@@ -175,11 +175,22 @@ typedef struct {
     int yrel;
 } SDL_MouseMotionEvent;
 
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 which;
+    Uint8 button;
+    Uint8 state;
+    Uint8 padding1;
+    Uint8 padding2;
+} SDL_ControllerButtonEvent;
+
 typedef union {
     Uint32 type;
     SDL_KeyboardEvent key;
     SDL_MouseButtonEvent button;
     SDL_MouseMotionEvent motion;
+    SDL_ControllerButtonEvent cbutton;
     unsigned char padding[56];
 } SDL_Event;
 
@@ -188,6 +199,14 @@ typedef union {
 #define SDL_MOUSEMOTION     0x400
 #define SDL_MOUSEBUTTONDOWN 0x401
 #define SDL_MOUSEBUTTONUP   0x402
+#define SDL_CONTROLLERBUTTONDOWN 0x651
+
+#define SDL_CONTROLLER_BUTTON_A            0
+#define SDL_CONTROLLER_BUTTON_B            1
+#define SDL_CONTROLLER_BUTTON_DPAD_UP     11
+#define SDL_CONTROLLER_BUTTON_DPAD_DOWN   12
+#define SDL_CONTROLLER_BUTTON_DPAD_LEFT   13
+#define SDL_CONTROLLER_BUTTON_DPAD_RIGHT  14
 
 typedef void SDL_Window;
 typedef void (*SDL_GL_SwapWindow_t)(SDL_Window*);
@@ -326,6 +345,20 @@ int SDL_PollEvent(SDL_Event* event) {
                 consumed = lua_manager_on_event("mousemotion",
                     0, 0, 0, event->motion.x, event->motion.y, 0);
                 break;
+            case SDL_CONTROLLERBUTTONDOWN: {
+                int action = 0;
+                if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP) action = 1;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) action = 2;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) action = 3;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) action = 4;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_A) action = 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_B) action = 6;
+
+                if (action && hooks_mods_menu_control_action(action)) {
+                    consumed = 1;
+                }
+                break;
+            }
             default:
                 // Unknown/unhandled event type: don't consume
                 consumed = 0;

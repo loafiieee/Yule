@@ -27,6 +27,8 @@
 #define ADDR_TURTLE_SET_POS_UNSCALED  0x409040u
 #define ADDR_TURTLE_SET_SCALE         0x409080u
 #define ADDR_TURTLE_SET_RGB           0x4091E0u
+#define ADDR_TURTLE_SET_RGBA          0x4090C0u
+#define ADDR_TURTLE_RESET             0x4092D0u
 #define ADDR_MAD_W                    0x404300u
 #define ADDR_MAD_H                    0x404320u
 #define ADDR_OPTIONS_STATE            0x448398u
@@ -114,6 +116,8 @@ typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
 typedef void  (__cdecl *fn_turtle_set_pos_unscaled_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_scale_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
+typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
+typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
@@ -134,6 +138,8 @@ static fn_turtle_set_angle_t         p_turtle_set_angle = (fn_turtle_set_angle_t
 static fn_turtle_set_pos_unscaled_t  p_turtle_set_pos_unscaled = (fn_turtle_set_pos_unscaled_t)(uintptr_t)ADDR_TURTLE_SET_POS_UNSCALED;
 static fn_turtle_set_scale_t         p_turtle_set_scale = (fn_turtle_set_scale_t)(uintptr_t)ADDR_TURTLE_SET_SCALE;
 static fn_turtle_set_rgb_t           p_turtle_set_rgb = (fn_turtle_set_rgb_t)(uintptr_t)ADDR_TURTLE_SET_RGB;
+static fn_turtle_set_rgba_t          p_turtle_set_rgba = (fn_turtle_set_rgba_t)(uintptr_t)ADDR_TURTLE_SET_RGBA;
+static fn_turtle_reset_t             p_turtle_reset = (fn_turtle_reset_t)(uintptr_t)ADDR_TURTLE_RESET;
 static fn_mad_dim_t                  p_mad_w = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_W;
 static fn_mad_dim_t                  p_mad_h = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_H;
 static fn_void_void_t                p_options_enter = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER;
@@ -345,10 +351,19 @@ static float approx_text_width(const char* text, float scale) {
 }
 
 static void mods_restore_render_state(void) {
-    // Avoid touching global text-shadow state; it appears shared by other menus.
+    // Reset full turtle state (including alpha) to avoid leaking text render
+    // state into sprite/glow drawing used by the rest of the UI.
+    if (p_turtle_reset) {
+        p_turtle_reset();
+        return;
+    }
     p_turtle_set_angle(0.0);
     p_turtle_set_scale(1.0, 1.0);
-    p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    if (p_turtle_set_rgba) {
+        p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    } else {
+        p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    }
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {

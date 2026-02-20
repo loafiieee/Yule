@@ -366,13 +366,17 @@ static void mods_restore_render_state(void) {
     }
 }
 
-static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
+static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
     if (!text || !p_plot_text) return;
     p_turtle_set_angle(0.0);
     p_turtle_set_scale((double)scale, (double)scale);
     p_turtle_set_rgb(r, g, b);
     p_turtle_set_pos_unscaled((double)x, (double)y);
-    p_plot_text(text, 1);
+    p_plot_text(text, mode);
+}
+
+static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
+    draw_text_scaled_mode(x, y, scale, r, g, b, text, 1);
 }
 
 static void draw_text(float x, float y, float r, float g, float b, const char* text) {
@@ -380,8 +384,8 @@ static void draw_text(float x, float y, float r, float g, float b, const char* t
 }
 
 static void draw_text_centered_scaled(float cx, float y, float scale, float r, float g, float b, const char* text) {
-    float w = approx_text_width(text, scale);
-    draw_text_scaled(cx - (w * 0.5f), y, scale, r, g, b, text);
+    // plot_text mode=1 is already centered around turtle x in the base UI.
+    draw_text_scaled_mode(cx, y, scale, r, g, b, text, 1);
 }
 
 static void draw_text_right_scaled(float right_x, float y, float scale, float r, float g, float b, const char* text) {
@@ -1167,9 +1171,7 @@ static void __cdecl mods_update(void) {
 static void __cdecl mods_render(void) {
     p_menu_common_render();
     render_rows();
-    if (p_main_sprite_batches_draw) {
-        p_main_sprite_batches_draw();
-    }
+    // main_draw() handles sprite batch flush; avoid a second flush here.
     mods_restore_render_state();
 }
 

@@ -339,15 +339,13 @@ static int is_mods_state_active(void) {
 
 static float approx_text_width(const char* text, float scale) {
     if (!text) return 0.0f;
-    // Eggnogg's UI font is near 8px wide per glyph at scale=1.
-    // Using an 8.0f advance keeps centered/right-aligned text stable.
-    return (float)strlen(text) * 6.0f * scale;
+    // font8x8 atlas is 145x145 (16x16 cells with 1px gutters):
+    // effective advance is 9px per glyph at scale=1.
+    return (float)strlen(text) * 9.0f * scale;
 }
 
 static void mods_restore_render_state(void) {
-    if (p_plot_text_set_shadow) {
-        p_plot_text_set_shadow(0.0f, 0.0f, 0.0f, 0.0f);
-    }
+    // Avoid touching global text-shadow state; it appears shared by other menus.
     p_turtle_set_angle(0.0);
     p_turtle_set_scale(1.0, 1.0);
     p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
@@ -955,10 +953,6 @@ int hooks_mods_menu_control_action(int action) {
 }
 
 static void render_rows(void) {
-    if (p_plot_text_set_shadow) {
-        p_plot_text_set_shadow(0.18f, 0.18f, 0.18f, 0.78f);
-    }
-
     rebuild_rows();
 
     ModsLayout L;

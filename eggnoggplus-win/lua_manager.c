@@ -459,6 +459,49 @@ static int mod_config_save(LoadedMod* mod) {
     return 1;
 }
 
+static char* find_top_level_comma(char* s) {
+    int bracket_depth = 0;
+    int in_quotes = 0;
+    int esc = 0;
+    if (!s) return NULL;
+
+    for (; *s; s++) {
+        char c = *s;
+        if (in_quotes) {
+            if (esc) {
+                esc = 0;
+                continue;
+            }
+            if (c == '\\') {
+                esc = 1;
+                continue;
+            }
+            if (c == '"') {
+                in_quotes = 0;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            in_quotes = 1;
+            continue;
+        }
+        if (c == '[') {
+            bracket_depth++;
+            continue;
+        }
+        if (c == ']') {
+            if (bracket_depth > 0) bracket_depth--;
+            continue;
+        }
+        if (c == ',' && bracket_depth == 0) {
+            return s;
+        }
+    }
+
+    return NULL;
+}
+
 static int mod_config_load(LoadedMod* mod) {
     if (!mod || !mod->config_path[0]) return 0;
 
@@ -499,7 +542,7 @@ static int mod_config_load(LoadedMod* mod) {
         char type_str[64] = {0};
         char value_str[256] = {0};
 
-        char* comma = strchr(rest, ',');
+        char* comma = find_top_level_comma(rest);
         if (comma) {
             *comma = '\0';
             strncpy(type_str, rest, sizeof(type_str) - 1);

@@ -145,6 +145,8 @@ The file is a simple line-based format:
 enabled: bool, true
 max_lives: int, 3
 speed: float, 1.25
+jump_count: int[1,10], 3
+gravity: float[0.2,2.5], 1.0
 player_name: str, "Loaf"
 
 reset_stats: action
@@ -154,6 +156,10 @@ big_red_button: action, "Reset Everything"
 Rules:
 - One setting per line.
 - `key: type, value` for values.
+- Optional numeric bounds are supported for `int`/`float` as `type[min,max]`.
+  - Example: `lives: int[1,9], 3`
+  - Example: `speed: float[0.25,3.0], 1.0`
+  - Spaces are fine too: `speed: float[0.5, 10], 1.0`
 - `key: action` (or `key: action, "Label"`) for buttons.
 - Strings can be quoted (recommended if they contain spaces/commas).
 

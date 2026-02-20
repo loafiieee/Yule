@@ -353,8 +353,17 @@ static float approx_text_width(const char* text, float scale) {
 }
 
 static void mods_restore_render_state(void) {
-    // No-op: base renderer owns final turtle/shadow state. Forcing resets here
-    // causes cross-frame sprite/glow artifacts.
+    // Prepare shared turtle state for the engine's main_draw() pass.
+    // render_rows() changes scale/color heavily for text; if we don't restore
+    // sane defaults *before* main_draw(), cursor/sword sprite shadows can be
+    // drawn with the wrong scale/tint.
+    p_turtle_set_angle(0.0);
+    p_turtle_set_scale(1.0, 1.0);
+    if (p_turtle_set_rgba) {
+        p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    } else {
+        p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    }
 }
 
 static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
@@ -1163,10 +1172,12 @@ static void __cdecl mods_render(void) {
     p_menu_common_render();
     render_rows();
 
+    // Restore turtle defaults before main_draw() so sprite/glow/cursor passes
+    // don't inherit text render scale/tint.
+    mods_restore_render_state();
+
     // In base menus, rendering is finalized via main_draw(), which flushes sprite
     // batches and draws particles/cursors/button sprites in the expected order.
-    // Calling only main_sprite_batches_draw() skips that pipeline and causes sprite
-    // artifacts (e.g. missing glow / corrupted menu sprites).
     if (p_main_draw) {
         p_main_draw();
     } else if (p_main_sprite_batches_draw) {

@@ -1,0 +1,364 @@
+#include <windows.h>
+#include "log.h"
+#include "hooks.h"
+#include "lua_manager.h"
+
+#include <stdint.h>
+
+// ---------------- Crash handler (writes mods/crash.log, optional minidump) ----------------
+
+typedef enum _MINIDUMP_TYPE {
+    MiniDumpNormal = 0x00000000
+} MINIDUMP_TYPE;
+
+typedef struct _MINIDUMP_EXCEPTION_INFORMATION {
+    DWORD ThreadId;
+    PEXCEPTION_POINTERS ExceptionPointers;
+    BOOL ClientPointers;
+} MINIDUMP_EXCEPTION_INFORMATION;
+
+typedef BOOL (WINAPI *MiniDumpWriteDump_t)(
+    HANDLE hProcess,
+    DWORD ProcessId,
+    HANDLE hFile,
+    MINIDUMP_TYPE DumpType,
+    const MINIDUMP_EXCEPTION_INFORMATION* ExceptionParam,
+    const void* UserStreamParam,
+    const void* CallbackParam
+);
+
+static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep);
+
+static void crash_append_line(const char* line) {
+    // Best-effort, no CRT FILE* dependency.
+    CreateDirectoryA("mods", NULL);
+    HANDLE h = CreateFileA(
+        "mods/crash.log",
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(h, line, (DWORD)lstrlenA(line), &written, NULL);
+    WriteFile(h, "\r\n", 2, &written, NULL);
+    CloseHandle(h);
+}
+
+static void try_write_minidump(EXCEPTION_POINTERS* ep) {
+    HMODULE dbg = LoadLibraryA("dbghelp.dll");
+    if (!dbg) return;
+
+    MiniDumpWriteDump_t pMiniDumpWriteDump = (MiniDumpWriteDump_t)GetProcAddress(dbg, "MiniDumpWriteDump");
+    if (!pMiniDumpWriteDump) return;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char dump_path[MAX_PATH];
+    wsprintfA(dump_path, "mods/crash_%04d%02d%02d_%02d%02d%02d.dmp",
+              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    HANDLE hFile = CreateFileA(dump_path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return;
+
+    MINIDUMP_EXCEPTION_INFORMATION mei;
+    mei.ThreadId = GetCurrentThreadId();
+    mei.ExceptionPointers = ep;
+    mei.ClientPointers = FALSE;
+
+    HANDLE hProc = GetCurrentProcess();
+    DWORD pid = GetCurrentProcessId();
+
+    pMiniDumpWriteDump(hProc, pid, hFile, MiniDumpNormal, &mei, NULL, NULL);
+    CloseHandle(hFile);
+}
+
+static void install_crash_handler(void) {
+    SetUnhandledExceptionFilter(luna_unhandled_exception_filter);
+}
+
+static const char* exception_code_name(DWORD code) {
+    switch (code) {
+        case EXCEPTION_ACCESS_VIOLATION: return "ACCESS_VIOLATION";
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: return "ARRAY_BOUNDS_EXCEEDED";
+        case EXCEPTION_BREAKPOINT: return "BREAKPOINT";
+        case EXCEPTION_DATATYPE_MISALIGNMENT: return "DATATYPE_MISALIGNMENT";
+        case EXCEPTION_FLT_DIVIDE_BY_ZERO: return "FLT_DIVIDE_BY_ZERO";
+        case EXCEPTION_INT_DIVIDE_BY_ZERO: return "INT_DIVIDE_BY_ZERO";
+        case EXCEPTION_ILLEGAL_INSTRUCTION: return "ILLEGAL_INSTRUCTION";
+        case EXCEPTION_IN_PAGE_ERROR: return "IN_PAGE_ERROR";
+        case EXCEPTION_STACK_OVERFLOW: return "STACK_OVERFLOW";
+        default: return "UNKNOWN";
+    }
+}
+
+static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
+    DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+    void* addr = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : NULL;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    char line[512];
+    wsprintfA(line,
+              "[%04d-%02d-%02d %02d:%02d:%02d] Unhandled exception 0x%08lX (%s) at %p",
+              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+              (unsigned long)code, exception_code_name(code), addr);
+    crash_append_line(line);
+
+    // Optional minidump if dbghelp.dll is present.
+    try_write_minidump(ep);
+    crash_append_line("Wrote minidump if available: mods/crash_YYYYMMDD_HHMMSS.dmp");
+
+    // Also try to surface a visible error (best-effort).
+    MessageBoxA(NULL,
+        "Eggnogg+ mod framework crashed.\n\n"
+        "Details were written to mods/crash.log (and a .dmp if possible).\n"
+        "Please attach those files when reporting bugs.",
+        "Eggnogg+ Crash",
+        MB_OK | MB_ICONERROR
+    );
+
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// -----------------------------------------------------------------------------------------
+
+// Minimal SDL event structures
+typedef unsigned int Uint32;
+typedef unsigned short Uint16;
+typedef unsigned char Uint8;
+
+typedef struct {
+    int scancode;
+    int sym;
+    Uint16 mod;
+    Uint32 unused;
+} SDL_Keysym;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 windowID;
+    Uint8 state;
+    Uint8 repeat;
+    Uint8 padding2;
+    Uint8 padding3;
+    SDL_Keysym keysym;
+} SDL_KeyboardEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 windowID;
+    Uint32 which;
+    Uint8 button;
+    Uint8 state;
+    Uint8 clicks;
+    Uint8 padding1;
+    int x;
+    int y;
+} SDL_MouseButtonEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 windowID;
+    Uint32 which;
+    Uint32 state;
+    int x;
+    int y;
+    int xrel;
+    int yrel;
+} SDL_MouseMotionEvent;
+
+typedef union {
+    Uint32 type;
+    SDL_KeyboardEvent key;
+    SDL_MouseButtonEvent button;
+    SDL_MouseMotionEvent motion;
+    unsigned char padding[56];
+} SDL_Event;
+
+#define SDL_KEYDOWN         0x300
+#define SDL_KEYUP           0x301
+#define SDL_MOUSEMOTION     0x400
+#define SDL_MOUSEBUTTONDOWN 0x401
+#define SDL_MOUSEBUTTONUP   0x402
+
+typedef void SDL_Window;
+typedef void (*SDL_GL_SwapWindow_t)(SDL_Window*);
+typedef int  (*SDL_PollEvent_t)(SDL_Event*);
+
+HMODULE real_sdl = NULL;
+static SDL_GL_SwapWindow_t real_SwapWindow = NULL;
+static SDL_PollEvent_t     real_PollEvent  = NULL;
+
+// ---------------- Time scaling (speedhack support) ----------------
+// Mods can modify a synthetic "delta_time" event each frame. We turn that
+// into a multiplier that scales SDL time sources (GetTicks / QPC wrappers).
+
+static LARGE_INTEGER g_qpc_freq;
+static int g_qpc_inited = 0;
+
+// Piecewise-continuous scaled clock so changing scale doesn't jump.
+static unsigned long long g_real_anchor = 0;
+static double g_scaled_anchor = 0.0;
+static float g_last_scale = 1.0f;
+
+// For generating delta_time (real, unscaled)
+static unsigned long long g_last_real_qpc = 0;
+
+static unsigned long long luna_real_qpc(void) {
+    if (!g_qpc_inited) {
+        QueryPerformanceFrequency(&g_qpc_freq);
+        g_qpc_inited = 1;
+        LARGE_INTEGER c;
+        QueryPerformanceCounter(&c);
+        g_real_anchor = (unsigned long long)c.QuadPart;
+        g_scaled_anchor = (double)g_real_anchor;
+        g_last_scale = 1.0f;
+        g_last_real_qpc = (unsigned long long)c.QuadPart;
+        return (unsigned long long)c.QuadPart;
+    }
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (unsigned long long)c.QuadPart;
+}
+
+static unsigned long long luna_scaled_qpc(void) {
+    unsigned long long now = luna_real_qpc();
+    float scale = lua_manager_get_time_scale();
+    if (scale < 0.05f) scale = 0.05f;
+    if (scale > 5.0f)  scale = 5.0f;
+
+    if (scale != g_last_scale) {
+        double dreal = (double)(now - g_real_anchor);
+        g_scaled_anchor += dreal * (double)g_last_scale;
+        g_real_anchor = now;
+        g_last_scale = scale;
+    }
+
+    double dreal = (double)(now - g_real_anchor);
+    double scaled = g_scaled_anchor + dreal * (double)g_last_scale;
+    return (unsigned long long)scaled;
+}
+
+// These wrappers are wired up by init_stubs() by overriding stub pointers.
+unsigned int __cdecl luna_SDL_GetTicks(void) {
+    unsigned long long qpc = luna_scaled_qpc();
+    double seconds = (double)qpc / (double)g_qpc_freq.QuadPart;
+    return (unsigned int)(seconds * 1000.0);
+}
+
+unsigned long long __cdecl luna_SDL_GetPerformanceCounter(void) {
+    return luna_scaled_qpc();
+}
+
+unsigned long long __cdecl luna_SDL_GetPerformanceFrequency(void) {
+    if (!g_qpc_inited) (void)luna_real_qpc();
+    return (unsigned long long)g_qpc_freq.QuadPart;
+}
+
+// ---------------------------------------------------------------
+
+void init_stubs();
+void lua_manager_init();
+void lua_manager_on_frame();
+int  lua_manager_on_event(const char*, int, int, int, int, int, int);
+void lua_manager_shutdown();
+
+void SDL_GL_SwapWindow(SDL_Window* window) {
+    // Generate a real (unscaled) delta_time and let mods adjust it.
+    // This feeds the time-scale multiplier used by the SDL time wrappers.
+    unsigned long long now = luna_real_qpc();
+    if (g_qpc_inited && g_last_real_qpc != 0) {
+        double dt = (double)(now - g_last_real_qpc) / (double)g_qpc_freq.QuadPart;
+        (void)lua_manager_on_delta_time(dt);
+    }
+    g_last_real_qpc = now;
+
+    lua_manager_on_frame();
+    if (real_SwapWindow) real_SwapWindow(window);
+}
+
+int SDL_PollEvent(SDL_Event* event) {
+    if (!real_PollEvent) return 0;
+
+    // Allow Lua mods to "consume" SDL events by returning true from an on_event handler.
+    // If consumed, we keep polling until we find a non-consumed event (or the queue is empty).
+    while (1) {
+        int result = real_PollEvent(event);
+        if (!result || !event) return result;
+
+        int consumed = 0;
+        switch (event->type) {
+            case SDL_KEYDOWN:
+                // If we're capturing text for an in-game config string field, swallow key presses here.
+                if (hooks_text_capture_active() &&
+                    hooks_text_capture_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
+                    consumed = 1;
+                    break;
+                }
+                if (hooks_mods_menu_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
+                    consumed = 1;
+                    break;
+                }
+                consumed = lua_manager_on_event("keydown",
+                    event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
+                break;
+            case SDL_KEYUP:
+                consumed = lua_manager_on_event("keyup",
+                    event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+                consumed = lua_manager_on_event("mousebuttondown",
+                    0, 0, 0, event->button.x, event->button.y, event->button.button);
+                break;
+            case SDL_MOUSEBUTTONUP:
+                consumed = lua_manager_on_event("mousebuttonup",
+                    0, 0, 0, event->button.x, event->button.y, event->button.button);
+                break;
+            case SDL_MOUSEMOTION:
+                consumed = lua_manager_on_event("mousemotion",
+                    0, 0, 0, event->motion.x, event->motion.y, 0);
+                break;
+            default:
+                // Unknown/unhandled event type: don't consume
+                consumed = 0;
+                break;
+        }
+
+        if (!consumed) return result;
+        // else: keep looping, pulling the next SDL event
+    }
+}
+
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+    if (fdwReason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(hinstDLL);
+        install_crash_handler();
+        real_sdl = LoadLibraryA("SDL2_real.dll");
+        if (!real_sdl) {
+            MessageBoxA(NULL, "Could not load SDL2_real.dll!", "Error", MB_OK);
+            return FALSE;
+        }
+        real_SwapWindow = (SDL_GL_SwapWindow_t)GetProcAddress(real_sdl, "SDL_GL_SwapWindow");
+        real_PollEvent  = (SDL_PollEvent_t)    GetProcAddress(real_sdl, "SDL_PollEvent");
+        init_stubs();
+        log_init();
+        LOG_INFO("Mod framework initializing...");
+        lua_manager_init();
+
+        // Game hooks (OPTIONS -> Mods submenu)
+        hooks_init();
+    }
+    else if (fdwReason == DLL_PROCESS_DETACH) {
+        lua_manager_shutdown();
+        if (real_sdl) FreeLibrary(real_sdl);
+    }
+    return TRUE;
+}

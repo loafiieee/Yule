@@ -353,19 +353,8 @@ static float approx_text_width(const char* text, float scale) {
 }
 
 static void mods_restore_render_state(void) {
-    // Reset full turtle state (including alpha) to avoid leaking text render
-    // state into sprite/glow drawing used by the rest of the UI.
-    if (p_turtle_reset) {
-        p_turtle_reset();
-        return;
-    }
-    p_turtle_set_angle(0.0);
-    p_turtle_set_scale(1.0, 1.0);
-    if (p_turtle_set_rgba) {
-        p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
-    } else {
-        p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
-    }
+    // No-op: base renderer owns final turtle/shadow state. Forcing resets here
+    // causes cross-frame sprite/glow artifacts.
 }
 
 static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {

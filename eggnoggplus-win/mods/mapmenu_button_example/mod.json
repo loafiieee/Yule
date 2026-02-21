@@ -1,0 +1,9 @@
+{
+  "id": "mapmenu_button_example",
+  "name": "Map Menu Button Example",
+  "version": "1.0.0",
+  "author": "codex",
+  "description": "Shows a mod UI button on the map selection menu and logs when pressed.",
+  "api_version": 1,
+  "entry": "main.lua"
+}

@@ -192,6 +192,65 @@ Notes:
 
 ---
 
+## UI API (draw anywhere, including main menu)
+
+Each mod gets an immediate-mode UI helper at `mod.ui`.
+Use it from `mod.on_frame(...)`.
+
+### State helpers
+
+```lua
+local name = mod.ui.state_name() -- e.g. "main", "options", "game", "mods", ...
+local ptr = mod.ui.state_ptr()    -- raw state pointer as a number
+local is_main = mod.ui.is_state("main")
+local is_any_menu = mod.ui.is_state("menu")
+```
+
+### Screen / mouse helpers
+
+```lua
+local w, h = mod.ui.screen_size()
+local mx, my = mod.ui.mouse_pos()
+```
+
+### Layout + elements
+
+```lua
+-- layout(x, y, row_h, gap, width, text_scale)
+mod.ui.layout(40, 40, 28, 6, 220, 1.0)
+
+mod.ui.text("My Mod Overlay")
+
+if mod.ui.button("hello_btn", "Click me") then
+  mod.log("Button clicked")
+end
+```
+
+Absolute positioning helpers:
+
+```lua
+mod.ui.text_at("Top right", 1040, 40, 1.0, 1.0, 1.0, 1.0)
+if mod.ui.button_at("x", "X", 1180, 20, 40, 28) then
+  mod.log("Close clicked")
+end
+```
+
+API summary:
+- `mod.ui.layout(x, y [,row_h [,gap [,width [,text_scale]]]])`
+- `mod.ui.cursor([x [,y]]) -> x, y`
+- `mod.ui.next_row([count])`
+- `mod.ui.text(text [,r [,g [,b [,scale]]]])`
+- `mod.ui.text_at(text, x, y [,scale [,r [,g [,b]]]])`
+- `mod.ui.button(id, label [,w [,h]]) -> clicked`
+- `mod.ui.button_at(id, label, x, y [,w [,h]]) -> clicked`
+- `mod.ui.state_name() -> string`
+- `mod.ui.state_ptr() -> number`
+- `mod.ui.is_state(name) -> bool`
+- `mod.ui.screen_size() -> w, h`
+- `mod.ui.mouse_pos() -> x, y`
+
+---
+
 ## Notes for modders
 
 ### Isolated globals

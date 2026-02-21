@@ -41,6 +41,9 @@
 #define CAPTURE_BUF_SIZE   256
 #define BASE_UI_W        1280.0f
 #define BASE_UI_H         720.0f
+#define MODS_CURSOR_ROW_Y_FACTOR   0.50f
+#define MODS_CURSOR_ROW_Y_NUDGE    0.0f
+#define MODS_CURSOR_OUTER_PAD_X   22.0f
 
 #define MODS_BTN_GRID_X      1.0f
 #define MODS_BTN_GRID_Y      0.0f
@@ -201,20 +204,17 @@ static int g_cursor_initialized = 0;
 static int g_cursor_bump = 0;
 
 static void write_main_cursor_pos(int idx, float x, float y) {
-    if (idx < 0 || idx > 1 || !g_main_cursors) return;
-    volatile MainCursor* c = (volatile MainCursor*)((uintptr_t)g_main_cursors + (uintptr_t)(idx * (int)sizeof(MainCursor)));
-    c->x = x;
-    c->y = y;
-    c->tx = x;
-    c->ty = y;
+    if (idx < 0 || idx >= 2) return;
+    if (!g_main_cursors) return;
+
+    g_main_cursors[idx].x = x;
+    g_main_cursors[idx].y = y;
+    g_main_cursors[idx].tx = x;
+    g_main_cursors[idx].ty = y;
 }
 
 static void mods_cursor_on_selection_changed(void) {
     g_cursor_bump = 7;
-    if (p_main_cursor_spin) {
-        p_main_cursor_spin(0);
-        p_main_cursor_spin(1);
-    }
 }
 
 static void mods_cursor_tick(void) {
@@ -226,11 +226,13 @@ static void mods_cursor_tick(void) {
     g_ui_scale = L.text_scale;
 
     // Determine target position from selected row.
-    float row_y = L.list_top + ((float)(g_selected_row - g_scroll_row) * L.row_h) + (L.row_h * 0.55f);
+    float row_y = L.list_top + ((float)(g_selected_row - g_scroll_row) * L.row_h)
+                + (L.row_h * MODS_CURSOR_ROW_Y_FACTOR)
+                + (MODS_CURSOR_ROW_Y_NUDGE * L.ui);
 
     // Place swords just outside the content region so they don't clip into text.
-    float left_x  = L.left  + (44.0f * L.ui);
-    float right_x = L.right + (30.0f * L.ui);
+    float left_x  = L.left  - (MODS_CURSOR_OUTER_PAD_X * L.ui);
+    float right_x = L.right + (MODS_CURSOR_OUTER_PAD_X * L.ui);
     // Keep within window bounds.
     {
         float w = L.w;
@@ -263,17 +265,18 @@ static void mods_cursor_tick(void) {
         g_cursor_x[1] += (g_cursor_tx[1] - g_cursor_x[1]) * k;
         g_cursor_y[1] += (g_cursor_ty[1] - g_cursor_y[1]) * k;
     }
+    // Keep engine cursor state initialized, then override exact sword positions
+    // for this non-button list UI.
+    if (g_cursor_bump > 0) g_cursor_bump--;
 
-    // Small outward "pop" when selection changes.
-    if (g_cursor_bump > 0) {
-        float pop = (float)g_cursor_bump * (1.2f * L.ui);
-        write_main_cursor_pos(0, g_cursor_x[0] - pop, g_cursor_y[0]);
-        write_main_cursor_pos(1, g_cursor_x[1] + pop, g_cursor_y[1]);
-        g_cursor_bump--;
-    } else {
-        write_main_cursor_pos(0, g_cursor_x[0], g_cursor_y[0]);
-        write_main_cursor_pos(1, g_cursor_x[1], g_cursor_y[1]);
+    if (p_main_cursors_reset) {
+        float cx = (g_cursor_x[0] + g_cursor_x[1]) * 0.5f;
+        float cy = (g_cursor_y[0] + g_cursor_y[1]) * 0.5f;
+        p_main_cursors_reset(cx, cy);
     }
+
+    write_main_cursor_pos(0, g_cursor_x[0], g_cursor_y[0]);
+    write_main_cursor_pos(1, g_cursor_x[1], g_cursor_y[1]);
 }
 
 
@@ -353,17 +356,19 @@ static float approx_text_width(const char* text, float scale) {
 }
 
 static void mods_restore_render_state(void) {
-    // Prepare shared turtle state for the engine's main_draw() pass.
-    // render_rows() changes scale/color heavily for text; if we don't restore
-    // sane defaults *before* main_draw(), cursor/sword sprite shadows can be
-    // drawn with the wrong scale/tint.
+    // Reset full turtle state when possible. The cursor/shadow pass depends on
+    // more than angle/scale/color, and partial restores can make shadows look
+    // like extra mini swords.
+    if (p_turtle_reset) {
+        p_turtle_reset();
+        return;
+    }
+
+    // Fallback for builds where turtle_reset is unavailable.
     p_turtle_set_angle(0.0);
     p_turtle_set_scale(1.0, 1.0);
-    if (p_turtle_set_rgba) {
-        p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
-    } else {
-        p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
-    }
+    if (p_turtle_set_rgba) p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    else p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
 }
 
 static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
@@ -808,6 +813,10 @@ int hooks_text_capture_active(void) {
     return g_capture_active;
 }
 
+int hooks_mods_menu_active(void) {
+    return is_mods_state_active();
+}
+
 int hooks_text_capture_keydown(int sym, int scancode, int mod) {
     (void)scancode;
 
@@ -1145,7 +1154,7 @@ static void render_rows(void) {
 
 
 static void __cdecl mods_enter(void) {
-    LOG_INFO("MODS: entering custom mods state");
+    LOG_INFO("MODS: entering mods menu");
     if (p_main_buttons_start) p_main_buttons_start();
 
     g_capture_active = 0;
@@ -1169,19 +1178,19 @@ static void __cdecl mods_update(void) {
 }
 
 static void __cdecl mods_render(void) {
+    mods_restore_render_state();
     p_menu_common_render();
     render_rows();
-
     // Restore turtle defaults before main_draw() so sprite/glow/cursor passes
     // don't inherit text render scale/tint.
     mods_restore_render_state();
 
     // In base menus, rendering is finalized via main_draw(), which flushes sprite
     // batches and draws particles/cursors/button sprites in the expected order.
-    if (p_main_draw) {
-        p_main_draw();
-    } else if (p_main_sprite_batches_draw) {
+    if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
+    } else if (p_main_draw) {
+        p_main_draw();
     }
 
     mods_restore_render_state();
@@ -1220,10 +1229,12 @@ static int install_detour(Detour* d, void* target, void* hook, size_t length) {
     {
         uint8_t* jump_back = (uint8_t*)d->trampoline + length;
         uintptr_t back_addr = (uintptr_t)target + length;
-        jump_back[0] = 0xB8;
+
+        // push back_addr; ret  (absolute jump without clobbering EAX)
+        jump_back[0] = 0x68; // push imm32
         *(uint32_t*)(jump_back + 1) = (uint32_t)back_addr;
-        jump_back[5] = 0xFF;
-        jump_back[6] = 0xE0;
+        jump_back[5] = 0xC3; // ret
+        jump_back[6] = 0x90; // nop (padding)
     }
 
     {
@@ -1298,7 +1309,7 @@ static void add_mods_button_to_options(void) {
     }
     {
         // Old placement: above Player 2 Input.
-        void* btn = p_menu_button_link(4.0f, -1.05f, "Mods", (void*)&g_mods_entry_state);
+        void* btn = p_menu_button_link(4.0f, -1.05f, "MODS", (void*)&g_mods_entry_state);
         if (btn) {
             // Force bridge target explicitly so legacy paths cannot land in old menu states.
             *(void**)((uint8_t*)btn + 0xE0) = (void*)&g_mods_entry_state;

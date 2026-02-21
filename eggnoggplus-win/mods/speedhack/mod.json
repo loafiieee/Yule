@@ -1,10 +1,10 @@
 {
-    "id": "testmod",
-    "name": "Test Mod",
-    "version": "1.0.0",
-    "author": "you",
+    "id": "poc_speedhack",
+    "name": "Speed Hack",
+    "version": "uwu",
+    "author": "Loafiieee",
     "description": "Tests the framework, speedhack for demonstration purposes.",
     "api_version": 1,
-    "entry": "testmod.lua",
+    "entry": "speedhack.lua",
     "config": "config.cfg"
 }

@@ -3,11 +3,13 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <luajit-2.1/lua.h>
 #include <luajit-2.1/lauxlib.h>
 #include <luajit-2.1/lualib.h>
 #include "log.h"
 #include "lua_manager.h"
+#include "hooks.h"
 
 static lua_State *L = NULL;
 
@@ -18,6 +20,95 @@ static lua_State *L = NULL;
 // The schema/value format is the simple line-based "key: type, value" described in MODDING.md.
 // We keep this as v1 until we need a breaking change.
 #define MOD_CONFIG_FORMAT_VERSION 1
+
+// Engine symbols used by the lightweight Lua UI overlay.
+#define ADDR_STATE_CURRENT         0x405DB0u
+#define ADDR_MAD_W                 0x404300u
+#define ADDR_MAD_H                 0x404320u
+#define ADDR_PLOT_TEXT             0x4304E0u
+#define ADDR_TURTLE_SET_ANGLE      0x409000u
+#define ADDR_TURTLE_SET_POS        0x409040u
+#define ADDR_TURTLE_SET_SCALE      0x409080u
+#define ADDR_TURTLE_SET_RGB        0x4091E0u
+#define ADDR_TURTLE_SET_RGBA       0x4090C0u
+#define ADDR_TURTLE_RESET          0x4092D0u
+#define ADDR_BUTTON_GET            0x415D00u
+#define ADDR_BUTTON_SET_LAYOUT     0x415F80u
+#define ADDR_BUTTON_EX             0x416310u
+#define ADDR_BUTTON_COUNT          0x416890u
+#define ADDR_BTN_PLAYER_FILTER     0x4325C0u
+
+// Known game state addresses (base game).
+#define ADDR_ERROR_STATE           0x448204u
+#define ADDR_GAME_STATE            0x448220u
+#define ADDR_MAIN_STATE_INITIAL    0x448340u
+#define ADDR_MAIN_STATE            0x448350u
+#define ADDR_OPTIONS_STATE_PAUSED  0x448388u
+#define ADDR_OPTIONS_STATE         0x448398u
+#define ADDR_PREGAME_STATE         0x4483A8u
+#define ADDR_REMAP_STATE2          0x4483B8u
+#define ADDR_REMAP_STATE1          0x4483C8u
+
+typedef void* (__cdecl *fn_state_current_t)(void);
+typedef float (__cdecl *fn_mad_dim_t)(void);
+typedef void  (__cdecl *fn_plot_text_t)(const char*, int);
+typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
+typedef void  (__cdecl *fn_turtle_set_pos_t)(double, double);
+typedef void  (__cdecl *fn_turtle_set_scale_t)(double, double);
+typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
+typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
+typedef void  (__cdecl *fn_turtle_reset_t)(void);
+typedef void* (__cdecl *fn_button_get_t)(int);
+typedef void  (__cdecl *fn_button_set_layout_t)(float, float);
+typedef void* (__cdecl *fn_button_ex_t)(float, float, uint32_t, const char*, int);
+typedef int   (__cdecl *fn_button_count_t)(void);
+typedef int   (__cdecl *fn_btn_player_filter_t)(void* btn, int event_code);
+
+static fn_state_current_t   p_state_current   = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
+static fn_mad_dim_t         p_mad_w           = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_W;
+static fn_mad_dim_t         p_mad_h           = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_H;
+static fn_plot_text_t       p_plot_text       = (fn_plot_text_t)(uintptr_t)ADDR_PLOT_TEXT;
+static fn_turtle_set_angle_t p_turtle_set_angle = (fn_turtle_set_angle_t)(uintptr_t)ADDR_TURTLE_SET_ANGLE;
+static fn_turtle_set_pos_t  p_turtle_set_pos  = (fn_turtle_set_pos_t)(uintptr_t)ADDR_TURTLE_SET_POS;
+static fn_turtle_set_scale_t p_turtle_set_scale = (fn_turtle_set_scale_t)(uintptr_t)ADDR_TURTLE_SET_SCALE;
+static fn_turtle_set_rgb_t  p_turtle_set_rgb  = (fn_turtle_set_rgb_t)(uintptr_t)ADDR_TURTLE_SET_RGB;
+static fn_turtle_set_rgba_t p_turtle_set_rgba = (fn_turtle_set_rgba_t)(uintptr_t)ADDR_TURTLE_SET_RGBA;
+static fn_turtle_reset_t    p_turtle_reset    = (fn_turtle_reset_t)(uintptr_t)ADDR_TURTLE_RESET;
+static fn_button_get_t      p_button_get      = (fn_button_get_t)(uintptr_t)ADDR_BUTTON_GET;
+static fn_button_set_layout_t p_button_set_layout = (fn_button_set_layout_t)(uintptr_t)ADDR_BUTTON_SET_LAYOUT;
+static fn_button_ex_t       p_button_ex       = (fn_button_ex_t)(uintptr_t)ADDR_BUTTON_EX;
+static fn_button_count_t    p_button_count    = (fn_button_count_t)(uintptr_t)ADDR_BUTTON_COUNT;
+static fn_btn_player_filter_t p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
+
+typedef struct UiHitBox {
+    float x;
+    float y;
+    float w;
+    float h;
+} UiHitBox;
+
+typedef struct UiLayout {
+    int active;
+    float cursor_x;
+    float cursor_y;
+    float row_h;
+    float gap;
+    float width;
+    float text_scale;
+} UiLayout;
+
+typedef struct UiNativeButton {
+    char id[64];
+    char state_name[32];
+    char label[128];
+    float grid_x;
+    float grid_y;
+    float layout_x;
+    float layout_y;
+    void* btn_ptr;
+    int clicked;
+    int warned_non_menu;
+} UiNativeButton;
 
 // =============================
 // Data model
@@ -55,6 +146,16 @@ typedef struct LoadedMod {
 
     LuaRefList on_frame;
     LuaRefList on_event;
+
+    // Immediate-mode UI runtime state.
+    UiHitBox* ui_hitboxes;
+    int ui_hitbox_count;
+    int ui_hitbox_cap;
+    void* ui_state_ptr;
+    UiLayout ui_layout;
+    UiNativeButton** ui_native_buttons;
+    int ui_native_count;
+    int ui_native_cap;
 
     // =============================
     // Optional config (in-game editable)
@@ -94,6 +195,12 @@ typedef struct ConfigAction {
 static LoadedMod* g_mods = NULL;
 static int        g_mod_count = 0;
 static int        g_mod_cap = 0;
+
+// UI input state shared across mods.
+static int g_ui_mouse_x = 0;
+static int g_ui_mouse_y = 0;
+static int g_ui_mouse_down_left = 0;
+static int g_ui_mouse_pressed_left = 0;
 
 // =============================
 // Tiny JSON helpers
@@ -641,6 +748,15 @@ static LoadedMod* mods_add(void) {
     m->on_unload_ref = LUA_NOREF;
     m->api_version = MOD_API_VERSION;
 
+    m->ui_hitboxes = NULL;
+    m->ui_hitbox_count = 0;
+    m->ui_hitbox_cap = 0;
+    m->ui_state_ptr = NULL;
+    memset(&m->ui_layout, 0, sizeof(m->ui_layout));
+    m->ui_native_buttons = NULL;
+    m->ui_native_count = 0;
+    m->ui_native_cap = 0;
+
     m->config_rel[0] = '\0';
     m->config_path[0] = '\0';
     m->cfg_entries = NULL;
@@ -670,6 +786,252 @@ static void log_mod(LoadedMod* mod, const char* level, const char* msg) {
         return;
     }
     log_write(level, "[mod:%s] %s", mod->id[0] ? mod->id : "?", msg);
+}
+
+static void* ui_current_state_ptr(void) {
+    return p_state_current ? p_state_current() : NULL;
+}
+
+static int ui_is_menu_state_name(const char* name) {
+    if (!name) return 0;
+    return (_stricmp(name, "main") == 0 ||
+            _stricmp(name, "main_initial") == 0 ||
+            _stricmp(name, "options") == 0 ||
+            _stricmp(name, "options_paused") == 0 ||
+            _stricmp(name, "pregame") == 0 ||
+            _stricmp(name, "remap1") == 0 ||
+            _stricmp(name, "remap2") == 0 ||
+            _stricmp(name, "mods") == 0);
+}
+
+static const char* ui_state_name_from_ptr(void* st) {
+    uintptr_t p = (uintptr_t)st;
+    if (!st) return "none";
+    if (hooks_mods_menu_active()) return "mods";
+    if (p == (uintptr_t)ADDR_MAIN_STATE) return "main";
+    if (p == (uintptr_t)ADDR_MAIN_STATE_INITIAL) return "main_initial";
+    if (p == (uintptr_t)ADDR_OPTIONS_STATE) return "options";
+    if (p == (uintptr_t)ADDR_OPTIONS_STATE_PAUSED) return "options_paused";
+    if (p == (uintptr_t)ADDR_PREGAME_STATE) return "pregame";
+    if (p == (uintptr_t)ADDR_REMAP_STATE1) return "remap1";
+    if (p == (uintptr_t)ADDR_REMAP_STATE2) return "remap2";
+    if (p == (uintptr_t)ADDR_GAME_STATE) return "game";
+    if (p == (uintptr_t)ADDR_ERROR_STATE) return "error";
+    return "unknown";
+}
+
+static int ui_state_matches_name(void* st, const char* name) {
+    const char* current = ui_state_name_from_ptr(st);
+    if (!name || !name[0]) return 1;
+    if (_stricmp(name, current) == 0) return 1;
+    if (_stricmp(name, "menu") == 0 && ui_is_menu_state_name(current)) return 1;
+    return 0;
+}
+
+static float ui_screen_w(void) {
+    return p_mad_w ? p_mad_w() : 1280.0f;
+}
+
+static float ui_screen_h(void) {
+    return p_mad_h ? p_mad_h() : 720.0f;
+}
+
+static float ui_approx_text_width(const char* text, float scale) {
+    if (!text) return 0.0f;
+    return (float)strlen(text) * 9.0f * scale;
+}
+
+static void ui_reset_render_state(void) {
+    if (p_turtle_reset) {
+        p_turtle_reset();
+        return;
+    }
+    if (p_turtle_set_angle) p_turtle_set_angle(0.0);
+    if (p_turtle_set_scale) p_turtle_set_scale(1.0, 1.0);
+    if (p_turtle_set_rgba) p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    else if (p_turtle_set_rgb) p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+}
+
+static void ui_draw_text_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
+    if (!text || !text[0] || !p_plot_text || !p_turtle_set_pos || !p_turtle_set_scale || !p_turtle_set_angle) return;
+    if (!p_turtle_set_rgb && !p_turtle_set_rgba) return;
+    p_turtle_set_angle(0.0);
+    p_turtle_set_scale((double)scale, (double)scale);
+    if (p_turtle_set_rgb) p_turtle_set_rgb(r, g, b);
+    else p_turtle_set_rgba(r, g, b, 1.0f);
+    p_turtle_set_pos((double)x, (double)y);
+    p_plot_text(text, mode);
+}
+
+static void mod_ui_reset_frame(LoadedMod* mod, void* state_ptr) {
+    if (!mod) return;
+    mod->ui_hitbox_count = 0;
+    mod->ui_state_ptr = state_ptr;
+}
+
+static void mod_ui_free(LoadedMod* mod) {
+    if (!mod) return;
+    if (mod->ui_hitboxes) {
+        free(mod->ui_hitboxes);
+        mod->ui_hitboxes = NULL;
+    }
+    mod->ui_hitbox_count = 0;
+    mod->ui_hitbox_cap = 0;
+    mod->ui_state_ptr = NULL;
+    memset(&mod->ui_layout, 0, sizeof(mod->ui_layout));
+
+    if (mod->ui_native_buttons) {
+        for (int i = 0; i < mod->ui_native_count; i++) {
+            if (mod->ui_native_buttons[i]) free(mod->ui_native_buttons[i]);
+        }
+        free(mod->ui_native_buttons);
+        mod->ui_native_buttons = NULL;
+    }
+    mod->ui_native_count = 0;
+    mod->ui_native_cap = 0;
+}
+
+static void mod_ui_push_hitbox(LoadedMod* mod, float x, float y, float w, float h) {
+    if (!mod) return;
+    if (w <= 0.0f || h <= 0.0f) return;
+    if (mod->ui_hitbox_count + 1 > mod->ui_hitbox_cap) {
+        int newcap = (mod->ui_hitbox_cap == 0) ? 8 : (mod->ui_hitbox_cap * 2);
+        UiHitBox* nb = (UiHitBox*)realloc(mod->ui_hitboxes, sizeof(UiHitBox) * newcap);
+        if (!nb) return;
+        mod->ui_hitboxes = nb;
+        mod->ui_hitbox_cap = newcap;
+    }
+    mod->ui_hitboxes[mod->ui_hitbox_count].x = x;
+    mod->ui_hitboxes[mod->ui_hitbox_count].y = y;
+    mod->ui_hitboxes[mod->ui_hitbox_count].w = w;
+    mod->ui_hitboxes[mod->ui_hitbox_count].h = h;
+    mod->ui_hitbox_count++;
+}
+
+static int ui_point_in_hitbox(int x, int y, const UiHitBox* hb) {
+    float fx = (float)x;
+    float fy = (float)y;
+    if (!hb) return 0;
+    if (fx < hb->x) return 0;
+    if (fy < hb->y) return 0;
+    if (fx > hb->x + hb->w) return 0;
+    if (fy > hb->y + hb->h) return 0;
+    return 1;
+}
+
+static int ui_hit_any_visible_button(int x, int y) {
+    void* state_ptr = ui_current_state_ptr();
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled) continue;
+        if (mod->ui_hitbox_count <= 0) continue;
+        if (mod->ui_state_ptr != state_ptr) continue;
+        for (int i = 0; i < mod->ui_hitbox_count; i++) {
+            if (ui_point_in_hitbox(x, y, &mod->ui_hitboxes[i])) return 1;
+        }
+    }
+    return 0;
+}
+
+static int ui_engine_button_exists(void* btn_ptr) {
+    if (!btn_ptr || !p_button_count || !p_button_get) return 0;
+    int count = p_button_count();
+    if (count <= 0 || count > 3000) return 0;
+    for (int i = 0; i < count; i++) {
+        if (p_button_get(i) == btn_ptr) return 1;
+    }
+    return 0;
+}
+
+static UiNativeButton* mod_ui_native_find(LoadedMod* mod, const char* id, const char* state_name) {
+    if (!mod || !id || !id[0] || !state_name || !state_name[0]) return NULL;
+    for (int i = 0; i < mod->ui_native_count; i++) {
+        UiNativeButton* b = mod->ui_native_buttons[i];
+        if (!b) continue;
+        if (_stricmp(b->id, id) != 0) continue;
+        if (_stricmp(b->state_name, state_name) != 0) continue;
+        return b;
+    }
+    return NULL;
+}
+
+static UiNativeButton* mod_ui_native_get_or_add(LoadedMod* mod, const char* id, const char* state_name) {
+    UiNativeButton* b;
+    if (!mod || !id || !id[0] || !state_name || !state_name[0]) return NULL;
+
+    b = mod_ui_native_find(mod, id, state_name);
+    if (b) return b;
+
+    if (mod->ui_native_count + 1 > mod->ui_native_cap) {
+        int newcap = (mod->ui_native_cap == 0) ? 8 : (mod->ui_native_cap * 2);
+        UiNativeButton** nb = (UiNativeButton**)realloc(mod->ui_native_buttons, sizeof(UiNativeButton*) * newcap);
+        if (!nb) return NULL;
+        mod->ui_native_buttons = nb;
+        mod->ui_native_cap = newcap;
+    }
+
+    b = (UiNativeButton*)calloc(1, sizeof(UiNativeButton));
+    if (!b) return NULL;
+
+    strncpy(b->id, id, sizeof(b->id) - 1);
+    strncpy(b->state_name, state_name, sizeof(b->state_name) - 1);
+    b->layout_x = 5.0f;
+    b->layout_y = 5.0f;
+    b->grid_x = 0.0f;
+    b->grid_y = 0.0f;
+    b->btn_ptr = NULL;
+    b->clicked = 0;
+    b->warned_non_menu = 0;
+
+    mod->ui_native_buttons[mod->ui_native_count++] = b;
+    return b;
+}
+
+static UiNativeButton* ui_native_find_by_btn_ptr(void* btn_ptr) {
+    if (!btn_ptr) return NULL;
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled) continue;
+        for (int bi = 0; bi < mod->ui_native_count; bi++) {
+            UiNativeButton* b = mod->ui_native_buttons[bi];
+            if (!b) continue;
+            if (b->btn_ptr == btn_ptr) return b;
+        }
+    }
+    return NULL;
+}
+
+static int ui_native_run_player_filter(void* btn, int event_code) {
+    uint32_t* tag_ptr;
+    uint32_t old_tag;
+    int ok = 0;
+
+    if (!btn) return 0;
+    if (!p_btn_player_filter) return 1;
+
+    tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+    old_tag = *tag_ptr;
+
+    *tag_ptr = 0x11;
+    ok = p_btn_player_filter(btn, event_code);
+    if (!ok) {
+        *tag_ptr = 0x12;
+        ok = p_btn_player_filter(btn, event_code);
+    }
+    *tag_ptr = old_tag;
+    return ok;
+}
+
+static int __cdecl ui_native_button_filter(void* btn, int event_code) {
+    int ok = ui_native_run_player_filter(btn, event_code);
+
+    if (event_code == 3 && ok) {
+        UiNativeButton* b = ui_native_find_by_btn_ptr(btn);
+        if (b) b->clicked = 1;
+        return 0;
+    }
+
+    return ok ? 1 : 0;
 }
 
 // =============================
@@ -902,6 +1264,278 @@ static void push_config_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushstring(Ls, mod->config_path); lua_setfield(Ls, -2, "path");
 }
 
+static UiLayout* mod_ui_layout_or_default(LoadedMod* mod) {
+    if (!mod) return NULL;
+    if (!mod->ui_layout.active) {
+        mod->ui_layout.active = 1;
+        mod->ui_layout.cursor_x = 28.0f;
+        mod->ui_layout.cursor_y = 28.0f;
+        mod->ui_layout.row_h = 30.0f;
+        mod->ui_layout.gap = 6.0f;
+        mod->ui_layout.width = 260.0f;
+        mod->ui_layout.text_scale = 1.0f;
+    }
+    return &mod->ui_layout;
+}
+
+static int lua_ui_state_name(lua_State* Ls) {
+    lua_pushstring(Ls, ui_state_name_from_ptr(ui_current_state_ptr()));
+    return 1;
+}
+
+static int lua_ui_state_ptr(lua_State* Ls) {
+    lua_pushnumber(Ls, (lua_Number)(uintptr_t)ui_current_state_ptr());
+    return 1;
+}
+
+static int lua_ui_is_state(lua_State* Ls) {
+    const char* name = luaL_checkstring(Ls, 1);
+    lua_pushboolean(Ls, ui_state_matches_name(ui_current_state_ptr(), name));
+    return 1;
+}
+
+static int lua_ui_screen_size(lua_State* Ls) {
+    lua_pushnumber(Ls, ui_screen_w());
+    lua_pushnumber(Ls, ui_screen_h());
+    return 2;
+}
+
+static int lua_ui_mouse_pos(lua_State* Ls) {
+    lua_pushinteger(Ls, g_ui_mouse_x);
+    lua_pushinteger(Ls, g_ui_mouse_y);
+    return 2;
+}
+
+static int lua_ui_layout(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    UiLayout* layout = mod_ui_layout_or_default(mod);
+    if (!layout) return 0;
+
+    layout->active = 1;
+    layout->cursor_x = (float)luaL_checknumber(Ls, 1);
+    layout->cursor_y = (float)luaL_checknumber(Ls, 2);
+    layout->row_h = (float)luaL_optnumber(Ls, 3, 30.0);
+    layout->gap = (float)luaL_optnumber(Ls, 4, 6.0);
+    layout->width = (float)luaL_optnumber(Ls, 5, 260.0);
+    layout->text_scale = (float)luaL_optnumber(Ls, 6, 1.0);
+
+    if (layout->row_h < 8.0f) layout->row_h = 8.0f;
+    if (layout->gap < 0.0f) layout->gap = 0.0f;
+    if (layout->width < 20.0f) layout->width = 20.0f;
+    if (layout->text_scale < 0.4f) layout->text_scale = 0.4f;
+    if (layout->text_scale > 3.0f) layout->text_scale = 3.0f;
+    return 0;
+}
+
+static int lua_ui_cursor(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    UiLayout* layout = mod_ui_layout_or_default(mod);
+    int n = lua_gettop(Ls);
+    if (!layout) return 0;
+    if (n >= 1) layout->cursor_x = (float)luaL_checknumber(Ls, 1);
+    if (n >= 2) layout->cursor_y = (float)luaL_checknumber(Ls, 2);
+    lua_pushnumber(Ls, layout->cursor_x);
+    lua_pushnumber(Ls, layout->cursor_y);
+    return 2;
+}
+
+static int lua_ui_next_row(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    UiLayout* layout = mod_ui_layout_or_default(mod);
+    int rows = (int)luaL_optinteger(Ls, 1, 1);
+    if (!layout) return 0;
+    if (rows < 1) rows = 1;
+    layout->cursor_y += (layout->row_h + layout->gap) * (float)rows;
+    return 0;
+}
+
+static int lua_ui_text(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    UiLayout* layout = mod_ui_layout_or_default(mod);
+    const char* text = luaL_checkstring(Ls, 1);
+    float r = (float)luaL_optnumber(Ls, 2, 0.95);
+    float g = (float)luaL_optnumber(Ls, 3, 0.95);
+    float b = (float)luaL_optnumber(Ls, 4, 0.95);
+    float scale;
+    if (!layout) return 0;
+    scale = (float)luaL_optnumber(Ls, 5, layout->text_scale);
+    ui_draw_text_mode(layout->cursor_x, layout->cursor_y, scale, r, g, b, text, 0);
+    layout->cursor_y += layout->row_h + layout->gap;
+    return 0;
+}
+
+static int lua_ui_text_at(lua_State* Ls) {
+    const char* text = luaL_checkstring(Ls, 1);
+    float x = (float)luaL_checknumber(Ls, 2);
+    float y = (float)luaL_checknumber(Ls, 3);
+    float scale = (float)luaL_optnumber(Ls, 4, 1.0);
+    float r = (float)luaL_optnumber(Ls, 5, 0.95);
+    float g = (float)luaL_optnumber(Ls, 6, 0.95);
+    float b = (float)luaL_optnumber(Ls, 7, 0.95);
+    ui_draw_text_mode(x, y, scale, r, g, b, text, 0);
+    return 0;
+}
+
+static int ui_button_common(lua_State* Ls,
+                            LoadedMod* mod,
+                            const char* id,
+                            const char* label,
+                            float x,
+                            float y,
+                            float w,
+                            float h,
+                            float scale) {
+    int hovered;
+    int clicked;
+    char rendered[256];
+    float tx;
+    float ty;
+    float tr = 0.82f, tg = 0.88f, tb = 0.98f;
+    (void)id;
+
+    if (!label) label = "";
+    if (scale < 0.4f) scale = 0.4f;
+    if (scale > 3.0f) scale = 3.0f;
+    if (w <= 0.0f) w = ui_approx_text_width(label, scale) + 30.0f;
+    if (h <= 0.0f) h = 28.0f;
+
+    hovered = (g_ui_mouse_x >= (int)x &&
+               g_ui_mouse_y >= (int)y &&
+               g_ui_mouse_x <= (int)(x + w) &&
+               g_ui_mouse_y <= (int)(y + h));
+    clicked = hovered && g_ui_mouse_pressed_left;
+
+    if (clicked) {
+        tr = 1.00f; tg = 0.93f; tb = 0.45f;
+    } else if (hovered && g_ui_mouse_down_left) {
+        tr = 0.98f; tg = 0.86f; tb = 0.40f;
+    } else if (hovered) {
+        tr = 0.95f; tg = 0.90f; tb = 0.60f;
+    }
+
+    snprintf(rendered, sizeof(rendered), "[ %s ]", label);
+    tx = x + 4.0f;
+    ty = y + (h * 0.55f);
+    ui_draw_text_mode(tx, ty, scale, tr, tg, tb, rendered, 0);
+    mod_ui_push_hitbox(mod, x, y, w, h);
+
+    lua_pushboolean(Ls, clicked);
+    return 1;
+}
+
+static int lua_ui_button(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    UiLayout* layout = mod_ui_layout_or_default(mod);
+    const char* id = luaL_checkstring(Ls, 1);
+    const char* label = luaL_checkstring(Ls, 2);
+    float w;
+    float h;
+    int ret;
+
+    if (!layout) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    w = (float)luaL_optnumber(Ls, 3, layout->width);
+    h = (float)luaL_optnumber(Ls, 4, layout->row_h);
+    ret = ui_button_common(Ls, mod, id, label, layout->cursor_x, layout->cursor_y, w, h, layout->text_scale);
+    layout->cursor_y += h + layout->gap;
+    return ret;
+}
+
+static int lua_ui_button_at(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    UiLayout* layout = mod_ui_layout_or_default(mod);
+    const char* id = luaL_checkstring(Ls, 1);
+    const char* label = luaL_checkstring(Ls, 2);
+    float x = (float)luaL_checknumber(Ls, 3);
+    float y = (float)luaL_checknumber(Ls, 4);
+    float w = (float)luaL_optnumber(Ls, 5, 0.0);
+    float h = (float)luaL_optnumber(Ls, 6, 0.0);
+    float scale = layout ? layout->text_scale : 1.0f;
+    return ui_button_common(Ls, mod, id, label, x, y, w, h, scale);
+}
+
+static int lua_ui_native_button(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* id = luaL_checkstring(Ls, 1);
+    const char* label = luaL_checkstring(Ls, 2);
+    float grid_x = (float)luaL_checknumber(Ls, 3);
+    float grid_y = (float)luaL_checknumber(Ls, 4);
+    float layout_x = (float)luaL_optnumber(Ls, 5, 5.0);
+    float layout_y = (float)luaL_optnumber(Ls, 6, 5.0);
+    const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
+    UiNativeButton* b;
+    int clicked = 0;
+
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    b = mod_ui_native_get_or_add(mod, id, state_name);
+    if (!b) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    strncpy(b->label, label ? label : "", sizeof(b->label) - 1);
+    b->label[sizeof(b->label) - 1] = '\0';
+    b->grid_x = grid_x;
+    b->grid_y = grid_y;
+    b->layout_x = layout_x;
+    b->layout_y = layout_y;
+
+    if (b->btn_ptr && !ui_engine_button_exists(b->btn_ptr)) {
+        b->btn_ptr = NULL;
+    }
+
+    if (!ui_is_menu_state_name(state_name)) {
+        if (!b->warned_non_menu) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "ui.native_button('%s') ignored in non-menu state '%s'",
+                     b->id, state_name);
+            log_mod(mod, "WARN", msg);
+            b->warned_non_menu = 1;
+        }
+        clicked = b->clicked;
+        b->clicked = 0;
+        lua_pushboolean(Ls, clicked);
+        return 1;
+    }
+
+    b->warned_non_menu = 0;
+
+    if (!b->btn_ptr && p_button_ex) {
+        if (p_button_set_layout) p_button_set_layout(b->layout_x, b->layout_y);
+        b->btn_ptr = p_button_ex(b->grid_x, b->grid_y, 0, b->label, (int)(intptr_t)&ui_native_button_filter);
+    }
+
+    clicked = b->clicked;
+    b->clicked = 0;
+    lua_pushboolean(Ls, clicked);
+    return 1;
+}
+
+static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_state_name, 1); lua_setfield(Ls, -2, "state_name");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_state_ptr, 1);  lua_setfield(Ls, -2, "state_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_is_state, 1);   lua_setfield(Ls, -2, "is_state");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_screen_size, 1);lua_setfield(Ls, -2, "screen_size");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_pos, 1);  lua_setfield(Ls, -2, "mouse_pos");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_layout, 1);     lua_setfield(Ls, -2, "layout");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_cursor, 1);     lua_setfield(Ls, -2, "cursor");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_next_row, 1);   lua_setfield(Ls, -2, "next_row");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_text, 1);       lua_setfield(Ls, -2, "text");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_text_at, 1);    lua_setfield(Ls, -2, "text_at");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button, 1);     lua_setfield(Ls, -2, "button");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_at, 1);  lua_setfield(Ls, -2, "button_at");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_button, 1); lua_setfield(Ls, -2, "native_button");
+}
+
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
 
@@ -918,6 +1552,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_info,     1); lua_setfield(Ls, -2, "info");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_get_path, 1); lua_setfield(Ls, -2, "get_path");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_dofile,   1); lua_setfield(Ls, -2, "dofile");
+
+    // UI helpers (immediate mode, usable from on_frame in any game state).
+    push_ui_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "ui");
 
     // Fields (convenience)
     lua_pushstring(Ls, mod->id);      lua_setfield(Ls, -2, "id");
@@ -1077,6 +1715,11 @@ void lua_manager_init() {
     luaL_openlibs(L);
     extend_package_path();
 
+    g_ui_mouse_x = 0;
+    g_ui_mouse_y = 0;
+    g_ui_mouse_down_left = 0;
+    g_ui_mouse_pressed_left = 0;
+
     LOG_INFO("Mod framework API version: %d", MOD_API_VERSION);
     LOG_INFO("Scanning mods/ folder...");
 
@@ -1123,6 +1766,7 @@ void lua_manager_shutdown() {
         LoadedMod* mod = &g_mods[i];
         reflist_clear(L, &mod->on_frame);
         reflist_clear(L, &mod->on_event);
+        mod_ui_free(mod);
 
         // Config entries + action handlers
         mod_config_clear(L, mod);
@@ -1155,6 +1799,39 @@ static float g_time_scale = 1.0f;
 
 float lua_manager_get_time_scale(void) {
     return g_time_scale;
+}
+
+static int ui_handle_event(const char* type, int x, int y, int button) {
+    if (!type) return 0;
+
+    if (_stricmp(type, "mousemotion") == 0) {
+        g_ui_mouse_x = x;
+        g_ui_mouse_y = y;
+        return 0;
+    }
+
+    if (_stricmp(type, "mousebuttondown") == 0) {
+        g_ui_mouse_x = x;
+        g_ui_mouse_y = y;
+        if (button == 1) {
+            g_ui_mouse_down_left = 1;
+            g_ui_mouse_pressed_left = 1;
+            return ui_hit_any_visible_button(x, y);
+        }
+        return 0;
+    }
+
+    if (_stricmp(type, "mousebuttonup") == 0) {
+        g_ui_mouse_x = x;
+        g_ui_mouse_y = y;
+        if (button == 1) {
+            g_ui_mouse_down_left = 0;
+            return ui_hit_any_visible_button(x, y);
+        }
+        return 0;
+    }
+
+    return 0;
 }
 
 double lua_manager_on_delta_time(double dt_seconds) {
@@ -1212,6 +1889,13 @@ double lua_manager_on_delta_time(double dt_seconds) {
 
 void lua_manager_on_frame() {
     if (!L) return;
+    void* state_ptr = ui_current_state_ptr();
+
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        mod_ui_reset_frame(mod, state_ptr);
+    }
+
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod->enabled) continue;
@@ -1227,11 +1911,15 @@ void lua_manager_on_frame() {
             }
         }
     }
+
+    ui_reset_render_state();
+    g_ui_mouse_pressed_left = 0;
 }
 
 // Returns 1 if consumed by any mod (a handler returned true), else 0.
 int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, int x, int y, int button) {
     if (!L) return 0;
+    int ui_consumed = ui_handle_event(type, x, y, button);
 
     // Build event table once
     lua_newtable(L);
@@ -1243,7 +1931,7 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
     lua_pushinteger(L, y);        lua_setfield(L, -2, "y");
     lua_pushinteger(L, button);   lua_setfield(L, -2, "button");
 
-    int consumed = 0;
+    int consumed = ui_consumed;
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod->enabled) continue;

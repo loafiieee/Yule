@@ -1,12 +1,50 @@
-[23:57:36] [INFO] Mod framework initializing...
-[23:57:36] [INFO] Mod framework API version: 1
-[23:57:36] [INFO] Scanning mods/ folder...
-[23:57:36] [INFO] Loading mod: testmod (Test Mod) v1.0.0 by you
-[23:57:36] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[23:57:36] [INFO] [mod:testmod] Loaded! id=testmod name=Test Mod
-[23:57:36] [INFO] [mod:testmod] enabled=true
-[23:57:36] [INFO] [mod:testmod] speed=1.2
-[23:57:36] [INFO] Loaded mod: testmod
-[23:57:36] [INFO] Done. 1 mod folder(s) scanned.
-[23:57:36] [INFO] hooks_init: custom MODS menu ready
-[23:59:55] [INFO] [mod:testmod] Unloaded
+[20:36:54] [INFO] Mod framework initializing...
+[20:36:54] [INFO] Mod framework API version: 1
+[20:36:54] [INFO] Scanning mods/ folder...
+[20:36:54] [INFO] Loading mod: mapmenu_button_example (Map Menu Button Example) v1.0.0 by codex
+[20:36:54] [INFO]   Shows a mod UI button on the map selection menu and logs when pressed.
+[20:36:54] [INFO] [mod:mapmenu_button_example] Map Menu Button Example loaded
+[20:36:54] [INFO] [mod:mapmenu_button_example] Open map select (pregame) to see the test button
+[20:36:54] [INFO] Loaded mod: mapmenu_button_example
+[20:36:54] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[20:36:54] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[20:36:54] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[20:36:54] [INFO] [mod:poc_speedhack] enabled=true
+[20:36:54] [INFO] [mod:poc_speedhack] speed=1.2
+[20:36:54] [INFO] Loaded mod: poc_speedhack
+[20:36:54] [INFO] Loading mod: my_mod (My Mod) v0.1.0 by your-name
+[20:36:54] [INFO]   One-line description of what the mod does.
+[20:36:54] [INFO] [mod:my_mod] Hello from my_mod! Framework API=1
+[20:36:54] [INFO] [mod:my_mod] enabled=true, player_name=Loaf
+[20:36:54] [INFO] Loaded mod: my_mod
+[20:36:54] [INFO] Done. 3 mod folder(s) scanned.
+[20:36:54] [INFO] hooks_init: custom MODS menu ready
+[20:36:56] [INFO] [mod:my_mod] keydown sym=118
+[20:36:57] [INFO] [mod:my_mod] keydown sym=100
+[20:36:57] [INFO] [mod:my_mod] keydown sym=118
+[20:36:57] [INFO] [mod:my_mod] keydown sym=118
+[20:36:57] [INFO] [mod:my_mod] keydown sym=118
+[20:36:58] [INFO] [mod:my_mod] keydown sym=118
+[20:36:58] [INFO] [mod:my_mod] keydown sym=118
+[20:36:59] [INFO] [mod:my_mod] keydown sym=27
+[20:36:59] [INFO] [mod:my_mod] keydown sym=119
+[20:36:59] [INFO] [mod:my_mod] keydown sym=118
+[20:37:00] [INFO] [mod:my_mod] keydown sym=115
+[20:37:00] [INFO] [mod:my_mod] keydown sym=100
+[20:37:00] [INFO] [mod:my_mod] keydown sym=119
+[20:37:00] [INFO] [mod:my_mod] keydown sym=118
+[20:37:00] [INFO] MODS: entering mods menu
+[20:37:04] [INFO] [mod:my_mod] do_something pressed
+[20:37:05] [INFO] [mod:my_mod] keydown sym=118
+[20:37:06] [INFO] [mod:my_mod] keydown sym=118
+[20:37:06] [INFO] [mod:my_mod] keydown sym=119
+[20:37:07] [INFO] [mod:my_mod] keydown sym=118
+[20:37:08] [INFO] [mod:my_mod] keydown sym=118
+[20:37:08] [INFO] [mod:my_mod] keydown sym=119
+[20:37:08] [INFO] [mod:my_mod] keydown sym=118
+[20:37:09] [INFO] [mod:my_mod] keydown sym=118
+[20:37:09] [INFO] [mod:my_mod] keydown sym=119
+[20:37:09] [INFO] [mod:my_mod] keydown sym=118
+[20:37:10] [INFO] [mod:my_mod] keydown sym=27
+[20:37:10] [INFO] [mod:mapmenu_button_example] Map Menu Button Example unloaded
+[20:37:10] [INFO] [mod:poc_speedhack] Unloaded

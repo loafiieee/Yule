@@ -10,6 +10,9 @@ void hooks_init(void);
 // Returns 1 if the framework is currently capturing text input for a string config field.
 int hooks_text_capture_active(void);
 
+// Returns 1 while the custom MODS menu state is active.
+int hooks_mods_menu_active(void);
+
 // Handle a keydown while text capture is active.
 // Returns 1 if consumed (framework handled it), else 0.
 int hooks_text_capture_keydown(int sym, int scancode, int mod);

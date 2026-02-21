@@ -20,6 +20,15 @@ end)
 
 mod.on_frame(function()
   -- Called once per frame (hooked from SDL_GL_SwapWindow)
+  -- Example: draw a tiny overlay only on the main menu.
+  if mod.ui.is_state("main") then
+    mod.ui.layout(36, 42, 28, 6, 240, 1.0)
+    mod.ui.text("Template Overlay", 0.86, 0.90, 0.98, 1.0)
+
+    if mod.ui.button("template_hello", "Say hello") then
+      mod.log("Hello from UI button")
+    end
+  end
 end)
 
 mod.on_event(function(e)

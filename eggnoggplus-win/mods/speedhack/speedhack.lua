@@ -19,6 +19,10 @@ mod.on_event(function(e)
   return false
 end)
 
+mod.on_frame(function()
+  -- This runs every frame, put code here that needs to run continuously
+end)
+
 mod.on_unload(function()
   mod.log("Unloaded")
 end)

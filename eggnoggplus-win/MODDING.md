@@ -272,10 +272,13 @@ You can also target currently-active engine buttons (including base-game/vanilla
 by finding a button pointer from its label text, then mutating it:
 
 ```lua
-local p = mod.ui.find_button_by_label("START")
-if p then
+for nth = 1, 16 do
+  local p = mod.ui.find_button_by_label("START", nth)
+  if not p then break end
   local x, y, w, h = mod.ui.button_rect_ptr(p)
-  mod.ui.button_resize_ptr(p, w * 0.5, h * 0.5)
+  if x then
+    mod.ui.button_resize_ptr(p, w * 0.5, h * 0.5)
+  end
 end
 ```
 

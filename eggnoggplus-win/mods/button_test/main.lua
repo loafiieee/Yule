@@ -7,10 +7,11 @@ mod.on_frame(function()
   if not mod.ui.is_state("main") then return end
 
   -- Native engine button (selector-hover style).
-  -- Args: id, label, grid_x, grid_y, layout_across, layout_down
+  -- Args: id, label, grid_x, grid_y, layout_across, layout_down. ex:
   if mod.ui.native_button("map_select_log", "TEST", 4.0, 3.0, 6.0, 5.0) then
     mod.log("Map select button pressed")
   end
+
 end)
 
 mod.on_unload(function()

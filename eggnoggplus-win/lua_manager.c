@@ -45,7 +45,7 @@ static lua_State *L = NULL;
 #define BTN_OFS_CENTER_Y          0x14
 #define BTN_OFS_FLAGS             0xBC
 #define BTN_OFS_LABEL_PTR         0xC8
-#define BTN_OFS_ACTION_PTR        0xE0
+#define BTN_OFS_ACTION_PTR        0xE4
 
 // Bits in the 0xBC flags field that affect focus/navigation in menu logic.
 #define BTN_FLAG_NOCLICK          0x00000100u
@@ -136,6 +136,11 @@ typedef struct UiNativeButton {
 // Data model
 // =============================
 
+typedef struct LayoutHandler {
+    char state_name[32];
+    int  ref;
+} LayoutHandler;
+
 typedef struct LuaRefList {
     int* refs;
     int  count;
@@ -168,6 +173,11 @@ typedef struct LoadedMod {
 
     LuaRefList on_frame;
     LuaRefList on_event;
+
+    // Fired once per state entry, after the engine's button list is stable.
+    LayoutHandler* on_layout;
+    int on_layout_count;
+    int on_layout_cap;
 
     // Immediate-mode UI runtime state.
     UiHitBox* ui_hitboxes;
@@ -769,6 +779,10 @@ static LoadedMod* mods_add(void) {
     m->on_load_ref = LUA_NOREF;
     m->on_unload_ref = LUA_NOREF;
     m->api_version = MOD_API_VERSION;
+
+    m->on_layout = NULL;
+    m->on_layout_count = 0;
+    m->on_layout_cap = 0;
 
     m->ui_hitboxes = NULL;
     m->ui_hitbox_count = 0;
@@ -1935,6 +1949,27 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_remove_ptr, 1);    lua_setfield(Ls, -2, "button_remove_ptr");
 }
 
+static int lua_mod_on_layout(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* state_name = luaL_checkstring(Ls, 1);
+    luaL_checktype(Ls, 2, LUA_TFUNCTION);
+    if (!mod || !state_name || !state_name[0]) return 0;
+
+    if (mod->on_layout_count + 1 > mod->on_layout_cap) {
+        int newcap = (mod->on_layout_cap == 0) ? 8 : (mod->on_layout_cap * 2);
+        LayoutHandler* nh = (LayoutHandler*)realloc(mod->on_layout, sizeof(LayoutHandler) * newcap);
+        if (!nh) return 0;
+        mod->on_layout = nh;
+        mod->on_layout_cap = newcap;
+    }
+    LayoutHandler* h = &mod->on_layout[mod->on_layout_count++];
+    strncpy(h->state_name, state_name, sizeof(h->state_name) - 1);
+    h->state_name[sizeof(h->state_name) - 1] = '\0';
+    lua_pushvalue(Ls, 2);
+    h->ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
 
@@ -1943,6 +1978,7 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_unload, 1); lua_setfield(Ls, -2, "on_unload");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_frame,  1); lua_setfield(Ls, -2, "on_frame");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_event,  1); lua_setfield(Ls, -2, "on_event");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_layout, 1); lua_setfield(Ls, -2, "on_layout");
 
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_log,   1); lua_setfield(Ls, -2, "log");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_warn,  1); lua_setfield(Ls, -2, "warn");
@@ -2167,6 +2203,17 @@ void lua_manager_shutdown() {
         reflist_clear(L, &mod->on_event);
         mod_ui_free(mod);
 
+        if (mod->on_layout) {
+            for (int i = 0; i < mod->on_layout_count; i++) {
+                if (mod->on_layout[i].ref != LUA_NOREF && mod->on_layout[i].ref != LUA_REFNIL)
+                    luaL_unref(L, LUA_REGISTRYINDEX, mod->on_layout[i].ref);
+            }
+            free(mod->on_layout);
+            mod->on_layout = NULL;
+        }
+        mod->on_layout_count = 0;
+        mod->on_layout_cap = 0;
+
         // Config entries + action handlers
         mod_config_clear(L, mod);
 
@@ -2290,9 +2337,69 @@ void lua_manager_on_frame() {
     if (!L) return;
     void* state_ptr = ui_current_state_ptr();
 
+    // Detect state transitions and fire on_layout handlers.
+    // main_layout() (and equivalents for other states) run synchronously in
+    // each state's enter() before the first frame, so by the time we get here
+    // the button list is fully built.
+    static void* s_last_layout_state = (void*)-1;
+    if (state_ptr != s_last_layout_state) {
+        // Normalise new state: treat main_initial as "main" so on_layout("main")
+        // handlers see it as a main-menu entry regardless of which phase we're in.
+        const char* new_name = ui_state_name_from_ptr(state_ptr);
+        if (_stricmp(new_name, "main_initial") == 0) new_name = "main";
+
+        // Do NOT normalise old_name — we want main_initial→main to count as a
+        // real transition so the callback fires once the button list is stable.
+        const char* old_name = ui_state_name_from_ptr(s_last_layout_state);
+
+        // Only fire if the canonical name actually changed.
+        if (_stricmp(new_name, old_name) != 0) {
+            for (int mi = 0; mi < g_mod_count; mi++) {
+                LoadedMod* mod = &g_mods[mi];
+                if (!mod->enabled) continue;
+                for (int i = 0; i < mod->on_layout_count; i++) {
+                    LayoutHandler* h = &mod->on_layout[i];
+                    if (_stricmp(h->state_name, new_name) != 0) continue;
+                    if (h->ref == LUA_NOREF || h->ref == LUA_REFNIL) continue;
+                    lua_rawgeti(L, LUA_REGISTRYINDEX, h->ref);
+                    if (lua_pcall(L, 0, 0, 0) != 0) {
+                        const char* err = lua_tostring(L, -1);
+                        char buf[512];
+                        snprintf(buf, sizeof(buf), "on_layout('%s') error: %s",
+                                 new_name, err ? err : "(unknown)");
+                        log_mod(mod, "ERROR", buf);
+                        lua_pop(L, 1);
+                        mod->error_count++;
+                    }
+                }
+            }
+        }
+        s_last_layout_state = state_ptr;
+    }
+
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         mod_ui_reset_frame(mod, state_ptr);
+    }
+
+    // If the engine's button list was wiped (main_buttons_start was called by
+    // a state enter), any cached native btn_ptrs are stale — the slots may now
+    // hold a completely different state's buttons.  Detect this by watching for
+    // the count to drop back to near-zero and null out all cached ptrs so the
+    // native_button path re-creates them cleanly on the next frame.
+    {
+        static int s_last_btn_count = -1;
+        int cur_count = p_button_count ? p_button_count() : -1;
+        if (cur_count >= 0 && cur_count < 4 && s_last_btn_count >= 4) {
+            for (int mi = 0; mi < g_mod_count; mi++) {
+                LoadedMod* mod = &g_mods[mi];
+                for (int bi = 0; bi < mod->ui_native_count; bi++) {
+                    UiNativeButton* b = mod->ui_native_buttons[bi];
+                    if (b) b->btn_ptr = NULL;
+                }
+            }
+        }
+        s_last_btn_count = cur_count;
     }
 
     for (int mi = 0; mi < g_mod_count; mi++) {

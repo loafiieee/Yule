@@ -1,45 +1,19 @@
-local logged_once = false
-local baseline = {}
-local stable_main_frames = 0
-
--- From ghidra: menu construction calls button_ex(..., "START", 0x432440)
+-- From ghidra: main_layout calls button_ex(..., "START", 0x432440)
 local START_ACTION_PTR = 0x432440
 
-mod.on_frame(function()
-  local state = mod.ui.state_name()
-  if state ~= "main" then
-    baseline = {}
-    stable_main_frames = 0
-    return
-  end
-
-  stable_main_frames = stable_main_frames + 1
-  if stable_main_frames < 20 then
-    return
-  end
-
-  local changed = 0
-
-  for nth = 1, 8 do
-    local ptr = mod.ui.find_button_by_action_ptr(START_ACTION_PTR, nth)
-    if not ptr then break end
+mod.on_layout("main", function()
+    local ptr = mod.ui.find_button_by_action_ptr(START_ACTION_PTR)
+    if not ptr then
+        mod.warn("START button not found after main layout")
+        return
+    end
 
     local x, y, w, h = mod.ui.button_rect_ptr(ptr)
-    if x and w and h and w > 1.0 and h > 1.0 and w < 2000.0 and h < 2000.0 then
-      local slot = baseline[nth]
-      if (not slot) or slot.ptr ~= ptr then
-        slot = { ptr = ptr, w = w, h = h }
-        baseline[nth] = slot
-      end
-
-      if mod.ui.button_resize_ptr(ptr, slot.w * 0.5, slot.h * 0.5, 2.0) then
-        changed = changed + 1
-      end
+    if not (w and h and w > 1.0 and h > 1.0) then
+        mod.warn("START button has unexpected dimensions")
+        return
     end
-  end
 
-  if changed > 0 and not logged_once then
-    logged_once = true
-    mod.log("START action button(s) resized to half size")
-  end
+    mod.ui.button_resize_ptr(ptr, w * 0.5, h * 0.5)
+    mod.log("START button resized to half size")
 end)

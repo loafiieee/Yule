@@ -51,6 +51,10 @@ void lua_manager_config_trigger_action(int mod_index, int entry_index);
 // Returns the possibly modified dt.
 double lua_manager_on_delta_time(double dt_seconds);
 
+// Exposed for documentation purposes; fired internally by lua_manager_on_frame
+// when it detects a state transition. Mods register handlers via mod.on_layout().
+// (No external callers needed - no new hooks required.)
+
 // Current time-scale multiplier derived from delta_time (1.0 = normal).
 float lua_manager_get_time_scale(void);
 

@@ -1,14 +1,10 @@
 -automatic Hot Reload mod functionality
 
--Random crash when running action in mod menu, dont know why
-
 -automatic hot reload mod menu
 
 -Glow sprite is broken?
 
 -Buttons made using the UI api in mapmenu (pregame) are unclickable using keyboard selectos
-
--custom buttons on main menu dont show on game startup until you navigate to a different menu then back
 
 WAY LATER STUFF:
 

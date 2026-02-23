@@ -21,3 +21,5 @@
 [22:37:29] [INFO] Done. 3 mod folder(s) scanned.
 [22:37:29] [INFO] hooks_init: custom MODS menu ready
 [22:37:31] [INFO] [mod:my_mod] keydown sym=27
+[22:40:30] [INFO] [mod:mapmenu_button_example] Map Menu Button Example unloaded
+[22:40:30] [INFO] [mod:poc_speedhack] Unloaded

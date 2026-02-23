@@ -1,0 +1,22 @@
+[23:15:58] [INFO] Mod framework initializing...
+[23:15:58] [INFO] Mod framework API version: 1
+[23:15:58] [INFO] Scanning mods/ folder...
+[23:15:58] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[23:15:58] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[23:15:58] [INFO] [mod:button test] Map Menu Button Example loaded
+[23:15:58] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[23:15:58] [INFO] Loaded mod: button test
+[23:15:58] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:15:58] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:15:58] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:15:58] [INFO] [mod:poc_speedhack] enabled=true
+[23:15:58] [INFO] [mod:poc_speedhack] speed=1.2
+[23:15:58] [INFO] Loaded mod: poc_speedhack
+[23:15:58] [INFO] Loading mod: my_mod (My Mod) v0.1.0 by your-name
+[23:15:58] [INFO]   One-line description of what the mod does.
+[23:15:58] [INFO] [mod:my_mod] Hello from my_mod! Framework API=1
+[23:15:58] [INFO] [mod:my_mod] enabled=true, player_name=Player
+[23:15:58] [WARN] [mod:my_mod] config.on_action('do_something') registered, but 'do_something' is not declared as type 'action' in the config file
+[23:15:58] [INFO] Loaded mod: my_mod
+[23:15:58] [INFO] Done. 3 mod folder(s) scanned.
+[23:15:58] [INFO] hooks_init: custom MODS menu ready

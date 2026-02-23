@@ -10,8 +10,8 @@ mod.on_load(function()
   mod.log("enabled=" .. tostring(enabled) .. ", player_name=" .. tostring(name))
 
   -- Register an action button handler
-  config.on_action("do_something", function()
-    mod.log("do_something pressed")
+  config.on_action("action", function()
+    mod.log("action pressed")
   end)
 
   -- You can load extra lua files relative to your mod folder:

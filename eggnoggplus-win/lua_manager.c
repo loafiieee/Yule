@@ -830,6 +830,11 @@ static int ui_state_matches_name(void* st, const char* name) {
     const char* current = ui_state_name_from_ptr(st);
     if (!name || !name[0]) return 1;
     if (_stricmp(name, current) == 0) return 1;
+
+    // Title-screen scripts often guard UI with is_state("main"). During startup,
+    // the game may still report main_initial for a short handoff window.
+    if (_stricmp(name, "main") == 0 && _stricmp(current, "main_initial") == 0) return 1;
+
     if (_stricmp(name, "menu") == 0 && ui_is_menu_state_name(current)) return 1;
     return 0;
 }

@@ -1747,12 +1747,23 @@ static void* ui_lua_ptr_to_button(lua_State* Ls, int idx) {
 static int lua_ui_find_button_by_label(lua_State* Ls) {
     const char* label = luaL_checkstring(Ls, 1);
     int nth = (int)luaL_optinteger(Ls, 2, 1);
+    const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
     if (!label || !label[0] || nth < 1 || !p_button_count || !p_button_get) {
         lua_pushnil(Ls);
         return 1;
     }
 
+    // During main_initial handoff the button list is not always stable yet.
+    if (_stricmp(state_name, "main_initial") == 0) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+
     int count = p_button_count();
+    if (count <= 0 || count > 3000) {
+        lua_pushnil(Ls);
+        return 1;
+    }
     for (int i = 0; i < count; i++) {
         void* btn = p_button_get(i);
         if (!btn) continue;

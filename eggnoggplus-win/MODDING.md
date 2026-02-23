@@ -273,6 +273,7 @@ by finding a button pointer from its label text, then mutating it:
 
 ```lua
 local baseline = baseline or {}
+if mod.ui.state_name() == "main" then
 for nth = 1, 16 do
   local p = mod.ui.find_button_by_label("START", nth)
   if not p then break end
@@ -286,6 +287,7 @@ for nth = 1, 16 do
     mod.ui.button_resize_ptr(p, b.w * 0.5, b.h * 0.5)
   end
 end
+end
 ```
 
 Pointer APIs:
@@ -294,6 +296,7 @@ Pointer APIs:
 - `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
 - `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
   - Tip: some menu screens recreate buttons every frame/state transition; call this from `on_frame` to keep your override applied.
+  - Tip: use `mod.ui.state_name() == "main"` (not `is_state("main")`) for vanilla main-menu button mutations, and consider a short frame delay after entering main.
 - `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
 - `mod.ui.button_remove_ptr(ptr) -> bool` (best-effort remove by hide + tiny size + offscreen)
 

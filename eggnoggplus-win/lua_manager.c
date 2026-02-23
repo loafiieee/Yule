@@ -40,11 +40,11 @@ static lua_State *L = NULL;
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_MAIN_BTN_FRAMED      0x432390u
 
-// Reverse-engineered button struct field offsets.
+// Reverse-engineered button struct field offsets (from button_ex in ghidra).
 #define BTN_OFS_CENTER_X          0x10
 #define BTN_OFS_CENTER_Y          0x14
 #define BTN_OFS_FLAGS             0xBC
-#define BTN_OFS_LABEL_PTR         0xC4
+#define BTN_OFS_LABEL_PTR         0xC8
 
 // Bits in the 0xBC flags field that affect focus/navigation in menu logic.
 #define BTN_FLAG_NOCLICK          0x00000100u

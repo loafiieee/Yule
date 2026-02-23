@@ -284,6 +284,7 @@ Pointer APIs:
 - `mod.ui.button_rect_ptr(ptr) -> x, y, w, h` (or `nil` if invalid)
 - `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
 - `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
+  - Tip: some menu screens recreate buttons every frame/state transition; call this from `on_frame` to keep your override applied.
 - `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
 - `mod.ui.button_remove_ptr(ptr) -> bool` (best-effort remove by hide + tiny size + offscreen)
 

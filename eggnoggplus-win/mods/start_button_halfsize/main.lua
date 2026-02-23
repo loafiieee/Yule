@@ -1,10 +1,7 @@
-local did_apply = false
-local original_w = nil
-local original_h = nil
+local logged = false
 
 mod.on_frame(function()
   if not mod.ui.is_state("main") then
-    did_apply = false
     return
   end
 
@@ -13,24 +10,18 @@ mod.on_frame(function()
     return
   end
 
-  if did_apply then
-    return
-  end
-
   local x, y, w, h = mod.ui.button_rect_ptr(start_ptr)
   if not x then
     return
   end
 
-  if not original_w then
-    original_w = w
-    original_h = h
-    mod.log(string.format("START original size: %.2f x %.2f", w, h))
-  end
+  -- The main menu can rebuild buttons; re-apply size every frame while in main.
+  local target_w = w * 0.5
+  local target_h = h * 0.5
+  local ok = mod.ui.button_resize_ptr(start_ptr, target_w, target_h, 2.0)
 
-  local ok = mod.ui.button_resize_ptr(start_ptr, w * 0.5, h * 0.5, 2.0)
-  if ok then
-    did_apply = true
-    mod.log(string.format("START resized to: %.2f x %.2f", w * 0.5, h * 0.5))
+  if ok and not logged then
+    logged = true
+    mod.log(string.format("START size forced to half: %.2f x %.2f (from %.2f x %.2f)", target_w, target_h, w, h))
   end
 end)

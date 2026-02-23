@@ -1,46 +1,19 @@
-[23:03:58] [INFO] Mod framework initializing...
-[23:03:58] [INFO] Mod framework API version: 1
-[23:03:58] [INFO] Scanning mods/ folder...
-[23:03:58] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
-[23:03:58] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
-[23:03:58] [INFO] [mod:button test] Map Menu Button Example loaded
-[23:03:58] [INFO] [mod:button test] Open map select (pregame) to see the test button
-[23:03:58] [INFO] Loaded mod: button test
-[23:03:58] [INFO] Loading mod: mainmenu_vs_buttons (Main Menu VS Buttons) v0.1.0 by codex
-[23:03:58] [INFO]   Adds VS PLAYER / VS AI buttons on the title screen as a pure Lua mod.
-[23:03:58] [INFO] [mod:mainmenu_vs_buttons] Main Menu VS Buttons loaded
-[23:03:58] [INFO] Loaded mod: mainmenu_vs_buttons
-[23:03:58] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[23:03:58] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[23:03:58] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[23:03:58] [INFO] [mod:poc_speedhack] enabled=true
-[23:03:58] [INFO] [mod:poc_speedhack] speed=1.2
-[23:03:58] [INFO] Loaded mod: poc_speedhack
-[23:03:58] [INFO] Loading mod: my_mod (My Mod) v0.1.0 by your-name
-[23:03:58] [INFO]   One-line description of what the mod does.
-[23:03:58] [INFO] [mod:my_mod] Hello from my_mod! Framework API=1
-[23:03:58] [INFO] [mod:my_mod] enabled=true, player_name=Player
-[23:03:58] [WARN] [mod:my_mod] config.on_action('do_something') registered, but 'do_something' is not declared as type 'action' in the config file
-[23:03:58] [INFO] Loaded mod: my_mod
-[23:03:58] [INFO] Done. 4 mod folder(s) scanned.
-[23:03:58] [INFO] hooks_init: custom MODS menu ready
-[23:04:09] [INFO] [mod:my_mod] keydown sym=1073741906
-[23:04:09] [INFO] [mod:my_mod] keydown sym=1073741906
-[23:04:09] [INFO] [mod:my_mod] keydown sym=1073741903
-[23:04:10] [INFO] [mod:my_mod] keydown sym=1073741903
-[23:04:10] [INFO] [mod:my_mod] keydown sym=1073741903
-[23:04:10] [INFO] [mod:my_mod] keydown sym=1073741903
-[23:04:10] [INFO] [mod:my_mod] keydown sym=1073741906
-[23:04:10] [INFO] [mod:my_mod] keydown sym=1073741906
-[23:04:11] [INFO] [mod:my_mod] keydown sym=27
-[23:04:11] [INFO] [mod:my_mod] keydown sym=119
-[23:04:12] [INFO] [mod:my_mod] keydown sym=97
-[23:04:12] [INFO] [mod:my_mod] keydown sym=119
-[23:04:12] [INFO] [mod:my_mod] keydown sym=119
-[23:04:12] [INFO] [mod:my_mod] keydown sym=119
-[23:04:12] [INFO] [mod:my_mod] keydown sym=97
-[23:04:13] [INFO] [mod:my_mod] keydown sym=97
-[23:04:14] [INFO] [mod:my_mod] keydown sym=27
-[23:04:14] [INFO] [mod:button test] Map Menu Button Example unloaded
-[23:04:14] [INFO] [mod:mainmenu_vs_buttons] Main Menu VS Buttons unloaded
-[23:04:14] [INFO] [mod:poc_speedhack] Unloaded
+[23:42:40] [INFO] Mod framework initializing...
+[23:42:40] [INFO] Mod framework API version: 1
+[23:42:40] [INFO] Scanning mods/ folder...
+[23:42:40] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[23:42:40] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[23:42:40] [INFO] [mod:button test] Map Menu Button Example loaded
+[23:42:40] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[23:42:40] [INFO] Loaded mod: button test
+[23:42:40] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:42:40] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:42:40] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:42:40] [INFO] [mod:poc_speedhack] enabled=true
+[23:42:40] [INFO] [mod:poc_speedhack] speed=1.2
+[23:42:40] [INFO] Loaded mod: poc_speedhack
+[23:42:40] [INFO] Loading mod: start_button_halfsize (Start Button Halfsize) v1.0.0 by codex
+[23:42:40] [INFO]   Example mod: resizes the vanilla START button in main menu to half size.
+[23:42:40] [INFO] Loaded mod: start_button_halfsize
+[23:42:40] [INFO] Done. 3 mod folder(s) scanned.
+[23:42:40] [INFO] hooks_init: custom MODS menu ready

@@ -2,6 +2,9 @@ local logged_once = false
 local baseline = {}
 local stable_main_frames = 0
 
+-- From ghidra: menu construction calls button_ex(..., "START", 0x432440)
+local START_ACTION_PTR = 0x432440
+
 mod.on_frame(function()
   local state = mod.ui.state_name()
   if state ~= "main" then
@@ -10,7 +13,6 @@ mod.on_frame(function()
     return
   end
 
-  -- Let the title->main handoff settle before mutating engine buttons.
   stable_main_frames = stable_main_frames + 1
   if stable_main_frames < 20 then
     return
@@ -18,8 +20,8 @@ mod.on_frame(function()
 
   local changed = 0
 
-  for nth = 1, 16 do
-    local ptr = mod.ui.find_button_by_label("START", nth)
+  for nth = 1, 8 do
+    local ptr = mod.ui.find_button_by_action_ptr(START_ACTION_PTR, nth)
     if not ptr then break end
 
     local x, y, w, h = mod.ui.button_rect_ptr(ptr)
@@ -38,6 +40,6 @@ mod.on_frame(function()
 
   if changed > 0 and not logged_once then
     logged_once = true
-    mod.log("Resized visible START button candidates to half size")
+    mod.log("START action button(s) resized to half size")
   end
 end)

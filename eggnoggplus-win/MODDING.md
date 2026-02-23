@@ -269,13 +269,14 @@ Notes:
 ### Engine button access (including vanilla buttons)
 
 You can also target currently-active engine buttons (including base-game/vanilla menu buttons)
-by finding a button pointer from its label text, then mutating it:
+by finding a button pointer from its action pointer (most reliable) or label text, then mutating it:
 
 ```lua
+local START_ACTION_PTR = 0x432440 -- from ghidra button_ex(..., "START", 0x432440)
 local baseline = baseline or {}
 if mod.ui.state_name() == "main" then
-for nth = 1, 16 do
-  local p = mod.ui.find_button_by_label("START", nth)
+for nth = 1, 8 do
+  local p = mod.ui.find_button_by_action_ptr(START_ACTION_PTR, nth)
   if not p then break end
   local x, y, w, h = mod.ui.button_rect_ptr(p)
   if x then
@@ -291,6 +292,7 @@ end
 ```
 
 Pointer APIs:
+- `mod.ui.find_button_by_action_ptr(action_ptr [,nth]) -> ptr|nil`
 - `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
 - `mod.ui.button_rect_ptr(ptr) -> x, y, w, h` (or `nil` if invalid)
 - `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
@@ -319,6 +321,7 @@ API summary:
 - `mod.ui.native_resize(id, w, h [,shrink]) -> bool`
 - `mod.ui.native_hide(id, hidden) -> bool`
 - `mod.ui.native_remove(id) -> bool`
+- `mod.ui.find_button_by_action_ptr(action_ptr [,nth]) -> ptr|nil`
 - `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
 - `mod.ui.button_rect_ptr(ptr) -> x, y, w, h`
 - `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`

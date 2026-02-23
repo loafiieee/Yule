@@ -1,48 +1,24 @@
-[23:24:47] [INFO] Mod framework initializing...
-[23:24:47] [INFO] Mod framework API version: 1
-[23:24:47] [INFO] Scanning mods/ folder...
-[23:24:47] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
-[23:24:47] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
-[23:24:47] [INFO] [mod:button test] Map Menu Button Example loaded
-[23:24:47] [INFO] [mod:button test] Open map select (pregame) to see the test button
-[23:24:47] [INFO] Loaded mod: button test
-[23:24:47] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[23:24:47] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[23:24:47] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[23:24:47] [INFO] [mod:poc_speedhack] enabled=true
-[23:24:47] [INFO] [mod:poc_speedhack] speed=1.2
-[23:24:47] [INFO] Loaded mod: poc_speedhack
-[23:24:47] [INFO] Loading mod: start_button_halfsize (Start Button Halfsize) v1.0.0 by codex
-[23:24:47] [INFO]   Example mod: resizes the vanilla START button in main menu to half size.
-[23:24:47] [INFO] Loaded mod: start_button_halfsize
-[23:24:47] [INFO] Loading mod: my_mod (My Mod) v0.1.0 by your-name
-[23:24:47] [INFO]   One-line description of what the mod does.
-[23:24:47] [INFO] [mod:my_mod] Hello from my_mod! Framework API=1
-[23:24:47] [INFO] [mod:my_mod] enabled=true, player_name=Player
-[23:24:47] [INFO] Loaded mod: my_mod
-[23:24:47] [INFO] Done. 4 mod folder(s) scanned.
-[23:24:47] [INFO] hooks_init: custom MODS menu ready
-[23:24:48] [INFO] [mod:my_mod] keydown sym=115
-[23:24:48] [INFO] [mod:my_mod] keydown sym=118
-[23:24:49] [INFO] [mod:my_mod] keydown sym=118
-[23:24:49] [INFO] [mod:my_mod] keydown sym=118
-[23:24:49] [INFO] [mod:my_mod] keydown sym=118
-[23:24:50] [INFO] [mod:my_mod] keydown sym=118
-[23:24:50] [INFO] [mod:my_mod] keydown sym=118
-[23:24:50] [INFO] [mod:my_mod] keydown sym=98
-[23:24:52] [INFO] [mod:my_mod] keydown sym=100
-[23:24:52] [INFO] [mod:my_mod] keydown sym=100
-[23:24:53] [INFO] [mod:my_mod] keydown sym=119
-[23:24:53] [INFO] [mod:my_mod] keydown sym=118
-[23:24:53] [INFO] [mod:button test] Map select button pressed
-[23:24:53] [INFO] [mod:my_mod] keydown sym=97
-[23:24:54] [INFO] [mod:my_mod] keydown sym=118
-[23:24:54] [INFO] [mod:my_mod] keydown sym=119
-[23:24:54] [INFO] [mod:my_mod] keydown sym=118
-[23:24:57] [INFO] [mod:my_mod] keydown sym=100
-[23:24:57] [INFO] [mod:my_mod] keydown sym=119
-[23:24:57] [INFO] [mod:my_mod] keydown sym=119
-[23:24:58] [INFO] [mod:my_mod] keydown sym=118
-[23:24:59] [INFO] [mod:my_mod] keydown sym=27
-[23:25:23] [INFO] [mod:button test] Map Menu Button Example unloaded
-[23:25:23] [INFO] [mod:poc_speedhack] Unloaded
+[23:30:19] [INFO] Mod framework initializing...
+[23:30:19] [INFO] Mod framework API version: 1
+[23:30:19] [INFO] Scanning mods/ folder...
+[23:30:19] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[23:30:19] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[23:30:19] [INFO] [mod:button test] Map Menu Button Example loaded
+[23:30:19] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[23:30:19] [INFO] Loaded mod: button test
+[23:30:19] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:30:19] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:30:19] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:30:19] [INFO] [mod:poc_speedhack] enabled=true
+[23:30:19] [INFO] [mod:poc_speedhack] speed=1.2
+[23:30:19] [INFO] Loaded mod: poc_speedhack
+[23:30:19] [INFO] Loading mod: start_button_halfsize (Start Button Halfsize) v1.0.0 by codex
+[23:30:19] [INFO]   Example mod: resizes the vanilla START button in main menu to half size.
+[23:30:19] [INFO] Loaded mod: start_button_halfsize
+[23:30:19] [INFO] Done. 3 mod folder(s) scanned.
+[23:30:19] [INFO] hooks_init: custom MODS menu ready
+[23:30:21] [INFO] [mod:button test] Map select button pressed
+[23:30:22] [INFO] [mod:button test] Map select button pressed
+[23:30:23] [INFO] MODS: entering mods menu
+[23:30:26] [INFO] [mod:button test] Map Menu Button Example unloaded
+[23:30:26] [INFO] [mod:poc_speedhack] Unloaded

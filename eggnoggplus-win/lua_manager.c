@@ -37,6 +37,8 @@ static lua_State *L = NULL;
 #define ADDR_BUTTON_EX             0x416310u
 #define ADDR_BUTTON_COUNT          0x416890u
 #define ADDR_BTN_PLAYER_FILTER     0x4325C0u
+#define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
+#define ADDR_MAIN_BTN_FRAMED      0x432390u
 
 // Known game state addresses (base game).
 #define ADDR_ERROR_STATE           0x448204u
@@ -63,6 +65,8 @@ typedef void  (__cdecl *fn_button_set_layout_t)(float, float);
 typedef void* (__cdecl *fn_button_ex_t)(float, float, uint32_t, const char*, int);
 typedef int   (__cdecl *fn_button_count_t)(void);
 typedef int   (__cdecl *fn_btn_player_filter_t)(void* btn, int event_code);
+typedef void  (__cdecl *fn_main_sprite_batches_draw_t)(void);
+typedef int   (__cdecl *fn_main_btn_framed_t)(int btn_ptr, int event_code);
 
 static fn_state_current_t   p_state_current   = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_mad_dim_t         p_mad_w           = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_W;
@@ -79,6 +83,8 @@ static fn_button_set_layout_t p_button_set_layout = (fn_button_set_layout_t)(uin
 static fn_button_ex_t       p_button_ex       = (fn_button_ex_t)(uintptr_t)ADDR_BUTTON_EX;
 static fn_button_count_t    p_button_count    = (fn_button_count_t)(uintptr_t)ADDR_BUTTON_COUNT;
 static fn_btn_player_filter_t p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
+static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprite_batches_draw_t)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW;
+static fn_main_btn_framed_t   p_main_btn_framed   = (fn_main_btn_framed_t)(uintptr_t)ADDR_MAIN_BTN_FRAMED;
 
 typedef struct UiHitBox {
     float x;
@@ -1022,16 +1028,97 @@ static int ui_native_run_player_filter(void* btn, int event_code) {
     return ok;
 }
 
-static int __cdecl ui_native_button_filter(void* btn, int event_code) {
-    int ok = ui_native_run_player_filter(btn, event_code);
+// Old-style link filter: allow either player selector to activate the same button.
+// This mirrors the MODS menu entry button behavior (see hooks.c), but instead of
+// switching states it just toggles the UiNativeButton.clicked flag.
+//
+// NOTE: The selector system does not call the main framed filter. It calls the
+// per-player filter function pointer stored on the button struct (observed at
+// +0xE4). Native buttons created via button_ex need this field populated.
+static int __cdecl ui_native_player_filter_proxy(void* btn, int event_code) {
+    if (!btn || !p_btn_player_filter) return 0;
 
-    if (event_code == 3 && ok) {
-        UiNativeButton* b = ui_native_find_by_btn_ptr(btn);
-        if (b) b->clicked = 1;
+    // Helper: try both selector tags for player 1/2. Some screens use 0x11/0x12,
+    // others use 1/2.
+    uint32_t* tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+    uint32_t old_tag = *tag_ptr;
+    int ok = 0;
+
+    // Activation: if either selector activates, mark clicked and consume so the
+    // engine's default link behavior (if any) cannot fire.
+    if (event_code == 3) {
+        *tag_ptr = 0x11;
+        ok = p_btn_player_filter(btn, event_code);
+        if (!ok) {
+            *tag_ptr = 0x12;
+            ok = p_btn_player_filter(btn, event_code);
+        }
+        if (!ok) {
+            *tag_ptr = 1;
+            ok = p_btn_player_filter(btn, event_code);
+            if (!ok) {
+                *tag_ptr = 2;
+                ok = p_btn_player_filter(btn, event_code);
+            }
+        }
+
+        *tag_ptr = old_tag;
+
+        if (ok) {
+            UiNativeButton* b = ui_native_find_by_btn_ptr(btn);
+            if (b) b->clicked = 1;
+        }
+
         return 0;
     }
 
-    return ok ? 1 : 0;
+    // Non-activation events: report the button as eligible for either selector.
+    *tag_ptr = 0x11;
+    if (p_btn_player_filter(btn, event_code)) {
+        *tag_ptr = old_tag;
+        return 1;
+    }
+
+    *tag_ptr = 0x12;
+    if (p_btn_player_filter(btn, event_code)) {
+        *tag_ptr = old_tag;
+        return 1;
+    }
+
+    *tag_ptr = 1;
+    if (p_btn_player_filter(btn, event_code)) {
+        *tag_ptr = old_tag;
+        return 1;
+    }
+
+    *tag_ptr = 2;
+    if (p_btn_player_filter(btn, event_code)) {
+        *tag_ptr = old_tag;
+        return 1;
+    }
+
+    *tag_ptr = old_tag;
+    return 0;
+}
+
+static int __cdecl ui_native_button_filter(void* btn, int event_code) {
+    // Use the game's standard framed button behavior so the keyboard selectors
+    // (sword cursors) can navigate to mod-created buttons.
+    int ret = 0;
+    if (p_main_btn_framed) {
+        ret = p_main_btn_framed((int)(intptr_t)btn, event_code);
+    } else if (p_btn_player_filter) {
+        // Fallback: older builds may not have main_btn_framed symbol resolved.
+        ret = p_btn_player_filter(btn, event_code);
+    }
+
+    // event_code==3 corresponds to activation/click.
+    if (event_code == 3 && ret) {
+        UiNativeButton* b = ui_native_find_by_btn_ptr(btn);
+        if (b) b->clicked = 1;
+    }
+
+    return ret;
 }
 
 // =============================
@@ -1511,6 +1598,13 @@ static int lua_ui_native_button(lua_State* Ls) {
     if (!b->btn_ptr && p_button_ex) {
         if (p_button_set_layout) p_button_set_layout(b->layout_x, b->layout_y);
         b->btn_ptr = p_button_ex(b->grid_x, b->grid_y, 0, b->label, (int)(intptr_t)&ui_native_button_filter);
+        if (b->btn_ptr) {
+            // Match MODS menu button behavior so sword selectors can land on it.
+            // +0xE0: link target / state bridge (must be non-null for some menus)
+            // +0xE4: per-player filter pointer (used by selectors)
+            *(void**)((uint8_t*)b->btn_ptr + 0xE0) = ui_current_state_ptr();
+            *(void**)((uint8_t*)b->btn_ptr + 0xE4) = (void*)&ui_native_player_filter_proxy;
+        }
     }
 
     clicked = b->clicked;
@@ -1910,6 +2004,15 @@ void lua_manager_on_frame() {
                 mod->error_count++;
             }
         }
+    }
+
+    // Reset turtle state before flushing; sprite batching relies on consistent globals.
+    ui_reset_render_state();
+
+    // Flush any sprites plotted by mods this frame so they render immediately and
+    // don't carry over into the next frame (which can break glow layering).
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
     }
 
     ui_reset_render_state();

@@ -381,7 +381,8 @@ static void draw_text_scaled_mode(float x, float y, float scale, float r, float 
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
-    draw_text_scaled_mode(x, y, scale, r, g, b, text, 1);
+    // Left-aligned (base engine: plot_text align=0).
+    draw_text_scaled_mode(x, y, scale, r, g, b, text, 0);
 }
 
 static void draw_text(float x, float y, float r, float g, float b, const char* text) {
@@ -394,8 +395,8 @@ static void draw_text_centered_scaled(float cx, float y, float scale, float r, f
 }
 
 static void draw_text_right_scaled(float right_x, float y, float scale, float r, float g, float b, const char* text) {
-    float w = approx_text_width(text, scale);
-    draw_text_scaled(right_x - w, y, scale, r, g, b, text);
+    // Right-aligned (base engine: plot_text align=2).
+    draw_text_scaled_mode(right_x, y, scale, r, g, b, text, 2);
 }
 
 static void draw_text_centered(float cx, float y, float r, float g, float b, const char* text) {
@@ -1184,13 +1185,14 @@ static void __cdecl mods_render(void) {
     // Restore turtle defaults before main_draw() so sprite/glow/cursor passes
     // don't inherit text render scale/tint.
     mods_restore_render_state();
-
     // In base menus, rendering is finalized via main_draw(), which flushes sprite
     // batches and draws particles/cursors/button sprites in the expected order.
-    if (p_main_sprite_batches_draw) {
-        p_main_sprite_batches_draw();
-    } else if (p_main_draw) {
+    // Call main_draw when available so glow/cursor passes behave exactly like
+    // the vanilla menus.
+    if (p_main_draw) {
         p_main_draw();
+    } else if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
     }
 
     mods_restore_render_state();

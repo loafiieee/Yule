@@ -979,6 +979,18 @@ static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden) {
     }
 }
 
+static int ui_safe_string_readable(const char* s, int maxlen) {
+    int i;
+    if (!s || maxlen <= 0) return 0;
+    if (IsBadStringPtrA(s, (UINT_PTR)maxlen)) return 0;
+    for (i = 0; i < maxlen; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\0') return 1;
+        if (c < 0x09) return 0;
+    }
+    return 0;
+}
+
 static UiNativeButton* mod_ui_native_find(LoadedMod* mod, const char* id, const char* state_name) {
     if (!mod || !id || !id[0] || !state_name || !state_name[0]) return NULL;
     for (int i = 0; i < mod->ui_native_count; i++) {
@@ -1745,7 +1757,7 @@ static int lua_ui_find_button_by_label(lua_State* Ls) {
         void* btn = p_button_get(i);
         if (!btn) continue;
         const char* txt = *(const char**)((uint8_t*)btn + BTN_OFS_LABEL_PTR);
-        if (!txt) continue;
+        if (!ui_safe_string_readable(txt, 128)) continue;
         if (_stricmp(txt, label) != 0) continue;
         nth--;
         if (nth == 0) {

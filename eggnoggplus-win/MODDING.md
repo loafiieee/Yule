@@ -263,7 +263,29 @@ mod.ui.native_remove("my_btn")
 
 Notes:
 - These functions only affect **mod-owned native buttons** created via `mod.ui.native_button`.
-- They do not mutate arbitrary vanilla UI elements created by the base game.
+- To target vanilla/base-game buttons, use the pointer APIs in the next section (`find_button_by_label`, `button_*_ptr`).
+
+
+### Engine button access (including vanilla buttons)
+
+You can also target currently-active engine buttons (including base-game/vanilla menu buttons)
+by finding a button pointer from its label text, then mutating it:
+
+```lua
+local p = mod.ui.find_button_by_label("START")
+if p then
+  local x, y, w, h = mod.ui.button_rect_ptr(p)
+  mod.ui.button_resize_ptr(p, w * 0.5, h * 0.5)
+end
+```
+
+Pointer APIs:
+- `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
+- `mod.ui.button_rect_ptr(ptr) -> x, y, w, h` (or `nil` if invalid)
+- `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
+- `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
+- `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
+- `mod.ui.button_remove_ptr(ptr) -> bool` (best-effort remove by hide + tiny size + offscreen)
 
 API summary:
 - `mod.ui.layout(x, y [,row_h [,gap [,width [,text_scale]]]])`
@@ -284,6 +306,12 @@ API summary:
 - `mod.ui.native_resize(id, w, h [,shrink]) -> bool`
 - `mod.ui.native_hide(id, hidden) -> bool`
 - `mod.ui.native_remove(id) -> bool`
+- `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
+- `mod.ui.button_rect_ptr(ptr) -> x, y, w, h`
+- `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
+- `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
+- `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
+- `mod.ui.button_remove_ptr(ptr) -> bool`
 
 ---
 

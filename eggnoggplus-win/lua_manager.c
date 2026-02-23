@@ -981,16 +981,12 @@ static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden) {
 }
 
 static int ui_safe_string_readable(const char* s, int maxlen) {
-    int i;
     if (!s || maxlen <= 0) return 0;
-    __try {
-        for (i = 0; i < maxlen; i++) {
-            unsigned char c = (unsigned char)s[i];
-            if (c == '\0') return 1;
-            if (c < 0x09) return 0;
-        }
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
+    if (IsBadReadPtr(s, (SIZE_T)maxlen)) return 0;
+    for (int i = 0; i < maxlen; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\0') return 1;
+        if (c < 0x09) return 0;
     }
     return 0;
 }

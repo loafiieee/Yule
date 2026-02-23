@@ -1,15 +1,16 @@
--Custom Map support
+-automatic Hot Reload mod functionality
 
--Mod menu text input placement is weird
-
--Hot Reload mod functionality
-
--API for adding content to gameplay, not just menus. (Ex, custom weapons, etc.)
-
--Random crash when running action in mod menu
+-Random crash when running action in mod menu, dont know why
 
 -automatic hot reload mod menu
 
--Buttons in UI api cant be selected using keyboard selectors, only mouse.
-
 -Glow sprite is broken?
+
+-Buttons made using the UI api in mapmenu (pregame) are unclickable using keyboard selectos
+
+-custom buttons on main menu dont show on game startup until you navigate to a different menu then back
+
+WAY LATER STUFF:
+
+-Custom Map support by scanning maps/ for a .map file.
+-API for adding content to gameplay, like more weapons than just a sword.

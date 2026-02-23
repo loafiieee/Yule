@@ -1,25 +1,30 @@
-[22:37:29] [INFO] Mod framework initializing...
-[22:37:29] [INFO] Mod framework API version: 1
-[22:37:29] [INFO] Scanning mods/ folder...
-[22:37:29] [INFO] Loading mod: mapmenu_button_example (Map Menu Button Example) v1.0.0 by loaf
-[22:37:29] [INFO]   Shows a mod UI button on the map selection menu and logs when pressed.
-[22:37:29] [INFO] [mod:mapmenu_button_example] Map Menu Button Example loaded
-[22:37:29] [INFO] [mod:mapmenu_button_example] Open map select (pregame) to see the test button
-[22:37:29] [INFO] Loaded mod: mapmenu_button_example
-[22:37:29] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[22:37:29] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[22:37:29] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[22:37:29] [INFO] [mod:poc_speedhack] enabled=true
-[22:37:29] [INFO] [mod:poc_speedhack] speed=1.2
-[22:37:29] [INFO] Loaded mod: poc_speedhack
-[22:37:29] [INFO] Loading mod: my_mod (My Mod) v0.1.0 by your-name
-[22:37:29] [INFO]   One-line description of what the mod does.
-[22:37:29] [INFO] [mod:my_mod] Hello from my_mod! Framework API=1
-[22:37:29] [INFO] [mod:my_mod] enabled=true, player_name=Player
-[22:37:29] [WARN] [mod:my_mod] config.on_action('do_something') registered, but 'do_something' is not declared as type 'action' in the config file
-[22:37:29] [INFO] Loaded mod: my_mod
-[22:37:29] [INFO] Done. 3 mod folder(s) scanned.
-[22:37:29] [INFO] hooks_init: custom MODS menu ready
-[22:37:31] [INFO] [mod:my_mod] keydown sym=27
-[22:40:30] [INFO] [mod:mapmenu_button_example] Map Menu Button Example unloaded
-[22:40:30] [INFO] [mod:poc_speedhack] Unloaded
+[22:47:00] [INFO] Mod framework initializing...
+[22:47:00] [INFO] Mod framework API version: 1
+[22:47:00] [INFO] Scanning mods/ folder...
+[22:47:00] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[22:47:00] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[22:47:00] [INFO] [mod:button test] Map Menu Button Example loaded
+[22:47:00] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[22:47:00] [INFO] Loaded mod: button test
+[22:47:00] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[22:47:00] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[22:47:00] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[22:47:00] [INFO] [mod:poc_speedhack] enabled=true
+[22:47:00] [INFO] [mod:poc_speedhack] speed=1.2
+[22:47:00] [INFO] Loaded mod: poc_speedhack
+[22:47:00] [INFO] Loading mod: my_mod (My Mod) v0.1.0 by your-name
+[22:47:00] [INFO]   One-line description of what the mod does.
+[22:47:00] [INFO] [mod:my_mod] Hello from my_mod! Framework API=1
+[22:47:00] [INFO] [mod:my_mod] enabled=true, player_name=Player
+[22:47:00] [WARN] [mod:my_mod] config.on_action('do_something') registered, but 'do_something' is not declared as type 'action' in the config file
+[22:47:00] [INFO] Loaded mod: my_mod
+[22:47:00] [INFO] Done. 3 mod folder(s) scanned.
+[22:47:00] [INFO] hooks_init: custom MODS menu ready
+[22:47:02] [INFO] [mod:my_mod] keydown sym=27
+[22:47:03] [INFO] [mod:button test] Start button pressed
+[22:47:03] [INFO] [mod:button test] Start button replacement pressed
+[22:47:04] [INFO] [mod:button test] Start button replacement pressed
+[22:47:04] [INFO] [mod:button test] Start button replacement pressed
+[22:47:04] [INFO] [mod:my_mod] keydown sym=27
+[22:47:04] [INFO] [mod:button test] Map Menu Button Example unloaded
+[22:47:04] [INFO] [mod:poc_speedhack] Unloaded

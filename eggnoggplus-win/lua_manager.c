@@ -1553,6 +1553,9 @@ static int lua_ui_native_button(lua_State* Ls) {
     float layout_x = (float)luaL_optnumber(Ls, 5, 5.0);
     float layout_y = (float)luaL_optnumber(Ls, 6, 5.0);
     const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
+    // Treat main_initial as main so title-menu native buttons appear immediately
+    // on startup and persist across the title state handoff.
+    const char* button_state_name = (_stricmp(state_name, "main_initial") == 0) ? "main" : state_name;
     UiNativeButton* b;
     int clicked = 0;
 
@@ -1561,7 +1564,7 @@ static int lua_ui_native_button(lua_State* Ls) {
         return 1;
     }
 
-    b = mod_ui_native_get_or_add(mod, id, state_name);
+    b = mod_ui_native_get_or_add(mod, id, button_state_name);
     if (!b) {
         lua_pushboolean(Ls, 0);
         return 1;
@@ -2189,12 +2192,30 @@ void lua_manager_config_trigger_action(int mod_index, int entry_index) {
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_ACTION) return;
 
-    // Find registered handlers
+    // Find registered handlers.
+    //
+    // We snapshot refs before invoking callbacks so action handlers that mutate
+    // config registrations (directly or indirectly) cannot invalidate the
+    // ConfigAction pointer while this loop is running.
     for (int ai = 0; ai < m->cfg_action_count; ai++) {
         ConfigAction* a = &m->cfg_actions[ai];
         if (_stricmp(a->key, e->key) != 0) continue;
-        for (int hi = 0; hi < a->handlers.count; hi++) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, a->handlers.refs[hi]);
+
+        if (a->handlers.count <= 0) break;
+
+        int count = a->handlers.count;
+        int* refs = (int*)malloc(sizeof(int) * count);
+        if (!refs) {
+            log_mod(m, "ERROR", "config action handler dispatch failed: out of memory");
+            return;
+        }
+
+        for (int i = 0; i < count; i++) {
+            refs[i] = a->handlers.refs[i];
+        }
+
+        for (int hi = 0; hi < count; hi++) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[hi]);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
                 char buf[512];
@@ -2204,6 +2225,8 @@ void lua_manager_config_trigger_action(int mod_index, int entry_index) {
                 m->error_count++;
             }
         }
+
+        free(refs);
         break;
     }
 }

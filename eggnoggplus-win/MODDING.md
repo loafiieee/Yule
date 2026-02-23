@@ -235,6 +235,58 @@ if mod.ui.button_at("x", "X", 1180, 20, 40, 28) then
 end
 ```
 
+
+### Native menu buttons (engine-backed)
+
+`mod.ui.native_button(...)` creates an engine-backed menu button (works with selector swords/navigation).
+After creation, you can adjust that native button by id in the current state:
+
+```lua
+mod.ui.native_button("my_btn", "My Button", 1.0, 3.0, 5.0, 5.0)
+
+-- Move center (screen-space coordinates)
+mod.ui.native_set_pos("my_btn", 640, 360)
+
+-- Change grid layout defaults used for future recreation
+mod.ui.native_set_layout("my_btn", 5.0, 5.0)
+
+-- Resize clickable/rendered bounds
+mod.ui.native_resize("my_btn", 240, 52)
+
+-- Hide/show from navigation + click handling
+mod.ui.native_hide("my_btn", true)
+mod.ui.native_hide("my_btn", false)
+
+-- Remove mod-owned native button record for this state
+mod.ui.native_remove("my_btn")
+```
+
+Notes:
+- These functions only affect **mod-owned native buttons** created via `mod.ui.native_button`.
+- To target vanilla/base-game buttons, use the pointer APIs in the next section (`find_button_by_label`, `button_*_ptr`).
+
+
+### Engine button access (including vanilla buttons)
+
+You can also target currently-active engine buttons (including base-game/vanilla menu buttons)
+by finding a button pointer from its label text, then mutating it:
+
+```lua
+local p = mod.ui.find_button_by_label("START")
+if p then
+  local x, y, w, h = mod.ui.button_rect_ptr(p)
+  mod.ui.button_resize_ptr(p, w * 0.5, h * 0.5)
+end
+```
+
+Pointer APIs:
+- `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
+- `mod.ui.button_rect_ptr(ptr) -> x, y, w, h` (or `nil` if invalid)
+- `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
+- `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
+- `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
+- `mod.ui.button_remove_ptr(ptr) -> bool` (best-effort remove by hide + tiny size + offscreen)
+
 API summary:
 - `mod.ui.layout(x, y [,row_h [,gap [,width [,text_scale]]]])`
 - `mod.ui.cursor([x [,y]]) -> x, y`
@@ -248,6 +300,18 @@ API summary:
 - `mod.ui.is_state(name) -> bool`
 - `mod.ui.screen_size() -> w, h`
 - `mod.ui.mouse_pos() -> x, y`
+- `mod.ui.native_button(id, label, grid_x, grid_y [,layout_x [,layout_y]]) -> clicked`
+- `mod.ui.native_set_pos(id, x, y) -> bool`
+- `mod.ui.native_set_layout(id, layout_x, layout_y) -> bool`
+- `mod.ui.native_resize(id, w, h [,shrink]) -> bool`
+- `mod.ui.native_hide(id, hidden) -> bool`
+- `mod.ui.native_remove(id) -> bool`
+- `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
+- `mod.ui.button_rect_ptr(ptr) -> x, y, w, h`
+- `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
+- `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
+- `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
+- `mod.ui.button_remove_ptr(ptr) -> bool`
 
 ---
 

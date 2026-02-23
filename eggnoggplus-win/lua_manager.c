@@ -44,6 +44,7 @@ static lua_State *L = NULL;
 #define BTN_OFS_CENTER_X          0x10
 #define BTN_OFS_CENTER_Y          0x14
 #define BTN_OFS_FLAGS             0xBC
+#define BTN_OFS_LABEL_PTR         0xC4
 
 // Bits in the 0xBC flags field that affect focus/navigation in menu logic.
 #define BTN_FLAG_NOCLICK          0x00000100u
@@ -1723,6 +1724,101 @@ static int lua_ui_native_hide(lua_State* Ls) {
     return 1;
 }
 
+static void* ui_lua_ptr_to_button(lua_State* Ls, int idx) {
+    if (!lua_isnumber(Ls, idx)) return NULL;
+    uintptr_t raw = (uintptr_t)lua_tonumber(Ls, idx);
+    void* btn = (void*)raw;
+    if (!ui_engine_button_exists(btn)) return NULL;
+    return btn;
+}
+
+static int lua_ui_find_button_by_label(lua_State* Ls) {
+    const char* label = luaL_checkstring(Ls, 1);
+    int nth = (int)luaL_optinteger(Ls, 2, 1);
+    if (!label || !label[0] || nth < 1 || !p_button_count || !p_button_get) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+
+    int count = p_button_count();
+    for (int i = 0; i < count; i++) {
+        void* btn = p_button_get(i);
+        if (!btn) continue;
+        const char* txt = *(const char**)((uint8_t*)btn + BTN_OFS_LABEL_PTR);
+        if (!txt) continue;
+        if (_stricmp(txt, label) != 0) continue;
+        nth--;
+        if (nth == 0) {
+            lua_pushnumber(Ls, (lua_Number)(uintptr_t)btn);
+            return 1;
+        }
+    }
+
+    lua_pushnil(Ls);
+    return 1;
+}
+
+static int lua_ui_button_rect_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    if (!btn) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+
+    lua_pushnumber(Ls, *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X));
+    lua_pushnumber(Ls, *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y));
+    lua_pushnumber(Ls, *(float*)((uint8_t*)btn + 0x20));
+    lua_pushnumber(Ls, *(float*)((uint8_t*)btn + 0x24));
+    return 4;
+}
+
+static int lua_ui_button_set_pos_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    float x = (float)luaL_checknumber(Ls, 2);
+    float y = (float)luaL_checknumber(Ls, 3);
+    if (!btn) { lua_pushboolean(Ls, 0); return 1; }
+    *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X) = x;
+    *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y) = y;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_ui_button_resize_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    float w = (float)luaL_checknumber(Ls, 2);
+    float h = (float)luaL_checknumber(Ls, 3);
+    float shrink = (float)luaL_optnumber(Ls, 4, 4.0);
+    if (!btn || w <= 0.0f || h <= 0.0f) { lua_pushboolean(Ls, 0); return 1; }
+    if (shrink < 0.0f) shrink = 0.0f;
+    if (p_button_set_w_ex) p_button_set_w_ex((int)(intptr_t)btn, w, shrink);
+    if (p_button_set_h_ex) p_button_set_h_ex((int)(intptr_t)btn, h, shrink);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_ui_button_hide_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    int hidden = lua_toboolean(Ls, 2);
+    if (!btn) { lua_pushboolean(Ls, 0); return 1; }
+    ui_button_apply_flags_hidden(btn, hidden);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_ui_button_remove_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    if (!btn) { lua_pushboolean(Ls, 0); return 1; }
+
+    ui_button_apply_flags_hidden(btn, 1);
+    if (p_button_set_w_ex) p_button_set_w_ex((int)(intptr_t)btn, 1.0f, 0.0f);
+    if (p_button_set_h_ex) p_button_set_h_ex((int)(intptr_t)btn, 1.0f, 0.0f);
+    *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X) = -10000.0f;
+    *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y) = -10000.0f;
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
 static int lua_ui_native_remove(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     const char* id = luaL_checkstring(Ls, 1);
@@ -1770,6 +1866,13 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_resize, 1);      lua_setfield(Ls, -2, "native_resize");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_hide, 1);        lua_setfield(Ls, -2, "native_hide");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_remove, 1);      lua_setfield(Ls, -2, "native_remove");
+
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_find_button_by_label, 1); lua_setfield(Ls, -2, "find_button_by_label");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_rect_ptr, 1);      lua_setfield(Ls, -2, "button_rect_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_set_pos_ptr, 1);   lua_setfield(Ls, -2, "button_set_pos_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_resize_ptr, 1);    lua_setfield(Ls, -2, "button_resize_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_hide_ptr, 1);      lua_setfield(Ls, -2, "button_hide_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_remove_ptr, 1);    lua_setfield(Ls, -2, "button_remove_ptr");
 }
 
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {

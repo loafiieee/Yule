@@ -609,7 +609,7 @@ static void rebuild_rows(void) {
 
         safe_copy(header, sizeof(header), name);
         if (ver[0]) {
-            snprintf(version, sizeof(version), "v%s", ver);
+            snprintf(version, sizeof(version), "%s", ver);
         } else {
             version[0] = '\0';
         }

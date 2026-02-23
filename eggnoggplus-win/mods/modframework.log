@@ -20,3 +20,5 @@
 [23:15:58] [INFO] Loaded mod: my_mod
 [23:15:58] [INFO] Done. 3 mod folder(s) scanned.
 [23:15:58] [INFO] hooks_init: custom MODS menu ready
+[23:22:16] [INFO] [mod:button test] Map Menu Button Example unloaded
+[23:22:16] [INFO] [mod:poc_speedhack] Unloaded

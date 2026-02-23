@@ -38,6 +38,12 @@ mod.on_frame(function()
         resized_this_entry = false
         return
     end
+    frames_in_main = frames_in_main + 1
+    if frames_in_main < 1 then return end
+
+    for nth = 1, 8 do
+        local ptr = mod.ui.find_button_by_action_ptr(START_ACTION_PTR, nth)
+        if not ptr then break end
 
     if not was_main then
         -- Fresh main-menu entry.

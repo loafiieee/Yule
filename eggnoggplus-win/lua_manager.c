@@ -45,6 +45,7 @@ static lua_State *L = NULL;
 #define BTN_OFS_CENTER_Y          0x14
 #define BTN_OFS_FLAGS             0xBC
 #define BTN_OFS_LABEL_PTR         0xC8
+#define BTN_OFS_ACTION_PTR        0xE0
 
 // Bits in the 0xBC flags field that affect focus/navigation in menu logic.
 #define BTN_FLAG_NOCLICK          0x00000100u
@@ -982,11 +983,14 @@ static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden) {
 static int ui_safe_string_readable(const char* s, int maxlen) {
     int i;
     if (!s || maxlen <= 0) return 0;
-    if (IsBadStringPtrA(s, (UINT_PTR)maxlen)) return 0;
-    for (i = 0; i < maxlen; i++) {
-        unsigned char c = (unsigned char)s[i];
-        if (c == '\0') return 1;
-        if (c < 0x09) return 0;
+    __try {
+        for (i = 0; i < maxlen; i++) {
+            unsigned char c = (unsigned char)s[i];
+            if (c == '\0') return 1;
+            if (c < 0x09) return 0;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
     }
     return 0;
 }
@@ -1744,6 +1748,42 @@ static void* ui_lua_ptr_to_button(lua_State* Ls, int idx) {
     return btn;
 }
 
+static int lua_ui_find_button_by_action_ptr(lua_State* Ls) {
+    uintptr_t action_ptr = (uintptr_t)luaL_checknumber(Ls, 1);
+    int nth = (int)luaL_optinteger(Ls, 2, 1);
+    const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
+
+    if (action_ptr == 0 || nth < 1 || !p_button_count || !p_button_get) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    if (_stricmp(state_name, "main_initial") == 0) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+
+    {
+        int count = p_button_count();
+        if (count <= 0 || count > 3000) {
+            lua_pushnil(Ls);
+            return 1;
+        }
+        for (int i = 0; i < count; i++) {
+            void* btn = p_button_get(i);
+            if (!btn) continue;
+            if ((uintptr_t)(*(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR)) != action_ptr) continue;
+            nth--;
+            if (nth == 0) {
+                lua_pushnumber(Ls, (lua_Number)(uintptr_t)btn);
+                return 1;
+            }
+        }
+    }
+
+    lua_pushnil(Ls);
+    return 1;
+}
+
 static int lua_ui_find_button_by_label(lua_State* Ls) {
     const char* label = luaL_checkstring(Ls, 1);
     int nth = (int)luaL_optinteger(Ls, 2, 1);
@@ -1890,7 +1930,8 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_hide, 1);        lua_setfield(Ls, -2, "native_hide");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_remove, 1);      lua_setfield(Ls, -2, "native_remove");
 
-    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_find_button_by_label, 1); lua_setfield(Ls, -2, "find_button_by_label");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_find_button_by_label, 1);      lua_setfield(Ls, -2, "find_button_by_label");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_find_button_by_action_ptr, 1); lua_setfield(Ls, -2, "find_button_by_action_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_rect_ptr, 1);      lua_setfield(Ls, -2, "button_rect_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_set_pos_ptr, 1);   lua_setfield(Ls, -2, "button_set_pos_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_resize_ptr, 1);    lua_setfield(Ls, -2, "button_resize_ptr");

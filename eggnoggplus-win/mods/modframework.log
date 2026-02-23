@@ -1,19 +1,19 @@
-[23:42:40] [INFO] Mod framework initializing...
-[23:42:40] [INFO] Mod framework API version: 1
-[23:42:40] [INFO] Scanning mods/ folder...
-[23:42:40] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
-[23:42:40] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
-[23:42:40] [INFO] [mod:button test] Map Menu Button Example loaded
-[23:42:40] [INFO] [mod:button test] Open map select (pregame) to see the test button
-[23:42:40] [INFO] Loaded mod: button test
-[23:42:40] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[23:42:40] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[23:42:40] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[23:42:40] [INFO] [mod:poc_speedhack] enabled=true
-[23:42:40] [INFO] [mod:poc_speedhack] speed=1.2
-[23:42:40] [INFO] Loaded mod: poc_speedhack
-[23:42:40] [INFO] Loading mod: start_button_halfsize (Start Button Halfsize) v1.0.0 by codex
-[23:42:40] [INFO]   Example mod: resizes the vanilla START button in main menu to half size.
-[23:42:40] [INFO] Loaded mod: start_button_halfsize
-[23:42:40] [INFO] Done. 3 mod folder(s) scanned.
-[23:42:40] [INFO] hooks_init: custom MODS menu ready
+[23:50:14] [INFO] Mod framework initializing...
+[23:50:14] [INFO] Mod framework API version: 1
+[23:50:14] [INFO] Scanning mods/ folder...
+[23:50:14] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[23:50:14] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[23:50:14] [INFO] [mod:button test] Map Menu Button Example loaded
+[23:50:14] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[23:50:14] [INFO] Loaded mod: button test
+[23:50:14] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:50:14] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:50:14] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:50:14] [INFO] [mod:poc_speedhack] enabled=true
+[23:50:14] [INFO] [mod:poc_speedhack] speed=1.2
+[23:50:14] [INFO] Loaded mod: poc_speedhack
+[23:50:14] [INFO] Loading mod: start_button_halfsize (Start Button Halfsize) v1.0.0 by codex
+[23:50:14] [INFO]   Example mod: resizes the vanilla START button in main menu to half size.
+[23:50:14] [INFO] Loaded mod: start_button_halfsize
+[23:50:14] [INFO] Done. 3 mod folder(s) scanned.
+[23:50:14] [INFO] hooks_init: custom MODS menu ready

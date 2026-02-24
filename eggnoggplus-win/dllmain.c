@@ -284,7 +284,7 @@ static unsigned long long luna_scaled_qpc(void) {
     unsigned long long now = luna_real_qpc();
     float scale = lua_manager_get_time_scale();
     if (scale < 0.05f) scale = 0.05f;
-    if (scale > 5.0f)  scale = 5.0f;
+    if (scale > 100.0f)  scale = 100.0f;
 
     if (scale != g_last_scale) {
         double dreal = (double)(now - g_real_anchor);

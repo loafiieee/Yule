@@ -37,6 +37,7 @@
 #define ADDR_OPTIONS_STATE_PAUSED     0x448388u
 #define ADDR_OPTIONS_ENTER            0x4381F0u
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
+#define ADDR_MAIN_PLAYER_POLL_CMDS    0x433F90u
 
 // Asset load hook used for moddable font glyph overlays.
 #define ADDR_RGBA_LOAD                0x4022A0u
@@ -128,6 +129,7 @@ typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
 typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
 typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);
+typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -156,12 +158,15 @@ static fn_void_void_t                p_options_enter = (fn_void_void_t)(uintptr_
 static fn_void_void_t                p_options_enter_paused = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER_PAUSED;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
+static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
+static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
 
 static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)ADDR_RGBA_LOAD;
 static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
 
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
+static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
@@ -174,6 +179,11 @@ static int g_capture_mod = -1;
 static int g_capture_cfg = -1;
 static char g_capture_buf[CAPTURE_BUF_SIZE];
 static float g_ui_scale = 1.0f;
+
+// Command-bit overrides applied in the main_player_poll_cmds detour.
+static volatile uint32_t g_input_override_mask[2] = { 0, 0 };
+static volatile int g_input_override_frames[2] = { 0, 0 };
+static volatile int g_input_override_replace[2] = { 0, 0 };
 
 // Forward decls for UI layout + state checks used by cursor hijack.
 typedef struct ModsLayout {
@@ -990,6 +1000,35 @@ int hooks_mods_menu_control_action(int action) {
     }
 }
 
+void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace) {
+    int pi = (player_index & 1);
+    if (frames == 0) {
+        g_input_override_mask[pi] = 0;
+        g_input_override_frames[pi] = 0;
+        g_input_override_replace[pi] = 0;
+        return;
+    }
+    g_input_override_mask[pi] = cmd_mask;
+    g_input_override_frames[pi] = frames;
+    g_input_override_replace[pi] = replace ? 1 : 0;
+}
+
+void hooks_clear_input_override(int player_index) {
+    int pi = (player_index & 1);
+    g_input_override_mask[pi] = 0;
+    g_input_override_frames[pi] = 0;
+    g_input_override_replace[pi] = 0;
+}
+
+int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_frames, int* out_replace) {
+    int pi = (player_index & 1);
+    int frames = g_input_override_frames[pi];
+    if (out_mask) *out_mask = g_input_override_mask[pi];
+    if (out_frames) *out_frames = frames;
+    if (out_replace) *out_replace = g_input_override_replace[pi];
+    return frames != 0;
+}
+
 static void render_rows(void) {
     rebuild_rows();
 
@@ -1342,6 +1381,35 @@ static void __cdecl hooked_options_enter_paused(void) {
     add_mods_button_to_options();
 }
 
+static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint32_t mode) {
+    fn_main_player_poll_cmds_t real_poll = p_main_player_poll_cmds_trampoline
+        ? p_main_player_poll_cmds_trampoline
+        : p_main_player_poll_cmds;
+
+    uint32_t cmd = real_poll ? real_poll(player_index, mode) : 0u;
+
+    {
+        int pi = (int)(player_index & 1u);
+        int frames = g_input_override_frames[pi];
+        if (frames != 0) {
+            uint32_t mask = g_input_override_mask[pi];
+            if (g_input_override_replace[pi]) cmd = mask;
+            else cmd |= mask;
+
+            if (frames > 0) {
+                frames--;
+                g_input_override_frames[pi] = frames;
+                if (frames == 0) {
+                    g_input_override_mask[pi] = 0;
+                    g_input_override_replace[pi] = 0;
+                }
+            }
+        }
+    }
+
+    return cmd;
+}
+
 static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
     fn_rgba_load_t real = p_rgba_load_trampoline ? p_rgba_load_trampoline : p_rgba_load;
     RgbaImage* img = real ? real(path) : NULL;
@@ -1367,6 +1435,12 @@ void hooks_init(void) {
         return;
     }
     p_options_enter_paused_trampoline = (fn_void_void_t)g_options_enter_paused_detour.trampoline;
+
+    if (!install_detour(&g_main_player_poll_cmds_detour, (void*)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS, (void*)&hooked_main_player_poll_cmds, 5)) {
+        LOG_WARN("hooks_init: failed to detour main_player_poll_cmds (input override API disabled)");
+    } else {
+        p_main_player_poll_cmds_trampoline = (fn_main_player_poll_cmds_t)g_main_player_poll_cmds_detour.trampoline;
+    }
 
     // Detour rgba_load so we can patch data/font8x8.png pixels before it is
     // packed into the engine's glyph atlas.

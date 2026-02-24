@@ -41,6 +41,9 @@ static lua_State *L = NULL;
 #define ADDR_BTN_PLAYER_FILTER     0x4325C0u
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_MAIN_BTN_FRAMED      0x432390u
+#define ADDR_MAIN_PLAYER_POLL_CMDS   0x433F90u
+#define ADDR_MAP_TILES_H             0x434950u
+#define ADDR_MAP_TILE                0x434A50u
 
 // Globals used by click/state-transition logic.
 #define ADDR_BTN_RESET_COUNTER     0x50E3A8u
@@ -70,6 +73,13 @@ static lua_State *L = NULL;
 #define ADDR_REMAP_STATE2          0x4483B8u
 #define ADDR_REMAP_STATE1          0x4483C8u
 
+// Gameplay globals (from bundled ghidra symbols).
+#define ADDR_GAME_ACTIVE_ROOM      0x541E08u
+#define ADDR_PLAYER_ARRAY          0x542058u
+#define ADDR_THINGS                0x542080u
+#define ADDR_THING_INFO            0x543640u
+#define ADDR_ROOM_W                0x55A3A4u
+
 typedef void* (__cdecl *fn_state_current_t)(void);
 typedef void* (__cdecl *fn_state_switch_t)(void*);
 typedef float (__cdecl *fn_mad_dim_t)(void);
@@ -89,6 +99,9 @@ typedef void  (__cdecl *fn_main_sprite_batches_draw_t)(void);
 typedef int   (__cdecl *fn_main_btn_framed_t)(int btn_ptr, int event_code);
 typedef void  (__cdecl *fn_button_set_w_ex_t)(int, float, float);
 typedef void  (__cdecl *fn_button_set_h_ex_t)(int, float, float);
+typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
+typedef int   (__cdecl *fn_map_tiles_h_t)(void);
+typedef int   (__cdecl *fn_map_tile_t)(int, int);
 
 static fn_state_current_t   p_state_current   = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_switch_t    p_state_switch    = (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
@@ -110,8 +123,16 @@ static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprit
 static fn_main_btn_framed_t   p_main_btn_framed   = (fn_main_btn_framed_t)(uintptr_t)ADDR_MAIN_BTN_FRAMED;
 static fn_button_set_w_ex_t   p_button_set_w_ex   = (fn_button_set_w_ex_t)(uintptr_t)0x4161a0u;
 static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintptr_t)0x416230u;
+static fn_main_player_poll_cmds_t p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
+static fn_map_tiles_h_t      p_map_tiles_h       = (fn_map_tiles_h_t)(uintptr_t)ADDR_MAP_TILES_H;
+static fn_map_tile_t         p_map_tile          = (fn_map_tile_t)(uintptr_t)ADDR_MAP_TILE;
 
 static volatile int* p_btn_reset_counter = (volatile int*)(uintptr_t)ADDR_BTN_RESET_COUNTER;
+static volatile int* p_game_active_room = (volatile int*)(uintptr_t)ADDR_GAME_ACTIVE_ROOM;
+static volatile int* p_room_w = (volatile int*)(uintptr_t)ADDR_ROOM_W;
+static uintptr_t* p_player_slots = (uintptr_t*)(uintptr_t)ADDR_PLAYER_ARRAY;
+static uint8_t* p_things = (uint8_t*)(uintptr_t)ADDR_THINGS;
+static uint8_t* p_thing_info = (uint8_t*)(uintptr_t)ADDR_THING_INFO;
 
 typedef struct UiHitBox {
     float x;
@@ -1030,6 +1051,61 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
         if (c < 0x09) return 0;
     }
     return 0;
+}
+
+// Gameplay telemetry offsets (player + thing structs).
+#define PLAYER_OFS_HAS_SWORD 0x11
+#define PLAYER_OFS_X         0x24
+#define PLAYER_OFS_Y         0x28
+#define PLAYER_OFS_VX        0x34
+#define PLAYER_OFS_VY        0x38
+#define PLAYER_OFS_ROOM      0x9B
+
+#define THING_SIZE           0x15C
+#define THING_OFS_ACTIVE     0x00
+#define THING_OFS_TYPE       0x01
+#define THING_OFS_X          0x24
+#define THING_OFS_Y          0x28
+#define THING_OFS_ROOM       0xC0
+#define THING_TYPE_SWORD     0x02
+
+static int ptr_readable(const void* p, SIZE_T len) {
+    return (p && len > 0 && !IsBadReadPtr(p, len)) ? 1 : 0;
+}
+
+static uintptr_t game_get_player_ptr(int player_index) {
+    if (player_index < 0 || player_index > 1) return 0;
+    if (!ptr_readable(p_player_slots + player_index, sizeof(uintptr_t))) return 0;
+    uintptr_t p = p_player_slots[player_index];
+    if (!p) return 0;
+    if (!ptr_readable((const void*)p, 0xB0)) return 0;
+    return p;
+}
+
+static int game_get_thing_count(void) {
+    if (!p_things || !p_thing_info) return 0;
+    if (p_thing_info <= p_things) return 0;
+    intptr_t bytes = (intptr_t)(p_thing_info - p_things);
+    if (bytes <= 0) return 0;
+    int n = (int)(bytes / THING_SIZE);
+    if (n < 0) n = 0;
+    if (n > 128) n = 128;
+    return n;
+}
+
+static void lua_push_field_number(lua_State* Ls, const char* key, double v) {
+    lua_pushnumber(Ls, v);
+    lua_setfield(Ls, -2, key);
+}
+
+static void lua_push_field_int(lua_State* Ls, const char* key, int v) {
+    lua_pushinteger(Ls, v);
+    lua_setfield(Ls, -2, key);
+}
+
+static void lua_push_field_bool(lua_State* Ls, const char* key, int v) {
+    lua_pushboolean(Ls, v ? 1 : 0);
+    lua_setfield(Ls, -2, key);
 }
 
 static UiNativeButton* mod_ui_native_find(LoadedMod* mod, const char* id, const char* state_name) {
@@ -2042,6 +2118,208 @@ static int lua_ui_button_activate_ptr(lua_State* Ls) {
     lua_pushstring(Ls, "no button dispatcher available");
     return 2;
 }
+
+// =============================
+// Gameplay API
+// =============================
+
+static int lua_game_poll_cmds(lua_State* Ls) {
+    int player_index = (int)luaL_optinteger(Ls, 1, 0);
+    int mode = (int)luaL_optinteger(Ls, 2, 1);
+    uint32_t cmd = 0;
+
+    player_index &= 1;
+
+    if (p_main_player_poll_cmds && !IsBadCodePtr((FARPROC)(void*)p_main_player_poll_cmds)) {
+        cmd = p_main_player_poll_cmds((uint32_t)player_index, (uint32_t)mode);
+    }
+
+    lua_pushinteger(Ls, (lua_Integer)cmd);
+    return 1;
+}
+
+static int lua_game_input_override(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1);
+    uint32_t cmd_mask = (uint32_t)luaL_checkinteger(Ls, 2);
+    int frames = (int)luaL_optinteger(Ls, 3, 1);
+    int replace = lua_toboolean(Ls, 4) ? 1 : 0;
+
+    hooks_set_input_override(player_index, cmd_mask, frames, replace);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_input_clear(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1);
+    hooks_clear_input_override(player_index);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_input_status(lua_State* Ls) {
+    int player_index = (int)luaL_optinteger(Ls, 1, 0);
+    uint32_t mask = 0;
+    int frames = 0;
+    int replace = 0;
+    int active = hooks_get_input_override(player_index, &mask, &frames, &replace);
+
+    lua_newtable(Ls);
+    lua_push_field_bool(Ls, "active", active);
+    lua_push_field_int(Ls, "mask", (int)mask);
+    lua_push_field_int(Ls, "frames", frames);
+    lua_push_field_bool(Ls, "replace", replace);
+    return 1;
+}
+
+static int lua_game_snapshot(lua_State* Ls) {
+    int player_index = (int)luaL_optinteger(Ls, 1, 0);
+    int include_tiles = lua_isnoneornil(Ls, 2) ? 1 : (lua_toboolean(Ls, 2) ? 1 : 0);
+    int enemy_index;
+    uintptr_t player_ptr;
+    uintptr_t enemy_ptr;
+    int in_game;
+
+    player_index &= 1;
+    enemy_index = (player_index + 1) & 1;
+    player_ptr = game_get_player_ptr(player_index);
+    enemy_ptr = game_get_player_ptr(enemy_index);
+    in_game = ui_state_matches_name(ui_current_state_ptr(), "game");
+
+    lua_newtable(Ls);
+    lua_push_field_bool(Ls, "in_game", in_game);
+    lua_push_field_int(Ls, "player_index", player_index);
+    lua_push_field_int(Ls, "enemy_index", enemy_index);
+
+    if (!player_ptr) {
+        lua_pushstring(Ls, "player pointer unavailable");
+        lua_setfield(Ls, -2, "error");
+        return 1;
+    }
+
+    {
+        float player_x = *(float*)(player_ptr + PLAYER_OFS_X);
+        float player_y = *(float*)(player_ptr + PLAYER_OFS_Y);
+        float player_vx = *(float*)(player_ptr + PLAYER_OFS_VX);
+        float player_vy = *(float*)(player_ptr + PLAYER_OFS_VY);
+        int player_has_sword = (*(uint8_t*)(player_ptr + PLAYER_OFS_HAS_SWORD) == 0) ? 1 : 0;
+
+        lua_push_field_number(Ls, "player_x", player_x);
+        lua_push_field_number(Ls, "player_y", player_y);
+        lua_push_field_number(Ls, "player_vx", player_vx);
+        lua_push_field_number(Ls, "player_vy", player_vy);
+        lua_push_field_bool(Ls, "player_has_sword", player_has_sword);
+
+        if (enemy_ptr) {
+            float enemy_x = *(float*)(enemy_ptr + PLAYER_OFS_X);
+            float enemy_y = *(float*)(enemy_ptr + PLAYER_OFS_Y);
+            float enemy_vx = *(float*)(enemy_ptr + PLAYER_OFS_VX);
+            float enemy_vy = *(float*)(enemy_ptr + PLAYER_OFS_VY);
+            int enemy_has_sword = (*(uint8_t*)(enemy_ptr + PLAYER_OFS_HAS_SWORD) == 0) ? 1 : 0;
+            lua_push_field_number(Ls, "enemy_dx", enemy_x - player_x);
+            lua_push_field_number(Ls, "enemy_dy", enemy_y - player_y);
+            lua_push_field_number(Ls, "enemy_vx", enemy_vx);
+            lua_push_field_number(Ls, "enemy_vy", enemy_vy);
+            lua_push_field_bool(Ls, "enemy_has_sword", enemy_has_sword);
+        } else {
+            lua_pushnil(Ls); lua_setfield(Ls, -2, "enemy_dx");
+            lua_pushnil(Ls); lua_setfield(Ls, -2, "enemy_dy");
+            lua_pushnil(Ls); lua_setfield(Ls, -2, "enemy_vx");
+            lua_pushnil(Ls); lua_setfield(Ls, -2, "enemy_vy");
+            lua_pushnil(Ls); lua_setfield(Ls, -2, "enemy_has_sword");
+        }
+
+        {
+            int room_index = 0;
+            int room_w = 0;
+            int room_h = 0;
+            int found_sword = 0;
+            double nearest_dx = 0.0;
+            double nearest_dy = 0.0;
+            double best_d2 = 0.0;
+
+            if (ptr_readable((const void*)p_game_active_room, sizeof(int))) {
+                room_index = *p_game_active_room;
+            } else {
+                room_index = (int)(int8_t)*(uint8_t*)(player_ptr + PLAYER_OFS_ROOM);
+            }
+            if (ptr_readable((const void*)p_room_w, sizeof(int))) {
+                room_w = *p_room_w;
+            }
+            if (p_map_tiles_h && !IsBadCodePtr((FARPROC)(void*)p_map_tiles_h)) {
+                room_h = p_map_tiles_h();
+            }
+            if (room_w < 0 || room_w > 2048) room_w = 0;
+            if (room_h < 0 || room_h > 2048) room_h = 0;
+
+            lua_push_field_int(Ls, "room_index", room_index);
+            lua_push_field_int(Ls, "room_width", room_w);
+            lua_push_field_int(Ls, "room_height", room_h);
+
+            {
+                int thing_count = game_get_thing_count();
+                for (int i = 0; i < thing_count; i++) {
+                    uint8_t* t = p_things + (i * THING_SIZE);
+                    if (!ptr_readable((const void*)t, THING_SIZE)) continue;
+                    if (t[THING_OFS_ACTIVE] == 0) continue;
+                    if (t[THING_OFS_TYPE] != THING_TYPE_SWORD) continue;
+                    if (ptr_readable((const void*)(t + THING_OFS_ROOM), sizeof(int))) {
+                        int thing_room = *(int*)(t + THING_OFS_ROOM);
+                        if (thing_room != room_index) continue;
+                    }
+                    {
+                        double dx = (double)(*(float*)(t + THING_OFS_X) - player_x);
+                        double dy = (double)(*(float*)(t + THING_OFS_Y) - player_y);
+                        double d2 = dx * dx + dy * dy;
+                        if (!found_sword || d2 < best_d2) {
+                            found_sword = 1;
+                            best_d2 = d2;
+                            nearest_dx = dx;
+                            nearest_dy = dy;
+                        }
+                    }
+                }
+            }
+
+            if (found_sword) {
+                lua_push_field_number(Ls, "nearest_sword_dx", nearest_dx);
+                lua_push_field_number(Ls, "nearest_sword_dy", nearest_dy);
+            } else {
+                lua_pushnil(Ls); lua_setfield(Ls, -2, "nearest_sword_dx");
+                lua_pushnil(Ls); lua_setfield(Ls, -2, "nearest_sword_dy");
+            }
+
+            if (include_tiles &&
+                in_game &&
+                room_w > 0 &&
+                room_h > 0 &&
+                p_map_tile &&
+                !IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+                int room_x0 = room_index * room_w;
+                lua_newtable(Ls);
+                for (int ty = 0; ty < room_h; ty++) {
+                    lua_newtable(Ls);
+                    for (int tx = 0; tx < room_w; tx++) {
+                        int tile_id = -1;
+                        int tile_ptr = p_map_tile(room_x0 + tx, ty);
+                        if (tile_ptr != 0 && !IsBadReadPtr((void*)(uintptr_t)tile_ptr, 1)) {
+                            tile_id = (int)(*(uint8_t*)(uintptr_t)tile_ptr);
+                        }
+                        lua_pushinteger(Ls, tile_id);
+                        lua_rawseti(Ls, -2, tx + 1);
+                    }
+                    lua_rawseti(Ls, -2, ty + 1);
+                }
+                lua_setfield(Ls, -2, "tiles_of_current_room");
+            } else {
+                lua_pushnil(Ls);
+                lua_setfield(Ls, -2, "tiles_of_current_room");
+            }
+        }
+    }
+
+    return 1;
+}
+
 // =============================
 // Font glyph extension API
 // =============================
@@ -2199,6 +2477,15 @@ lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_activate_ptr,
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_remove_ptr, 1);    lua_setfield(Ls, -2, "button_remove_ptr");
 }
 
+static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_snapshot, 1);       lua_setfield(Ls, -2, "snapshot");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds, 1);      lua_setfield(Ls, -2, "poll_cmds");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_override, 1); lua_setfield(Ls, -2, "input_override");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_clear, 1);    lua_setfield(Ls, -2, "input_clear");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_status, 1);   lua_setfield(Ls, -2, "input_status");
+}
+
 static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_loaded, 1);         lua_setfield(Ls, -2, "font_loaded");
@@ -2248,6 +2535,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     // UI helpers (immediate mode, usable from on_frame in any game state).
     push_ui_api_table(Ls, mod);
     lua_setfield(Ls, -2, "ui");
+
+    // Gameplay helpers (snapshot + input simulation).
+    push_game_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "game");
 
     // Font glyph extension (for "VS " .. string.char(byte) style icons).
     push_font_api_table(Ls, mod);
@@ -2592,7 +2883,7 @@ double lua_manager_on_delta_time(double dt_seconds) {
     // Update time scale multiplier
     double scale = out / dt_seconds;
     if (scale < 0.05) scale = 0.05;
-    if (scale > 5.0)  scale = 5.0;
+    if (scale > 100.0)  scale = 100.0;
     g_time_scale = (float)scale;
 
     return out;

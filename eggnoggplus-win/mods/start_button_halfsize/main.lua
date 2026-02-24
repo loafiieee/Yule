@@ -40,6 +40,8 @@ mod.on_frame(function()
         resized_this_visit = false
         return
     end
+    frames_in_main = frames_in_main + 1
+    if frames_in_main < 1 then return end
 
     if not in_main_menu then
         in_main_menu = true

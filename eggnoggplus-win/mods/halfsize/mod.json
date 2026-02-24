@@ -1,0 +1,9 @@
+{
+  "id": "halfsize",
+  "name": "Halfsize",
+  "version": "1.0.0",
+  "author": "codex",
+  "description": "Resizes the vanilla START button in main menu to half size.",
+  "api_version": 1,
+  "entry": "main.lua"
+}

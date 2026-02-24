@@ -1,0 +1,21 @@
+[17:31:48] [INFO] Mod framework initializing...
+[17:31:48] [INFO] Mod framework API version: 1
+[17:31:48] [INFO] Scanning mods/ folder...
+[17:31:48] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[17:31:48] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[17:31:48] [INFO] [mod:button test] Map Menu Button Example loaded
+[17:31:48] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[17:31:48] [INFO] Loaded mod: button test
+[17:31:48] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[17:31:48] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[17:31:48] [INFO] Loaded mod: test
+[17:31:48] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[17:31:48] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[17:31:48] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[17:31:48] [INFO] [mod:poc_speedhack] enabled=true
+[17:31:48] [INFO] [mod:poc_speedhack] speed=1.2
+[17:31:48] [INFO] Loaded mod: poc_speedhack
+[17:31:48] [INFO] Done. 3 mod folder(s) scanned.
+[17:31:48] [INFO] hooks_init: custom MODS menu ready
+[17:31:48] [WARN] [mod:test] START button not found after main layout
+[17:31:50] [INFO] [mod:test] START button resized to half size

@@ -1,22 +1,22 @@
-[17:45:53] [INFO] Mod framework initializing...
-[17:45:53] [INFO] Mod framework API version: 1
-[17:45:53] [INFO] Scanning mods/ folder...
-[17:45:53] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
-[17:45:53] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
-[17:45:53] [INFO] [mod:button test] Map Menu Button Example loaded
-[17:45:53] [INFO] [mod:button test] Open map select (pregame) to see the test button
-[17:45:53] [INFO] Loaded mod: button test
-[17:45:53] [INFO] Loading mod: halfsize (Halfsize) v1.0.0 by codex
-[17:45:53] [INFO]   Resizes the vanilla START button in main menu to half size.
-[17:45:53] [INFO] Loaded mod: halfsize
-[17:45:53] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[17:45:53] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[17:45:53] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[17:45:53] [INFO] [mod:poc_speedhack] enabled=true
-[17:45:53] [INFO] [mod:poc_speedhack] speed=1.2
-[17:45:53] [INFO] Loaded mod: poc_speedhack
-[17:45:53] [INFO] Done. 3 mod folder(s) scanned.
-[17:45:53] [INFO] hooks_init: custom MODS menu ready
-[17:45:55] [INFO] [mod:halfsize] START button resized to half size
-[17:45:56] [INFO] [mod:button test] Map Menu Button Example unloaded
-[17:45:56] [INFO] [mod:poc_speedhack] Unloaded
+[21:47:31] [INFO] Mod framework initializing...
+[21:47:31] [INFO] Mod framework API version: 1
+[21:47:31] [INFO] Scanning mods/ folder...
+[21:47:31] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
+[21:47:31] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
+[21:47:31] [INFO] [mod:button test] Map Menu Button Example loaded
+[21:47:31] [INFO] [mod:button test] Open map select (pregame) to see the test button
+[21:47:31] [INFO] Loaded mod: button test
+[21:47:31] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[21:47:31] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[21:47:31] [INFO] Loaded mod: test
+[21:47:31] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[21:47:31] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[21:47:31] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[21:47:31] [INFO] [mod:poc_speedhack] enabled=true
+[21:47:31] [INFO] [mod:poc_speedhack] speed=1.2
+[21:47:31] [INFO] Loaded mod: poc_speedhack
+[21:47:31] [INFO] Done. 3 mod folder(s) scanned.
+[21:47:31] [INFO] hooks_init: custom MODS menu ready
+[21:47:38] [INFO] MODS: entering mods menu
+[21:48:50] [INFO] [mod:button test] Map Menu Button Example unloaded
+[21:48:50] [INFO] [mod:poc_speedhack] Unloaded

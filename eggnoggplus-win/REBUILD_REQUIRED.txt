@@ -1,0 +1,8 @@
+This zip includes new C code (font_ext.*) and API changes.
+
+You MUST rebuild SDL2.dll for these changes to take effect.
+
+On Windows/MSYS2 (32-bit MinGW), from this folder:
+  ./compile.sh
+
+Then copy the newly built SDL2.dll into your Eggnogg+ folder (replacing the old one).

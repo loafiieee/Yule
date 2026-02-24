@@ -1,0 +1,10 @@
+{
+  "id": "telemetry_http",
+  "name": "Telemetry HTTP",
+  "version": "0.1.0",
+  "author": "Codex",
+  "description": "Serves mod.game telemetry on localhost over HTTP.",
+  "api_version": 1,
+  "entry": "main.lua",
+  "config": "config.cfg"
+}

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -25,6 +27,20 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod);
 // action: 1=up 2=down 3=left 4=right 5=activate 6=back
 // Returns 1 if consumed, else 0.
 int hooks_mods_menu_control_action(int action);
+
+// Configure synthetic command-bit overrides for main_player_poll_cmds.
+// player_index: 0 or 1
+// cmd_mask: command bits to apply
+// frames:
+//   >0  apply for that many polls, then auto-clear
+//    0  clear override
+//   <0  hold indefinitely until cleared
+// replace:
+//   0 => OR cmd_mask with real commands
+//   1 => replace real commands with cmd_mask
+void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace);
+void hooks_clear_input_override(int player_index);
+int  hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_frames, int* out_replace);
 
 #ifdef __cplusplus
 }

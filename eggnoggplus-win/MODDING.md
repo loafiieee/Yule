@@ -317,6 +317,42 @@ API summary:
 - `mod.ui.button(id, label [,w [,h]]) -> clicked`
 - `mod.ui.button_at(id, label, x, y [,w [,h]]) -> clicked`
 
+## Gameplay API (`mod.game`)
+
+`mod.game` exposes low-level gameplay telemetry and command-bit input overrides.
+
+```lua
+local s = mod.game.snapshot(0) -- player 0 perspective
+if s.in_game then
+  mod.log(("p=(%.2f,%.2f) v=(%.2f,%.2f)"):format(s.player_x, s.player_y, s.player_vx, s.player_vy))
+end
+```
+
+`snapshot(player_index [,include_tiles=true]) -> table`
+- Returns a table with:
+  - `player_x`, `player_y`, `player_vx`, `player_vy`
+  - `enemy_dx`, `enemy_dy`, `enemy_vx`, `enemy_vy` (enemy relative position + velocity)
+  - `player_has_sword`, `enemy_has_sword`
+  - `nearest_sword_dx`, `nearest_sword_dy` (relative to player, or `nil` if none)
+  - `tiles_of_current_room` (2D array of tile ids, or `nil` if not available)
+  - `room_index`, `room_width`, `room_height`, `in_game`
+
+`poll_cmds(player_index [,mode=1]) -> int`
+- Returns the game's raw command bitmask for the player.
+
+`input_override(player_index, cmd_mask [,frames=1 [,replace=false]]) -> bool`
+- Simulates inputs by overriding command bits in `main_player_poll_cmds`.
+- `frames > 0`: apply for N polls then clear.
+- `frames = 0`: clear override.
+- `frames < 0`: hold until cleared.
+- `replace=false` ORs bits with real input, `replace=true` fully replaces real input.
+
+`input_clear(player_index) -> bool`
+- Clears any active override for that player.
+
+`input_status(player_index) -> { active, mask, frames, replace }`
+- Returns current override state.
+
 ## Font glyph overlays (`mod.font`)
 
 If you like the "icons-as-bytes" style for menu labels:

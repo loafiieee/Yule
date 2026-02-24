@@ -1,0 +1,9 @@
+{
+  "id": "test",
+  "name": "test",
+  "version": "1.0.0",
+  "author": "loaf",
+  "description": "Shows a mod UI button on the main menu and logs when pressed.",
+  "api_version": 1,
+  "entry": "main.lua"
+}

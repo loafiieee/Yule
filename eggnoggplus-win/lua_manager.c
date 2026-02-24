@@ -99,8 +99,8 @@ static fn_button_count_t    p_button_count    = (fn_button_count_t)(uintptr_t)AD
 static fn_btn_player_filter_t p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
 static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprite_batches_draw_t)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW;
 static fn_main_btn_framed_t   p_main_btn_framed   = (fn_main_btn_framed_t)(uintptr_t)ADDR_MAIN_BTN_FRAMED;
-static fn_button_set_w_ex_t   p_button_set_w_ex   = (fn_button_set_w_ex_t)(uintptr_t)0x4160d0u;
-static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintptr_t)0x416140u;
+static fn_button_set_w_ex_t   p_button_set_w_ex   = (fn_button_set_w_ex_t)(uintptr_t)0x4161a0u;
+static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintptr_t)0x416230u;
 
 typedef struct UiHitBox {
     float x;

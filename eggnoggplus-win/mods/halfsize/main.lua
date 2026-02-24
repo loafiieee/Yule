@@ -1,8 +1,8 @@
 local START_ACTION_PTR = 0x432440
 
 -- Two-buttons-on-main-menu scaffold:
---   VS \x9E          -> sets config.vs_ai = false and starts
---   VS <alloc glyph> -> sets config.vs_ai = true and starts
+--   Left:  VS <human glyph>  -> sets config.vs_ai = false, then normal START
+--   Right: VS <ai glyph>     -> sets config.vs_ai = true, then normal START
 
 -- You said you like: "VS " .. string.char(0x9E)
 local HUMAN_GLYPH = 0x9E
@@ -26,23 +26,34 @@ local GAP = 10.0 -- pixels between the two buttons
 
 local last_start_ptr = nil
 
--- We must capture the *original* START button rect only once per main-menu visit.
--- If we recapture after we resize it, we'd keep halving it every frame.
+-- Baseline START rect capture
 local baseline_captured = false
 local baseline_from_initial = false
 local base_x, base_y, base_w, base_h = nil, nil, nil, nil
 
-local function capture_start_button_ptr_and_baseline(state_name)
+local function in_main_menu_state(st)
+    return st == "main" or st == "main_initial"
+end
+
+local function cfg_set_bool(key, val)
+    if not (config and config.get and config.set) then return end
+    local cur = config.get(key, false)
+    local want = val and true or false
+    local have = cur and true or false
+    if have ~= want then
+        config.set(key, want)
+    end
+end
+
+local function capture_start_ptr_and_baseline(state_name)
     local ptr = mod.ui.find_button_by_action_ptr(START_ACTION_PTR)
     if not ptr then return nil end
 
-    -- Always keep the pointer so we can invoke the START action even if we
-    -- later hide/shrink the vanilla button.
     last_start_ptr = ptr
 
     -- Capture baseline once (before we touch size/pos).
     -- If we first see the button in "main_initial", capture a provisional baseline,
-    -- then refresh it once when we reach "main" (the fully-laid-out state).
+    -- then refresh it once when we reach "main" (fully laid out).
     local want_capture = (not baseline_captured) or (baseline_from_initial and state_name == "main")
     if want_capture then
         local x, y, w, h = mod.ui.button_rect_ptr(ptr)
@@ -59,62 +70,95 @@ local function capture_start_button_ptr_and_baseline(state_name)
     return ptr
 end
 
-local function set_vs_ai(enabled)
-    if config and config.set then
-        config.set("vs_ai", enabled and true or false)
-    end
-end
+local function dispatch_start(ptr)
+    if not ptr then return end
 
-local function invoke_start(ptr)
-    if not (ptr and mod.ui.button_invoke_ptr) then return end
+    local fn = mod.ui.button_invoke_ptr or mod.ui.button_activate_ptr
+    if not fn then return end
 
-    -- Different buttons in Eggnogg+ use different "event codes" for activation.
-    -- Rather than hard-coding one, try a small set until the state changes.
-    -- This makes the mod robust across minor game updates.
     local before = mod.ui.state_name()
-    local codes = { 1, 2, 3, 4, 0 }
+    local codes = { 1, 3, 0, 2, 4 }
+
     for _, code in ipairs(codes) do
-        local ret, err = mod.ui.button_invoke_ptr(ptr, code)
+        local ret, err = fn(ptr, code)
         if ret == nil then
-            mod.warn("button_invoke_ptr failed (code=" .. tostring(code) .. "): " .. tostring(err))
+            mod.warn("start dispatch failed (code=" .. tostring(code) .. "): " .. tostring(err))
         end
         local after = mod.ui.state_name()
-        if after ~= before and after ~= "main" and after ~= "main_initial" then
+        if after ~= before then
             return
         end
     end
 end
 
+-- Ensure clicking the *left* (vanilla) button disables vs_ai BEFORE the game handles the click.
+mod.on_event(function(e)
+    if e.type ~= "mousebuttondown" or e.button ~= 1 then
+        return false
+    end
+
+    local st = mod.ui.state_name()
+    if not in_main_menu_state(st) then
+        return false
+    end
+
+    local ptr = mod.ui.find_button_by_action_ptr(START_ACTION_PTR)
+    if not ptr then
+        return false
+    end
+
+    local x, y, w, h = mod.ui.button_rect_ptr(ptr)
+    if not (x and y and w and h) then
+        return false
+    end
+
+    -- Rect is center-based
+    if math.abs(e.x - x) <= (w * 0.5) and math.abs(e.y - y) <= (h * 0.5) then
+        cfg_set_bool("vs_ai", false)
+    end
+
+    return false
+end)
+
+local was_in_main = false
+
 mod.on_frame(function()
     local st = mod.ui.state_name()
-    if st ~= "main" and st ~= "main_initial" then
-        -- Leaving the menu: allow a fresh baseline capture next time we return.
+    local in_main = in_main_menu_state(st)
+
+    -- Entering main menu: default to VS human.
+    if in_main and not was_in_main then
+        cfg_set_bool("vs_ai", false)
+    end
+
+    was_in_main = in_main
+
+    if not in_main then
+        -- Leaving: allow a fresh baseline capture next time.
         baseline_captured = false
         baseline_from_initial = false
         base_x, base_y, base_w, base_h = nil, nil, nil, nil
         return
     end
 
-    local start_ptr = capture_start_button_ptr_and_baseline(st)
+    local start_ptr = capture_start_ptr_and_baseline(st)
     if not start_ptr then return end
 
-    -- Keep the vanilla START button alive so its action works.
-    -- We repurpose it as "VS <human>" (label + size/pos).
+    -- Repurpose the vanilla START button as the left (VS human) button.
     if mod.ui.button_set_label_ptr then
         mod.ui.button_set_label_ptr(start_ptr, LABEL_HUMAN)
     end
 
-    -- Create the AI button (engine-backed so selector can navigate to it).
+    -- Create the right (VS AI) button.
     local clicked_ai = mod.ui.native_button("vs_ai", LABEL_AI, 1.0, 4.5, 3.0, 6.0)
 
-    -- If we know where START was, position our two buttons to fit in the same slot.
+    -- Position both buttons into the original START slot.
     if base_w and base_h and base_x and base_y then
         local gap = GAP
         if gap < 0.0 then gap = 0.0 end
 
         local w_each = (base_w - gap) * 0.5
         if w_each < 40.0 then
-            -- Too tight; fall back to equal split without a gap.
             gap = 0.0
             w_each = base_w * 0.5
         end
@@ -123,7 +167,6 @@ mod.on_frame(function()
         local human_x = left_edge + (w_each * 0.5)
         local ai_x    = human_x + w_each + gap
 
-        -- Resize/move the vanilla start button into the left half.
         if mod.ui.button_resize_ptr then
             mod.ui.button_resize_ptr(start_ptr, w_each, base_h)
         end
@@ -131,16 +174,12 @@ mod.on_frame(function()
             mod.ui.button_set_pos_ptr(start_ptr, human_x, base_y)
         end
 
-        -- Position the AI button into the right half.
         mod.ui.native_resize("vs_ai", w_each, base_h)
         mod.ui.native_set_pos("vs_ai", ai_x, base_y)
     end
 
-    -- Human: default off. Set every frame we're on the main menu so it stays consistent.
-    set_vs_ai(false)
-
     if clicked_ai then
-        set_vs_ai(true)
-        invoke_start(last_start_ptr)
+        cfg_set_bool("vs_ai", true)
+        dispatch_start(last_start_ptr)
     end
 end)

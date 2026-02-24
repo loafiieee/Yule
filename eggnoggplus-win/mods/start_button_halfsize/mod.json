@@ -1,9 +1,0 @@
-{
-  "id": "start_button_halfsize",
-  "name": "Start Button Halfsize",
-  "version": "1.0.0",
-  "author": "codex",
-  "description": "Example mod: resizes the vanilla START button in main menu to half size.",
-  "api_version": 1,
-  "entry": "main.lua"
-}

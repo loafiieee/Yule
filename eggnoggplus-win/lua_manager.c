@@ -24,6 +24,7 @@ static lua_State *L = NULL;
 
 // Engine symbols used by the lightweight Lua UI overlay.
 #define ADDR_STATE_CURRENT         0x405DB0u
+#define ADDR_STATE_SWITCH          0x405DC0u
 #define ADDR_MAD_W                 0x404300u
 #define ADDR_MAD_H                 0x404320u
 #define ADDR_PLOT_TEXT             0x4304E0u
@@ -41,11 +42,16 @@ static lua_State *L = NULL;
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_MAIN_BTN_FRAMED      0x432390u
 
+// Globals used by click/state-transition logic.
+#define ADDR_BTN_RESET_COUNTER     0x50E3A8u
+
 // Reverse-engineered button struct field offsets (from button_ex in ghidra).
 #define BTN_OFS_CENTER_X          0x10
 #define BTN_OFS_CENTER_Y          0x14
 #define BTN_OFS_FLAGS             0xBC
+#define BTN_OFS_NOLINK_FLAG       0xBD
 #define BTN_OFS_LABEL_PTR         0xC8
+#define BTN_OFS_LINK_PTR          0xE0
 #define BTN_OFS_ACTION_PTR        0xE4
 
 // Bits in the 0xBC flags field that affect focus/navigation in menu logic.
@@ -65,6 +71,7 @@ static lua_State *L = NULL;
 #define ADDR_REMAP_STATE1          0x4483C8u
 
 typedef void* (__cdecl *fn_state_current_t)(void);
+typedef void* (__cdecl *fn_state_switch_t)(void*);
 typedef float (__cdecl *fn_mad_dim_t)(void);
 typedef void  (__cdecl *fn_plot_text_t)(const char*, int);
 typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
@@ -84,6 +91,7 @@ typedef void  (__cdecl *fn_button_set_w_ex_t)(int, float, float);
 typedef void  (__cdecl *fn_button_set_h_ex_t)(int, float, float);
 
 static fn_state_current_t   p_state_current   = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
+static fn_state_switch_t    p_state_switch    = (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
 static fn_mad_dim_t         p_mad_w           = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_W;
 static fn_mad_dim_t         p_mad_h           = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_H;
 static fn_plot_text_t       p_plot_text       = (fn_plot_text_t)(uintptr_t)ADDR_PLOT_TEXT;
@@ -102,6 +110,8 @@ static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprit
 static fn_main_btn_framed_t   p_main_btn_framed   = (fn_main_btn_framed_t)(uintptr_t)ADDR_MAIN_BTN_FRAMED;
 static fn_button_set_w_ex_t   p_button_set_w_ex   = (fn_button_set_w_ex_t)(uintptr_t)0x4161a0u;
 static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintptr_t)0x416230u;
+
+static volatile int* p_btn_reset_counter = (volatile int*)(uintptr_t)ADDR_BTN_RESET_COUNTER;
 
 typedef struct UiHitBox {
     float x;
@@ -1679,7 +1689,6 @@ static int lua_ui_native_button(lua_State* Ls) {
             // +0xE0: link target / state bridge (must be non-null for some menus)
             // +0xE4: per-player filter pointer (used by selectors)
             *(void**)((uint8_t*)b->btn_ptr + 0xE0) = ui_current_state_ptr();
-            *(void**)((uint8_t*)b->btn_ptr + 0xE4) = (void*)&ui_native_player_filter_proxy;
         }
     }
 
@@ -1936,6 +1945,13 @@ static int lua_ui_button_invoke_ptr(lua_State* Ls) {
     void* btn = ui_lua_ptr_to_button(Ls, 1);
     int event_code = (int)luaL_optinteger(Ls, 2, 3);
 
+    // Mirror the game's click logic: if an action runs without resetting the button system,
+    // and the button has a non-null link target, activation will transition states.
+    // (See do_click_ex in ghidra: action return != 0 + link_ptr != NULL => state_switch(link_ptr))
+    int reset_before = (p_btn_reset_counter && !IsBadReadPtr((void*)p_btn_reset_counter, sizeof(int)))
+                           ? *p_btn_reset_counter
+                           : 0;
+
     if (!btn) {
         lua_pushnil(Ls);
         lua_pushstring(Ls, "invalid button pointer");
@@ -1949,24 +1965,82 @@ static int lua_ui_button_invoke_ptr(lua_State* Ls) {
     }
 
     void* fn_raw = *(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR);
-    if (!fn_raw) {
-        lua_pushnil(Ls);
-        lua_pushstring(Ls, "button has no action");
-        return 2;
+
+    // In the base game, buttons are allowed to have no action (NULL) and still act as links.
+    int ret = 1;
+
+    if (fn_raw) {
+        if (IsBadCodePtr((FARPROC)fn_raw)) {
+            lua_pushnil(Ls);
+            lua_pushstring(Ls, "invalid action pointer");
+            return 2;
+        }
+
+        // Action signature in Eggnogg+: int __cdecl action(void* btn, int event_code)
+        int (__cdecl *fn)(void*, int) = (int (__cdecl *)(void*, int))(intptr_t)fn_raw;
+        ret = fn(btn, event_code);
     }
 
-    if (IsBadCodePtr((FARPROC)fn_raw)) {
-        lua_pushnil(Ls);
-        lua_pushstring(Ls, "invalid action pointer");
-        return 2;
-    }
+    // If activation happened and the action returned nonzero, follow link target (if any),
+    // but only if the action did not reset the button system.
+    if (event_code == 3 && ret != 0) {
+        int reset_after = (p_btn_reset_counter && !IsBadReadPtr((void*)p_btn_reset_counter, sizeof(int)))
+                              ? *p_btn_reset_counter
+                              : reset_before;
 
-    // Action signature in Eggnogg+: int __cdecl action(void* btn, int event_code)
-    int (__cdecl *fn)(void*, int) = (int (__cdecl *)(void*, int))(intptr_t)fn_raw;
-    int ret = fn(btn, event_code);
+        if (reset_after != reset_before) {
+            // Match do_click_ex semantics: if the button system was reset, don't state_switch here.
+            ret = -1000;
+        } else {
+            void* link_ptr = NULL;
+            if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_LINK_PTR, sizeof(void*))) {
+                link_ptr = *(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR);
+            }
+
+            uint8_t nolink = 0;
+            if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_NOLINK_FLAG, sizeof(uint8_t))) {
+                nolink = *(uint8_t*)((uint8_t*)btn + BTN_OFS_NOLINK_FLAG);
+            }
+
+            if (link_ptr && !nolink && p_state_switch && !IsBadCodePtr((FARPROC)(void*)p_state_switch)) {
+                p_state_switch(link_ptr);
+                ret = -1000;
+            }
+        }
+    }
 
     lua_pushinteger(Ls, ret);
     return 1;
+}
+
+
+static int lua_ui_button_activate_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    int event_code = (int)luaL_optinteger(Ls, 2, 3);
+
+    if (!btn) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "invalid button pointer");
+        return 2;
+    }
+
+    // Prefer the game's framed dispatcher: this is what real menu clicks go through.
+    if (p_main_btn_framed) {
+        int ret = p_main_btn_framed((int)(intptr_t)btn, event_code);
+        lua_pushinteger(Ls, ret);
+        return 1;
+    }
+
+    // Fallback: older builds may not have main_btn_framed resolved.
+    if (p_btn_player_filter) {
+        int ret = p_btn_player_filter(btn, event_code);
+        lua_pushinteger(Ls, ret);
+        return 1;
+    }
+
+    lua_pushnil(Ls);
+    lua_pushstring(Ls, "no button dispatcher available");
+    return 2;
 }
 // =============================
 // Font glyph extension API
@@ -2119,6 +2193,7 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_set_pos_ptr, 1);   lua_setfield(Ls, -2, "button_set_pos_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_set_label_ptr, 1); lua_setfield(Ls, -2, "button_set_label_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_invoke_ptr, 1); lua_setfield(Ls, -2, "button_invoke_ptr");
+lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_activate_ptr, 1); lua_setfield(Ls, -2, "button_activate_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_resize_ptr, 1);    lua_setfield(Ls, -2, "button_resize_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_hide_ptr, 1);      lua_setfield(Ls, -2, "button_hide_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_remove_ptr, 1);    lua_setfield(Ls, -2, "button_remove_ptr");

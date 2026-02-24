@@ -4,11 +4,6 @@
 
 -Glow sprite is broken?
 
--Buttons made using the UI api in mapmenu (pregame) are unclickable using keyboard selectos
-
--Cant select button after resizing
-
--Resizing an element in main on startup doesn't work until you navigate away from the main menu then back.
 
 WAY LATER STUFF:
 

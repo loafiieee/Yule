@@ -296,7 +296,11 @@ Pointer APIs:
 - `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
 - `mod.ui.button_rect_ptr(ptr) -> x, y, w, h` (or `nil` if invalid)
 - `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
-- `mod.ui.button_invoke_ptr(ptr [,event_code]) -> int | nil, err` (calls the button's action callback; default `event_code=3`)
+- `mod.ui.button_invoke_ptr(ptr [,event_code]) -> int | nil, err`
+  - Calls the button's action callback.
+  - When `event_code=3` (activation/click), it also follows the button's link target (state transition) if the engine would.
+- `mod.ui.button_activate_ptr(ptr [,event_code]) -> int | nil, err`
+  - Calls the game's framed button handler (used for hover/selector behavior; does **not** follow link targets).
 - `mod.ui.button_set_label_ptr(ptr, label) -> bool`
 - `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
   - Tip: some menu screens recreate buttons every frame/state transition; call this from `on_frame` to keep your override applied.

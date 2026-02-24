@@ -19,3 +19,5 @@
 [17:31:48] [INFO] hooks_init: custom MODS menu ready
 [17:31:48] [WARN] [mod:test] START button not found after main layout
 [17:31:50] [INFO] [mod:test] START button resized to half size
+[17:32:25] [INFO] [mod:button test] Map Menu Button Example unloaded
+[17:32:25] [INFO] [mod:poc_speedhack] Unloaded

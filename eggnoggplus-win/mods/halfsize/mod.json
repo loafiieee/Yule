@@ -3,7 +3,8 @@
   "name": "test",
   "version": "1.0.0",
   "author": "loaf",
-  "description": "Shows a mod UI button on the main menu and logs when pressed.",
+  "description": "Adds VS Human / VS AI buttons on the main menu.",
   "api_version": 1,
-  "entry": "main.lua"
+  "entry": "main.lua",
+  "config": "config.cfg"
 }

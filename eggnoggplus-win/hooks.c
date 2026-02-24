@@ -6,6 +6,7 @@
 
 #include "hooks.h"
 #include "lua_manager.h"
+#include "font_ext.h"
 #include "log.h"
 
 #define ADDR_STATE_CURRENT            0x405DB0u
@@ -36,6 +37,9 @@
 #define ADDR_OPTIONS_STATE_PAUSED     0x448388u
 #define ADDR_OPTIONS_ENTER            0x4381F0u
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
+
+// Asset load hook used for moddable font glyph overlays.
+#define ADDR_RGBA_LOAD                0x4022A0u
 
 #define MAX_MENU_ROWS     2048
 #define CAPTURE_BUF_SIZE   256
@@ -123,6 +127,7 @@ typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
 typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
 typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
+typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -152,8 +157,12 @@ static fn_void_void_t                p_options_enter_paused = (fn_void_void_t)(u
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
 
+static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)ADDR_RGBA_LOAD;
+static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
+
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
+static Detour g_rgba_load_detour;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -1333,6 +1342,15 @@ static void __cdecl hooked_options_enter_paused(void) {
     add_mods_button_to_options();
 }
 
+static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
+    fn_rgba_load_t real = p_rgba_load_trampoline ? p_rgba_load_trampoline : p_rgba_load;
+    RgbaImage* img = real ? real(path) : NULL;
+    if (img) {
+        font_ext_on_rgba_load(path, img);
+    }
+    return img;
+}
+
 void hooks_init(void) {
     static int done = 0;
     if (done) return;
@@ -1349,6 +1367,16 @@ void hooks_init(void) {
         return;
     }
     p_options_enter_paused_trampoline = (fn_void_void_t)g_options_enter_paused_detour.trampoline;
+
+    // Detour rgba_load so we can patch data/font8x8.png pixels before it is
+    // packed into the engine's glyph atlas.
+    // rgba_load has an 8-byte prologue (push ebx; sub esp,0x28; lea ...), so
+    // we patch 8 bytes to avoid splitting instructions.
+    if (!install_detour(&g_rgba_load_detour, (void*)(uintptr_t)ADDR_RGBA_LOAD, (void*)&hooked_rgba_load, 8)) {
+        LOG_ERROR("hooks_init: failed to detour rgba_load (font glyph overlay disabled)");
+    } else {
+        p_rgba_load_trampoline = (fn_rgba_load_t)g_rgba_load_detour.trampoline;
+    }
 
     LOG_INFO("hooks_init: custom MODS menu ready");
 }

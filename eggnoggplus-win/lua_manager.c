@@ -10,6 +10,7 @@
 #include "log.h"
 #include "lua_manager.h"
 #include "hooks.h"
+#include "font_ext.h"
 
 static lua_State *L = NULL;
 
@@ -189,6 +190,11 @@ typedef struct LoadedMod {
     int ui_native_count;
     int ui_native_cap;
 
+
+    // Strings allocated by the framework on behalf of this mod (e.g. button labels).
+    char** ui_string_pool;
+    int ui_string_count;
+    int ui_string_cap;
     // =============================
     // Optional config (in-game editable)
     // =============================
@@ -912,6 +918,7 @@ static void mod_ui_reset_frame(LoadedMod* mod, void* state_ptr) {
 
 static void mod_ui_free(LoadedMod* mod) {
     if (!mod) return;
+
     if (mod->ui_hitboxes) {
         free(mod->ui_hitboxes);
         mod->ui_hitboxes = NULL;
@@ -930,6 +937,16 @@ static void mod_ui_free(LoadedMod* mod) {
     }
     mod->ui_native_count = 0;
     mod->ui_native_cap = 0;
+
+    if (mod->ui_string_pool) {
+        for (int i = 0; i < mod->ui_string_count; i++) {
+            if (mod->ui_string_pool[i]) free(mod->ui_string_pool[i]);
+        }
+        free(mod->ui_string_pool);
+        mod->ui_string_pool = NULL;
+    }
+    mod->ui_string_count = 0;
+    mod->ui_string_cap = 0;
 }
 
 static void mod_ui_push_hitbox(LoadedMod* mod, float x, float y, float w, float h) {
@@ -1750,6 +1767,30 @@ static int lua_ui_native_hide(lua_State* Ls) {
     return 1;
 }
 
+
+
+static char* mod_ui_pool_strdup(LoadedMod* mod, const char* s, size_t len) {
+    if (!mod || !s) return NULL;
+    if (len > 2048) len = 2048; // sanity cap for UI strings
+    char* mem = (char*)malloc(len + 1);
+    if (!mem) return NULL;
+    memcpy(mem, s, len);
+    mem[len] = '\0';
+
+    if (mod->ui_string_count + 1 > mod->ui_string_cap) {
+        int newcap = (mod->ui_string_cap == 0) ? 8 : (mod->ui_string_cap * 2);
+        char** np = (char**)realloc(mod->ui_string_pool, sizeof(char*) * newcap);
+        if (!np) {
+            free(mem);
+            return NULL;
+        }
+        mod->ui_string_pool = np;
+        mod->ui_string_cap = newcap;
+    }
+    mod->ui_string_pool[mod->ui_string_count++] = mem;
+    return mem;
+}
+
 static void* ui_lua_ptr_to_button(lua_State* Ls, int idx) {
     if (!lua_isnumber(Ls, idx)) return NULL;
     uintptr_t raw = (uintptr_t)lua_tonumber(Ls, idx);
@@ -1767,10 +1808,13 @@ static int lua_ui_find_button_by_action_ptr(lua_State* Ls) {
         lua_pushnil(Ls);
         return 1;
     }
-    if (_stricmp(state_name, "main_initial") == 0) {
-        lua_pushnil(Ls);
-        return 1;
-    }
+    // NOTE: We used to hard-disable button scanning during main_initial because
+    // the button list can be in flux during the startup handoff. That makes it
+    // impossible for mods to tweak the initial title screen (e.g. resize/move
+    // the START button) unless the user leaves/re-enters the menu.
+    //
+    // Instead of blanket-disabling, keep scanning but guard all reads so we
+    // never dereference an invalid transient pointer.
 
     {
         int count = p_button_count();
@@ -1781,6 +1825,7 @@ static int lua_ui_find_button_by_action_ptr(lua_State* Ls) {
         for (int i = 0; i < count; i++) {
             void* btn = p_button_get(i);
             if (!btn) continue;
+            if (IsBadReadPtr(btn, (SIZE_T)(BTN_OFS_ACTION_PTR + sizeof(void*)))) continue;
             if ((uintptr_t)(*(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR)) != action_ptr) continue;
             nth--;
             if (nth == 0) {
@@ -1804,10 +1849,7 @@ static int lua_ui_find_button_by_label(lua_State* Ls) {
     }
 
     // During main_initial handoff the button list is not always stable yet.
-    if (_stricmp(state_name, "main_initial") == 0) {
-        lua_pushnil(Ls);
-        return 1;
-    }
+    // We still allow scanning, but we guard all pointer reads (see below).
 
     int count = p_button_count();
     if (count <= 0 || count > 3000) {
@@ -1817,6 +1859,7 @@ static int lua_ui_find_button_by_label(lua_State* Ls) {
     for (int i = 0; i < count; i++) {
         void* btn = p_button_get(i);
         if (!btn) continue;
+        if (IsBadReadPtr(btn, (SIZE_T)(BTN_OFS_LABEL_PTR + sizeof(void*)))) continue;
         const char* txt = *(const char**)((uint8_t*)btn + BTN_OFS_LABEL_PTR);
         if (!ui_safe_string_readable(txt, 128)) continue;
         if (_stricmp(txt, label) != 0) continue;
@@ -1852,6 +1895,136 @@ static int lua_ui_button_set_pos_ptr(lua_State* Ls) {
     if (!btn) { lua_pushboolean(Ls, 0); return 1; }
     *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X) = x;
     *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y) = y;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+static int lua_ui_button_set_label_ptr(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    size_t len = 0;
+    const char* label = luaL_checklstring(Ls, 2, &len);
+
+    if (!mod || !btn || !label) { lua_pushboolean(Ls, 0); return 1; }
+    if (IsBadWritePtr((uint8_t*)btn + BTN_OFS_LABEL_PTR, (SIZE_T)sizeof(void*))) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    // Avoid churn/leaks when mods call this repeatedly with the same label.
+    const char* cur = NULL;
+    if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_LABEL_PTR, (SIZE_T)sizeof(void*))) {
+        cur = *(const char**)((uint8_t*)btn + BTN_OFS_LABEL_PTR);
+    }
+    if (cur && ui_safe_string_readable(cur, 256)) {
+        // strcmp is safe here because both strings are NUL-terminated.
+        if (strncmp(cur, label, len) == 0 && cur[len] == '\0') {
+            lua_pushboolean(Ls, 1);
+            return 1;
+        }
+    }
+
+    char* owned = mod_ui_pool_strdup(mod, label, len);
+    if (!owned) { lua_pushboolean(Ls, 0); return 1; }
+
+    *(const char**)((uint8_t*)btn + BTN_OFS_LABEL_PTR) = owned;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+
+static int lua_ui_button_invoke_ptr(lua_State* Ls) {
+    void* btn = ui_lua_ptr_to_button(Ls, 1);
+    int event_code = (int)luaL_optinteger(Ls, 2, 3);
+
+    if (!btn) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "invalid button pointer");
+        return 2;
+    }
+
+    if (IsBadReadPtr((uint8_t*)btn + BTN_OFS_ACTION_PTR, (SIZE_T)sizeof(void*))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "cannot read action pointer");
+        return 2;
+    }
+
+    void* fn_raw = *(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR);
+    if (!fn_raw) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "button has no action");
+        return 2;
+    }
+
+    if (IsBadCodePtr((FARPROC)fn_raw)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "invalid action pointer");
+        return 2;
+    }
+
+    // Action signature in Eggnogg+: int __cdecl action(void* btn, int event_code)
+    int (__cdecl *fn)(void*, int) = (int (__cdecl *)(void*, int))(intptr_t)fn_raw;
+    int ret = fn(btn, event_code);
+
+    lua_pushinteger(Ls, ret);
+    return 1;
+}
+// =============================
+// Font glyph extension API
+// =============================
+
+static int lua_font_loaded(lua_State* Ls) {
+    (void)mod_from_upvalue(Ls);
+    lua_pushboolean(Ls, font_ext_font_loaded() ? 1 : 0);
+    return 1;
+}
+
+static int lua_font_alloc_glyph(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* rel = luaL_checkstring(Ls, 1);
+    uint8_t b = 0;
+    char err[256] = {0};
+    if (!mod) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+    if (!font_ext_alloc_glyph(mod->id, mod->folder_path, rel, &b, err, (int)sizeof(err))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err[0] ? err : "alloc_glyph failed");
+        return 2;
+    }
+    lua_pushinteger(Ls, (int)b);
+    return 1;
+}
+
+static int lua_font_register_glyph(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int byte_value = (int)luaL_checkinteger(Ls, 1);
+    const char* rel = luaL_checkstring(Ls, 2);
+    int override_other = 0;
+
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+
+    if (lua_istable(Ls, 3)) {
+        lua_getfield(Ls, 3, "override");
+        override_other = lua_toboolean(Ls, -1) ? 1 : 0;
+        lua_pop(Ls, 1);
+    }
+
+    if (byte_value < 0) byte_value = 0;
+    if (byte_value > 255) byte_value = 255;
+
+    char err[256] = {0};
+    if (!font_ext_register_glyph(mod->id, mod->folder_path, (uint8_t)byte_value, rel, override_other, err, (int)sizeof(err))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err[0] ? err : "register_glyph failed");
+        return 2;
+    }
+
     lua_pushboolean(Ls, 1);
     return 1;
 }
@@ -1944,9 +2117,18 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_find_button_by_action_ptr, 1); lua_setfield(Ls, -2, "find_button_by_action_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_rect_ptr, 1);      lua_setfield(Ls, -2, "button_rect_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_set_pos_ptr, 1);   lua_setfield(Ls, -2, "button_set_pos_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_set_label_ptr, 1); lua_setfield(Ls, -2, "button_set_label_ptr");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_invoke_ptr, 1); lua_setfield(Ls, -2, "button_invoke_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_resize_ptr, 1);    lua_setfield(Ls, -2, "button_resize_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_hide_ptr, 1);      lua_setfield(Ls, -2, "button_hide_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_remove_ptr, 1);    lua_setfield(Ls, -2, "button_remove_ptr");
+}
+
+static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_loaded, 1);         lua_setfield(Ls, -2, "font_loaded");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_alloc_glyph, 1);    lua_setfield(Ls, -2, "alloc_glyph");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_register_glyph, 1); lua_setfield(Ls, -2, "register_glyph");
 }
 
 static int lua_mod_on_layout(lua_State* Ls) {
@@ -1991,6 +2173,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     // UI helpers (immediate mode, usable from on_frame in any game state).
     push_ui_api_table(Ls, mod);
     lua_setfield(Ls, -2, "ui");
+
+    // Font glyph extension (for "VS " .. string.char(byte) style icons).
+    push_font_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "font");
 
     // Fields (convenience)
     lua_pushstring(Ls, mod->id);      lua_setfield(Ls, -2, "id");
@@ -2150,6 +2336,8 @@ void lua_manager_init() {
     luaL_openlibs(L);
     extend_package_path();
 
+    font_ext_init();
+
     g_ui_mouse_x = 0;
     g_ui_mouse_y = 0;
     g_ui_mouse_down_left = 0;
@@ -2234,6 +2422,8 @@ void lua_manager_shutdown() {
 
     lua_close(L);
     L = NULL;
+
+    font_ext_shutdown();
 }
 
 // =============================

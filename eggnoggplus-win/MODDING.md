@@ -296,6 +296,8 @@ Pointer APIs:
 - `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
 - `mod.ui.button_rect_ptr(ptr) -> x, y, w, h` (or `nil` if invalid)
 - `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
+- `mod.ui.button_invoke_ptr(ptr [,event_code]) -> int | nil, err` (calls the button's action callback; default `event_code=3`)
+- `mod.ui.button_set_label_ptr(ptr, label) -> bool`
 - `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
   - Tip: some menu screens recreate buttons every frame/state transition; call this from `on_frame` to keep your override applied.
   - Tip: use `mod.ui.state_name() == "main"` (not `is_state("main")`) for vanilla main-menu button mutations, and consider a short frame delay after entering main.
@@ -310,6 +312,28 @@ API summary:
 - `mod.ui.text_at(text, x, y [,scale [,r [,g [,b]]]])`
 - `mod.ui.button(id, label [,w [,h]]) -> clicked`
 - `mod.ui.button_at(id, label, x, y [,w [,h]]) -> clicked`
+
+## Font glyph overlays (`mod.font`)
+
+If you like the "icons-as-bytes" style for menu labels:
+
+```lua
+local AI = mod.font.alloc_glyph("icons/ai_8x8.png")
+local label = "VS " .. string.char(AI)
+```
+
+The framework patches `data/font8x8.png` **as it is loaded** so the base game text renderer can draw your new 8×8 glyph.
+
+- `mod.font.alloc_glyph(rel_path) -> byte | nil, err`
+  - Allocates a free glyph in the range `0x80..0xFF` for your mod.
+  - `rel_path` is relative to your mod folder.
+  - The image must be a PNG sized **8×8**.
+- `mod.font.register_glyph(byte, rel_path [,opts]) -> true | false, err`
+  - Manually assigns a specific glyph byte (0..255). Useful for resource-pack style mods.
+  - `opts.override = true` allows replacing a glyph owned by another mod.
+- `mod.font.font_loaded() -> bool`
+  - Returns true after the game has loaded `data/font8x8.png` once.
+  - If you register/allocate **after** this, you'll need to restart for it to show (no hot-patch yet).
 - `mod.ui.state_name() -> string`
 - `mod.ui.state_ptr() -> number`
 - `mod.ui.is_state(name) -> bool`

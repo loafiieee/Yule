@@ -1,25 +1,15 @@
-[13:47:39] [INFO] Mod framework initializing...
-[13:47:39] [INFO] Mod framework API version: 1
-[13:47:39] [INFO] Scanning mods/ folder...
-[13:47:39] [INFO] Loading mod: button test (button test) v1.0.0 by loaf
-[13:47:39] [INFO]   Shows a mod UI button on the main menu and logs when pressed.
-[13:47:39] [INFO] [mod:button test] Map Menu Button Example loaded
-[13:47:39] [INFO] [mod:button test] Open map select (pregame) to see the test button
-[13:47:39] [INFO] Loaded mod: button test
-[13:47:39] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[13:47:39] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[13:47:39] [INFO] Loaded mod: test
-[13:47:39] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[13:47:39] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[13:47:39] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[13:47:39] [INFO] [mod:poc_speedhack] enabled=true
-[13:47:39] [INFO] [mod:poc_speedhack] speed=1
-[13:47:39] [INFO] Loaded mod: poc_speedhack
-[13:47:39] [INFO] Loading mod: telemetry_http (Telemetry HTTP) v0.1.0 by Codex
-[13:47:39] [INFO]   Serves mod.game telemetry on localhost over HTTP.
-[13:47:39] [INFO] Loaded mod: telemetry_http
-[13:47:39] [INFO] Done. 4 mod folder(s) scanned.
-[13:47:39] [INFO] hooks_init: custom MODS menu ready
-[13:47:41] [INFO] [mod:telemetry_http] telemetry server listening on http://127.0.0.1:8765
-[14:00:27] [INFO] [mod:button test] Map Menu Button Example unloaded
-[14:00:27] [INFO] [mod:poc_speedhack] Unloaded
+[21:04:59] [INFO] Mod framework initializing...
+[21:04:59] [INFO] Mod framework API version: 1
+[21:04:59] [INFO] Scanning mods/ folder...
+[21:04:59] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[21:04:59] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[21:04:59] [INFO] Loaded mod: test
+[21:04:59] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[21:04:59] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[21:04:59] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[21:04:59] [INFO] [mod:poc_speedhack] enabled=true
+[21:04:59] [INFO] [mod:poc_speedhack] speed=1
+[21:04:59] [INFO] Loaded mod: poc_speedhack
+[21:04:59] [INFO] Done. 2 mod folder(s) scanned.
+[21:04:59] [INFO] hooks_init: custom MODS menu ready
+[21:06:01] [INFO] [mod:poc_speedhack] Unloaded

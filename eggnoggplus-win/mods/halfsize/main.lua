@@ -19,7 +19,7 @@ if mod.font and mod.font.alloc_glyph then
 end
 
 local LABEL_HUMAN = "VS " .. string.char(HUMAN_GLYPH)
-local LABEL_AI    = "VS " .. string.char(AI_GLYPH)
+local LABEL_AI    = "VS " .. string.char(AI_GLYPH) 
 
 -- Layout tuning
 local GAP = 10.0 -- pixels between the two buttons

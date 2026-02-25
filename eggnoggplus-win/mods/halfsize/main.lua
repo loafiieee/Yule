@@ -176,11 +176,23 @@ local last_menu_start_frame = { -1, -1 }
 local ai_human_player = nil
 local ai_player = nil
 local ai_logged = false
+local ai_state = {
+    [0] = { attack_cd = 0, jump_cd = 0, strafe_timer = 0, strafe_dir = 1, prev_enemy_dx = 0.0 },
+    [1] = { attack_cd = 0, jump_cd = 0, strafe_timer = 0, strafe_dir = -1, prev_enemy_dx = 0.0 },
+}
+
 
 local function clear_ai_inputs()
     if mod.game and mod.game.input_clear then
         mod.game.input_clear(0)
         mod.game.input_clear(1)
+    end
+    for pidx = 0, 1 do
+        local st = ai_state[pidx]
+        st.attack_cd = 0
+        st.jump_cd = 0
+        st.strafe_timer = 0
+        st.prev_enemy_dx = 0.0
     end
 end
 
@@ -207,6 +219,16 @@ local function cmd_right()
     return bor(CMD_RIGHT_A, CMD_RIGHT_B)
 end
 
+local function apply_hdir(mask, dx)
+    if dx < 0.0 then
+        return bor(mask, cmd_left())
+    end
+    if dx > 0.0 then
+        return bor(mask, cmd_right())
+    end
+    return mask
+end
+
 local function build_ai_mask_for_player(player_index)
     if not (mod.game and mod.game.snapshot) then
         return 0
@@ -217,38 +239,82 @@ local function build_ai_mask_for_player(player_index)
         return 0
     end
 
+    local st = ai_state[player_index]
+    if not st then return 0 end
+
+    if st.attack_cd > 0 then st.attack_cd = st.attack_cd - 1 end
+    if st.jump_cd > 0 then st.jump_cd = st.jump_cd - 1 end
+    if st.strafe_timer > 0 then st.strafe_timer = st.strafe_timer - 1 end
+
     local enemy_dx = s.enemy_dx or 0.0
     local enemy_dy = s.enemy_dy or 0.0
+    local enemy_vx = s.enemy_vx or 0.0
+    local enemy_vy = s.enemy_vy or 0.0
     local sword_dx = s.nearest_sword_dx
     local sword_dy = s.nearest_sword_dy
 
     local mask = 0
 
-    local want_sword = not s.player_has_sword and sword_dx ~= nil and sword_dy ~= nil
-    local target_dx = want_sword and sword_dx or enemy_dx
-    local target_dy = want_sword and sword_dy or enemy_dy
+    local enemy_pred_dx = enemy_dx + enemy_vx * 6.0
+    local enemy_pred_dy = enemy_dy + enemy_vy * 3.0
+
+    local want_sword = (not s.player_has_sword) and sword_dx ~= nil and sword_dy ~= nil
+    local target_dx = want_sword and sword_dx or enemy_pred_dx
+    local target_dy = want_sword and sword_dy or enemy_pred_dy
 
     local abs_dx = math.abs(target_dx)
-    local abs_dy = math.abs(target_dy)
-
-    -- Horizontal tracking.
-    if abs_dx > 8.0 then
-        if target_dx < 0.0 then mask = bor(mask, cmd_left()) end
-        if target_dx > 0.0 then mask = bor(mask, cmd_right()) end
-    end
-
-    -- Jump if target is above us (enemy or desired sword), or if we are very close in X.
-    if target_dy < -14.0 or (abs_dx < 24.0 and abs_dy > 20.0 and target_dy < 0.0) then
-        mask = bor(mask, CMD_JUMP)
-    end
-
-    -- Attack when close to enemy.
     local eabsx = math.abs(enemy_dx)
     local eabsy = math.abs(enemy_dy)
-    if eabsx < 32.0 and eabsy < 24.0 then
-        mask = bor(mask, CMD_ATTACK)
+
+    -- Main chase/spacing logic.
+    if want_sword then
+        -- Beeline to nearest sword when unarmed.
+        if abs_dx > 6.0 then
+            mask = apply_hdir(mask, target_dx)
+        end
+    else
+        local preferred_range = s.player_has_sword and 42.0 or 26.0
+        if eabsx > preferred_range then
+            mask = apply_hdir(mask, enemy_pred_dx)
+        elseif eabsx < (preferred_range * 0.55) then
+            -- Too close: strafe out and reset angle.
+            if st.strafe_timer <= 0 then
+                st.strafe_dir = (enemy_dx >= 0.0) and -1 or 1
+                st.strafe_timer = 7
+            end
+            mask = apply_hdir(mask, st.strafe_dir)
+        else
+            -- Mid-range: micro-strafe so we are less predictable.
+            if st.strafe_timer <= 0 then
+                st.strafe_dir = -st.strafe_dir
+                st.strafe_timer = 5
+            end
+            mask = apply_hdir(mask, st.strafe_dir)
+        end
     end
 
+    -- Vertical decisions:
+    -- 1) pursue targets that are above us
+    -- 2) panic-jump if enemy is diving into us
+    if st.jump_cd <= 0 then
+        local should_jump_for_target = (target_dy < -16.0 and abs_dx < 60.0)
+        local should_jump_for_pressure = (enemy_dy < -8.0 and eabsx < 26.0 and enemy_vy > 0.4)
+        if should_jump_for_target or should_jump_for_pressure then
+            mask = bor(mask, CMD_JUMP)
+            st.jump_cd = 10
+        end
+    end
+
+    -- Attack gating (burst when in cone + predictive crossing).
+    local crossing = (st.prev_enemy_dx <= 0.0 and enemy_dx > 0.0) or (st.prev_enemy_dx >= 0.0 and enemy_dx < 0.0)
+    local in_attack_cone = (eabsx < 38.0 and eabsy < 28.0)
+    local predictive_attack = (math.abs(enemy_pred_dx) < 34.0 and math.abs(enemy_pred_dy) < 34.0)
+    if st.attack_cd <= 0 and (in_attack_cone or predictive_attack or crossing) then
+        mask = bor(mask, CMD_ATTACK)
+        st.attack_cd = s.player_has_sword and 8 or 14
+    end
+
+    st.prev_enemy_dx = enemy_dx
     return mask
 end
 
@@ -367,7 +433,7 @@ mod.on_frame(function()
     end
 
     if not ai_logged then
-        mod.log(("VS AI active: human=p%d ai=p%d"):format(ai_human_player + 1, ai_player + 1))
+        mod.log(("VS AI active: human=p%d ai=p%d (stateful heuristic bot)"):format(ai_human_player + 1, ai_player + 1))
         ai_logged = true
     end
 end)

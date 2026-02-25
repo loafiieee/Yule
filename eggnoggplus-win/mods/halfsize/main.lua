@@ -33,6 +33,44 @@ local CMD_LEFT_B  = 0x10
 local CMD_RIGHT_B = 0x20
 local CMD_ATTACK  = 0x40
 
+local bitlib = bit32 or bit
+
+local function bor(a, b)
+    if bitlib and bitlib.bor then
+        return bitlib.bor(a, b)
+    end
+    local res, bitv = 0, 1
+    while a > 0 or b > 0 do
+        local abit = a % 2
+        local bbit = b % 2
+        if abit ~= 0 or bbit ~= 0 then
+            res = res + bitv
+        end
+        a = math.floor(a / 2)
+        b = math.floor(b / 2)
+        bitv = bitv * 2
+    end
+    return res
+end
+
+local function band(a, b)
+    if bitlib and bitlib.band then
+        return bitlib.band(a, b)
+    end
+    local res, bitv = 0, 1
+    while a > 0 and b > 0 do
+        local abit = a % 2
+        local bbit = b % 2
+        if abit ~= 0 and bbit ~= 0 then
+            res = res + bitv
+        end
+        a = math.floor(a / 2)
+        b = math.floor(b / 2)
+        bitv = bitv * 2
+    end
+    return res
+end
+
 local last_start_ptr = nil
 
 -- Baseline START rect capture
@@ -162,11 +200,11 @@ local function pick_human_selector_player()
 end
 
 local function cmd_left()
-    return CMD_LEFT_A | CMD_LEFT_B
+    return bor(CMD_LEFT_A, CMD_LEFT_B)
 end
 
 local function cmd_right()
-    return CMD_RIGHT_A | CMD_RIGHT_B
+    return bor(CMD_RIGHT_A, CMD_RIGHT_B)
 end
 
 local function build_ai_mask_for_player(player_index)
@@ -195,20 +233,20 @@ local function build_ai_mask_for_player(player_index)
 
     -- Horizontal tracking.
     if abs_dx > 8.0 then
-        if target_dx < 0.0 then mask = mask | cmd_left() end
-        if target_dx > 0.0 then mask = mask | cmd_right() end
+        if target_dx < 0.0 then mask = bor(mask, cmd_left()) end
+        if target_dx > 0.0 then mask = bor(mask, cmd_right()) end
     end
 
     -- Jump if target is above us (enemy or desired sword), or if we are very close in X.
     if target_dy < -14.0 or (abs_dx < 24.0 and abs_dy > 20.0 and target_dy < 0.0) then
-        mask = mask | CMD_JUMP
+        mask = bor(mask, CMD_JUMP)
     end
 
     -- Attack when close to enemy.
     local eabsx = math.abs(enemy_dx)
     local eabsy = math.abs(enemy_dy)
     if eabsx < 32.0 and eabsy < 24.0 then
-        mask = mask | CMD_ATTACK
+        mask = bor(mask, CMD_ATTACK)
     end
 
     return mask
@@ -227,7 +265,7 @@ mod.on_frame(function()
             if cmd ~= 0 then
                 last_menu_input_frame[p + 1] = frame_no
             end
-            if (cmd & CMD_START) ~= 0 then
+            if band(cmd, CMD_START) ~= 0 then
                 last_menu_start_frame[p + 1] = frame_no
             end
         end

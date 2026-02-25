@@ -1,15 +1,31 @@
-[21:18:25] [INFO] Mod framework initializing...
-[21:18:25] [INFO] Mod framework API version: 1
-[21:18:25] [INFO] Scanning mods/ folder...
-[21:18:25] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[21:18:25] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[21:18:25] [INFO] Loaded mod: test
-[21:18:25] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[21:18:25] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[21:18:25] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[21:18:25] [INFO] [mod:poc_speedhack] enabled=true
-[21:18:25] [INFO] [mod:poc_speedhack] speed=1
-[21:18:25] [INFO] Loaded mod: poc_speedhack
-[21:18:25] [INFO] Done. 2 mod folder(s) scanned.
-[21:18:25] [INFO] hooks_init: custom MODS menu ready
-[21:18:31] [INFO] [mod:poc_speedhack] Unloaded
+[21:23:53] [INFO] Mod framework initializing...
+[21:23:53] [INFO] Mod framework API version: 1
+[21:23:53] [INFO] Scanning mods/ folder...
+[21:23:53] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[21:23:53] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[21:23:53] [INFO] Loaded mod: test
+[21:23:53] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[21:23:53] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[21:23:53] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[21:23:53] [INFO] [mod:poc_speedhack] enabled=true
+[21:23:53] [INFO] [mod:poc_speedhack] speed=1
+[21:23:53] [INFO] Loaded mod: poc_speedhack
+[21:23:53] [INFO] Done. 2 mod folder(s) scanned.
+[21:23:53] [INFO] hooks_init: custom MODS menu ready
+[21:23:58] [INFO] MODS: entering mods menu
+[21:24:02] [INFO] MODS: entering mods menu
+[21:24:05] [INFO] [mod:test] VS AI active: human=p1 ai=p2 (stateful heuristic bot)
+[21:24:14] [INFO] MODS: entering mods menu
+[21:24:18] [INFO] MODS: entering mods menu
+[21:24:20] [INFO] MODS: entering mods menu
+[21:24:33] [INFO] [mod:test] VS AI active: human=p1 ai=p2 (stateful heuristic bot)
+[21:26:38] [INFO] MODS: entering mods menu
+[21:26:40] [INFO] MODS: entering mods menu
+[21:26:40] [INFO] MODS: entering mods menu
+[21:26:40] [INFO] MODS: entering mods menu
+[21:26:40] [INFO] MODS: entering mods menu
+[21:26:48] [INFO] MODS: entering mods menu
+[21:26:52] [INFO] [mod:test] VS AI active: human=p1 ai=p2 (stateful heuristic bot)
+[21:27:06] [INFO] MODS: entering mods menu
+[21:27:07] [INFO] MODS: entering mods menu
+[21:27:19] [INFO] [mod:poc_speedhack] Unloaded

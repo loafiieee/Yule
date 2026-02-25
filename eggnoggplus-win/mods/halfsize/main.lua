@@ -24,59 +24,6 @@ local LABEL_AI    = "VS " .. string.char(AI_GLYPH)
 -- Layout tuning
 local GAP = 10.0 -- pixels between the two buttons
 
--- main_player_poll_cmds command bits (from ghidra)
-local CMD_START   = 0x01
-local CMD_JUMP    = 0x02
-local CMD_LEFT_A  = 0x04
-local CMD_RIGHT_A = 0x08
-local CMD_LEFT_B  = 0x10
-local CMD_RIGHT_B = 0x20
-local CMD_ATTACK  = 0x40
-local CMD_ALLOWED = CMD_JUMP + CMD_LEFT_A + CMD_RIGHT_A + CMD_LEFT_B + CMD_RIGHT_B + CMD_ATTACK
-
-local bitlib = bit32 or bit
-
-local function bor(a, b)
-    if bitlib and bitlib.bor then
-        return bitlib.bor(a, b)
-    end
-    local res, bitv = 0, 1
-    while a > 0 or b > 0 do
-        local abit = a % 2
-        local bbit = b % 2
-        if abit ~= 0 or bbit ~= 0 then
-            res = res + bitv
-        end
-        a = math.floor(a / 2)
-        b = math.floor(b / 2)
-        bitv = bitv * 2
-    end
-    return res
-end
-
-local function band(a, b)
-    if bitlib and bitlib.band then
-        return bitlib.band(a, b)
-    end
-    local res, bitv = 0, 1
-    while a > 0 and b > 0 do
-        local abit = a % 2
-        local bbit = b % 2
-        if abit ~= 0 and bbit ~= 0 then
-            res = res + bitv
-        end
-        a = math.floor(a / 2)
-        b = math.floor(b / 2)
-        bitv = bitv * 2
-    end
-    return res
-end
-
-local function sanitize_gameplay_mask(mask)
-    -- Never allow START/PAUSE or unknown bits from AI overrides.
-    return band(mask or 0, CMD_ALLOWED)
-end
-
 local last_start_ptr = nil
 
 -- Baseline START rect capture
@@ -174,182 +121,14 @@ mod.on_event(function(e)
 end)
 
 local was_in_main = false
-local frame_no = 0
-
-local last_menu_input_frame = { -1, -1 }
-local last_menu_start_frame = { -1, -1 }
-
-local ai_human_player = nil
-local ai_player = nil
-local ai_logged = false
-local ai_state = {
-    [0] = { attack_cd = 0, jump_cd = 0, strafe_timer = 0, strafe_dir = 1, prev_enemy_dx = 0.0 },
-    [1] = { attack_cd = 0, jump_cd = 0, strafe_timer = 0, strafe_dir = -1, prev_enemy_dx = 0.0 },
-}
-
-
-local function clear_ai_inputs()
-    if mod.game and mod.game.input_clear then
-        mod.game.input_clear(0)
-        mod.game.input_clear(1)
-    end
-    for pidx = 0, 1 do
-        local st = ai_state[pidx]
-        st.attack_cd = 0
-        st.jump_cd = 0
-        st.strafe_timer = 0
-        st.prev_enemy_dx = 0.0
-    end
-end
-
-local function pick_human_selector_player()
-    -- Prefer whichever selector pressed START most recently (the one that clicked).
-    if last_menu_start_frame[1] ~= last_menu_start_frame[2] then
-        return (last_menu_start_frame[1] > last_menu_start_frame[2]) and 0 or 1
-    end
-
-    -- Fallback to any recent selector movement.
-    if last_menu_input_frame[1] ~= last_menu_input_frame[2] then
-        return (last_menu_input_frame[1] > last_menu_input_frame[2]) and 0 or 1
-    end
-
-    -- Deterministic final fallback.
-    return 0
-end
-
-local function cmd_left()
-    return bor(CMD_LEFT_A, CMD_LEFT_B)
-end
-
-local function cmd_right()
-    return bor(CMD_RIGHT_A, CMD_RIGHT_B)
-end
-
-local function apply_hdir(mask, dx)
-    if dx < 0.0 then
-        return bor(mask, cmd_left())
-    end
-    if dx > 0.0 then
-        return bor(mask, cmd_right())
-    end
-    return mask
-end
-
-local function build_ai_mask_for_player(player_index)
-    if not (mod.game and mod.game.snapshot) then
-        return 0
-    end
-
-    local s = mod.game.snapshot(player_index, false)
-    if not s or not s.in_game then
-        return 0
-    end
-
-    local st = ai_state[player_index]
-    if not st then return 0 end
-
-    if st.attack_cd > 0 then st.attack_cd = st.attack_cd - 1 end
-    if st.jump_cd > 0 then st.jump_cd = st.jump_cd - 1 end
-    if st.strafe_timer > 0 then st.strafe_timer = st.strafe_timer - 1 end
-
-    local enemy_dx = s.enemy_dx or 0.0
-    local enemy_dy = s.enemy_dy or 0.0
-    local enemy_vx = s.enemy_vx or 0.0
-    local enemy_vy = s.enemy_vy or 0.0
-    local sword_dx = s.nearest_sword_dx
-    local sword_dy = s.nearest_sword_dy
-
-    local mask = 0
-
-    local enemy_pred_dx = enemy_dx + enemy_vx * 6.0
-    local enemy_pred_dy = enemy_dy + enemy_vy * 3.0
-
-    local want_sword = (not s.player_has_sword) and sword_dx ~= nil and sword_dy ~= nil
-    local target_dx = want_sword and sword_dx or enemy_pred_dx
-    local target_dy = want_sword and sword_dy or enemy_pred_dy
-
-    local abs_dx = math.abs(target_dx)
-    local eabsx = math.abs(enemy_dx)
-    local eabsy = math.abs(enemy_dy)
-
-    -- Main chase/spacing logic.
-    if want_sword then
-        -- Beeline to nearest sword when unarmed.
-        if abs_dx > 6.0 then
-            mask = apply_hdir(mask, target_dx)
-        end
-    else
-        local preferred_range = s.player_has_sword and 42.0 or 26.0
-        if eabsx > preferred_range then
-            mask = apply_hdir(mask, enemy_pred_dx)
-        elseif eabsx < (preferred_range * 0.55) then
-            -- Too close: strafe out and reset angle.
-            if st.strafe_timer <= 0 then
-                st.strafe_dir = (enemy_dx >= 0.0) and -1 or 1
-                st.strafe_timer = 7
-            end
-            mask = apply_hdir(mask, st.strafe_dir)
-        else
-            -- Mid-range: micro-strafe so we are less predictable.
-            if st.strafe_timer <= 0 then
-                st.strafe_dir = -st.strafe_dir
-                st.strafe_timer = 5
-            end
-            mask = apply_hdir(mask, st.strafe_dir)
-        end
-    end
-
-    -- Vertical decisions:
-    -- 1) pursue targets that are above us
-    -- 2) panic-jump if enemy is diving into us
-    if st.jump_cd <= 0 then
-        local should_jump_for_target = (target_dy < -16.0 and abs_dx < 60.0)
-        local should_jump_for_pressure = (enemy_dy < -8.0 and eabsx < 26.0 and enemy_vy > 0.4)
-        if should_jump_for_target or should_jump_for_pressure then
-            mask = bor(mask, CMD_JUMP)
-            st.jump_cd = 10
-        end
-    end
-
-    -- Attack gating (burst when in cone + predictive crossing).
-    local crossing = (st.prev_enemy_dx <= 0.0 and enemy_dx > 0.0) or (st.prev_enemy_dx >= 0.0 and enemy_dx < 0.0)
-    local in_attack_cone = (eabsx < 38.0 and eabsy < 28.0)
-    local predictive_attack = (math.abs(enemy_pred_dx) < 34.0 and math.abs(enemy_pred_dy) < 34.0)
-    if st.attack_cd <= 0 and (in_attack_cone or predictive_attack or crossing) then
-        mask = bor(mask, CMD_ATTACK)
-        st.attack_cd = s.player_has_sword and 8 or 14
-    end
-
-    st.prev_enemy_dx = enemy_dx
-    return sanitize_gameplay_mask(mask)
-end
 
 mod.on_frame(function()
-    frame_no = frame_no + 1
-
     local st = mod.ui.state_name()
     local in_main = in_main_menu_state(st)
-
-    -- Track which selector (player 0 or 1) is actively navigating menus.
-    if in_main and mod.game and mod.game.poll_cmds then
-        for p = 0, 1 do
-            local cmd = mod.game.poll_cmds(p, 1) or 0
-            if cmd ~= 0 then
-                last_menu_input_frame[p + 1] = frame_no
-            end
-            if band(cmd, CMD_START) ~= 0 then
-                last_menu_start_frame[p + 1] = frame_no
-            end
-        end
-    end
 
     -- Entering main menu: default to VS human.
     if in_main and not was_in_main then
         cfg_set_bool("vs_ai", false)
-        ai_human_player = nil
-        ai_player = nil
-        ai_logged = false
-        clear_ai_inputs()
     end
 
     was_in_main = in_main
@@ -359,92 +138,48 @@ mod.on_frame(function()
         baseline_captured = false
         baseline_from_initial = false
         base_x, base_y, base_w, base_h = nil, nil, nil, nil
-    else
-        local start_ptr = capture_start_ptr_and_baseline(st)
-        if not start_ptr then return end
+        return
+    end
 
-        -- Repurpose the vanilla START button as the left (VS human) button.
-        if mod.ui.button_set_label_ptr then
-            mod.ui.button_set_label_ptr(start_ptr, LABEL_HUMAN)
+    local start_ptr = capture_start_ptr_and_baseline(st)
+    if not start_ptr then return end
+
+    -- Repurpose the vanilla START button as the left (VS human) button.
+    if mod.ui.button_set_label_ptr then
+        mod.ui.button_set_label_ptr(start_ptr, LABEL_HUMAN)
+    end
+
+    -- Create the right (VS AI) button.
+    local clicked_ai = mod.ui.native_button("vs_ai", LABEL_AI, 1.0, 4.5, 3.0, 6.0)
+
+    -- Position both buttons into the original START slot.
+    if base_w and base_h and base_x and base_y then
+        local gap = GAP
+        if gap < 0.0 then gap = 0.0 end
+
+        local w_each = (base_w - gap) * 0.5
+        if w_each < 40.0 then
+            gap = 0.0
+            w_each = base_w * 0.5
         end
 
-        -- Create the right (VS AI) button.
-        local clicked_ai = mod.ui.native_button("vs_ai", LABEL_AI, 1.0, 4.5, 3.0, 6.0)
+        local left_edge = base_x - (base_w * 0.5)
+        local human_x = left_edge + (w_each * 0.5)
+        local ai_x    = human_x + w_each + gap
 
-        -- Position both buttons into the original START slot.
-        if base_w and base_h and base_x and base_y then
-            local gap = GAP
-            if gap < 0.0 then gap = 0.0 end
-
-            local w_each = (base_w - gap) * 0.5
-            if w_each < 40.0 then
-                gap = 0.0
-                w_each = base_w * 0.5
-            end
-
-            local left_edge = base_x - (base_w * 0.5)
-            local human_x = left_edge + (w_each * 0.5)
-            local ai_x    = human_x + w_each + gap
-
-            if mod.ui.button_resize_ptr then
-                mod.ui.button_resize_ptr(start_ptr, w_each, base_h)
-            end
-            if mod.ui.button_set_pos_ptr then
-                mod.ui.button_set_pos_ptr(start_ptr, human_x, base_y)
-            end
-
-            mod.ui.native_resize("vs_ai", w_each, base_h)
-            mod.ui.native_set_pos("vs_ai", ai_x, base_y)
+        if mod.ui.button_resize_ptr then
+            mod.ui.button_resize_ptr(start_ptr, w_each, base_h)
+        end
+        if mod.ui.button_set_pos_ptr then
+            mod.ui.button_set_pos_ptr(start_ptr, human_x, base_y)
         end
 
-        if clicked_ai then
-            cfg_set_bool("vs_ai", true)
-            ai_human_player = pick_human_selector_player()
-            ai_player = (ai_human_player == 0) and 1 or 0
-            ai_logged = false
-            dispatch_start(last_start_ptr)
-        end
-
-        -- While in menus we never force input overrides.
-        clear_ai_inputs()
-        return
+        mod.ui.native_resize("vs_ai", w_each, base_h)
+        mod.ui.native_set_pos("vs_ai", ai_x, base_y)
     end
 
-    -- Gameplay AI: only active when VS AI is selected.
-    local enabled = config and config.get and config.get("vs_ai", false)
-    if not enabled then
-        ai_human_player = nil
-        ai_player = nil
-        ai_logged = false
-        clear_ai_inputs()
-        return
-    end
-
-    if ai_human_player == nil or ai_player == nil then
-        ai_human_player = pick_human_selector_player()
-        ai_player = (ai_human_player == 0) and 1 or 0
-        ai_logged = false
-    end
-
-    if mod.ui and mod.ui.state_name and mod.ui.state_name() ~= "game" then
-        clear_ai_inputs()
-        return
-    end
-
-    local s = (mod.game and mod.game.snapshot) and mod.game.snapshot(ai_player, false) or nil
-    if not (s and s.in_game) then
-        clear_ai_inputs()
-        return
-    end
-
-    local mask = sanitize_gameplay_mask(build_ai_mask_for_player(ai_player))
-    if mod.game and mod.game.input_override then
-        mod.game.input_override(ai_player, mask, 1, true)
-        mod.game.input_clear(ai_human_player)
-    end
-
-    if not ai_logged then
-        mod.log(("VS AI active: human=p%d ai=p%d (stateful heuristic bot)"):format(ai_human_player + 1, ai_player + 1))
-        ai_logged = true
+    if clicked_ai then
+        cfg_set_bool("vs_ai", true)
+        dispatch_start(last_start_ptr)
     end
 end)

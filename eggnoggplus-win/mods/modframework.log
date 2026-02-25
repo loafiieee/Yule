@@ -1,15 +1,15 @@
-[21:04:59] [INFO] Mod framework initializing...
-[21:04:59] [INFO] Mod framework API version: 1
-[21:04:59] [INFO] Scanning mods/ folder...
-[21:04:59] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[21:04:59] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[21:04:59] [INFO] Loaded mod: test
-[21:04:59] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[21:04:59] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[21:04:59] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[21:04:59] [INFO] [mod:poc_speedhack] enabled=true
-[21:04:59] [INFO] [mod:poc_speedhack] speed=1
-[21:04:59] [INFO] Loaded mod: poc_speedhack
-[21:04:59] [INFO] Done. 2 mod folder(s) scanned.
-[21:04:59] [INFO] hooks_init: custom MODS menu ready
-[21:06:01] [INFO] [mod:poc_speedhack] Unloaded
+[21:08:19] [INFO] Mod framework initializing...
+[21:08:19] [INFO] Mod framework API version: 1
+[21:08:19] [INFO] Scanning mods/ folder...
+[21:08:19] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[21:08:19] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[21:08:19] [INFO] Loaded mod: test
+[21:08:19] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[21:08:19] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[21:08:19] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[21:08:19] [INFO] [mod:poc_speedhack] enabled=true
+[21:08:19] [INFO] [mod:poc_speedhack] speed=1
+[21:08:19] [INFO] Loaded mod: poc_speedhack
+[21:08:19] [INFO] Done. 2 mod folder(s) scanned.
+[21:08:19] [INFO] hooks_init: custom MODS menu ready
+[21:08:21] [INFO] [mod:poc_speedhack] Unloaded

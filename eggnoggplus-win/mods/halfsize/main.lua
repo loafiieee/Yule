@@ -24,6 +24,15 @@ local LABEL_AI    = "VS " .. string.char(AI_GLYPH)
 -- Layout tuning
 local GAP = 10.0 -- pixels between the two buttons
 
+-- main_player_poll_cmds command bits (from ghidra)
+local CMD_START   = 0x01
+local CMD_JUMP    = 0x02
+local CMD_LEFT_A  = 0x04
+local CMD_RIGHT_A = 0x08
+local CMD_LEFT_B  = 0x10
+local CMD_RIGHT_B = 0x20
+local CMD_ATTACK  = 0x40
+
 local last_start_ptr = nil
 
 -- Baseline START rect capture
@@ -121,14 +130,116 @@ mod.on_event(function(e)
 end)
 
 local was_in_main = false
+local frame_no = 0
+
+local last_menu_input_frame = { -1, -1 }
+local last_menu_start_frame = { -1, -1 }
+
+local ai_human_player = nil
+local ai_player = nil
+local ai_logged = false
+
+local function clear_ai_inputs()
+    if mod.game and mod.game.input_clear then
+        mod.game.input_clear(0)
+        mod.game.input_clear(1)
+    end
+end
+
+local function pick_human_selector_player()
+    -- Prefer whichever selector pressed START most recently (the one that clicked).
+    if last_menu_start_frame[1] ~= last_menu_start_frame[2] then
+        return (last_menu_start_frame[1] > last_menu_start_frame[2]) and 0 or 1
+    end
+
+    -- Fallback to any recent selector movement.
+    if last_menu_input_frame[1] ~= last_menu_input_frame[2] then
+        return (last_menu_input_frame[1] > last_menu_input_frame[2]) and 0 or 1
+    end
+
+    -- Deterministic final fallback.
+    return 0
+end
+
+local function cmd_left()
+    return CMD_LEFT_A | CMD_LEFT_B
+end
+
+local function cmd_right()
+    return CMD_RIGHT_A | CMD_RIGHT_B
+end
+
+local function build_ai_mask_for_player(player_index)
+    if not (mod.game and mod.game.snapshot) then
+        return 0
+    end
+
+    local s = mod.game.snapshot(player_index, false)
+    if not s or not s.in_game then
+        return 0
+    end
+
+    local enemy_dx = s.enemy_dx or 0.0
+    local enemy_dy = s.enemy_dy or 0.0
+    local sword_dx = s.nearest_sword_dx
+    local sword_dy = s.nearest_sword_dy
+
+    local mask = 0
+
+    local want_sword = not s.player_has_sword and sword_dx ~= nil and sword_dy ~= nil
+    local target_dx = want_sword and sword_dx or enemy_dx
+    local target_dy = want_sword and sword_dy or enemy_dy
+
+    local abs_dx = math.abs(target_dx)
+    local abs_dy = math.abs(target_dy)
+
+    -- Horizontal tracking.
+    if abs_dx > 8.0 then
+        if target_dx < 0.0 then mask = mask | cmd_left() end
+        if target_dx > 0.0 then mask = mask | cmd_right() end
+    end
+
+    -- Jump if target is above us (enemy or desired sword), or if we are very close in X.
+    if target_dy < -14.0 or (abs_dx < 24.0 and abs_dy > 20.0 and target_dy < 0.0) then
+        mask = mask | CMD_JUMP
+    end
+
+    -- Attack when close to enemy.
+    local eabsx = math.abs(enemy_dx)
+    local eabsy = math.abs(enemy_dy)
+    if eabsx < 32.0 and eabsy < 24.0 then
+        mask = mask | CMD_ATTACK
+    end
+
+    return mask
+end
 
 mod.on_frame(function()
+    frame_no = frame_no + 1
+
     local st = mod.ui.state_name()
     local in_main = in_main_menu_state(st)
+
+    -- Track which selector (player 0 or 1) is actively navigating menus.
+    if in_main and mod.game and mod.game.poll_cmds then
+        for p = 0, 1 do
+            local cmd = mod.game.poll_cmds(p, 1) or 0
+            if cmd ~= 0 then
+                last_menu_input_frame[p + 1] = frame_no
+            end
+            if (cmd & CMD_START) ~= 0 then
+                last_menu_start_frame[p + 1] = frame_no
+            end
+        end
+    end
 
     -- Entering main menu: default to VS human.
     if in_main and not was_in_main then
         cfg_set_bool("vs_ai", false)
+        ai_human_player = nil
+        ai_player = nil
+        ai_logged = false
+        clear_ai_inputs()
     end
 
     was_in_main = in_main
@@ -138,48 +249,87 @@ mod.on_frame(function()
         baseline_captured = false
         baseline_from_initial = false
         base_x, base_y, base_w, base_h = nil, nil, nil, nil
+    else
+        local start_ptr = capture_start_ptr_and_baseline(st)
+        if not start_ptr then return end
+
+        -- Repurpose the vanilla START button as the left (VS human) button.
+        if mod.ui.button_set_label_ptr then
+            mod.ui.button_set_label_ptr(start_ptr, LABEL_HUMAN)
+        end
+
+        -- Create the right (VS AI) button.
+        local clicked_ai = mod.ui.native_button("vs_ai", LABEL_AI, 1.0, 4.5, 3.0, 6.0)
+
+        -- Position both buttons into the original START slot.
+        if base_w and base_h and base_x and base_y then
+            local gap = GAP
+            if gap < 0.0 then gap = 0.0 end
+
+            local w_each = (base_w - gap) * 0.5
+            if w_each < 40.0 then
+                gap = 0.0
+                w_each = base_w * 0.5
+            end
+
+            local left_edge = base_x - (base_w * 0.5)
+            local human_x = left_edge + (w_each * 0.5)
+            local ai_x    = human_x + w_each + gap
+
+            if mod.ui.button_resize_ptr then
+                mod.ui.button_resize_ptr(start_ptr, w_each, base_h)
+            end
+            if mod.ui.button_set_pos_ptr then
+                mod.ui.button_set_pos_ptr(start_ptr, human_x, base_y)
+            end
+
+            mod.ui.native_resize("vs_ai", w_each, base_h)
+            mod.ui.native_set_pos("vs_ai", ai_x, base_y)
+        end
+
+        if clicked_ai then
+            cfg_set_bool("vs_ai", true)
+            ai_human_player = pick_human_selector_player()
+            ai_player = (ai_human_player == 0) and 1 or 0
+            ai_logged = false
+            dispatch_start(last_start_ptr)
+        end
+
+        -- While in menus we never force input overrides.
+        clear_ai_inputs()
         return
     end
 
-    local start_ptr = capture_start_ptr_and_baseline(st)
-    if not start_ptr then return end
-
-    -- Repurpose the vanilla START button as the left (VS human) button.
-    if mod.ui.button_set_label_ptr then
-        mod.ui.button_set_label_ptr(start_ptr, LABEL_HUMAN)
+    -- Gameplay AI: only active when VS AI is selected.
+    local enabled = config and config.get and config.get("vs_ai", false)
+    if not enabled then
+        ai_human_player = nil
+        ai_player = nil
+        ai_logged = false
+        clear_ai_inputs()
+        return
     end
 
-    -- Create the right (VS AI) button.
-    local clicked_ai = mod.ui.native_button("vs_ai", LABEL_AI, 1.0, 4.5, 3.0, 6.0)
-
-    -- Position both buttons into the original START slot.
-    if base_w and base_h and base_x and base_y then
-        local gap = GAP
-        if gap < 0.0 then gap = 0.0 end
-
-        local w_each = (base_w - gap) * 0.5
-        if w_each < 40.0 then
-            gap = 0.0
-            w_each = base_w * 0.5
-        end
-
-        local left_edge = base_x - (base_w * 0.5)
-        local human_x = left_edge + (w_each * 0.5)
-        local ai_x    = human_x + w_each + gap
-
-        if mod.ui.button_resize_ptr then
-            mod.ui.button_resize_ptr(start_ptr, w_each, base_h)
-        end
-        if mod.ui.button_set_pos_ptr then
-            mod.ui.button_set_pos_ptr(start_ptr, human_x, base_y)
-        end
-
-        mod.ui.native_resize("vs_ai", w_each, base_h)
-        mod.ui.native_set_pos("vs_ai", ai_x, base_y)
+    if ai_human_player == nil or ai_player == nil then
+        ai_human_player = pick_human_selector_player()
+        ai_player = (ai_human_player == 0) and 1 or 0
+        ai_logged = false
     end
 
-    if clicked_ai then
-        cfg_set_bool("vs_ai", true)
-        dispatch_start(last_start_ptr)
+    local s = (mod.game and mod.game.snapshot) and mod.game.snapshot(ai_player, false) or nil
+    if not (s and s.in_game) then
+        clear_ai_inputs()
+        return
+    end
+
+    local mask = build_ai_mask_for_player(ai_player)
+    if mod.game and mod.game.input_override then
+        mod.game.input_override(ai_player, mask, 1, true)
+        mod.game.input_clear(ai_human_player)
+    end
+
+    if not ai_logged then
+        mod.log(("VS AI active: human=p%d ai=p%d"):format(ai_human_player + 1, ai_player + 1))
+        ai_logged = true
     end
 end)

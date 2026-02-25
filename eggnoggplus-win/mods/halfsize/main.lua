@@ -32,6 +32,7 @@ local CMD_RIGHT_A = 0x08
 local CMD_LEFT_B  = 0x10
 local CMD_RIGHT_B = 0x20
 local CMD_ATTACK  = 0x40
+local CMD_ALLOWED = CMD_JUMP + CMD_LEFT_A + CMD_RIGHT_A + CMD_LEFT_B + CMD_RIGHT_B + CMD_ATTACK
 
 local bitlib = bit32 or bit
 
@@ -69,6 +70,11 @@ local function band(a, b)
         bitv = bitv * 2
     end
     return res
+end
+
+local function sanitize_gameplay_mask(mask)
+    -- Never allow START/PAUSE or unknown bits from AI overrides.
+    return band(mask or 0, CMD_ALLOWED)
 end
 
 local last_start_ptr = nil
@@ -315,7 +321,7 @@ local function build_ai_mask_for_player(player_index)
     end
 
     st.prev_enemy_dx = enemy_dx
-    return mask
+    return sanitize_gameplay_mask(mask)
 end
 
 mod.on_frame(function()
@@ -420,13 +426,18 @@ mod.on_frame(function()
         ai_logged = false
     end
 
+    if mod.ui and mod.ui.state_name and mod.ui.state_name() ~= "game" then
+        clear_ai_inputs()
+        return
+    end
+
     local s = (mod.game and mod.game.snapshot) and mod.game.snapshot(ai_player, false) or nil
     if not (s and s.in_game) then
         clear_ai_inputs()
         return
     end
 
-    local mask = build_ai_mask_for_player(ai_player)
+    local mask = sanitize_gameplay_mask(build_ai_mask_for_player(ai_player))
     if mod.game and mod.game.input_override then
         mod.game.input_override(ai_player, mask, 1, true)
         mod.game.input_clear(ai_human_player)

@@ -2,7 +2,7 @@
 
 -automatic hot reload mod menu
 
--Glow sprite is broken?
+-Glow sprite is broken? doesn't seem to show no matter what i do
 
 
 WAY LATER STUFF:

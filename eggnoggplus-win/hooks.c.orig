@@ -5,50 +5,10 @@
 #include <string.h>
 #include <ctype.h>
 
-#include <GL/gl.h>
-#ifdef __has_include
-#  if __has_include(<GL/glext.h>)
-#    include <GL/glext.h>
-#  endif
-#endif
-
-/* Fallback defines for texture-combine constants (in case glext.h isn't available). */
-#ifndef GL_COMBINE
-#define GL_COMBINE 0x8570
-#endif
-#ifndef GL_COMBINE_RGB
-#define GL_COMBINE_RGB 0x8571
-#endif
-#ifndef GL_SOURCE0_RGB
-#define GL_SOURCE0_RGB 0x8580
-#endif
-#ifndef GL_SOURCE1_RGB
-#define GL_SOURCE1_RGB 0x8581
-#endif
-#ifndef GL_OPERAND0_RGB
-#define GL_OPERAND0_RGB 0x8590
-#endif
-#ifndef GL_OPERAND1_RGB
-#define GL_OPERAND1_RGB 0x8591
-#endif
-#ifndef GL_COMBINE_ALPHA
-#define GL_COMBINE_ALPHA 0x8572
-#endif
-#ifndef GL_SOURCE0_ALPHA
-#define GL_SOURCE0_ALPHA 0x8588
-#endif
-#ifndef GL_OPERAND0_ALPHA
-#define GL_OPERAND0_ALPHA 0x8598
-#endif
-#ifndef GL_PREVIOUS
-#define GL_PREVIOUS 0x8578
-#endif
-
 #include "hooks.h"
 #include "lua_manager.h"
 #include "font_ext.h"
 #include "log.h"
-
 
 #define ADDR_STATE_CURRENT            0x405DB0u
 #define ADDR_STATE_LAST               0x405DB8u
@@ -173,7 +133,8 @@ typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
 typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
 typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
-typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
+typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);
+typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -212,6 +173,13 @@ static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
+
+// Glow/additive debug detours
+static Detour g_sprite_batch_plot_detour;
+static Detour g_sprite_batch_draw_detour;
+
+static fn_sprite_batch_plot_t p_sprite_batch_plot_trampoline = NULL;
+static fn_sprite_batch_draw_t p_sprite_batch_draw_trampoline = NULL;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -1274,10 +1242,12 @@ static void __cdecl mods_render(void) {
     mods_restore_render_state();
     p_menu_common_render();
     render_rows();
+    // Restore turtle defaults before main_draw() so sprite/glow/cursor passes
     // don't inherit text render scale/tint.
     mods_restore_render_state();
     // In base menus, rendering is finalized via main_draw(), which flushes sprite
     // batches and draws particles/cursors/button sprites in the expected order.
+    // Call main_draw when available so glow/cursor passes behave exactly like
     // the vanilla menus.
     if (p_main_draw) {
         p_main_draw();
@@ -1454,18 +1424,129 @@ static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint
 
 
 // =============================
+// Glow/additive batching debug
 //
+// Goal: determine whether glow-layer sprites are being enqueued (layer==1),
+// whether sprite_batch_draw ever sees a nonzero glow count, and whether glow
 // counts are left queued at the end of a frame (cross-frame batching).
 //
 // Logs are rate-limited and written to mods/modframework.log.
+// =============================
 
-// Turtle color globals (float 0..1) used to build vertex colors (see quad_batch).
-#define ADDR_TURTLE_R 0x448110u
-#define ADDR_TURTLE_G 0x448114u
-#define ADDR_TURTLE_B 0x448118u
-#define ADDR_TURTLE_A 0x44811Cu
+static volatile uint32_t g_glowdbg_plot_calls = 0;
+static volatile uint32_t g_glowdbg_draw_calls = 0;
+static volatile uint32_t g_glowdbg_draw_glow_nonzero = 0;
+static volatile int      g_glowdbg_max_norm = 0;
+static volatile int      g_glowdbg_max_glow = 0;
+static volatile uintptr_t g_glowdbg_last_sprite = 0;
+static volatile uintptr_t g_glowdbg_last_atlas = 0;
+static volatile uintptr_t g_glowdbg_last_draw_atlas = 0;
+static DWORD g_glowdbg_last_report_ms = 0;
 
-// Query-only enums (guarded so we don't redefine what gl.h/glext.h already provides)
+static int safe_read_u32(uintptr_t addr, uint32_t* out) {
+    // MinGW/GCC does not support MSVC SEH (__try/__except). Use ReadProcessMemory
+    // against our own process instead. This is slower than a raw dereference, but
+    // safe for debug instrumentation.
+    if (!out) return 0;
+    SIZE_T n = 0;
+    uint32_t tmp = 0;
+    HANDLE h = GetCurrentProcess();
+    if (!ReadProcessMemory(h, (LPCVOID)addr, &tmp, sizeof(tmp), &n)) return 0;
+    if (n != sizeof(tmp)) return 0;
+    *out = tmp;
+    return 1;
+}
+
+static void __cdecl hooked_sprite_batch_plot(int sprite, int flip, int layer) {
+    fn_sprite_batch_plot_t real = p_sprite_batch_plot_trampoline ? p_sprite_batch_plot_trampoline
+        : (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
+
+    // Call real first so counts reflect what the engine actually queued.
+    if (real) real(sprite, flip, layer);
+
+    if (layer != 1) return;
+
+    g_glowdbg_plot_calls++;
+    g_glowdbg_last_sprite = (uintptr_t)(uint32_t)sprite;
+
+    // sprite struct has an atlas pointer at +0x0C (confirmed in quad_batch).
+    uint32_t atlas = 0;
+    if (safe_read_u32((uintptr_t)(uint32_t)sprite + 0x0C, &atlas) && atlas) {
+        g_glowdbg_last_atlas = (uintptr_t)atlas;
+
+        uint32_t norm = 0, glow = 0;
+        if (safe_read_u32((uintptr_t)atlas + 0x24, &norm)) {
+            if ((int)norm > g_glowdbg_max_norm) g_glowdbg_max_norm = (int)norm;
+        }
+        if (safe_read_u32((uintptr_t)atlas + 0x38, &glow)) {
+            if ((int)glow > g_glowdbg_max_glow) g_glowdbg_max_glow = (int)glow;
+        }
+    }
+}
+
+static void __cdecl hooked_sprite_batch_draw(int atlas) {
+    fn_sprite_batch_draw_t real = p_sprite_batch_draw_trampoline ? p_sprite_batch_draw_trampoline
+        : (fn_sprite_batch_draw_t)(uintptr_t)ADDR_SPRITE_BATCH_DRAW;
+
+    uint32_t norm = 0, glow = 0;
+    if (atlas) {
+        safe_read_u32((uintptr_t)(uint32_t)atlas + 0x24, &norm);
+        safe_read_u32((uintptr_t)(uint32_t)atlas + 0x38, &glow);
+    }
+
+    if (norm || glow) {
+        g_glowdbg_draw_calls++;
+        if ((int)norm > g_glowdbg_max_norm) g_glowdbg_max_norm = (int)norm;
+        if ((int)glow > g_glowdbg_max_glow) g_glowdbg_max_glow = (int)glow;
+    }
+    if (glow) {
+        g_glowdbg_draw_glow_nonzero++;
+        g_glowdbg_last_draw_atlas = (uintptr_t)(uint32_t)atlas;
+    }
+
+    if (real) real(atlas);
+}
+
+void hooks_glow_debug_report_and_reset(void) {
+    DWORD now = GetTickCount();
+    if (g_glowdbg_last_report_ms == 0) g_glowdbg_last_report_ms = now;
+
+    // Rate limit: one line ~2x/sec by default.
+    const DWORD REPORT_MS = 500;
+    if (now - g_glowdbg_last_report_ms < REPORT_MS) return;
+    g_glowdbg_last_report_ms = now;
+
+    uint32_t plots = g_glowdbg_plot_calls;
+    uint32_t draws = g_glowdbg_draw_calls;
+    uint32_t glow_draws = g_glowdbg_draw_glow_nonzero;
+    int max_norm = g_glowdbg_max_norm;
+    int max_glow = g_glowdbg_max_glow;
+    uintptr_t last_sprite = g_glowdbg_last_sprite;
+    uintptr_t last_atlas = g_glowdbg_last_atlas;
+    uintptr_t last_draw_atlas = g_glowdbg_last_draw_atlas;
+
+    // Sample live counts at end-of-frame for the last atlas we saw glow plots on.
+    int live_norm = -1, live_glow = -1;
+    if (last_atlas) {
+        uint32_t n=0,g=0;
+        if (safe_read_u32(last_atlas + 0x24, &n)) live_norm = (int)n;
+        if (safe_read_u32(last_atlas + 0x38, &g)) live_glow = (int)g;
+    }
+
+    LOG_INFO(
+        "GLOWDBG: plots(layer1)=%u draws(nonempty)=%u draws(glow>0)=%u max(norm=%d glow=%d) last_sprite=%p last_atlas=%p live(norm=%d glow=%d) last_glow_draw_atlas=%p",
+        plots, draws, glow_draws, max_norm, max_glow,
+        (void*)last_sprite, (void*)last_atlas, live_norm, live_glow, (void*)last_draw_atlas
+    );
+
+    // Reset counters for next window.
+    g_glowdbg_plot_calls = 0;
+    g_glowdbg_draw_calls = 0;
+    g_glowdbg_draw_glow_nonzero = 0;
+    g_glowdbg_max_norm = 0;
+    g_glowdbg_max_glow = 0;
+    // Keep last sprite/atlas pointers so live sampling still works even if no new plots.
+}
 
 static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
     fn_rgba_load_t real = p_rgba_load_trampoline ? p_rgba_load_trampoline : p_rgba_load;
@@ -1476,14 +1557,10 @@ static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
     return img;
 }
 
-
 void hooks_init(void) {
     static int done = 0;
     if (done) return;
     done = 1;
-
-
-
 
     if (!install_detour(&g_options_enter_detour, (void*)(uintptr_t)ADDR_OPTIONS_ENTER, (void*)&hooked_options_enter, 5)) {
         LOG_ERROR("hooks_init: failed to detour options enter");
@@ -1515,7 +1592,18 @@ void hooks_init(void) {
 
     
 
+    // Glow/additive debug hooks (safe, non-fatal if they fail)
+    if (!install_detour(&g_sprite_batch_plot_detour, (void*)(uintptr_t)ADDR_SPRITE_BATCH_PLOT, (void*)&hooked_sprite_batch_plot, 6)) {
+        LOG_WARN("hooks_init: failed to detour sprite_batch_plot (glow debug disabled)");
+    } else {
+        p_sprite_batch_plot_trampoline = (fn_sprite_batch_plot_t)g_sprite_batch_plot_detour.trampoline;
+    }
 
+    if (!install_detour(&g_sprite_batch_draw_detour, (void*)(uintptr_t)ADDR_SPRITE_BATCH_DRAW, (void*)&hooked_sprite_batch_draw, 5)) {
+        LOG_WARN("hooks_init: failed to detour sprite_batch_draw (glow debug disabled)");
+    } else {
+        p_sprite_batch_draw_trampoline = (fn_sprite_batch_draw_t)g_sprite_batch_draw_detour.trampoline;
+    }
 
 LOG_INFO("hooks_init: custom MODS menu ready");
 }

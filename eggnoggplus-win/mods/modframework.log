@@ -1,15 +1,16 @@
-[15:09:03] [INFO] Mod framework initializing...
-[15:09:03] [INFO] Mod framework API version: 1
-[15:09:03] [INFO] Scanning mods/ folder...
-[15:09:03] [INFO] Loading mod: online_play (Online Play Prototype) v0.1.0 by codex
-[15:09:03] [INFO]   Adds a Play Online button and prototype online hub menu.
-[15:09:03] [INFO] [mod:online_play] Online Play Prototype loaded
-[15:09:03] [INFO] Loaded mod: online_play
-[15:09:03] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[15:09:03] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[15:09:03] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[15:09:03] [INFO] [mod:poc_speedhack] enabled=true
-[15:09:03] [INFO] [mod:poc_speedhack] speed=1
-[15:09:03] [INFO] Loaded mod: poc_speedhack
-[15:09:03] [INFO] Done. 2 mod folder(s) scanned.
-[15:09:03] [INFO] hooks_init: custom MODS menu ready
+[15:17:15] [INFO] Mod framework initializing...
+[15:17:15] [INFO] Mod framework API version: 1
+[15:17:15] [INFO] Scanning mods/ folder...
+[15:17:15] [INFO] Loading mod: online_play (Online Play Prototype) v0.1.0 by codex
+[15:17:15] [INFO]   Adds a Play Online button and prototype online hub menu.
+[15:17:15] [INFO] [mod:online_play] Online Play Prototype loaded
+[15:17:15] [INFO] Loaded mod: online_play
+[15:17:15] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[15:17:15] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[15:17:15] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[15:17:16] [INFO] [mod:poc_speedhack] enabled=true
+[15:17:16] [INFO] [mod:poc_speedhack] speed=1
+[15:17:16] [INFO] Loaded mod: poc_speedhack
+[15:17:16] [INFO] Done. 2 mod folder(s) scanned.
+[15:17:16] [INFO] hooks_init: custom MODS menu ready
+[15:21:07] [INFO] MODS: entering mods menu

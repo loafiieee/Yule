@@ -1,0 +1,10 @@
+{
+  "id": "online_play",
+  "name": "Online Play Prototype",
+  "version": "0.1.0",
+  "author": "codex",
+  "description": "Adds a Play Online button and prototype online hub menu.",
+  "api_version": 1,
+  "entry": "main.lua",
+  "config": "config.cfg"
+}

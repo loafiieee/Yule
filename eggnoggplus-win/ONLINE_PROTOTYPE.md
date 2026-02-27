@@ -4,13 +4,13 @@ This repo now includes two prototype pieces:
 
 1. `mods/online_play` (Lua):
    - adds a **Play Online** button under START on the main menu
-   - opens an in-game **Online Hub** UI with prototype login/ranked/casual/friends/add-friend actions
+   - opens an in-game **Online Hub** UI with a darker panel backdrop, more vanilla button styling, prototype login/ranked/casual/friends/add-friend actions
 2. `../online_server` (Python FastAPI):
    - provides auth, friends, queue/matchmaking, match reports, and ELO updates
 
 ## Current limitation
 
-The current Lua mod framework does not yet expose built-in HTTP helpers, and LuaSocket is not wired by default.
+The current Lua mod framework does not yet expose built-in HTTP helpers, and LuaSocket is not wired by default (so queueing in the in-game UI is simulated while backend APIs are real/testable).
 So this prototype keeps menu/UI in-game and ships a separately runnable backend API.
 
 A next step is to add a small bridge layer (C-side HTTP functions exposed to Lua), then wire each UI button directly to API calls.

@@ -22,7 +22,7 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 8787
 ```
 
-Server runs at `http://127.0.0.1:8787`.
+Server runs at `http://127.0.0.1:8787` (opening this root URL now shows a small landing page instead of `Not Found`).
 
 ## API overview
 
@@ -35,7 +35,7 @@ Server runs at `http://127.0.0.1:8787`.
 - `GET /friends`
 - `POST /queue/join`
 - `POST /queue/leave`
-- `GET /queue/status`
+- `GET /queue/status` (returns queued mode + wait seconds, or matched match_id)
 - `GET /match/{match_id}`
 - `POST /match/{match_id}/report`
 

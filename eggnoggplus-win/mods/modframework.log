@@ -1,12 +1,13 @@
-[10:01:24] [INFO] Mod framework initializing...
-[10:01:24] [INFO] Mod framework API version: 1
-[10:01:24] [INFO] Scanning mods/ folder...
-[10:01:24] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:01:24] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:01:24] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:01:24] [INFO] [mod:poc_speedhack] enabled=true
-[10:01:24] [INFO] [mod:poc_speedhack] speed=1
-[10:01:24] [INFO] Loaded mod: poc_speedhack
-[10:01:24] [INFO] Done. 1 mod folder(s) scanned.
-[10:01:24] [INFO] hooks_init: custom MODS menu ready
-[10:01:38] [INFO] [mod:poc_speedhack] Unloaded
+[14:32:23] [INFO] Mod framework initializing...
+[14:32:23] [INFO] Mod framework API version: 1
+[14:32:23] [INFO] Scanning mods/ folder...
+[14:32:23] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[14:32:23] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[14:32:23] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[14:32:23] [INFO] [mod:poc_speedhack] enabled=true
+[14:32:23] [INFO] [mod:poc_speedhack] speed=1
+[14:32:23] [INFO] Loaded mod: poc_speedhack
+[14:32:23] [INFO] Done. 1 mod folder(s) scanned.
+[14:32:23] [INFO] hooks_init: custom MODS menu ready
+[14:35:15] [INFO] MODS: entering mods menu
+[14:48:22] [INFO] [mod:poc_speedhack] Unloaded

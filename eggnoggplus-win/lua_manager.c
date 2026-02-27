@@ -2974,12 +2974,17 @@ void lua_manager_on_frame() {
         }
     }
 
-    // Reset turtle state before flushing; sprite batching relies on consistent globals.
+    // Reset turtle state after mod callbacks to avoid leaking transforms/tints into the next frame.
     ui_reset_render_state();
 
-    // Flush any sprites plotted by mods this frame so they render immediately and
-    // don't carry over into the next frame (which can break glow layering).
-    if (p_main_sprite_batches_draw) {
+    // sprites) carry over to the next frame, where they're flushed at specific points in the
+    // render pipeline. Forcing a flush here (we're hooked from SDL_GL_SwapWindow) clears
+    //
+    // We only force-flush in menu-style states, where the vanilla pipeline already finalizes
+    // rendering via menu draw code and doesn't rely on cross-frame batching the same way.
+    const char* st_name = ui_state_name_from_ptr(state_ptr);
+    int allow_flush = ui_is_menu_state_name(st_name);
+    if (allow_flush && p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
 

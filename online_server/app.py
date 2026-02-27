@@ -11,6 +11,7 @@ from typing import Dict, List, Literal, Optional, Set, Tuple
 
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from passlib.context import CryptContext
 
@@ -303,6 +304,24 @@ def health() -> dict:
     return {"ok": True, "app": APP_NAME, "time": _now()}
 
 
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return """
+    <html>
+      <head><title>Eggnogg Online Prototype</title></head>
+      <body style="font-family: sans-serif; margin: 2rem;">
+        <h1>Eggnogg Online Prototype</h1>
+        <p>Server is running.</p>
+        <ul>
+          <li><a href="/health">/health</a></li>
+          <li><a href="/docs">/docs</a></li>
+        </ul>
+        <p>Use <code>/docs</code> to register/login and test queue/match endpoints.</p>
+      </body>
+    </html>
+    """
+
+
 @app.post("/auth/register", response_model=AuthResponse)
 def register(req: RegisterRequest) -> AuthResponse:
     email = req.email.strip().lower()
@@ -417,7 +436,15 @@ def list_friends(user: User = Depends(get_current_user)) -> dict:
 
 @app.post("/queue/join", response_model=QueueJoinResponse)
 def queue_join(req: QueueJoinRequest, user: User = Depends(get_current_user)) -> QueueJoinResponse:
-    if any(q.user_id == user.user_id for q in queues):
+    for m in matches.values():
+        if user.user_id in m.players and m.state in ("active", "pending_finalize"):
+            return QueueJoinResponse(status="matched", match_id=m.match_id)
+
+    already_queued = any(q.user_id == user.user_id and q.mode == req.mode for q in queues)
+    if already_queued:
+        maybe = try_matchmake(req.mode)
+        if maybe and user.user_id in maybe.players:
+            return QueueJoinResponse(status="matched", match_id=maybe.match_id)
         return QueueJoinResponse(status="queued")
 
     if any(user.user_id in m.players and m.state in ("active", "pending_finalize") for m in matches.values()):
@@ -443,9 +470,15 @@ def queue_leave(user: User = Depends(get_current_user)) -> dict:
 def queue_status(user: User = Depends(get_current_user)) -> dict:
     for m in matches.values():
         if user.user_id in m.players and m.state in ("active", "pending_finalize"):
-            return {"status": "matched", "match_id": m.match_id}
-    if any(q.user_id == user.user_id for q in queues):
-        return {"status": "queued"}
+            return {"status": "matched", "match_id": m.match_id, "mode": m.mode}
+
+    for q in queues:
+        if q.user_id == user.user_id:
+            return {
+                "status": "queued",
+                "mode": q.mode,
+                "wait_seconds": max(0, _now() - q.enqueued_at),
+            }
     return {"status": "idle"}
 
 

@@ -4,32 +4,28 @@ local online_menu_open = false
 local auth_user = nil
 local queue_mode = nil
 local queue_started_at = 0
+local queue_eta = 0
 local status_message = "Not logged in"
 
 local server_url = "http://127.0.0.1:8787"
 local strict_mod_policy = true
 
 local users = {
-  {
-    id = "u_alpha",
-    name = "Alpha",
-    elo = 1000,
-    friends = { "u_bravo" }
-  },
-  {
-    id = "u_bravo",
-    name = "Bravo",
-    elo = 1000,
-    friends = {}
-  }
+  { id = "u_alpha", name = "Alpha", elo = 1000 },
+  { id = "u_bravo", name = "Bravo", elo = 1000 },
 }
 
 local friend_directory = {
-  u_alpha = { { id = "u_bravo", name = "Bravo", online = true }, { id = "u_charlie", name = "Charlie", online = false } },
-  u_bravo = { { id = "u_alpha", name = "Alpha", online = true }, { id = "u_delta", name = "Delta", online = true } },
+  u_alpha = {
+    { id = "u_bravo", name = "Bravo", online = true },
+    { id = "u_charlie", name = "Charlie", online = false },
+    { id = "u_delta", name = "Delta", online = true },
+  },
+  u_bravo = {
+    { id = "u_alpha", name = "Alpha", online = true },
+    { id = "u_echo", name = "Echo", online = true },
+  },
 }
-
-local pending_outbound = {}
 
 local baseline = {
   captured = false,
@@ -74,107 +70,126 @@ local function menu_reset_baseline()
 end
 
 local function enforce_ranked_mod_policy()
-  if not strict_mod_policy then
-    return true
-  end
-
-  -- Prototype gate: the framework does not yet expose runtime mod enumeration
-  -- inside Lua, so this is currently advisory only.
-  status_message = "Ranked policy ON: run with only online_play enabled"
+  if not strict_mod_policy then return true end
+  status_message = "Ranked policy: run only online-play + cosmetic-safe mods"
   return true
 end
 
-local function draw_online_hub()
-  local sw, sh = mod.ui.screen_size()
-  local panel_w = 700
-  local panel_h = 430
-  local x = (sw - panel_w) * 0.5
-  local y = (sh - panel_h) * 0.5
+local function draw_dark_backdrop()
+  local w, h = mod.ui.screen_size()
+  -- A wide, dark-ish framed slab to separate the online hub from vanilla buttons.
+  -- (Immediate-mode button gives us a visible panel-like primitive in this API.)
+  mod.ui.button_at("online_backdrop", "", w * 0.5 - 420, h * 0.5 - 255, 840, 510)
+end
 
-  mod.ui.layout(x + 20, y + 20, 30, 6, panel_w - 40, 1.0)
-  mod.ui.text("ONLINE PLAY (PROTOTYPE)")
-  mod.ui.text("Server: " .. tostring(server_url), 0.8, 0.8, 1.0, 0.9)
-  mod.ui.text("Status: " .. tostring(status_message), 1.0, 1.0, 0.7, 0.9)
-  mod.ui.next_row()
+local function queue_tick()
+  if not queue_mode then return end
+  local elapsed = os.time() - queue_started_at
+  if elapsed >= queue_eta then
+    status_message = "Match found! (prototype)"
+    queue_mode = nil
+  else
+    status_message = ("Searching %s... %ds"):format(queue_mode, elapsed)
+  end
+end
+
+local function draw_online_hub()
+  local w, h = mod.ui.screen_size()
+  local cx = w * 0.5
+  local top_y = h * 0.5 - 220
+
+  draw_dark_backdrop()
+
+  mod.ui.text_at("PLAY ONLINE", cx - 110, top_y + 8, 1.3, 1.0, 1.0, 1.0)
+  mod.ui.text_at("Server: " .. tostring(server_url), cx - 170, top_y + 40, 0.9, 0.80, 0.85, 1.0)
+  mod.ui.text_at("Status: " .. tostring(status_message), cx - 170, top_y + 62, 0.9, 1.0, 1.0, 0.75)
+
+  -- Vanilla-like stacked action buttons in the center lane.
+  local btn_w = 260
+  local btn_h = 40
+  local by = top_y + 98
 
   if not auth_user then
-    mod.ui.text("Login:")
-    if mod.ui.button("login_alpha", "Login as Alpha") then
+    if mod.ui.button_at("login_alpha", "Login: Alpha", cx - btn_w - 10, by, btn_w, btn_h) then
       auth_user = users[1]
       status_message = "Logged in as " .. auth_user.name
     end
-    if mod.ui.button("login_bravo", "Login as Bravo") then
+    if mod.ui.button_at("login_bravo", "Login: Bravo", cx + 10, by, btn_w, btn_h) then
       auth_user = users[2]
       status_message = "Logged in as " .. auth_user.name
     end
   else
-    mod.ui.text("Logged in as: " .. auth_user.name .. " (ELO " .. tostring(auth_user.elo) .. ")")
-    if mod.ui.button("logout", "Logout") then
+    mod.ui.text_at(
+      ("Signed in: %s  ELO: %d"):format(auth_user.name, auth_user.elo),
+      cx - 170,
+      by + 8,
+      0.95,
+      0.95,
+      1.0,
+      0.95
+    )
+    if mod.ui.button_at("logout", "Logout", cx + 110, by, 160, btn_h) then
       auth_user = nil
       queue_mode = nil
       status_message = "Not logged in"
     end
   end
 
-  mod.ui.next_row()
-
-  local ranked_disabled = (not auth_user)
-  local casual_disabled = (not auth_user)
-
-  if ranked_disabled then
-    mod.ui.text("Ranked requires login.", 1.0, 0.6, 0.6, 0.9)
-  end
-
-  if mod.ui.button("queue_ranked", "Ranked Queue") then
-    if auth_user then
-      if enforce_ranked_mod_policy() then
-        queue_mode = "ranked"
-        queue_started_at = os.time()
-        status_message = "Searching ranked match near ELO " .. tostring(auth_user.elo)
-      end
+  local qy = by + 58
+  if mod.ui.button_at("queue_ranked", "Ranked", cx - btn_w - 10, qy, btn_w, btn_h) then
+    if auth_user and enforce_ranked_mod_policy() then
+      queue_mode = "ranked"
+      queue_started_at = os.time()
+      queue_eta = 7
+      status_message = "Searching ranked near your ELO"
     end
   end
 
-  if mod.ui.button("queue_casual", "Casual Queue") then
+  if mod.ui.button_at("queue_casual", "Casual", cx + 10, qy, btn_w, btn_h) then
     if auth_user then
       queue_mode = "casual"
       queue_started_at = os.time()
-      status_message = "Searching casual match"
+      queue_eta = 4
+      status_message = "Searching casual"
     end
   end
 
-  if queue_mode and mod.ui.button("leave_queue", "Leave Queue") then
+  if mod.ui.button_at("leave_queue", "Leave Queue", cx - 130, qy + 52, 260, btn_h) then
     queue_mode = nil
     status_message = "Queue cancelled"
   end
 
-  mod.ui.next_row()
-  mod.ui.text("Friends:")
+  -- Friends section: compact two-column chips instead of list-like rows.
+  local fy = qy + 112
+  mod.ui.text_at("FRIENDS", cx - 60, fy, 1.0, 0.9, 0.95, 1.0)
 
   if auth_user then
     local friends = friend_directory[auth_user.id] or {}
-    if #friends == 0 then
-      mod.ui.text("No friends yet.", 0.8, 0.8, 0.8, 0.9)
-    else
-      for i, f in ipairs(friends) do
-        local line = f.name .. (f.online and " (online)" or " (offline)")
-        mod.ui.text(line)
-        if f.online and mod.ui.button("challenge_" .. tostring(i), "Challenge") then
+    local chip_w = 250
+    local chip_h = 34
+    for i, f in ipairs(friends) do
+      local col = ((i - 1) % 2)
+      local row = math.floor((i - 1) / 2)
+      local bx = cx - 260 + (col * 270)
+      local by2 = fy + 26 + (row * 42)
+      local label = f.name .. (f.online and "  • online" or "  • offline")
+      if mod.ui.button_at("friend_" .. tostring(i), label, bx, by2, chip_w, chip_h) then
+        if f.online then
           status_message = "Challenge sent to " .. f.name
+        else
+          status_message = f.name .. " is offline"
         end
       end
     end
 
-    if mod.ui.button("add_friend", "Add Demo Friend") then
-      pending_outbound[#pending_outbound + 1] = "u_demo_" .. tostring(#pending_outbound + 1)
+    if mod.ui.button_at("add_friend", "Add Friend", cx - 130, fy + 160, 260, 34) then
       status_message = "Friend request sent (prototype)"
     end
   else
-    mod.ui.text("Login to see friends.", 0.8, 0.8, 0.8, 0.9)
+    mod.ui.text_at("Login to view and challenge friends.", cx - 190, fy + 28, 0.9, 0.8, 0.8, 0.8)
   end
 
-  mod.ui.next_row(2)
-  if mod.ui.button("close_online_menu", "Back") then
+  if mod.ui.button_at("close_online_menu", "Back", cx - 90, top_y + 470, 180, 32) then
     online_menu_open = false
   end
 end
@@ -199,6 +214,7 @@ end)
 
 mod.on_frame(function()
   read_config()
+  queue_tick()
 
   local st = mod.ui.state_name()
   if in_main_menu_state(st) then

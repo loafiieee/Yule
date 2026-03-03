@@ -51,6 +51,8 @@ static lua_State *L = NULL;
 // Reverse-engineered button struct field offsets (from button_ex in ghidra).
 #define BTN_OFS_CENTER_X          0x10
 #define BTN_OFS_CENTER_Y          0x14
+#define BTN_OFS_TEXT_SCALE_X      0xA4
+#define BTN_OFS_TEXT_SCALE_Y      0xA8
 #define BTN_OFS_FLAGS             0xBC
 #define BTN_OFS_NOLINK_FLAG       0xBD
 #define BTN_OFS_LABEL_PTR         0xC8
@@ -75,6 +77,9 @@ static lua_State *L = NULL;
 
 // Gameplay globals (from bundled ghidra symbols).
 #define ADDR_GAME_ACTIVE_ROOM      0x541E08u
+#define ADDR_LEADER                0x541E0Cu
+#define ADDR_END_COUNTDOWN         0x542044u
+#define ADDR_START_COUNTDOWN       0x542048u
 #define ADDR_PLAYER_ARRAY          0x542058u
 #define ADDR_THINGS                0x542080u
 #define ADDR_THING_INFO            0x543640u
@@ -129,6 +134,9 @@ static fn_map_tile_t         p_map_tile          = (fn_map_tile_t)(uintptr_t)ADD
 
 static volatile int* p_btn_reset_counter = (volatile int*)(uintptr_t)ADDR_BTN_RESET_COUNTER;
 static volatile int* p_game_active_room = (volatile int*)(uintptr_t)ADDR_GAME_ACTIVE_ROOM;
+static volatile uintptr_t* p_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_LEADER;
+static volatile int* p_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
+static volatile int* p_start_countdown = (volatile int*)(uintptr_t)ADDR_START_COUNTDOWN;
 static volatile int* p_room_w = (volatile int*)(uintptr_t)ADDR_ROOM_W;
 static uintptr_t* p_player_slots = (uintptr_t*)(uintptr_t)ADDR_PLAYER_ARRAY;
 static uint8_t* p_things = (uint8_t*)(uintptr_t)ADDR_THINGS;
@@ -1703,6 +1711,9 @@ static int lua_ui_button_at(lua_State* Ls) {
     return ui_button_common(Ls, mod, id, label, x, y, w, h, scale);
 }
 
+// Forward declaration; implementation lives below with other UI string helpers.
+static char* mod_ui_pool_strdup(LoadedMod* mod, const char* s, size_t len);
+
 static int lua_ui_native_button(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     const char* id = luaL_checkstring(Ls, 1);
@@ -1716,6 +1727,8 @@ static int lua_ui_native_button(lua_State* Ls) {
     // on startup and persist across the title state handoff.
     const char* button_state_name = (_stricmp(state_name, "main_initial") == 0) ? "main" : state_name;
     UiNativeButton* b;
+    int label_changed = 0;
+    int created_now = 0;
     int clicked = 0;
 
     if (!mod) {
@@ -1729,6 +1742,7 @@ static int lua_ui_native_button(lua_State* Ls) {
         return 1;
     }
 
+    label_changed = (strcmp(b->label, label ? label : "") != 0);
     strncpy(b->label, label ? label : "", sizeof(b->label) - 1);
     b->label[sizeof(b->label) - 1] = '\0';
     b->grid_x = grid_x;
@@ -1761,10 +1775,22 @@ static int lua_ui_native_button(lua_State* Ls) {
         if (p_button_set_layout) p_button_set_layout(b->layout_x, b->layout_y);
         b->btn_ptr = p_button_ex(b->grid_x, b->grid_y, 0, b->label, (int)(intptr_t)&ui_native_button_filter);
         if (b->btn_ptr) {
+            created_now = 1;
             // Match MODS menu button behavior so sword selectors can land on it.
             // +0xE0: link target / state bridge (must be non-null for some menus)
             // +0xE4: per-player filter pointer (used by selectors)
             *(void**)((uint8_t*)b->btn_ptr + 0xE0) = ui_current_state_ptr();
+        }
+    }
+
+    // Keep native button text in sync when Lua changes label for an existing ID.
+    if (b->btn_ptr && (created_now || label_changed)) {
+        if (!IsBadWritePtr((uint8_t*)b->btn_ptr + BTN_OFS_LABEL_PTR, (SIZE_T)sizeof(void*))) {
+            size_t len = strlen(b->label);
+            char* owned = mod_ui_pool_strdup(mod, b->label, len);
+            if (owned) {
+                *(const char**)((uint8_t*)b->btn_ptr + BTN_OFS_LABEL_PTR) = owned;
+            }
         }
     }
 
@@ -1831,6 +1857,30 @@ static int lua_ui_native_resize(lua_State* Ls) {
     if (p_button_set_w_ex) p_button_set_w_ex((int)(intptr_t)b->btn_ptr, w, shrink);
     if (p_button_set_h_ex) p_button_set_h_ex((int)(intptr_t)b->btn_ptr, h, shrink);
 
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_ui_native_set_text_scale(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* id = luaL_checkstring(Ls, 1);
+    float sx = (float)luaL_checknumber(Ls, 2);
+    float sy = (float)luaL_optnumber(Ls, 3, sx);
+    const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
+    const char* button_state_name = (_stricmp(state_name, "main_initial") == 0) ? "main" : state_name;
+    UiNativeButton* b;
+
+    if (!mod) { lua_pushboolean(Ls, 0); return 1; }
+    if (sx < 0.10f) sx = 0.10f;
+    if (sy < 0.10f) sy = 0.10f;
+    if (sx > 3.00f) sx = 3.00f;
+    if (sy > 3.00f) sy = 3.00f;
+
+    b = mod_ui_native_find(mod, id, button_state_name);
+    if (!b || !b->btn_ptr || !ui_engine_button_exists(b->btn_ptr)) { lua_pushboolean(Ls, 0); return 1; }
+
+    *(float*)((uint8_t*)b->btn_ptr + BTN_OFS_TEXT_SCALE_X) = sx;
+    *(float*)((uint8_t*)b->btn_ptr + BTN_OFS_TEXT_SCALE_Y) = sy;
     lua_pushboolean(Ls, 1);
     return 1;
 }
@@ -2189,6 +2239,31 @@ static int lua_game_snapshot(lua_State* Ls) {
     lua_push_field_bool(Ls, "in_game", in_game);
     lua_push_field_int(Ls, "player_index", player_index);
     lua_push_field_int(Ls, "enemy_index", enemy_index);
+    {
+        int start_countdown = 0;
+        int end_countdown = 0;
+        int leader_index = -1;
+        uintptr_t leader_ptr = 0;
+        uintptr_t p0 = game_get_player_ptr(0);
+        uintptr_t p1 = game_get_player_ptr(1);
+
+        if (ptr_readable((const void*)p_start_countdown, sizeof(int))) {
+            start_countdown = *p_start_countdown;
+        }
+        if (ptr_readable((const void*)p_end_countdown, sizeof(int))) {
+            end_countdown = *p_end_countdown;
+        }
+        if (ptr_readable((const void*)p_game_leader, sizeof(uintptr_t))) {
+            leader_ptr = *p_game_leader;
+            if (leader_ptr == p0) leader_index = 0;
+            else if (leader_ptr == p1) leader_index = 1;
+        }
+
+        lua_push_field_int(Ls, "start_countdown", start_countdown);
+        lua_push_field_int(Ls, "end_countdown", end_countdown);
+        if (leader_index >= 0) lua_push_field_int(Ls, "leader_index", leader_index);
+        else { lua_pushnil(Ls); lua_setfield(Ls, -2, "leader_index"); }
+    }
 
     if (!player_ptr) {
         lua_pushstring(Ls, "player pointer unavailable");
@@ -2462,6 +2537,7 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_set_pos, 1);     lua_setfield(Ls, -2, "native_set_pos");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_set_layout, 1);  lua_setfield(Ls, -2, "native_set_layout");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_resize, 1);      lua_setfield(Ls, -2, "native_resize");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_set_text_scale, 1); lua_setfield(Ls, -2, "native_set_text_scale");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_hide, 1);        lua_setfield(Ls, -2, "native_hide");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_native_remove, 1);      lua_setfield(Ls, -2, "native_remove");
 

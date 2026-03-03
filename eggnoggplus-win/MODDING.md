@@ -253,6 +253,9 @@ mod.ui.native_set_layout("my_btn", 5.0, 5.0)
 -- Resize clickable/rendered bounds
 mod.ui.native_resize("my_btn", 240, 52)
 
+-- Adjust native button label scale (x [,y]); useful when resizing buttons
+mod.ui.native_set_text_scale("my_btn", 0.85, 0.85)
+
 -- Hide/show from navigation + click handling
 mod.ui.native_hide("my_btn", true)
 mod.ui.native_hide("my_btn", false)
@@ -333,6 +336,7 @@ end
   - `player_x`, `player_y`, `player_vx`, `player_vy`
   - `enemy_dx`, `enemy_dy`, `enemy_vx`, `enemy_vy` (enemy relative position + velocity)
   - `player_has_sword`, `enemy_has_sword`
+  - `start_countdown`, `end_countdown`, `leader_index` (0/1 or `nil` when unknown)
   - `nearest_sword_dx`, `nearest_sword_dy` (relative to player, or `nil` if none)
   - `tiles_of_current_room` (2D array of tile ids, or `nil` if not available)
   - `room_index`, `room_width`, `room_height`, `in_game`
@@ -383,6 +387,7 @@ The framework patches `data/font8x8.png` **as it is loaded** so the base game te
 - `mod.ui.native_set_pos(id, x, y) -> bool`
 - `mod.ui.native_set_layout(id, layout_x, layout_y) -> bool`
 - `mod.ui.native_resize(id, w, h [,shrink]) -> bool`
+- `mod.ui.native_set_text_scale(id, sx [,sy]) -> bool`
 - `mod.ui.native_hide(id, hidden) -> bool`
 - `mod.ui.native_remove(id) -> bool`
 - `mod.ui.find_button_by_action_ptr(action_ptr [,nth]) -> ptr|nil`

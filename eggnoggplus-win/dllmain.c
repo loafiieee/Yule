@@ -3,6 +3,7 @@
 #include "hooks.h"
 #include "lua_manager.h"
 
+
 #include <stdint.h>
 
 // ---------------- Crash handler (writes mods/crash.log, optional minidump) ----------------
@@ -218,6 +219,7 @@ typedef union {
 
 #define SDL_KEYDOWN         0x300
 #define SDL_KEYUP           0x301
+#define SDL_QUIT            0x100
 #define SDL_MOUSEMOTION     0x400
 #define SDL_MOUSEBUTTONDOWN 0x401
 #define SDL_MOUSEBUTTONUP   0x402
@@ -418,6 +420,11 @@ int SDL_PollEvent(SDL_Event* event) {
                 }
                 break;
             }
+            case SDL_QUIT:
+                // Notify Lua mods (best-effort) before quit is delivered to the game.
+                (void)lua_manager_on_event("quit", 0, 0, 0, 0, 0, 0);
+                consumed = 0;
+                break;
             default:
                 // Unknown/unhandled event type: don't consume
                 consumed = 0;

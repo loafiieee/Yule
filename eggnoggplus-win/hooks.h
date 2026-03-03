@@ -19,6 +19,7 @@ int hooks_mods_menu_keydown(int sym, int scancode, int mod);
 int hooks_mods_menu_control_action(int action);
 int hooks_mods_menu_active(void);
 
+
 // Input override API (Lua)
 void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace);
 void hooks_clear_input_override(int player_index);

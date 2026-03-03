@@ -78,6 +78,8 @@
 #define ADDR_MAD_H                    0x404320u
 #define ADDR_OPTIONS_STATE            0x448398u
 #define ADDR_OPTIONS_STATE_PAUSED     0x448388u
+#define ADDR_MAIN_STATE               0x448350u
+#define ADDR_MAIN_STATE_INITIAL       0x448340u
 #define ADDR_OPTIONS_ENTER            0x4381F0u
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
 #define ADDR_MAIN_PLAYER_POLL_CMDS    0x433F90u
@@ -202,6 +204,7 @@ static fn_void_void_t                p_options_enter = (fn_void_void_t)(uintptr_
 static fn_void_void_t                p_options_enter_paused = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER_PAUSED;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
+static fn_state_switch_t             p_state_switch_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
 
@@ -210,6 +213,7 @@ static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
 
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
+static Detour g_state_switch_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 
@@ -1496,6 +1500,7 @@ void hooks_init(void) {
         return;
     }
     p_options_enter_paused_trampoline = (fn_void_void_t)g_options_enter_paused_detour.trampoline;
+
 
     if (!install_detour(&g_main_player_poll_cmds_detour, (void*)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS, (void*)&hooked_main_player_poll_cmds, 5)) {
         LOG_WARN("hooks_init: failed to detour main_player_poll_cmds (input override API disabled)");

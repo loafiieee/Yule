@@ -18,6 +18,7 @@ int hooks_text_capture_keydown(int sym, int scancode, int mod);
 int hooks_mods_menu_keydown(int sym, int scancode, int mod);
 int hooks_mods_menu_control_action(int action);
 int hooks_mods_menu_active(void);
+void hooks_mods_menu_notify_reload(void);
 
 
 // Input override API (Lua)

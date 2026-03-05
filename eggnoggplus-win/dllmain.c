@@ -272,7 +272,7 @@ static unsigned long long luna_real_qpc(void) {
         LARGE_INTEGER c;
         QueryPerformanceCounter(&c);
         g_real_anchor = (unsigned long long)c.QuadPart;
-        g_scaled_anchor = (double)g_real_anchor;
+        g_scaled_anchor = 0.0;
         g_last_scale = 1.0f;
         g_last_real_qpc = (unsigned long long)c.QuadPart;
         return (unsigned long long)c.QuadPart;

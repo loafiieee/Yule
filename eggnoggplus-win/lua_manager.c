@@ -279,6 +279,14 @@ static int g_ui_mouse_y = 0;
 static int g_ui_mouse_down_left = 0;
 static int g_ui_mouse_pressed_left = 0;
 
+// Runtime hot-reload state (polled once per second from on_frame).
+#define HOT_RELOAD_INTERVAL_MS 1000ULL
+static uint64_t g_hot_reload_signature = 0;
+static ULONGLONG g_hot_reload_next_poll_ms = 0;
+static int g_force_layout_refresh = 1;
+static void* g_last_layout_state = (void*)-1;
+static int g_last_btn_count = -1;
+
 // =============================
 // Tiny JSON helpers
 // (kept intentionally simple – good enough for our stable mod.json format)
@@ -2773,26 +2781,104 @@ static void extend_package_path(void) {
     lua_pop(L, 1);
 }
 
-void lua_manager_init() {
-    L = luaL_newstate();
-    luaL_openlibs(L);
-    extend_package_path();
-
-    font_ext_init();
-
+static void reset_runtime_ui_state(void) {
     g_ui_mouse_x = 0;
     g_ui_mouse_y = 0;
     g_ui_mouse_down_left = 0;
     g_ui_mouse_pressed_left = 0;
+    g_force_layout_refresh = 1;
+    g_last_layout_state = (void*)-1;
+    g_last_btn_count = -1;
+}
 
-    LOG_INFO("Mod framework API version: %d", MOD_API_VERSION);
+static int create_lua_runtime(void) {
+    if (L) return 1;
+    L = luaL_newstate();
+    if (!L) {
+        LOG_ERROR("Failed to create Lua state");
+        return 0;
+    }
+    luaL_openlibs(L);
+    extend_package_path();
+    return 1;
+}
+
+static void unload_all_mods(void) {
+    if (!g_mods || g_mod_count <= 0) {
+        free(g_mods);
+        g_mods = NULL;
+        g_mod_count = 0;
+        g_mod_cap = 0;
+        return;
+    }
+
+    if (!L) {
+        free(g_mods);
+        g_mods = NULL;
+        g_mod_count = 0;
+        g_mod_cap = 0;
+        return;
+    }
+
+    // Call on_unload for mods (best-effort)
+    for (int i = 0; i < g_mod_count; i++) {
+        LoadedMod* mod = &g_mods[i];
+        if (!mod->enabled) continue;
+        call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
+    }
+
+    // Free refs + per-mod allocations
+    for (int i = 0; i < g_mod_count; i++) {
+        LoadedMod* mod = &g_mods[i];
+        reflist_clear(L, &mod->on_frame);
+        reflist_clear(L, &mod->on_event);
+        mod_ui_free(mod);
+
+        if (mod->on_layout) {
+            for (int li = 0; li < mod->on_layout_count; li++) {
+                if (mod->on_layout[li].ref != LUA_NOREF && mod->on_layout[li].ref != LUA_REFNIL) {
+                    luaL_unref(L, LUA_REGISTRYINDEX, mod->on_layout[li].ref);
+                }
+            }
+            free(mod->on_layout);
+            mod->on_layout = NULL;
+        }
+        mod->on_layout_count = 0;
+        mod->on_layout_cap = 0;
+
+        // Config entries + action handlers
+        mod_config_clear(L, mod);
+
+        if (mod->on_load_ref != LUA_NOREF && mod->on_load_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, mod->on_load_ref);
+        }
+        if (mod->on_unload_ref != LUA_NOREF && mod->on_unload_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, mod->on_unload_ref);
+        }
+        if (mod->env_ref != LUA_NOREF && mod->env_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, mod->env_ref);
+        }
+        if (mod->mod_ref != LUA_NOREF && mod->mod_ref != LUA_REFNIL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, mod->mod_ref);
+        }
+    }
+
+    free(g_mods);
+    g_mods = NULL;
+    g_mod_count = 0;
+    g_mod_cap = 0;
+}
+
+static int scan_and_load_mods(void) {
+    if (!L) return 0;
+
     LOG_INFO("Scanning mods/ folder...");
 
-    WIN32_FIND_DATA fd;
-    HANDLE hFind = FindFirstFile("mods\\*", &fd);
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA("mods\\*", &fd);
     if (hFind == INVALID_HANDLE_VALUE) {
         LOG_WARN("No mods/ folder found");
-        return;
+        return 0;
     }
 
     int scanned = 0;
@@ -2810,62 +2896,195 @@ void lua_manager_init() {
 
         load_mod_lua(mod);
         scanned++;
-    } while (FindNextFile(hFind, &fd));
+    } while (FindNextFileA(hFind, &fd));
 
     FindClose(hFind);
     LOG_INFO("Done. %d mod folder(s) scanned.", scanned);
+    return scanned;
+}
+
+static uint64_t hot_reload_hash_bytes(uint64_t h, const void* data, size_t len) {
+    const uint8_t* p = (const uint8_t*)data;
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t hot_reload_hash_path_ci(uint64_t h, const char* s) {
+    if (!s) return h;
+    for (size_t i = 0; s[i]; i++) {
+        unsigned char c = (unsigned char)s[i];
+        c = (unsigned char)tolower(c);
+        h ^= (uint64_t)c;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t hot_reload_hash_entry(const char* rel_path, uint32_t attrs, uint64_t write_time, uint64_t size) {
+    uint64_t h = 1469598103934665603ULL;
+    h = hot_reload_hash_path_ci(h, rel_path);
+    h = hot_reload_hash_bytes(h, &attrs, sizeof(attrs));
+    h = hot_reload_hash_bytes(h, &write_time, sizeof(write_time));
+    h = hot_reload_hash_bytes(h, &size, sizeof(size));
+    return h;
+}
+
+static void hot_reload_sig_add(uint64_t* xor_accum, uint64_t* add_accum, uint64_t* count, uint64_t value) {
+    if (xor_accum) *xor_accum ^= value;
+    if (add_accum) *add_accum += (value * 0x9E3779B185EBCA87ULL);
+    if (count) (*count)++;
+}
+
+static int hot_reload_should_ignore_path(const char* full_path) {
+    if (!full_path || !full_path[0]) return 0;
+    for (int i = 0; i < g_mod_count; i++) {
+        LoadedMod* mod = &g_mods[i];
+        if (!mod->config_path[0]) continue;
+        if (_stricmp(mod->config_path, full_path) == 0) return 1;
+    }
+    return 0;
+}
+
+static void hot_reload_scan_mod_dir(const char* full_dir, const char* rel_dir,
+                                    uint64_t* xor_accum, uint64_t* add_accum, uint64_t* count) {
+    if (!full_dir || !rel_dir) return;
+
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", full_dir);
+
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(pattern, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+
+        char child_full[MAX_PATH];
+        char child_rel[MAX_PATH];
+        snprintf(child_full, sizeof(child_full), "%s\\%s", full_dir, fd.cFileName);
+        snprintf(child_rel, sizeof(child_rel), "%s\\%s", rel_dir, fd.cFileName);
+
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+            hot_reload_should_ignore_path(child_full)) {
+            continue;
+        }
+
+        uint64_t write_time = ((uint64_t)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime;
+        uint64_t size = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        uint64_t entry_hash = hot_reload_hash_entry(child_rel, fd.dwFileAttributes, write_time, size);
+        hot_reload_sig_add(xor_accum, add_accum, count, entry_hash);
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
+            hot_reload_scan_mod_dir(child_full, child_rel, xor_accum, add_accum, count);
+        }
+    } while (FindNextFileA(hFind, &fd));
+
+    FindClose(hFind);
+}
+
+static uint64_t hot_reload_compute_signature(void) {
+    uint64_t xor_accum = 0;
+    uint64_t add_accum = 0;
+    uint64_t count = 0;
+
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA("mods\\*", &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        uint64_t marker = hot_reload_hash_entry("mods_missing", 0, 0, 0);
+        hot_reload_sig_add(&xor_accum, &add_accum, &count, marker);
+    } else {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+            if (fd.cFileName[0] == '_') continue;
+
+            char mod_full[MAX_PATH];
+            char mod_rel[MAX_PATH];
+            snprintf(mod_full, sizeof(mod_full), "mods\\%s", fd.cFileName);
+            snprintf(mod_rel, sizeof(mod_rel), "%s", fd.cFileName);
+
+            uint64_t write_time = ((uint64_t)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime;
+            uint64_t folder_hash = hot_reload_hash_entry(mod_rel, fd.dwFileAttributes, write_time, 0);
+            hot_reload_sig_add(&xor_accum, &add_accum, &count, folder_hash);
+            hot_reload_scan_mod_dir(mod_full, mod_rel, &xor_accum, &add_accum, &count);
+        } while (FindNextFileA(hFind, &fd));
+        FindClose(hFind);
+    }
+
+    uint64_t final_hash = 1469598103934665603ULL;
+    final_hash = hot_reload_hash_bytes(final_hash, &xor_accum, sizeof(xor_accum));
+    final_hash = hot_reload_hash_bytes(final_hash, &add_accum, sizeof(add_accum));
+    final_hash = hot_reload_hash_bytes(final_hash, &count, sizeof(count));
+    return final_hash;
+}
+
+static int reload_mod_runtime(const char* reason) {
+    if (reason && reason[0]) {
+        LOG_INFO("Hot reload: %s", reason);
+    }
+
+    unload_all_mods();
+    if (L) {
+        lua_close(L);
+        L = NULL;
+    }
+
+    if (!create_lua_runtime()) {
+        LOG_ERROR("Hot reload: failed to recreate Lua runtime");
+        return 0;
+    }
+
+    scan_and_load_mods();
+    reset_runtime_ui_state();
+    hooks_mods_menu_notify_reload();
+    return 1;
+}
+
+static void hot_reload_poll(void) {
+    ULONGLONG now = GetTickCount64();
+    if (now < g_hot_reload_next_poll_ms) return;
+    g_hot_reload_next_poll_ms = now + HOT_RELOAD_INTERVAL_MS;
+
+    uint64_t sig = hot_reload_compute_signature();
+    if (sig == g_hot_reload_signature) return;
+
+    if (reload_mod_runtime("mods/ filesystem change detected")) {
+        g_hot_reload_signature = sig;
+        g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
+    } else {
+        LOG_ERROR("Hot reload failed; will retry on next poll.");
+    }
+}
+
+void lua_manager_init() {
+    font_ext_init();
+    reset_runtime_ui_state();
+
+    LOG_INFO("Mod framework API version: %d", MOD_API_VERSION);
+    if (!create_lua_runtime()) return;
+
+    scan_and_load_mods();
+    g_hot_reload_signature = hot_reload_compute_signature();
+    g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
 }
 
 void lua_manager_shutdown() {
-    if (!L) return;
-
-    // Call on_unload for mods (best-effort)
-    for (int i = 0; i < g_mod_count; i++) {
-        LoadedMod* mod = &g_mods[i];
-        if (!mod->enabled) continue;
-        call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
+    unload_all_mods();
+    if (L) {
+        lua_close(L);
+        L = NULL;
     }
-
-    // Free refs
-    for (int i = 0; i < g_mod_count; i++) {
-        LoadedMod* mod = &g_mods[i];
-        reflist_clear(L, &mod->on_frame);
-        reflist_clear(L, &mod->on_event);
-        mod_ui_free(mod);
-
-        if (mod->on_layout) {
-            for (int i = 0; i < mod->on_layout_count; i++) {
-                if (mod->on_layout[i].ref != LUA_NOREF && mod->on_layout[i].ref != LUA_REFNIL)
-                    luaL_unref(L, LUA_REGISTRYINDEX, mod->on_layout[i].ref);
-            }
-            free(mod->on_layout);
-            mod->on_layout = NULL;
-        }
-        mod->on_layout_count = 0;
-        mod->on_layout_cap = 0;
-
-        // Config entries + action handlers
-        mod_config_clear(L, mod);
-
-        if (mod->on_load_ref != LUA_NOREF && mod->on_load_ref != LUA_REFNIL)
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->on_load_ref);
-        if (mod->on_unload_ref != LUA_NOREF && mod->on_unload_ref != LUA_REFNIL)
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->on_unload_ref);
-        if (mod->env_ref != LUA_NOREF && mod->env_ref != LUA_REFNIL)
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->env_ref);
-        if (mod->mod_ref != LUA_NOREF && mod->mod_ref != LUA_REFNIL)
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->mod_ref);
-    }
-
-    free(g_mods);
-    g_mods = NULL;
-    g_mod_count = 0;
-    g_mod_cap = 0;
-
-    lua_close(L);
-    L = NULL;
 
     font_ext_shutdown();
+    g_hot_reload_signature = 0;
+    g_hot_reload_next_poll_ms = 0;
+    g_force_layout_refresh = 1;
+    g_last_layout_state = (void*)-1;
+    g_last_btn_count = -1;
 }
 
 // =============================
@@ -2966,15 +3185,20 @@ double lua_manager_on_delta_time(double dt_seconds) {
 }
 
 void lua_manager_on_frame() {
+    hot_reload_poll();
     if (!L) return;
     void* state_ptr = ui_current_state_ptr();
+
+    if (g_force_layout_refresh) {
+        g_last_layout_state = (void*)-1;
+        g_force_layout_refresh = 0;
+    }
 
     // Detect state transitions and fire on_layout handlers.
     // main_layout() (and equivalents for other states) run synchronously in
     // each state's enter() before the first frame, so by the time we get here
     // the button list is fully built.
-    static void* s_last_layout_state = (void*)-1;
-    if (state_ptr != s_last_layout_state) {
+    if (state_ptr != g_last_layout_state) {
         // Normalise new state: treat main_initial as "main" so on_layout("main")
         // handlers see it as a main-menu entry regardless of which phase we're in.
         const char* new_name = ui_state_name_from_ptr(state_ptr);
@@ -2982,7 +3206,7 @@ void lua_manager_on_frame() {
 
         // Do NOT normalise old_name — we want main_initial→main to count as a
         // real transition so the callback fires once the button list is stable.
-        const char* old_name = ui_state_name_from_ptr(s_last_layout_state);
+        const char* old_name = ui_state_name_from_ptr(g_last_layout_state);
 
         // Only fire if the canonical name actually changed.
         if (_stricmp(new_name, old_name) != 0) {
@@ -3006,7 +3230,7 @@ void lua_manager_on_frame() {
                 }
             }
         }
-        s_last_layout_state = state_ptr;
+        g_last_layout_state = state_ptr;
     }
 
     for (int mi = 0; mi < g_mod_count; mi++) {
@@ -3020,9 +3244,8 @@ void lua_manager_on_frame() {
     // the count to drop back to near-zero and null out all cached ptrs so the
     // native_button path re-creates them cleanly on the next frame.
     {
-        static int s_last_btn_count = -1;
         int cur_count = p_button_count ? p_button_count() : -1;
-        if (cur_count >= 0 && cur_count < 4 && s_last_btn_count >= 4) {
+        if (cur_count >= 0 && cur_count < 4 && g_last_btn_count >= 4) {
             for (int mi = 0; mi < g_mod_count; mi++) {
                 LoadedMod* mod = &g_mods[mi];
                 for (int bi = 0; bi < mod->ui_native_count; bi++) {
@@ -3031,7 +3254,7 @@ void lua_manager_on_frame() {
                 }
             }
         }
-        s_last_btn_count = cur_count;
+        g_last_btn_count = cur_count;
     }
 
     for (int mi = 0; mi < g_mod_count; mi++) {
@@ -3060,9 +3283,9 @@ void lua_manager_on_frame() {
     // rendering via menu draw code and doesn't rely on cross-frame batching the same way.
     const char* st_name = ui_state_name_from_ptr(state_ptr);
     int allow_flush = ui_is_menu_state_name(st_name);
-    if (allow_flush && p_main_sprite_batches_draw) {
-        p_main_sprite_batches_draw();
-    }
+    //if (allow_flush && p_main_sprite_batches_draw) {
+    //    p_main_sprite_batches_draw();
+    //}
 
     ui_reset_render_state();
     g_ui_mouse_pressed_left = 0;

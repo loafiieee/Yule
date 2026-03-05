@@ -1,16 +1,39 @@
-[16:35:03] [INFO] Mod framework initializing...
-[16:35:03] [INFO] Mod framework API version: 1
-[16:35:03] [INFO] Scanning mods/ folder...
-[16:35:03] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[16:35:03] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[16:35:03] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[16:35:03] [INFO] [mod:poc_speedhack] enabled=true
-[16:35:03] [INFO] [mod:poc_speedhack] speed=1
-[16:35:03] [INFO] Loaded mod: poc_speedhack
-[16:35:03] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[16:35:03] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[16:35:03] [INFO] Loaded mod: test
-[16:35:03] [INFO] Done. 2 mod folder(s) scanned.
-[16:35:03] [INFO] hooks_init: custom MODS menu ready
-[16:36:01] [INFO] MODS: entering mods menu
-[16:36:03] [INFO] [mod:poc_speedhack] Unloaded
+[22:00:48] [INFO] Mod framework initializing...
+[22:00:48] [INFO] Mod framework API version: 1
+[22:00:48] [INFO] Scanning mods/ folder...
+[22:00:48] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[22:00:48] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[22:00:48] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[22:00:48] [INFO] [mod:poc_speedhack] enabled=true
+[22:00:48] [INFO] [mod:poc_speedhack] speed=1
+[22:00:48] [INFO] Loaded mod: poc_speedhack
+[22:00:48] [INFO] Done. 1 mod folder(s) scanned.
+[22:00:48] [INFO] hooks_init: custom MODS menu ready
+[22:00:53] [INFO] Hot reload: mods/ filesystem change detected
+[22:00:53] [INFO] [mod:poc_speedhack] Unloaded
+[22:00:53] [INFO] Scanning mods/ folder...
+[22:00:53] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[22:00:53] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[22:00:53] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[22:00:53] [INFO] [mod:poc_speedhack] enabled=true
+[22:00:53] [INFO] [mod:poc_speedhack] speed=1
+[22:00:53] [INFO] Loaded mod: poc_speedhack
+[22:00:53] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[22:00:53] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[22:00:53] [WARN] font_ext: test alloc_glyph after font load; restart required
+[22:00:53] [INFO] Loaded mod: test
+[22:00:53] [INFO] Done. 2 mod folder(s) scanned.
+[22:00:54] [INFO] Hot reload: mods/ filesystem change detected
+[22:00:54] [INFO] [mod:poc_speedhack] Unloaded
+[22:00:54] [INFO] Scanning mods/ folder...
+[22:00:54] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[22:00:54] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[22:00:54] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[22:00:54] [INFO] [mod:poc_speedhack] enabled=true
+[22:00:54] [INFO] [mod:poc_speedhack] speed=1
+[22:00:54] [INFO] Loaded mod: poc_speedhack
+[22:00:54] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[22:00:54] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[22:00:54] [INFO] Loaded mod: test
+[22:00:54] [INFO] Done. 2 mod folder(s) scanned.
+[22:00:58] [INFO] [mod:poc_speedhack] Unloaded

@@ -885,6 +885,17 @@ int hooks_mods_menu_active(void) {
     return is_mods_state_active();
 }
 
+void hooks_mods_menu_notify_reload(void) {
+    g_capture_active = 0;
+    g_capture_mod = -1;
+    g_capture_cfg = -1;
+
+    if (is_mods_state_active()) {
+        rebuild_rows();
+        mods_cursor_tick();
+    }
+}
+
 int hooks_text_capture_keydown(int sym, int scancode, int mod) {
     (void)scancode;
 

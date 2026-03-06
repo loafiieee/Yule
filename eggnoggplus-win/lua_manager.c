@@ -189,6 +189,8 @@ typedef struct LuaRefList {
 
 // Forward declarations for helper functions used before definition
 static void reflist_clear(lua_State* Ls, LuaRefList* list);
+static int ui_engine_button_exists(void* btn_ptr);
+static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden);
 
 
 
@@ -283,9 +285,19 @@ static int g_ui_mouse_pressed_left = 0;
 #define HOT_RELOAD_INTERVAL_MS 1000ULL
 static uint64_t g_hot_reload_signature = 0;
 static ULONGLONG g_hot_reload_next_poll_ms = 0;
+static uint64_t g_hot_reload_pending_signature = 0;
 static int g_force_layout_refresh = 1;
 static void* g_last_layout_state = (void*)-1;
 static int g_last_btn_count = -1;
+
+// UI label strings can be referenced by engine button structs long after a mod
+// unload. During hot reload, keep those allocations alive and free them only on
+// final shutdown.
+static int g_unloading_for_shutdown = 0;
+static char** g_orphan_ui_strings = NULL;
+static int g_orphan_ui_string_count = 0;
+static int g_orphan_ui_string_cap = 0;
+static const char g_orphan_empty_label[] = "";
 
 // =============================
 // Tiny JSON helpers
@@ -957,6 +969,48 @@ static void ui_draw_text_mode(float x, float y, float scale, float r, float g, f
     p_plot_text(text, mode);
 }
 
+static void orphan_ui_string_take(char* s) {
+    if (!s) return;
+    if (g_orphan_ui_string_count + 1 > g_orphan_ui_string_cap) {
+        int newcap = (g_orphan_ui_string_cap == 0) ? 64 : (g_orphan_ui_string_cap * 2);
+        char** np = (char**)realloc(g_orphan_ui_strings, sizeof(char*) * newcap);
+        if (!np) {
+            // Keep the string alive (leak-safe fallback) so engine button
+            // pointers never dangle during hot reload.
+            return;
+        }
+        g_orphan_ui_strings = np;
+        g_orphan_ui_string_cap = newcap;
+    }
+    g_orphan_ui_strings[g_orphan_ui_string_count++] = s;
+}
+
+static void orphan_ui_strings_free_all(void) {
+    if (!g_orphan_ui_strings) return;
+    for (int i = 0; i < g_orphan_ui_string_count; i++) {
+        if (g_orphan_ui_strings[i]) free(g_orphan_ui_strings[i]);
+    }
+    free(g_orphan_ui_strings);
+    g_orphan_ui_strings = NULL;
+    g_orphan_ui_string_count = 0;
+    g_orphan_ui_string_cap = 0;
+}
+
+static void ui_detach_button_for_unload(void* btn_ptr) {
+    if (!btn_ptr) return;
+    if (!ui_engine_button_exists(btn_ptr)) return;
+
+    ui_button_apply_flags_hidden(btn_ptr, 1);
+    if (p_button_set_w_ex) p_button_set_w_ex((int)(intptr_t)btn_ptr, 1.0f, 0.0f);
+    if (p_button_set_h_ex) p_button_set_h_ex((int)(intptr_t)btn_ptr, 1.0f, 0.0f);
+    *(float*)((uint8_t*)btn_ptr + BTN_OFS_CENTER_X) = -10000.0f;
+    *(float*)((uint8_t*)btn_ptr + BTN_OFS_CENTER_Y) = -10000.0f;
+
+    if (!IsBadWritePtr((uint8_t*)btn_ptr + BTN_OFS_LABEL_PTR, (SIZE_T)sizeof(void*))) {
+        *(const char**)((uint8_t*)btn_ptr + BTN_OFS_LABEL_PTR) = g_orphan_empty_label;
+    }
+}
+
 static void mod_ui_reset_frame(LoadedMod* mod, void* state_ptr) {
     if (!mod) return;
     mod->ui_hitbox_count = 0;
@@ -977,7 +1031,13 @@ static void mod_ui_free(LoadedMod* mod) {
 
     if (mod->ui_native_buttons) {
         for (int i = 0; i < mod->ui_native_count; i++) {
-            if (mod->ui_native_buttons[i]) free(mod->ui_native_buttons[i]);
+            UiNativeButton* b = mod->ui_native_buttons[i];
+            if (!b) continue;
+            if (b->btn_ptr) {
+                ui_detach_button_for_unload(b->btn_ptr);
+                b->btn_ptr = NULL;
+            }
+            free(b);
         }
         free(mod->ui_native_buttons);
         mod->ui_native_buttons = NULL;
@@ -987,7 +1047,13 @@ static void mod_ui_free(LoadedMod* mod) {
 
     if (mod->ui_string_pool) {
         for (int i = 0; i < mod->ui_string_count; i++) {
-            if (mod->ui_string_pool[i]) free(mod->ui_string_pool[i]);
+            char* s = mod->ui_string_pool[i];
+            if (!s) continue;
+            if (g_unloading_for_shutdown) {
+                free(s);
+            } else {
+                orphan_ui_string_take(s);
+            }
         }
         free(mod->ui_string_pool);
         mod->ui_string_pool = NULL;
@@ -3027,6 +3093,7 @@ static int reload_mod_runtime(const char* reason) {
         LOG_INFO("Hot reload: %s", reason);
     }
 
+    g_unloading_for_shutdown = 0;
     unload_all_mods();
     if (L) {
         lua_close(L);
@@ -3050,10 +3117,22 @@ static void hot_reload_poll(void) {
     g_hot_reload_next_poll_ms = now + HOT_RELOAD_INTERVAL_MS;
 
     uint64_t sig = hot_reload_compute_signature();
-    if (sig == g_hot_reload_signature) return;
+    if (sig == g_hot_reload_signature) {
+        g_hot_reload_pending_signature = 0;
+        return;
+    }
+
+    // Debounce: require seeing the same changed signature twice in a row.
+    // This avoids reloading on transient intermediate states while files are
+    // being copied/rewritten.
+    if (sig != g_hot_reload_pending_signature) {
+        g_hot_reload_pending_signature = sig;
+        return;
+    }
 
     if (reload_mod_runtime("mods/ filesystem change detected")) {
-        g_hot_reload_signature = sig;
+        g_hot_reload_signature = hot_reload_compute_signature();
+        g_hot_reload_pending_signature = 0;
         g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
     } else {
         LOG_ERROR("Hot reload failed; will retry on next poll.");
@@ -3062,6 +3141,7 @@ static void hot_reload_poll(void) {
 
 void lua_manager_init() {
     font_ext_init();
+    g_unloading_for_shutdown = 0;
     reset_runtime_ui_state();
 
     LOG_INFO("Mod framework API version: %d", MOD_API_VERSION);
@@ -3069,19 +3149,24 @@ void lua_manager_init() {
 
     scan_and_load_mods();
     g_hot_reload_signature = hot_reload_compute_signature();
+    g_hot_reload_pending_signature = 0;
     g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
 }
 
 void lua_manager_shutdown() {
+    g_unloading_for_shutdown = 1;
     unload_all_mods();
     if (L) {
         lua_close(L);
         L = NULL;
     }
+    g_unloading_for_shutdown = 0;
 
     font_ext_shutdown();
+    orphan_ui_strings_free_all();
     g_hot_reload_signature = 0;
     g_hot_reload_next_poll_ms = 0;
+    g_hot_reload_pending_signature = 0;
     g_force_layout_refresh = 1;
     g_last_layout_state = (void*)-1;
     g_last_btn_count = -1;

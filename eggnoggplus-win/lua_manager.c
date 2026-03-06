@@ -288,9 +288,12 @@ static int g_ui_mouse_pressed_left = 0;
 static uint64_t g_hot_reload_signature = 0;
 static ULONGLONG g_hot_reload_next_poll_ms = 0;
 static uint64_t g_hot_reload_pending_signature = 0;
+static uint64_t g_hot_reload_modset_signature = 0;
 static int g_force_layout_refresh = 1;
 static void* g_last_layout_state = (void*)-1;
 static int g_last_btn_count = -1;
+static int g_pending_menu_state_reset = 0;
+static void* g_pending_menu_state_ptr = NULL;
 
 // UI label strings can be referenced by engine button structs long after a mod
 // unload. During hot reload, keep those allocations alive and free them only on
@@ -3136,6 +3139,65 @@ static uint64_t hot_reload_compute_signature(void) {
     return final_hash;
 }
 
+static uint64_t hot_reload_compute_modset_signature(void) {
+    uint64_t xor_accum = 0;
+    uint64_t add_accum = 0;
+    uint64_t count = 0;
+
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA("mods\\*", &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        uint64_t marker = hot_reload_hash_entry("mods_missing", 0, 0, 0);
+        hot_reload_sig_add(&xor_accum, &add_accum, &count, marker);
+    } else {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+            if (fd.cFileName[0] == '_') continue;
+
+            uint64_t h = hot_reload_hash_entry(fd.cFileName, FILE_ATTRIBUTE_DIRECTORY, 0, 0);
+            hot_reload_sig_add(&xor_accum, &add_accum, &count, h);
+        } while (FindNextFileA(hFind, &fd));
+        FindClose(hFind);
+    }
+
+    uint64_t final_hash = 1469598103934665603ULL;
+    final_hash = hot_reload_hash_bytes(final_hash, &xor_accum, sizeof(xor_accum));
+    final_hash = hot_reload_hash_bytes(final_hash, &add_accum, sizeof(add_accum));
+    final_hash = hot_reload_hash_bytes(final_hash, &count, sizeof(count));
+    return final_hash;
+}
+
+static void hot_reload_schedule_menu_state_reset_if_needed(int structural_change) {
+    if (!structural_change) return;
+    if (!p_state_switch) return;
+
+    void* cur = ui_current_state_ptr();
+    const char* st_name = ui_state_name_from_ptr(cur);
+    if (!ui_is_menu_state_name(st_name)) return;
+
+    void* target = cur;
+    if (_stricmp(st_name, "main") == 0 || _stricmp(st_name, "main_initial") == 0) {
+        target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+
+    if (!target) return;
+    g_pending_menu_state_ptr = target;
+    g_pending_menu_state_reset = 1;
+}
+
+static void hot_reload_apply_pending_menu_state_reset(void) {
+    if (!g_pending_menu_state_reset) return;
+
+    void* target = g_pending_menu_state_ptr;
+    g_pending_menu_state_ptr = NULL;
+    g_pending_menu_state_reset = 0;
+
+    if (!target || !p_state_switch) return;
+    LOG_INFO("Hot reload: refreshing menu state after mod add/remove");
+    p_state_switch(target);
+}
+
 static int reload_mod_runtime(const char* reason) {
     if (reason && reason[0]) {
         LOG_INFO("Hot reload: %s", reason);
@@ -3178,10 +3240,15 @@ static void hot_reload_poll(void) {
         return;
     }
 
+    uint64_t modset_sig_before = hot_reload_compute_modset_signature();
+    int structural_change = (modset_sig_before != g_hot_reload_modset_signature);
+
     if (reload_mod_runtime("mods/ filesystem change detected")) {
         g_hot_reload_signature = hot_reload_compute_signature();
+        g_hot_reload_modset_signature = hot_reload_compute_modset_signature();
         g_hot_reload_pending_signature = 0;
         g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
+        hot_reload_schedule_menu_state_reset_if_needed(structural_change);
     } else {
         LOG_ERROR("Hot reload failed; will retry on next poll.");
     }
@@ -3197,8 +3264,11 @@ void lua_manager_init() {
 
     scan_and_load_mods();
     g_hot_reload_signature = hot_reload_compute_signature();
+    g_hot_reload_modset_signature = hot_reload_compute_modset_signature();
     g_hot_reload_pending_signature = 0;
     g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
+    g_pending_menu_state_reset = 0;
+    g_pending_menu_state_ptr = NULL;
 }
 
 void lua_manager_shutdown() {
@@ -3215,6 +3285,9 @@ void lua_manager_shutdown() {
     g_hot_reload_signature = 0;
     g_hot_reload_next_poll_ms = 0;
     g_hot_reload_pending_signature = 0;
+    g_hot_reload_modset_signature = 0;
+    g_pending_menu_state_reset = 0;
+    g_pending_menu_state_ptr = NULL;
     g_force_layout_refresh = 1;
     g_last_layout_state = (void*)-1;
     g_last_btn_count = -1;
@@ -3319,6 +3392,7 @@ double lua_manager_on_delta_time(double dt_seconds) {
 
 void lua_manager_on_frame() {
     hot_reload_poll();
+    hot_reload_apply_pending_menu_state_reset();
     if (!L) return;
     void* state_ptr = ui_current_state_ptr();
 

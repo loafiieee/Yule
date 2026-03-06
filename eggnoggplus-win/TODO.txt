@@ -1,8 +1,3 @@
--automatic Hot Reload mod functionality
-
--automatic hot reload mod menu
-
-
 WAY LATER STUFF:
 
 -Custom Map support by scanning maps/ for a .map file.

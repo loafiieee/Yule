@@ -14,6 +14,8 @@
 
 static lua_State *L = NULL;
 
+void luna_force_crash_report(unsigned int exit_code);
+
 // Bump this when you make breaking changes to the Lua mod API.
 #define MOD_API_VERSION 1
 
@@ -887,6 +889,47 @@ static void log_mod(LoadedMod* mod, const char* level, const char* msg) {
         return;
     }
     log_write(level, "[mod:%s] %s", mod->id[0] ? mod->id : "?", msg);
+}
+
+static int lua_os_exit_status(lua_State* Ls, int arg) {
+    if (lua_isnoneornil(Ls, arg)) return 0;
+    if (lua_isboolean(Ls, arg)) return lua_toboolean(Ls, arg) ? 0 : 1;
+    return (int)luaL_checkinteger(Ls, arg);
+}
+
+static int lua_mod_os_exit(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int exit_code = lua_os_exit_status(Ls, 1);
+    char buf[256];
+
+    snprintf(buf, sizeof(buf),
+             "os.exit(%d) called; forcing the crash handler path",
+             exit_code);
+    log_mod(mod, "ERROR", buf);
+
+    luna_force_crash_report((unsigned int)exit_code);
+    return 0;
+}
+
+static void push_mod_os_table(lua_State* Ls, LoadedMod* mod) {
+    lua_getglobal(Ls, "os");
+    if (!lua_istable(Ls, -1)) {
+        lua_pop(Ls, 1);
+        lua_newtable(Ls);
+    } else {
+        lua_newtable(Ls);
+        lua_pushnil(Ls);
+        while (lua_next(Ls, -3) != 0) {
+            lua_pushvalue(Ls, -2);
+            lua_insert(Ls, -2);
+            lua_settable(Ls, -4);
+        }
+        lua_remove(Ls, -2);
+    }
+
+    lua_pushlightuserdata(Ls, mod);
+    lua_pushcclosure(Ls, lua_mod_os_exit, 1);
+    lua_setfield(Ls, -2, "exit");
 }
 
 static void* ui_current_state_ptr(void) {
@@ -2805,6 +2848,11 @@ static int load_mod_lua(LoadedMod* mod) {
     // Create per-mod config API table and store it in env.config
     push_config_api_table(L, mod);
     lua_setfield(L, -2, "config");
+
+    // Mods share one Lua state, so shadow os.exit per-mod to keep deliberate
+    // process termination on the crash-handler path instead of a clean shutdown.
+    push_mod_os_table(L, mod);
+    lua_setfield(L, -2, "os");
 
     // Keep env alive
     lua_pushvalue(L, -1);

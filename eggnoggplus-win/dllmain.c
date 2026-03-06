@@ -29,6 +29,12 @@ typedef BOOL (WINAPI *MiniDumpWriteDump_t)(
 );
 
 static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep);
+static LONG CALLBACK luna_vectored_exception_handler(EXCEPTION_POINTERS* ep);
+
+#define LUNA_FORCED_CRASH_EXCEPTION ((DWORD)0xE14E4747u)
+
+static PVOID g_luna_vectored_handler = NULL;
+static LONG  g_luna_crash_reporting = 0;
 
 static void crash_append_line(const char* line) {
     // Best-effort, no CRT FILE* dependency.
@@ -54,7 +60,10 @@ static void try_write_minidump(EXCEPTION_POINTERS* ep) {
     if (!dbg) return;
 
     MiniDumpWriteDump_t pMiniDumpWriteDump = (MiniDumpWriteDump_t)GetProcAddress(dbg, "MiniDumpWriteDump");
-    if (!pMiniDumpWriteDump) return;
+    if (!pMiniDumpWriteDump) {
+        FreeLibrary(dbg);
+        return;
+    }
 
     SYSTEMTIME st;
     GetLocalTime(&st);
@@ -63,7 +72,10 @@ static void try_write_minidump(EXCEPTION_POINTERS* ep) {
               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
 
     HANDLE hFile = CreateFileA(dump_path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) return;
+    if (hFile == INVALID_HANDLE_VALUE) {
+        FreeLibrary(dbg);
+        return;
+    }
 
     MINIDUMP_EXCEPTION_INFORMATION mei;
     mei.ThreadId = GetCurrentThreadId();
@@ -75,10 +87,25 @@ static void try_write_minidump(EXCEPTION_POINTERS* ep) {
 
     pMiniDumpWriteDump(hProc, pid, hFile, MiniDumpNormal, &mei, NULL, NULL);
     CloseHandle(hFile);
+    FreeLibrary(dbg);
+}
+
+void luna_reinstall_crash_handler(void) {
+    SetUnhandledExceptionFilter(luna_unhandled_exception_filter);
+}
+
+void luna_force_crash_report(unsigned int exit_code) {
+    ULONG_PTR args[1];
+    args[0] = (ULONG_PTR)exit_code;
+    RaiseException(LUNA_FORCED_CRASH_EXCEPTION, EXCEPTION_NONCONTINUABLE, 1, args);
+    TerminateProcess(GetCurrentProcess(), exit_code);
 }
 
 static void install_crash_handler(void) {
-    SetUnhandledExceptionFilter(luna_unhandled_exception_filter);
+    luna_reinstall_crash_handler();
+    if (!g_luna_vectored_handler) {
+        g_luna_vectored_handler = AddVectoredExceptionHandler(1, luna_vectored_exception_handler);
+    }
 }
 
 static const char* exception_code_name(DWORD code) {
@@ -91,12 +118,30 @@ static const char* exception_code_name(DWORD code) {
         case EXCEPTION_INT_DIVIDE_BY_ZERO: return "INT_DIVIDE_BY_ZERO";
         case EXCEPTION_ILLEGAL_INSTRUCTION: return "ILLEGAL_INSTRUCTION";
         case EXCEPTION_IN_PAGE_ERROR: return "IN_PAGE_ERROR";
+        case LUNA_FORCED_CRASH_EXCEPTION: return "FORCED_CRASH";
         case EXCEPTION_STACK_OVERFLOW: return "STACK_OVERFLOW";
         default: return "UNKNOWN";
     }
 }
 
-static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
+static int should_report_vectored_exception(DWORD code) {
+    switch (code) {
+        case LUNA_FORCED_CRASH_EXCEPTION:
+        case EXCEPTION_ACCESS_VIOLATION:
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+        case EXCEPTION_DATATYPE_MISALIGNMENT:
+        case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+        case EXCEPTION_ILLEGAL_INSTRUCTION:
+        case EXCEPTION_IN_PAGE_ERROR:
+        case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        case EXCEPTION_STACK_OVERFLOW:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void crash_report_exception(EXCEPTION_POINTERS* ep, const char* label) {
     DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
     void* addr = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : NULL;
 
@@ -105,8 +150,9 @@ static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
 
     char line[512];
     wsprintfA(line,
-              "[%04d-%02d-%02d %02d:%02d:%02d] Unhandled exception 0x%08lX (%s) at %p",
+              "[%04d-%02d-%02d %02d:%02d:%02d] %s 0x%08lX (%s) at %p",
               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+              label ? label : "Unhandled exception",
               (unsigned long)code, exception_code_name(code), addr);
     crash_append_line(line);
 
@@ -122,7 +168,35 @@ static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
         "Eggnogg+ Crash",
         MB_OK | MB_ICONERROR
     );
+}
 
+static LONG CALLBACK luna_vectored_exception_handler(EXCEPTION_POINTERS* ep) {
+    DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+    UINT exit_code = 1;
+
+    if (!should_report_vectored_exception(code)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    if (InterlockedCompareExchange(&g_luna_crash_reporting, 1, 0) != 0) {
+        TerminateProcess(GetCurrentProcess(), code == LUNA_FORCED_CRASH_EXCEPTION ? exit_code : (UINT)code);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    if (code == LUNA_FORCED_CRASH_EXCEPTION &&
+        ep && ep->ExceptionRecord && ep->ExceptionRecord->NumberParameters >= 1) {
+        exit_code = (UINT)ep->ExceptionRecord->ExceptionInformation[0];
+    } else if (code != 0) {
+        exit_code = (UINT)code;
+    }
+
+    crash_report_exception(ep, code == LUNA_FORCED_CRASH_EXCEPTION ? "Forced crash" : "Vectored exception");
+    TerminateProcess(GetCurrentProcess(), exit_code);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
+    crash_report_exception(ep, "Unhandled exception");
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -325,6 +399,8 @@ int  lua_manager_on_event(const char*, int, int, int, int, int, int);
 void lua_manager_shutdown();
 
 void SDL_GL_SwapWindow(SDL_Window* window) {
+    luna_reinstall_crash_handler();
+
     // Generate a real (unscaled) delta_time and let mods adjust it.
     // This feeds the time-scale multiplier used by the SDL time wrappers.
     unsigned long long now = luna_real_qpc();
@@ -340,6 +416,7 @@ void SDL_GL_SwapWindow(SDL_Window* window) {
 
 int SDL_PollEvent(SDL_Event* event) {
     if (!real_PollEvent) return 0;
+    luna_reinstall_crash_handler();
 
     // Allow Lua mods to "consume" SDL events by returning true from an on_event handler.
     // If consumed, we keep polling until we find a non-consumed event (or the queue is empty).

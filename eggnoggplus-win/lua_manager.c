@@ -195,7 +195,6 @@ static int ui_engine_button_exists(void* btn_ptr);
 static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden);
 
 
-
 typedef struct LoadedMod {
     char id[64];
     char name[64];
@@ -1219,6 +1218,31 @@ static int game_get_thing_count(void) {
     if (n < 0) n = 0;
     if (n > 128) n = 128;
     return n;
+}
+
+static int game_get_room_dims(int* out_room_w, int* out_room_h) {
+    int room_w = 0;
+    int room_h = 0;
+
+    if (ptr_readable((const void*)p_room_w, sizeof(int))) {
+        room_w = *p_room_w;
+    }
+    if (p_map_tiles_h && !IsBadCodePtr((FARPROC)(void*)p_map_tiles_h)) {
+        room_h = p_map_tiles_h();
+    }
+    if (room_w < 0 || room_w > 2048) room_w = 0;
+    if (room_h < 0 || room_h > 2048) room_h = 0;
+
+    if (out_room_w) *out_room_w = room_w;
+    if (out_room_h) *out_room_h = room_h;
+    return (room_w > 0 && room_h > 0) ? 1 : 0;
+}
+
+static int game_get_active_room_index(void) {
+    if (ptr_readable((const void*)p_game_active_room, sizeof(int))) {
+        return *p_game_active_room;
+    }
+    return 0;
 }
 
 static void lua_push_field_number(lua_State* Ls, const char* key, double v) {
@@ -2432,19 +2456,8 @@ static int lua_game_snapshot(lua_State* Ls) {
             double nearest_dy = 0.0;
             double best_d2 = 0.0;
 
-            if (ptr_readable((const void*)p_game_active_room, sizeof(int))) {
-                room_index = *p_game_active_room;
-            } else {
-                room_index = (int)(int8_t)*(uint8_t*)(player_ptr + PLAYER_OFS_ROOM);
-            }
-            if (ptr_readable((const void*)p_room_w, sizeof(int))) {
-                room_w = *p_room_w;
-            }
-            if (p_map_tiles_h && !IsBadCodePtr((FARPROC)(void*)p_map_tiles_h)) {
-                room_h = p_map_tiles_h();
-            }
-            if (room_w < 0 || room_w > 2048) room_w = 0;
-            if (room_h < 0 || room_h > 2048) room_h = 0;
+            room_index = game_get_active_room_index();
+            game_get_room_dims(&room_w, &room_h);
 
             lua_push_field_int(Ls, "room_index", room_index);
             lua_push_field_int(Ls, "room_width", room_w);

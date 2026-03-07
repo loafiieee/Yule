@@ -1,4 +1,2 @@
-WAY LATER STUFF:
-
--Custom Map support by scanning maps/ for a .map file.
 -API for adding content to gameplay, like more weapons than just a sword.
+

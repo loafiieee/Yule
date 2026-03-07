@@ -47,6 +47,7 @@
 #include "hooks.h"
 #include "lua_manager.h"
 #include "font_ext.h"
+#include "custom_maps.h"
 #include "log.h"
 
 
@@ -83,6 +84,7 @@
 #define ADDR_OPTIONS_ENTER            0x4381F0u
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
 #define ADDR_MAIN_PLAYER_POLL_CMDS    0x433F90u
+#define ADDR_MAPGEN_INIT              0x437D30u
 
 // Asset load hook used for moddable font glyph overlays.
 #define ADDR_RGBA_LOAD                0x4022A0u
@@ -202,8 +204,10 @@ static fn_mad_dim_t                  p_mad_w = (fn_mad_dim_t)(uintptr_t)ADDR_MAD
 static fn_mad_dim_t                  p_mad_h = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_H;
 static fn_void_void_t                p_options_enter = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER;
 static fn_void_void_t                p_options_enter_paused = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER_PAUSED;
+static fn_void_void_t                p_mapgen_init = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_INIT;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
+static fn_void_void_t                p_mapgen_init_trampoline = NULL;
 static fn_state_switch_t             p_state_switch_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
@@ -216,6 +220,7 @@ static Detour g_options_enter_paused_detour;
 static Detour g_state_switch_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
+static Detour g_mapgen_init_detour;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -1491,6 +1496,11 @@ static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
     return img;
 }
 
+static void __cdecl hooked_mapgen_init(void) {
+    fn_void_void_t real = p_mapgen_init_trampoline ? p_mapgen_init_trampoline : p_mapgen_init;
+    custom_maps_handle_mapgen_init(real);
+}
+
 
 void hooks_init(void) {
     static int done = 0;
@@ -1499,6 +1509,8 @@ void hooks_init(void) {
 
 
 
+
+    custom_maps_init();
 
     if (!install_detour(&g_options_enter_detour, (void*)(uintptr_t)ADDR_OPTIONS_ENTER, (void*)&hooked_options_enter, 5)) {
         LOG_ERROR("hooks_init: failed to detour options enter");
@@ -1528,6 +1540,15 @@ void hooks_init(void) {
     } else {
         p_rgba_load_trampoline = (fn_rgba_load_t)g_rgba_load_detour.trampoline;
     }
+
+    // mapgen_init starts with `sub esp, 0x2c` (3 bytes) followed by a 6-byte
+    // absolute mov. Patch 9 bytes so the trampoline never returns into a split
+    // instruction.
+    if (!install_detour(&g_mapgen_init_detour, (void*)(uintptr_t)ADDR_MAPGEN_INIT, (void*)&hooked_mapgen_init, 9)) {
+        LOG_ERROR("hooks_init: failed to detour mapgen_init");
+        return;
+    }
+    p_mapgen_init_trampoline = (fn_void_void_t)g_mapgen_init_detour.trampoline;
 
     
 

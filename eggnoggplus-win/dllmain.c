@@ -2,6 +2,7 @@
 #include "log.h"
 #include "hooks.h"
 #include "lua_manager.h"
+#include "custom_maps.h"
 
 
 #include <stdint.h>
@@ -162,7 +163,7 @@ static void crash_report_exception(EXCEPTION_POINTERS* ep, const char* label) {
 
     // Also try to surface a visible error (best-effort).
     MessageBoxA(NULL,
-        "Eggnogg+ mod framework crashed.\n\n"
+        "Yule Crashed.\n\n"
         "Details were written to mods/crash.log (and a .dmp if possible).\n"
         "Please attach those files when reporting bugs.",
         "Eggnogg+ Crash",
@@ -533,6 +534,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         hooks_init();
     }
     else if (fdwReason == DLL_PROCESS_DETACH) {
+        custom_maps_shutdown();
         lua_manager_shutdown();
         if (real_sdl) FreeLibrary(real_sdl);
     }

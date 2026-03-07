@@ -235,6 +235,21 @@ if mod.ui.button_at("x", "X", 1180, 20, 40, 28) then
 end
 ```
 
+Tile preview helper:
+
+```lua
+local tile = mod.game.room_tile(2, 4)
+if tile and tile.exists then
+  mod.ui.tile_preview(tile.id, tile.frame, tile.arg, 760, 128, 3.0, 3)
+end
+```
+
+- `mod.ui.tile_preview(id, frame, arg, x, y [,scale [,tile_y]]) -> bool`
+- Draws the exact rendered output for a tile byte triplet at screen position `x`,`y`.
+- `scale` defaults to `1.0`.
+- `tile_y` defaults to `0` and should usually be the source tile's zero-based row when previewing tiles whose draw callback depends on vertical position.
+- Returns `false` if the preview could not be drawn.
+
 
 ### Native menu buttons (engine-backed)
 
@@ -317,6 +332,7 @@ API summary:
 - `mod.ui.next_row([count])`
 - `mod.ui.text(text [,r [,g [,b [,scale]]]])`
 - `mod.ui.text_at(text, x, y [,scale [,r [,g [,b]]]])`
+- `mod.ui.tile_preview(id, frame, arg, x, y [,scale [,tile_y]]) -> bool`
 - `mod.ui.button(id, label [,w [,h]]) -> clicked`
 - `mod.ui.button_at(id, label, x, y [,w [,h]]) -> clicked`
 
@@ -340,6 +356,16 @@ end
   - `nearest_sword_dx`, `nearest_sword_dy` (relative to player, or `nil` if none)
   - `tiles_of_current_room` (2D array of tile ids, or `nil` if not available)
   - `room_index`, `room_width`, `room_height`, `in_game`
+
+`room_tile(col, row [,room_index]) -> table | nil`
+- Returns exact bytes for a room-relative tile cell.
+- `col`/`row` are 1-based room coordinates.
+- `room_index` defaults to the current active room.
+- Returned table fields:
+  - `id`, `frame`, `arg`
+  - `exists`
+  - `room_index`, `x`, `y`, `global_x`, `global_y`
+- Returns `nil` if the room dimensions are unavailable or the coordinate is out of bounds.
 
 `poll_cmds(player_index [,mode=1]) -> int`
 - Returns the game's raw command bitmask for the player.

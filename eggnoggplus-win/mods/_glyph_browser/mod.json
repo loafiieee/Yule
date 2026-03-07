@@ -1,9 +1,0 @@
-{
-  "id": "glyph_browser",
-  "name": "Glyph Browser",
-  "version": "1.0.0",
-  "author": "you",
-  "description": "Cycle through font glyph bytes and see what the button/text renderer displays.",
-  "api_version": 1,
-  "entry": "main.lua"
-}

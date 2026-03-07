@@ -1,128 +1,30 @@
-[10:54:53] [INFO] Mod framework initializing...
-[10:54:53] [INFO] Mod framework API version: 1
-[10:54:53] [INFO] Scanning mods/ folder...
-[10:54:53] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:54:53] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:54:53] [INFO] [mod:test] Loaded! id=test name=test
-[10:54:53] [INFO] Loaded mod: test
-[10:54:53] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:54:53] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:54:53] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:54:53] [INFO] [mod:poc_speedhack] enabled=true
-[10:54:53] [INFO] [mod:poc_speedhack] speed=1
-[10:54:53] [INFO] Loaded mod: poc_speedhack
-[10:54:53] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:54:53] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[10:54:53] [INFO] Loaded mod: test
-[10:54:53] [INFO] Done. 3 mod folder(s) scanned.
-[10:54:53] [INFO] hooks_init: custom MODS menu ready
-[10:55:00] [INFO] Hot reload: mods/ filesystem change detected
-[10:55:00] [INFO] [mod:test] Unloaded
-[10:55:00] [INFO] [mod:poc_speedhack] Unloaded
-[10:55:00] [INFO] Scanning mods/ folder...
-[10:55:00] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:55:00] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:55:00] [INFO] [mod:test] Loaded! id=test name=test
-[10:55:00] [INFO] Loaded mod: test
-[10:55:00] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:55:00] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:55:00] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:55:00] [INFO] [mod:poc_speedhack] enabled=true
-[10:55:00] [INFO] [mod:poc_speedhack] speed=1
-[10:55:00] [INFO] Loaded mod: poc_speedhack
-[10:55:00] [INFO] Done. 2 mod folder(s) scanned.
-[10:55:00] [INFO] Hot reload: refreshing menu state after mod add/remove
-[10:55:05] [INFO] Hot reload: mods/ filesystem change detected
-[10:55:05] [INFO] [mod:test] Unloaded
-[10:55:05] [INFO] [mod:poc_speedhack] Unloaded
-[10:55:05] [INFO] Scanning mods/ folder...
-[10:55:05] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:55:05] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:55:05] [INFO] [mod:test] Loaded! id=test name=test
-[10:55:05] [INFO] Loaded mod: test
-[10:55:05] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:55:05] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:55:05] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:55:05] [INFO] [mod:poc_speedhack] enabled=true
-[10:55:05] [INFO] [mod:poc_speedhack] speed=1
-[10:55:05] [INFO] Loaded mod: poc_speedhack
-[10:55:05] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:55:05] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[10:55:05] [INFO] Loaded mod: test
-[10:55:05] [INFO] Done. 3 mod folder(s) scanned.
-[10:55:05] [INFO] Hot reload: refreshing menu state after mod add/remove
-[10:55:11] [INFO] Hot reload: mods/ filesystem change detected
-[10:55:11] [INFO] [mod:test] Unloaded
-[10:55:11] [INFO] [mod:poc_speedhack] Unloaded
-[10:55:11] [INFO] Scanning mods/ folder...
-[10:55:11] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:55:11] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:55:11] [INFO] [mod:test] Loaded! id=test name=test
-[10:55:11] [INFO] Loaded mod: test
-[10:55:11] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:55:11] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:55:11] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:55:11] [INFO] [mod:poc_speedhack] enabled=true
-[10:55:11] [INFO] [mod:poc_speedhack] speed=1
-[10:55:11] [INFO] Loaded mod: poc_speedhack
-[10:55:11] [INFO] Done. 2 mod folder(s) scanned.
-[10:55:11] [INFO] Hot reload: refreshing menu state after mod add/remove
-[10:55:19] [INFO] Hot reload: mods/ filesystem change detected
-[10:55:19] [INFO] [mod:test] Unloaded
-[10:55:19] [INFO] [mod:poc_speedhack] Unloaded
-[10:55:19] [INFO] Scanning mods/ folder...
-[10:55:19] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:55:19] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:55:19] [INFO] [mod:test] Loaded! id=test name=test
-[10:55:19] [INFO] Loaded mod: test
-[10:55:19] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:55:19] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:55:19] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:55:19] [INFO] [mod:poc_speedhack] enabled=true
-[10:55:19] [INFO] [mod:poc_speedhack] speed=1
-[10:55:19] [INFO] Loaded mod: poc_speedhack
-[10:55:19] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:55:19] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[10:55:19] [INFO] Loaded mod: test
-[10:55:19] [INFO] Done. 3 mod folder(s) scanned.
-[10:55:19] [INFO] Hot reload: refreshing menu state after mod add/remove
-[10:57:53] [INFO] MODS: entering mods menu
-[10:58:09] [INFO] Hot reload: mods/ filesystem change detected
-[10:58:09] [INFO] [mod:test] Unloaded
-[10:58:09] [INFO] [mod:poc_speedhack] Unloaded
-[10:58:09] [INFO] Scanning mods/ folder...
-[10:58:09] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:58:09] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:58:09] [INFO] [mod:test] Loaded! id=test name=test
-[10:58:09] [INFO] Loaded mod: test
-[10:58:09] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:58:09] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:58:09] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:58:09] [INFO] [mod:poc_speedhack] enabled=true
-[10:58:09] [INFO] [mod:poc_speedhack] speed=1
-[10:58:09] [INFO] Loaded mod: poc_speedhack
-[10:58:09] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:58:09] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[10:58:09] [INFO] Loaded mod: test
-[10:58:09] [INFO] Done. 3 mod folder(s) scanned.
-[10:58:18] [INFO] Hot reload: mods/ filesystem change detected
-[10:58:18] [INFO] [mod:test] Unloaded
-[10:58:18] [INFO] [mod:poc_speedhack] Unloaded
-[10:58:18] [INFO] Scanning mods/ folder...
-[10:58:18] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[10:58:18] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:58:18] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[10:58:18] [INFO] Loaded mod: crash
-[10:58:18] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:58:18] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:58:18] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:58:18] [INFO] [mod:poc_speedhack] enabled=true
-[10:58:18] [INFO] [mod:poc_speedhack] speed=1
-[10:58:18] [INFO] Loaded mod: poc_speedhack
-[10:58:18] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[10:58:18] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[10:58:18] [INFO] Loaded mod: test
-[10:58:18] [INFO] Done. 3 mod folder(s) scanned.
-[10:58:22] [INFO] MODS: entering mods menu
-[10:58:40] [INFO] [mod:crash] Unloaded
-[10:58:40] [INFO] [mod:poc_speedhack] Unloaded
+[20:22:36] [INFO] Mod framework initializing...
+[20:22:36] [INFO] Mod framework API version: 1
+[20:22:36] [INFO] Scanning mods/ folder...
+[20:22:36] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[20:22:36] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[20:22:36] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[20:22:36] [INFO] Loaded mod: crash
+[20:22:36] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[20:22:36] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[20:22:36] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[20:22:36] [INFO] [mod:poc_speedhack] enabled=true
+[20:22:36] [INFO] [mod:poc_speedhack] speed=1
+[20:22:36] [INFO] Loaded mod: poc_speedhack
+[20:22:36] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[20:22:36] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[20:22:36] [INFO] Loaded mod: test
+[20:22:36] [INFO] Done. 3 mod folder(s) scanned.
+[20:22:36] [INFO] [maps] scanning maps/ for custom maps
+[20:22:36] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:22:36] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:22:36] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:22:36] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=3 final_rooms=5 mode=swords
+[20:22:36] [INFO] [maps] registry ready: 1 custom maps (was 0)
+[20:22:36] [INFO] hooks_init: custom MODS menu ready
+[20:22:37] [INFO] [maps][example_map] applying custom map for selector index 5
+[20:23:06] [INFO] [maps][example_map] applying custom map for selector index 5
+[20:23:09] [INFO] [maps][example_map] applying custom map for selector index 5
+[20:23:10] [INFO] [maps][example_map] applying custom map for selector index 5
+[20:23:56] [INFO] [mod:crash] Unloaded
+[20:23:56] [INFO] [mod:poc_speedhack] Unloaded

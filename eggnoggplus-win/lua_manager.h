@@ -15,7 +15,17 @@ int         lua_manager_get_mod_count(void);
 const char* lua_manager_get_mod_id(int mod_index);
 const char* lua_manager_get_mod_name(int mod_index);
 const char* lua_manager_get_mod_version(int mod_index);
+const char* lua_manager_get_mod_author(int mod_index);
+const char* lua_manager_get_mod_description(int mod_index);
 int         lua_manager_get_mod_enabled(int mod_index);
+int         lua_manager_get_mod_dependency_count(int mod_index);
+const char* lua_manager_get_mod_dependency_id(int mod_index, int dep_index);
+int         lua_manager_get_mod_dependency_optional(int mod_index, int dep_index);
+int         lua_manager_mod_dependency_satisfied(int mod_index, int dep_index);
+int         lua_manager_get_mod_conflict_count(int mod_index);
+const char* lua_manager_get_mod_conflict_id(int mod_index, int conflict_index);
+int         lua_manager_mod_conflict_active(int mod_index, int conflict_index);
+int         lua_manager_set_mod_enabled(int mod_index, int enabled);
 
 // Config entry types
 enum {
@@ -33,6 +43,17 @@ int         lua_manager_get_mod_config_type(int mod_index, int entry_index);
 const char* lua_manager_get_mod_config_key(int mod_index, int entry_index);
 const char* lua_manager_get_mod_config_label(int mod_index, int entry_index);
 const char* lua_manager_get_mod_config_value_str(int mod_index, int entry_index);
+int         lua_manager_find_mod_config_index(int mod_index, const char* key);
+
+// Input bindings
+int         lua_manager_get_mod_bind_count(int mod_index);
+const char* lua_manager_get_mod_bind_key(int mod_index, int bind_index);
+const char* lua_manager_get_mod_bind_label(int mod_index, int bind_index);
+const char* lua_manager_get_mod_bind_value_str(int mod_index, int bind_index);
+int         lua_manager_set_mod_bind_value(int mod_index, int bind_index, int sym);
+int         lua_manager_clear_mod_bind_value(int mod_index, int bind_index);
+int         lua_manager_mod_bind_has_conflict(int mod_index, int bind_index);
+void        lua_manager_on_key_event(int sym, int is_down);
 
 // Mutations (return 1 on success)
 int lua_manager_config_toggle_bool(int mod_index, int entry_index);
@@ -57,6 +78,25 @@ double lua_manager_on_delta_time(double dt_seconds);
 
 // Current time-scale multiplier derived from delta_time (1.0 = normal).
 float lua_manager_get_time_scale(void);
+int lua_manager_set_time_scale(float scale);
+void lua_manager_clear_time_scale(void);
+int lua_manager_get_time_scale_manual(float* out_scale);
+
+// Manual reload helpers used by native tools (console/UI).
+int lua_manager_reload_mods(void);
+int lua_manager_reload_assets(
+    int* out_textures_reloaded,
+    int* out_textures_failed,
+    int* out_textures_restart_required,
+    int* out_fonts_reloaded,
+    int* out_fonts_failed,
+    int* out_fonts_restart_required
+);
+
+// Console Lua execution helpers.
+int lua_manager_console_eval(const char* code, char* out, int out_sz);
+int lua_manager_console_eval_mod(const char* mod_id, const char* code, char* out, int out_sz);
+int lua_manager_console_run_file(const char* path, char* out, int out_sz);
 
 #ifdef __cplusplus
 }

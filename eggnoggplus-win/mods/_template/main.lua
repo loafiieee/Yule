@@ -9,6 +9,24 @@ mod.on_load(function()
   local name = config.get("player_name", "Player")
   mod.log("enabled=" .. tostring(enabled) .. ", player_name=" .. tostring(name))
 
+  -- Persistent storage (saved to storage.cfg by default)
+  local launches = storage.get("launches", 0)
+  storage.set("launches", launches + 1)
+  mod.log("launches=" .. tostring(storage.get("launches", 0)))
+
+  -- Optional schema migration helper
+  if storage.schema() < 1 then
+    storage.migrate(1, function()
+      storage.set("launches", storage.get("launches", 0))
+      return true
+    end)
+  end
+
+  -- Optional interop service publish
+  -- mod.interop.provide(mod.id .. ":api", "1.0.0", {
+  --   ping = function() return "pong" end
+  -- })
+
   -- Register an action button handler
   config.on_action("action", function()
     mod.log("action pressed")
@@ -16,6 +34,14 @@ mod.on_load(function()
 
   -- You can load extra lua files relative to your mod folder:
   -- mod.dofile("lib/util.lua")
+
+  -- Texture-pack examples:
+  -- mod.texture.register_spritesheet("assets/sprites.png")
+  -- mod.texture.register_tilesheet("assets/tiles.png")
+  -- mod.texture.register_miscsheet("assets/misc.png")
+  -- mod.texture.register_glowsheet("assets/glow.png")
+  -- Generic form:
+  -- mod.texture.register("data/tiles.png", "assets/tiles.png")
 end)
 
 mod.on_frame(function()

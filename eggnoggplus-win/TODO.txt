@@ -1,2 +1,39 @@
--API for adding content to gameplay, like more weapons than just a sword.
+Later:
 
+- API for adding content to gameplay, like more weapons than just a sword.
+
+Still worth doing:
+
+- Deeper developer diagnostics:
+  - per-mod perf counters
+  - per-mod error summaries in UI
+  - trace/event toggles
+  - memory/load diagnostics
+
+- Packaging/distribution tooling:
+  - pack/validate/install/update/uninstall commands
+  - manifest/schema validation CLI
+  - safer mod sharing workflow
+
+Recently completed in the framework:
+
+- Mod manager pass:
+  - cleaner panel-style mods menu
+  - enable/disable row in menu
+  - dependency/conflict visibility in UI and console
+  - profile save/load/delete/list commands
+
+- Input binding pass:
+  - named bind API for mods
+  - bind rows in menu
+  - rebind/capture flow in menu
+  - bind console commands and conflict surfacing
+
+- Console pass:
+  - mouse wheel scrolling
+  - tab autocomplete
+  - persistent command history
+  - better header/input behavior
+
+- State/navigation fix:
+  - opening console from mods no longer traps you in a console<->mods loop

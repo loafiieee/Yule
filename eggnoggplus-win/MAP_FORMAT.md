@@ -138,8 +138,7 @@ So in `v1`:
     "mode": "swords",
     "round_end_rooms": "inner_only",
     "score_target": null,
-    "armed_respawn_limit": 4,
-    "iron": false
+    "armed_respawn_limit": 4
   },
 
   "layout": {
@@ -224,9 +223,6 @@ So in `v1`:
 - `armed_respawn_limit`: optional integer
   - default: `4`
   - controls how many armed entities can exist before respawns are forced empty-handed
-- `iron`: optional boolean
-  - default: `false`
-  - toggles the existing iron-mode flag
 
 ### layout
 
@@ -550,7 +546,6 @@ A map is invalid if any of the following are true:
 - `round_end_rooms` is not `inner_only` or `any`
 - `score_target` is not `null` or a positive integer
 - `armed_respawn_limit` is not a non-negative integer
-- `iron` is not a boolean
 - `ambient` is not a valid string alias or integer `0..9`
 - `hook` is non-null
 

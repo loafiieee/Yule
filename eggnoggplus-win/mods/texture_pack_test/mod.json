@@ -1,0 +1,10 @@
+{
+  "id": "texture_pack_test",
+  "name": "Texture Pack Test",
+  "version": "0.1.0",
+  "author": "codex",
+  "description": "Replaces sprites/tiles/misc/glow atlases with test texture pack images.",
+  "api_version": 1,
+  "entry": "main.lua",
+  "config": "config.cfg"
+}

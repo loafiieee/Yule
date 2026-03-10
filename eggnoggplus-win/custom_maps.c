@@ -27,7 +27,6 @@
 
 #define ADDR_MAP_SELECTOR            0x55A2F4u
 #define ADDR_MAP_MODE                0x55A2F8u
-#define ADDR_MAP_IRON                0x55A2FCu
 #define ADDR_ROUND_END_ANY           0x55A304u
 #define ADDR_SCORE_TARGET            0x55A30Cu
 #define ADDR_ARMED_RESPAWN_LIMIT     0x55A310u
@@ -136,7 +135,6 @@ typedef struct CustomMap {
     int round_end_any;
     int score_target;
     int armed_respawn_limit;
-    int iron;
     RoomConfig defaults_room;
     int source_room_count;
     CustomMapRoom rooms[CUSTOM_MAP_MAX_SOURCE_ROOMS];
@@ -170,7 +168,6 @@ static uint64_t g_custom_maps_signature = 0;
 
 static volatile int* g_map_selector = (volatile int*)(uintptr_t)ADDR_MAP_SELECTOR;
 static volatile int* g_map_mode = (volatile int*)(uintptr_t)ADDR_MAP_MODE;
-static volatile int* g_map_iron = (volatile int*)(uintptr_t)ADDR_MAP_IRON;
 static volatile int* g_round_end_any = (volatile int*)(uintptr_t)ADDR_ROUND_END_ANY;
 static volatile int* g_score_target = (volatile int*)(uintptr_t)ADDR_SCORE_TARGET;
 static volatile int* g_armed_respawn_limit = (volatile int*)(uintptr_t)ADDR_ARMED_RESPAWN_LIMIT;
@@ -1519,13 +1516,12 @@ static int custom_map_compare(const void* lhs_ptr, const void* rhs_ptr) {
 
 static int parse_rules(MapDiagnostics* diag, const JsonValue* rules_value, CustomMap* map) {
     static const char* const known_keys[] = {
-        "mode", "round_end_rooms", "score_target", "armed_respawn_limit", "iron"
+        "mode", "round_end_rooms", "score_target", "armed_respawn_limit"
     };
     JsonValue* mode_value;
     JsonValue* round_value;
     JsonValue* score_value;
     JsonValue* limit_value;
-    JsonValue* iron_value;
 
     if (!rules_value) return 1;
     if (rules_value->type != JSON_OBJECT) {
@@ -1580,15 +1576,6 @@ static int parse_rules(MapDiagnostics* diag, const JsonValue* rules_value, Custo
             diag_log(diag, 1, "[data.json][rules.armed_respawn_limit] error: expected non-negative integer");
         } else {
             map->armed_respawn_limit = limit;
-        }
-    }
-
-    iron_value = json_object_get(rules_value, "iron");
-    if (iron_value) {
-        if (iron_value->type != JSON_BOOL) {
-            diag_log(diag, 1, "[data.json][rules.iron] error: expected boolean");
-        } else {
-            map->iron = iron_value->u.boolean_value ? 1 : 0;
         }
     }
 
@@ -1736,7 +1723,6 @@ static int build_custom_map(MapDiagnostics* diag, const ParsedMapFile* parsed_ma
     out_map->round_end_any = 0;
     out_map->score_target = 0;
     out_map->armed_respawn_limit = 4;
-    out_map->iron = 0;
 
     memset(overrides, 0, sizeof(overrides));
     memset(override_present, 0, sizeof(override_present));
@@ -1886,7 +1872,6 @@ static void apply_custom_map(const CustomMap* map) {
     *g_map_name = map->name;
     *g_map_author = map->author;
     *g_map_mode = map->mode;
-    *g_map_iron = map->iron;
     *g_round_end_any = map->round_end_any;
     *g_score_target = map->score_target;
     *g_armed_respawn_limit = map->armed_respawn_limit;

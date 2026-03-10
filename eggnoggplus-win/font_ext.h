@@ -49,6 +49,21 @@ int font_ext_register_glyph(
     int err_sz
 );
 
+// Returns 1 if full_path matches any registered glyph source PNG path.
+int font_ext_is_tracked_path(const char* full_path);
+
+// Polls registered glyph source PNG mtimes and reloads changed glyph RGBA.
+// Safe to call frequently; internally rate-limited.
+// Returns number of glyph PNGs reloaded in this poll.
+int font_ext_poll_hot_reload(void);
+
+// Force-reloads all registered glyph source PNGs.
+// out_reloaded: successfully reloaded glyph images.
+// out_failed: reload failures.
+// out_restart_required: reloaded glyphs that cannot apply live because
+// data/font8x8.png has already loaded this session.
+void font_ext_reload_all(int* out_reloaded, int* out_failed, int* out_restart_required);
+
 // Called from the rgba_load detour. If path is data/font8x8.png, applies all
 // registered glyph overrides into the pixel buffer.
 void font_ext_on_rgba_load(const char* path, RgbaImage* img);

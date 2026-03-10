@@ -177,7 +177,8 @@ typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
 typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
 typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
-typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
+typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);
+typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -350,7 +351,6 @@ static void mods_cursor_tick(void) {
     write_main_cursor_pos(0, g_cursor_x[0], g_cursor_y[0]);
     write_main_cursor_pos(1, g_cursor_x[1], g_cursor_y[1]);
 }
-
 
 static void* g_mods_return_state = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
 

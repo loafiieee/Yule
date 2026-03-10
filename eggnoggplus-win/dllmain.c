@@ -207,6 +207,7 @@ static LONG WINAPI luna_unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
 typedef unsigned int Uint32;
 typedef unsigned short Uint16;
 typedef unsigned char Uint8;
+typedef short Sint16;
 
 typedef struct {
     int scancode;
@@ -254,12 +255,53 @@ typedef struct {
 typedef struct {
     Uint32 type;
     Uint32 timestamp;
+    Uint32 windowID;
+    Uint32 which;
+    int x;
+    int y;
+    Uint32 direction;
+} SDL_MouseWheelEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 windowID;
+    char text[32];
+} SDL_TextInputEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 which;
+    Uint8 axis;
+    Uint8 padding1;
+    Uint8 padding2;
+    Uint8 padding3;
+    Sint16 value;
+    Uint16 padding4;
+} SDL_ControllerAxisEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
     Uint32 which;
     Uint8 button;
     Uint8 state;
     Uint8 padding1;
     Uint8 padding2;
 } SDL_ControllerButtonEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 which;
+    Uint8 axis;
+    Uint8 padding1;
+    Uint8 padding2;
+    Uint8 padding3;
+    Sint16 value;
+    Uint16 padding4;
+} SDL_JoyAxisEvent;
 
 typedef struct {
     Uint32 type;
@@ -286,7 +328,11 @@ typedef union {
     SDL_KeyboardEvent key;
     SDL_MouseButtonEvent button;
     SDL_MouseMotionEvent motion;
+    SDL_MouseWheelEvent wheel;
+    SDL_TextInputEvent text;
+    SDL_ControllerAxisEvent caxis;
     SDL_ControllerButtonEvent cbutton;
+    SDL_JoyAxisEvent jaxis;
     SDL_JoyButtonEvent jbutton;
     SDL_JoyHatEvent jhat;
     unsigned char padding[56];
@@ -294,12 +340,18 @@ typedef union {
 
 #define SDL_KEYDOWN         0x300
 #define SDL_KEYUP           0x301
+#define SDL_TEXTINPUT       0x303
 #define SDL_QUIT            0x100
 #define SDL_MOUSEMOTION     0x400
 #define SDL_MOUSEBUTTONDOWN 0x401
 #define SDL_MOUSEBUTTONUP   0x402
+#define SDL_MOUSEWHEEL      0x403
+#define SDL_CONTROLLERAXISMOTION 0x650
 #define SDL_CONTROLLERBUTTONDOWN 0x651
+#define SDL_CONTROLLERBUTTONUP   0x652
+#define SDL_JOYAXISMOTION        0x600
 #define SDL_JOYBUTTONDOWN       0x603
+#define SDL_JOYBUTTONUP         0x604
 #define SDL_JOYHATMOTION        0x602
 
 #define SDL_CONTROLLER_BUTTON_A            0
@@ -397,6 +449,7 @@ void init_stubs();
 void lua_manager_init();
 void lua_manager_on_frame();
 int  lua_manager_on_event(const char*, int, int, int, int, int, int);
+void lua_manager_on_key_event(int sym, int is_down);
 void lua_manager_shutdown();
 
 void SDL_GL_SwapWindow(SDL_Window* window) {
@@ -412,12 +465,14 @@ void SDL_GL_SwapWindow(SDL_Window* window) {
     g_last_real_qpc = now;
 
     lua_manager_on_frame();
+    hooks_console_on_pre_swap();
     if (real_SwapWindow) real_SwapWindow(window);
 }
 
 int SDL_PollEvent(SDL_Event* event) {
     if (!real_PollEvent) return 0;
     luna_reinstall_crash_handler();
+    hooks_console_pump();
 
     // Allow Lua mods to "consume" SDL events by returning true from an on_event handler.
     // If consumed, we keep polling until we find a non-consumed event (or the queue is empty).
@@ -428,7 +483,11 @@ int SDL_PollEvent(SDL_Event* event) {
         int consumed = 0;
         switch (event->type) {
             case SDL_KEYDOWN:
-                // If we're capturing text for an in-game config string field, swallow key presses here.
+                if (hooks_console_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
+                    consumed = 1;
+                    break;
+                }
+                // If we're capturing text for an in-game config string field or bind row, swallow key presses here.
                 if (hooks_text_capture_active() &&
                     hooks_text_capture_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
                     consumed = 1;
@@ -438,24 +497,69 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                lua_manager_on_key_event(event->key.keysym.sym, 1);
                 consumed = lua_manager_on_event("keydown",
                     event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
                 break;
             case SDL_KEYUP:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
+                lua_manager_on_key_event(event->key.keysym.sym, 0);
                 consumed = lua_manager_on_event("keyup",
                     event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
                 break;
             case SDL_MOUSEBUTTONDOWN:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousebuttondown",
                     0, 0, 0, event->button.x, event->button.y, event->button.button);
                 break;
             case SDL_MOUSEBUTTONUP:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousebuttonup",
                     0, 0, 0, event->button.x, event->button.y, event->button.button);
                 break;
             case SDL_MOUSEMOTION:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousemotion",
                     0, 0, 0, event->motion.x, event->motion.y, 0);
+                break;
+            case SDL_MOUSEWHEEL:
+                if (hooks_console_active()) {
+                    hooks_console_mousewheel(event->wheel.y);
+                    consumed = 1;
+                    break;
+                }
+                consumed = lua_manager_on_event("mousewheel",
+                    0, 0, 0, event->wheel.x, event->wheel.y, (int)event->wheel.direction);
+                break;
+            case SDL_TEXTINPUT: {
+                if (hooks_console_textinput(event->text.text)) {
+                    consumed = 1;
+                    break;
+                }
+                int first_ch = (unsigned char)event->text.text[0];
+                consumed = lua_manager_on_event("textinput",
+                    first_ch, 0, 0, 0, 0, 0);
+                break;
+            }
+            case SDL_CONTROLLERAXISMOTION:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
+                consumed = lua_manager_on_event("controlleraxismotion",
+                    (int)event->caxis.axis, 0, 0, (int)event->caxis.which, (int)event->caxis.value, 0);
                 break;
             case SDL_CONTROLLERBUTTONDOWN: {
                 int action = 0;
@@ -469,11 +573,34 @@ int SDL_PollEvent(SDL_Event* event) {
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y) action = 5;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_BACK) action = 6;
 
-                if (action && hooks_mods_menu_control_action(action)) {
+                if (action && hooks_console_control_action(action)) {
                     consumed = 1;
+                } else if (hooks_console_active()) {
+                    consumed = 1;
+                } else if (action && hooks_mods_menu_control_action(action)) {
+                    consumed = 1;
+                } else {
+                    consumed = lua_manager_on_event("controllerbuttondown",
+                        (int)event->cbutton.button, 0, 0, (int)event->cbutton.which, (int)event->cbutton.state, 0);
                 }
                 break;
             }
+            case SDL_CONTROLLERBUTTONUP:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
+                consumed = lua_manager_on_event("controllerbuttonup",
+                    (int)event->cbutton.button, 0, 0, (int)event->cbutton.which, (int)event->cbutton.state, 0);
+                break;
+            case SDL_JOYAXISMOTION:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
+                consumed = lua_manager_on_event("joyaxismotion",
+                    (int)event->jaxis.axis, 0, 0, (int)event->jaxis.which, (int)event->jaxis.value, 0);
+                break;
             case SDL_JOYBUTTONDOWN: {
                 int action = 0;
                 if (event->jbutton.button == 0 || event->jbutton.button == 1 ||
@@ -482,19 +609,41 @@ int SDL_PollEvent(SDL_Event* event) {
                 } else if (event->jbutton.button == 6 || event->jbutton.button == 7) {
                     action = 6;
                 }
-                if (action && hooks_mods_menu_control_action(action)) {
+                if (action && hooks_console_control_action(action)) {
                     consumed = 1;
+                } else if (hooks_console_active()) {
+                    consumed = 1;
+                } else if (action && hooks_mods_menu_control_action(action)) {
+                    consumed = 1;
+                } else {
+                    consumed = lua_manager_on_event("joybuttondown",
+                        (int)event->jbutton.button, 0, 0, (int)event->jbutton.which, (int)event->jbutton.state, 0);
                 }
                 break;
             }
+            case SDL_JOYBUTTONUP:
+                if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
+                consumed = lua_manager_on_event("joybuttonup",
+                    (int)event->jbutton.button, 0, 0, (int)event->jbutton.which, (int)event->jbutton.state, 0);
+                break;
             case SDL_JOYHATMOTION: {
                 int action = 0;
                 if (event->jhat.value & SDL_HAT_UP) action = 1;
                 else if (event->jhat.value & SDL_HAT_DOWN) action = 2;
                 else if (event->jhat.value & SDL_HAT_LEFT) action = 3;
                 else if (event->jhat.value & SDL_HAT_RIGHT) action = 4;
-                if (action && hooks_mods_menu_control_action(action)) {
+                if (action && hooks_console_control_action(action)) {
                     consumed = 1;
+                } else if (hooks_console_active()) {
+                    consumed = 1;
+                } else if (action && hooks_mods_menu_control_action(action)) {
+                    consumed = 1;
+                } else {
+                    consumed = lua_manager_on_event("joyhatmotion",
+                        (int)event->jhat.hat, 0, 0, (int)event->jhat.which, (int)event->jhat.value, 0);
                 }
                 break;
             }

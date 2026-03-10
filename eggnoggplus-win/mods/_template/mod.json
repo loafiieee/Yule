@@ -6,5 +6,6 @@
   "description": "One-line description of what the mod does.",
   "api_version": 1,
   "entry": "main.lua",
-  "config": "config.cfg"
+  "config": "config.cfg",
+  "storage": "storage.cfg"
 }

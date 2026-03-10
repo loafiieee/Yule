@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 #include <GL/gl.h>
 #ifdef __has_include
@@ -47,6 +48,7 @@
 #include "hooks.h"
 #include "lua_manager.h"
 #include "font_ext.h"
+#include "texture_ext.h"
 #include "custom_maps.h"
 #include "log.h"
 
@@ -85,11 +87,20 @@
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
 #define ADDR_MAIN_PLAYER_POLL_CMDS    0x433F90u
 #define ADDR_MAPGEN_INIT              0x437D30u
+#define ADDR_HIGH_WATER_ACTION        0x43C730u
+#define ADDR_GAME_WATER_HI_COLOUR     0x420100u
+#define ADDR_GAME_WATER_COLOUR        0x4201D0u
+#define ADDR_LAYER                    0x55A33Cu
+#define ADDR_TURTLE_R                 0x448110u
+#define ADDR_TURTLE_G                 0x448114u
+#define ADDR_TURTLE_B                 0x448118u
+#define ADDR_TURTLE_A                 0x44811Cu
 
 // Asset load hook used for moddable font glyph overlays.
 #define ADDR_RGBA_LOAD                0x4022A0u
 
 #define MAX_MENU_ROWS     2048
+#define MAX_MODS_TRACKED   512
 #define CAPTURE_BUF_SIZE   256
 #define BASE_UI_W        1280.0f
 #define BASE_UI_H         720.0f
@@ -117,6 +128,16 @@
 #define SDLK_KP_ENTER 1073741912
 
 #define KMOD_SHIFT 0x0003
+#define KMOD_CTRL  0x00C0
+
+#define CONSOLE_INPUT_BUF      512
+#define CONSOLE_LINE_TEXT      384
+#define CONSOLE_MAX_LINES      256
+#define CONSOLE_HISTORY_MAX     64
+#define CONSOLE_BG_DOWNSAMPLE    4
+#define CONSOLE_MAX_MATCHES       32
+#define PROFILE_NAME_MAX          64
+#define PROFILE_PATH_MAX        MAX_PATH
 
 typedef struct GameState {
     void (__cdecl *enter)(void);
@@ -129,10 +150,18 @@ typedef enum RowKind {
     ROW_NONE = 0,
     ROW_MOD_HEADER,
     ROW_DIVIDER,
+    ROW_MOD_TOGGLE,
     ROW_CONFIG,
+    ROW_BIND,
     ROW_BACK,
     ROW_INFO,
 } RowKind;
+
+typedef enum CaptureKind {
+    CAPTURE_NONE = 0,
+    CAPTURE_CONFIG_STRING,
+    CAPTURE_BIND,
+} CaptureKind;
 
 typedef struct MenuRow {
     RowKind kind;
@@ -148,6 +177,13 @@ typedef struct RowKey {
     int mod_index;
     int cfg_index;
 } RowKey;
+
+typedef struct ConsoleLine {
+    char text[CONSOLE_LINE_TEXT];
+    float r;
+    float g;
+    float b;
+} ConsoleLine;
 
 typedef struct Detour {
     void* target;
@@ -179,6 +215,8 @@ typedef void  (__cdecl *fn_turtle_reset_t)(void);
 typedef float (__cdecl *fn_mad_dim_t)(void);
 typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);
 typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
+typedef int (__cdecl *fn_tile_action_t)(void*, int, int, int, int);
+typedef void (__cdecl *fn_colour_query_t)(float*);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -190,6 +228,7 @@ static fn_void_void_t                p_main_buttons_start = (fn_void_void_t)(uin
 static fn_main_cursors_reset_t       p_main_cursors_reset = (fn_main_cursors_reset_t)(uintptr_t)ADDR_MAIN_CURSORS_RESET;
 static fn_main_cursor_spin_t        p_main_cursor_spin = (fn_main_cursor_spin_t)(uintptr_t)ADDR_MAIN_CURSOR_SPIN;
 static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprite_batches_draw_t)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW;
+static fn_sprite_batch_plot_t        p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
 static fn_menu_button_link_t         p_menu_button_link = (fn_menu_button_link_t)(uintptr_t)ADDR_MENU_BUTTON_LINK;
 static fn_button_set_layout_t        p_button_set_layout = (fn_button_set_layout_t)(uintptr_t)ADDR_BUTTON_SET_LAYOUT;
 static fn_btn_player_filter_t        p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
@@ -212,6 +251,10 @@ static fn_void_void_t                p_mapgen_init_trampoline = NULL;
 static fn_state_switch_t             p_state_switch_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
+static fn_tile_action_t              p_high_water_action_trampoline = NULL;
+static fn_colour_query_t             p_game_water_hi_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_HI_COLOUR;
+static fn_colour_query_t             p_game_water_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_COLOUR;
+static volatile int* g_layer = (volatile int*)(uintptr_t)ADDR_LAYER;
 
 static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)ADDR_RGBA_LOAD;
 static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
@@ -222,17 +265,44 @@ static Detour g_state_switch_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
+static Detour g_high_water_action_detour;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
 static int g_selected_row = -1;
 static int g_scroll_row = 0;
+static int g_mod_collapsed[MAX_MODS_TRACKED];
 
 static int g_capture_active = 0;
+static CaptureKind g_capture_kind = CAPTURE_NONE;
 static int g_capture_mod = -1;
 static int g_capture_cfg = -1;
 static char g_capture_buf[CAPTURE_BUF_SIZE];
+static char g_active_profile_name[PROFILE_NAME_MAX];
+static int g_console_history_loaded = 0;
 static float g_ui_scale = 1.0f;
+
+// Minimal developer console state.
+static void* g_console_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+static void* g_console_pending_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+static int g_console_open_pending = 0;
+static int g_console_open_ready = 0;
+static int g_console_suppress_next_textinput = 0;
+static int g_console_scroll = 0;
+static char g_console_input[CONSOLE_INPUT_BUF];
+static int g_console_cursor = 0;
+static char g_console_edit_stash[CONSOLE_INPUT_BUF];
+static int g_console_has_edit_stash = 0;
+static int g_console_history_pos = -1;
+static char g_console_history[CONSOLE_HISTORY_MAX][CONSOLE_INPUT_BUF];
+static int g_console_history_count = 0;
+static ConsoleLine g_console_lines[CONSOLE_MAX_LINES];
+static int g_console_line_head = 0;
+static int g_console_line_count = 0;
+static GLuint g_console_bg_tex = 0;
+static int g_console_bg_w = 0;
+static int g_console_bg_h = 0;
+static int g_console_bg_ready = 0;
 
 // Command-bit overrides applied in the main_player_poll_cmds detour.
 static volatile uint32_t g_input_override_mask[2] = { 0, 0 };
@@ -257,7 +327,10 @@ typedef struct ModsLayout {
 } ModsLayout;
 
 static int is_mods_state_active(void);
+static int is_console_state_active(void);
 static void mods_calc_layout(ModsLayout* L);
+static void console_draw_rect(float x, float y, float w, float h, float r, float g, float b, float a);
+static void console_draw_rect_outline(float x, float y, float w, float h, float line_w, float r, float g, float b, float a);
 
 typedef struct MainCursor {
     float x;
@@ -353,6 +426,10 @@ static void mods_cursor_tick(void) {
 }
 
 static void* g_mods_return_state = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
+static void __cdecl console_enter(void);
+static void __cdecl console_update(void);
+static void __cdecl console_render(void);
+static void __cdecl console_leave(void);
 
 static void __cdecl mods_enter(void);
 static void __cdecl mods_update(void);
@@ -363,11 +440,27 @@ static void __cdecl mods_entry_update(void);
 static void __cdecl mods_entry_render(void);
 static void __cdecl mods_entry_leave(void);
 
+static void console_push_line_rgb(const char* text, float r, float g, float b);
+static void console_set_input(const char* s);
+static const char* console_stristr(const char* haystack, const char* needle);
+static char* console_parse_token(char** inout_cursor);
+static int console_try_parse_long(const char* s, long* out_value);
+static int console_try_parse_double(const char* s, double* out_value);
+static int console_try_parse_bool(const char* s, int* out_value);
+static void console_strip_crlf(char* s);
+
 static GameState g_mods_state = {
     mods_enter,
     mods_update,
     mods_render,
     mods_leave,
+};
+
+static GameState g_console_state = {
+    console_enter,
+    console_update,
+    console_render,
+    console_leave,
 };
 
 static GameState g_mods_entry_state = {
@@ -416,8 +509,33 @@ static int str_bool_true(const char* s) {
     return 0;
 }
 
+static int str_bool_false(const char* s) {
+    if (!s) return 0;
+    if (_stricmp(s, "0") == 0) return 1;
+    if (_stricmp(s, "false") == 0) return 1;
+    if (_stricmp(s, "no") == 0) return 1;
+    if (_stricmp(s, "off") == 0) return 1;
+    return 0;
+}
+
 static int is_mods_state_active(void) {
     return p_state_current && (p_state_current() == (void*)&g_mods_state);
+}
+
+static int is_console_state_active(void) {
+    return p_state_current && (p_state_current() == (void*)&g_console_state);
+}
+
+static const char* state_name_from_ptr(void* st) {
+    if (!st) return "none";
+    if (st == (void*)&g_console_state) return "console";
+    if (st == (void*)&g_mods_state) return "mods";
+    if (st == (void*)&g_mods_entry_state) return "mods_entry";
+    if (st == (void*)(uintptr_t)ADDR_MAIN_STATE) return "main";
+    if (st == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) return "main_initial";
+    if (st == (void*)(uintptr_t)ADDR_OPTIONS_STATE) return "options";
+    if (st == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED) return "options_paused";
+    return "unknown";
 }
 
 static float approx_text_width(const char* text, float scale) {
@@ -578,6 +696,31 @@ static int visible_rows_capacity(void) {
     return cap;
 }
 
+static int mods_is_collapsed(int mod_index) {
+    if (mod_index < 0 || mod_index >= MAX_MODS_TRACKED) return 0;
+    return g_mod_collapsed[mod_index] ? 1 : 0;
+}
+
+static void mods_set_collapsed(int mod_index, int collapsed) {
+    if (mod_index < 0 || mod_index >= MAX_MODS_TRACKED) return;
+    g_mod_collapsed[mod_index] = collapsed ? 1 : 0;
+}
+
+static void mods_toggle_collapsed(int mod_index) {
+    if (mod_index < 0 || mod_index >= MAX_MODS_TRACKED) return;
+    g_mod_collapsed[mod_index] = g_mod_collapsed[mod_index] ? 0 : 1;
+}
+
+static int find_mod_header_row_for_index(int row_index) {
+    if (row_index < 0 || row_index >= g_row_count) return -1;
+    int mod_index = g_rows[row_index].mod_index;
+    if (mod_index < 0) return -1;
+    for (int i = row_index; i >= 0; --i) {
+        if (g_rows[i].kind == ROW_MOD_HEADER && g_rows[i].mod_index == mod_index) return i;
+    }
+    return -1;
+}
+
 static void ensure_scroll_visible(void) {
     int cap = visible_rows_capacity();
     int max_scroll = (g_row_count > cap) ? (g_row_count - cap) : 0;
@@ -594,8 +737,19 @@ static void ensure_scroll_visible(void) {
         g_scroll_row = g_selected_row - (cap - margin - 1);
     }
 
+    if (g_rows[g_selected_row].mod_index >= 0) {
+        int header_row = find_mod_header_row_for_index(g_selected_row);
+        if (header_row >= 0) {
+            int distance = g_selected_row - header_row;
+            if (distance <= 4 && g_scroll_row > header_row) {
+                g_scroll_row = header_row;
+            }
+        }
+    }
+
     g_scroll_row = clampi(g_scroll_row, 0, max_scroll);
 }
+
 
 static void rows_clear(void) {
     g_row_count = 0;
@@ -659,6 +813,139 @@ static int row_matches_key(const MenuRow* row, RowKey key) {
     return 1;
 }
 
+static void capture_clear(void) {
+    g_capture_active = 0;
+    g_capture_kind = CAPTURE_NONE;
+    g_capture_mod = -1;
+    g_capture_cfg = -1;
+    g_capture_buf[0] = '\0';
+}
+
+static void begin_string_capture(int mod_index, int cfg_index) {
+    const char* v = lua_manager_get_mod_config_value_str(mod_index, cfg_index);
+    capture_clear();
+    g_capture_active = 1;
+    g_capture_kind = CAPTURE_CONFIG_STRING;
+    g_capture_mod = mod_index;
+    g_capture_cfg = cfg_index;
+    safe_copy(g_capture_buf, sizeof(g_capture_buf), v ? v : "");
+}
+
+static void begin_bind_capture(int mod_index, int bind_index) {
+    capture_clear();
+    g_capture_active = 1;
+    g_capture_kind = CAPTURE_BIND;
+    g_capture_mod = mod_index;
+    g_capture_cfg = bind_index;
+    safe_copy(g_capture_buf, sizeof(g_capture_buf), "Press a key... Esc cancel, Backspace/Delete clear");
+}
+
+static int bind_name_to_sym(const char* name) {
+    if (!name || !name[0]) return 0;
+    if (_stricmp(name, "none") == 0 || _stricmp(name, "unbound") == 0 || _stricmp(name, "clear") == 0) return 0;
+    if (_stricmp(name, "space") == 0) return SDLK_SPACE;
+    if (_stricmp(name, "tab") == 0) return SDLK_TAB;
+    if (_stricmp(name, "enter") == 0 || _stricmp(name, "return") == 0) return SDLK_RETURN;
+    if (_stricmp(name, "escape") == 0 || _stricmp(name, "esc") == 0) return SDLK_ESCAPE;
+    if (_stricmp(name, "backspace") == 0) return SDLK_BACKSPACE;
+    if (_stricmp(name, "delete") == 0 || _stricmp(name, "del") == 0) return SDLK_DELETE;
+    if (_stricmp(name, "left") == 0) return SDLK_LEFT;
+    if (_stricmp(name, "right") == 0) return SDLK_RIGHT;
+    if (_stricmp(name, "up") == 0) return SDLK_UP;
+    if (_stricmp(name, "down") == 0) return SDLK_DOWN;
+    if (_stricmp(name, "home") == 0) return SDLK_HOME;
+    if (_stricmp(name, "end") == 0) return SDLK_END;
+    if (_stricmp(name, "pageup") == 0 || _stricmp(name, "pgup") == 0) return SDLK_PAGEUP;
+    if (_stricmp(name, "pagedown") == 0 || _stricmp(name, "pgdn") == 0) return SDLK_PAGEDOWN;
+    if (_stricmp(name, "kp_enter") == 0) return SDLK_KP_ENTER;
+    if (name[0] && !name[1]) return (unsigned char)tolower((unsigned char)name[0]);
+    {
+        char* end = NULL;
+        long v = strtol(name, &end, 0);
+        if (end && *end == '\0') return (int)v;
+    }
+    return 0;
+}
+
+static int console_find_bind_index_by_key(int mod_index, const char* key) {
+    int count = lua_manager_get_mod_bind_count(mod_index);
+    if (!key || !key[0]) return -1;
+    for (int i = 0; i < count; i++) {
+        const char* bind_key = lua_manager_get_mod_bind_key(mod_index, i);
+        if (bind_key && _stricmp(bind_key, key) == 0) return i;
+    }
+    return -1;
+}
+
+static int console_apply_bind_value(int mod_index, int bind_index, const char* value) {
+    int sym = bind_name_to_sym(value);
+    if (!value) return 0;
+    if (sym == 0 && value[0] && _stricmp(value, "none") != 0 && _stricmp(value, "unbound") != 0 && _stricmp(value, "clear") != 0) {
+        return 0;
+    }
+    return (sym == 0) ? lua_manager_clear_mod_bind_value(mod_index, bind_index)
+                      : lua_manager_set_mod_bind_value(mod_index, bind_index, sym);
+}
+
+static int console_apply_config_value(int idx, int cfg_idx, const char* value) {
+    int type;
+    int ok = 0;
+    if (idx < 0 || cfg_idx < 0 || !value) return 0;
+    type = lua_manager_get_mod_config_type(idx, cfg_idx);
+    if (type == LUA_CFG_BOOL) {
+        int want = 0;
+        int cur = str_bool_true(lua_manager_get_mod_config_value_str(idx, cfg_idx)) ? 1 : 0;
+        if (!console_try_parse_bool(value, &want)) return 0;
+        ok = (want == cur) ? 1 : lua_manager_config_toggle_bool(idx, cfg_idx);
+    } else if (type == LUA_CFG_INT) {
+        long want = 0;
+        long cur = 0;
+        const char* cur_text = lua_manager_get_mod_config_value_str(idx, cfg_idx);
+        if (!console_try_parse_long(value, &want)) return 0;
+        if (!console_try_parse_long(cur_text, &cur)) cur = strtol(cur_text, NULL, 10);
+        ok = lua_manager_config_increment_int(idx, cfg_idx, (int)(want - cur));
+    } else if (type == LUA_CFG_FLOAT) {
+        double want = 0.0;
+        double cur = 0.0;
+        const char* cur_text = lua_manager_get_mod_config_value_str(idx, cfg_idx);
+        if (!console_try_parse_double(value, &want)) return 0;
+        if (!console_try_parse_double(cur_text, &cur)) cur = atof(cur_text);
+        ok = lua_manager_config_increment_float(idx, cfg_idx, want - cur);
+    } else if (type == LUA_CFG_STRING) {
+        ok = lua_manager_config_set_string(idx, cfg_idx, value);
+    }
+    return ok;
+}
+
+static void profile_ensure_dir(void) {
+    CreateDirectoryA("mods", NULL);
+    CreateDirectoryA("mods\\profiles", NULL);
+}
+
+static int profile_sanitize_name(const char* src, char* dst, size_t dst_sz) {
+    size_t pos = 0;
+    if (!dst || dst_sz == 0) return 0;
+    dst[0] = '\0';
+    if (!src || !src[0]) return 0;
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        if (isalnum(c) || c == '_' || c == '-' || c == '.') {
+            if (pos + 1 >= dst_sz) break;
+            dst[pos++] = (char)c;
+        }
+    }
+    dst[pos] = '\0';
+    return pos > 0;
+}
+
+static int profile_build_path(const char* name, char* out, size_t out_sz) {
+    char clean[PROFILE_NAME_MAX];
+    if (!profile_sanitize_name(name, clean, sizeof(clean))) return 0;
+    profile_ensure_dir();
+    snprintf(out, out_sz, "mods\\profiles\\%s.profile", clean);
+    return 1;
+}
+
 static void rebuild_rows(void) {
     RowKey keep = selected_key();
     rows_clear();
@@ -670,66 +957,100 @@ static void rebuild_rows(void) {
     }
 
     for (int mi = 0; mi < mod_count; mi++) {
-        char header[128];
-        char version[64];
+        char header[192];
+        char desc_line[192];
+        char warn[192];
         const char* name = lua_manager_get_mod_name(mi);
         const char* id = lua_manager_get_mod_id(mi);
-        const char* ver = lua_manager_get_mod_version(mi);
+        const char* author = lua_manager_get_mod_author(mi);
+        const char* desc = lua_manager_get_mod_description(mi);
+        int enabled = lua_manager_get_mod_enabled(mi);
+        int dep_count = lua_manager_get_mod_dependency_count(mi);
+        int conflict_count = lua_manager_get_mod_conflict_count(mi);
+        int missing_required = 0;
+        int active_conflicts = 0;
+        int collapsed = mods_is_collapsed(mi);
 
         if (!name || !name[0]) name = (id && id[0]) ? id : "(unnamed mod)";
-        if (!ver) ver = "";
 
-        safe_copy(header, sizeof(header), name);
-        if (ver[0]) {
-            snprintf(version, sizeof(version), "%s", ver);
+        if (id && id[0] && author && author[0]) {
+            snprintf(header, sizeof(header), "%s %s (%s) by %s", collapsed ? "[+]" : "[-]", name, id, author);
+        } else if (id && id[0]) {
+            snprintf(header, sizeof(header), "%s %s (%s)", collapsed ? "[+]" : "[-]", name, id);
+        } else if (author && author[0]) {
+            snprintf(header, sizeof(header), "%s %s by %s", collapsed ? "[+]" : "[-]", name, author);
         } else {
-            version[0] = '\0';
+            snprintf(header, sizeof(header), "%s %s", collapsed ? "[+]" : "[-]", name);
         }
 
-        rows_add(ROW_MOD_HEADER, 0, mi, -1, header, version);
-        rows_add(ROW_DIVIDER, 0, mi, -1, "", "");
+        rows_add(ROW_MOD_HEADER, 1, mi, -1, header, "");
 
-        int cfg_count = lua_manager_get_mod_config_count(mi);
-        if (cfg_count <= 0) {
-            rows_add(ROW_INFO, 0, mi, -1, "(no options)", "");
+        if (desc && desc[0]) {
+            safe_copy(desc_line, sizeof(desc_line), desc);
+            rows_add(ROW_INFO, 0, mi, -1, desc_line, "");
         }
 
-        for (int ci = 0; ci < cfg_count; ci++) {
-            char label[128];
-            char value[192];
-            int type = lua_manager_get_mod_config_type(mi, ci);
+        for (int di = 0; di < dep_count; di++) {
+            int optional = lua_manager_get_mod_dependency_optional(mi, di);
+            int satisfied = lua_manager_mod_dependency_satisfied(mi, di);
+            if (!optional && !satisfied) missing_required++;
+        }
+        for (int ci = 0; ci < conflict_count; ci++) {
+            int active = lua_manager_mod_conflict_active(mi, ci);
+            if (active) active_conflicts++;
+        }
 
-            const char* raw_label = lua_manager_get_mod_config_label(mi, ci);
-            const char* key = lua_manager_get_mod_config_key(mi, ci);
-            const char* raw_value = lua_manager_get_mod_config_value_str(mi, ci);
+        if (!collapsed) {
+            rows_add(ROW_INFO, 0, mi, -1, "Options", "");
+            rows_add(ROW_MOD_TOGGLE, 1, mi, -1, "  Enabled", enabled ? "ON" : "OFF");
 
-            if (!raw_label || !raw_label[0]) raw_label = key;
-            if (!raw_label || !raw_label[0]) raw_label = "(option)";
-            if (!raw_value) raw_value = "";
-
-            safe_copy(label, sizeof(label), raw_label);
-
-            switch (type) {
-                case LUA_CFG_BOOL:
-                    safe_copy(value, sizeof(value), str_bool_true(raw_value) ? "ON" : "OFF");
-                    break;
-                case LUA_CFG_ACTION:
-                    safe_copy(value, sizeof(value), "[Run]");
-                    break;
-                case LUA_CFG_STRING:
-                    snprintf(value, sizeof(value), "\"%s\"", raw_value);
-                    break;
-                default:
-                    safe_copy(value, sizeof(value), raw_value);
-                    break;
+            if (missing_required > 0 || active_conflicts > 0) {
+                snprintf(warn, sizeof(warn), "  Status: %d missing required, %d active conflicts", missing_required, active_conflicts);
+                rows_add(ROW_INFO, 0, mi, -1, warn, "");
             }
 
-            rows_add(ROW_CONFIG, 1, mi, ci, label, value);
+            {
+                int cfg_count = lua_manager_get_mod_config_count(mi);
+                for (int ci = 0; ci < cfg_count; ci++) {
+                    char label[128];
+                    char value[192];
+                    int type = lua_manager_get_mod_config_type(mi, ci);
+                    const char* raw_label = lua_manager_get_mod_config_label(mi, ci);
+                    const char* key = lua_manager_get_mod_config_key(mi, ci);
+                    const char* raw_value = lua_manager_get_mod_config_value_str(mi, ci);
+                    if (!raw_label || !raw_label[0]) raw_label = key;
+                    if (!raw_label || !raw_label[0]) raw_label = "(option)";
+                    if (!raw_value) raw_value = "";
+                    snprintf(label, sizeof(label), "  %s", raw_label);
+                    switch (type) {
+                        case LUA_CFG_BOOL: safe_copy(value, sizeof(value), str_bool_true(raw_value) ? "ON" : "OFF"); break;
+                        case LUA_CFG_ACTION: safe_copy(value, sizeof(value), "[Run]"); break;
+                        case LUA_CFG_STRING: snprintf(value, sizeof(value), "\"%s\"", raw_value); break;
+                        default: safe_copy(value, sizeof(value), raw_value); break;
+                    }
+                    rows_add(ROW_CONFIG, 1, mi, ci, label, value);
+                }
+            }
+
+            {
+                int bind_count = lua_manager_get_mod_bind_count(mi);
+                for (int bi = 0; bi < bind_count; bi++) {
+                    char label[128];
+                    char value[192];
+                    const char* raw_label = lua_manager_get_mod_bind_label(mi, bi);
+                    const char* raw_key = lua_manager_get_mod_bind_key(mi, bi);
+                    const char* raw_value = lua_manager_get_mod_bind_value_str(mi, bi);
+                    snprintf(label, sizeof(label), "  Bind: %s", (raw_label && raw_label[0]) ? raw_label : ((raw_key && raw_key[0]) ? raw_key : "(bind)"));
+                    safe_copy(value, sizeof(value), (raw_value && raw_value[0]) ? raw_value : "[Unbound]");
+                    if (lua_manager_mod_bind_has_conflict(mi, bi) && strlen(value) + 11 < sizeof(value)) {
+                        strcat(value, " [conflict]");
+                    }
+                    rows_add(ROW_BIND, 1, mi, bi, label, value);
+                }
+            }
         }
 
-        if (mi != mod_count - 1) {
-            rows_add(ROW_INFO, 0, -1, -1, "", "");
-        }
+        if (mi != mod_count - 1) rows_add(ROW_DIVIDER, 0, -1, -1, "", "");
     }
 
     rows_add(ROW_DIVIDER, 0, -1, -1, "", "");
@@ -777,38 +1098,36 @@ static void move_selection(int dir, int amount) {
 }
 
 static void mods_go_back(void) {
-    g_capture_active = 0;
-    g_capture_mod = -1;
-    g_capture_cfg = -1;
+    capture_clear();
 
     void* target = g_mods_return_state;
-    if (!target || target == (void*)&g_mods_state) {
+    if (target == (void*)&g_console_state) {
+        target = g_console_return_state;
+    }
+    if (!target || target == (void*)&g_mods_state || target == (void*)&g_mods_entry_state) {
         target = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
     }
     p_state_switch(target);
-}
-
-static void begin_string_capture(int mod_index, int cfg_index) {
-    const char* v = lua_manager_get_mod_config_value_str(mod_index, cfg_index);
-    g_capture_active = 1;
-    g_capture_mod = mod_index;
-    g_capture_cfg = cfg_index;
-    safe_copy(g_capture_buf, sizeof(g_capture_buf), v ? v : "");
 }
 
 static void apply_adjustment_on_selected(int delta) {
     if (g_selected_row < 0 || g_selected_row >= g_row_count) return;
 
     MenuRow* row = &g_rows[g_selected_row];
-    if (row->kind != ROW_CONFIG) return;
-
-    int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
-    if (type == LUA_CFG_BOOL) {
-        lua_manager_config_toggle_bool(row->mod_index, row->cfg_index);
-    } else if (type == LUA_CFG_INT) {
-        lua_manager_config_increment_int(row->mod_index, row->cfg_index, delta);
-    } else if (type == LUA_CFG_FLOAT) {
-        lua_manager_config_increment_float(row->mod_index, row->cfg_index, (double)delta * 0.1);
+    if (row->kind == ROW_MOD_HEADER) {
+        mods_toggle_collapsed(row->mod_index);
+    } else if (row->kind == ROW_MOD_TOGGLE) {
+        int enabled = lua_manager_get_mod_enabled(row->mod_index);
+        lua_manager_set_mod_enabled(row->mod_index, delta > 0 ? 1 : (delta < 0 ? 0 : !enabled));
+    } else if (row->kind == ROW_CONFIG) {
+        int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
+        if (type == LUA_CFG_BOOL) {
+            lua_manager_config_toggle_bool(row->mod_index, row->cfg_index);
+        } else if (type == LUA_CFG_INT) {
+            lua_manager_config_increment_int(row->mod_index, row->cfg_index, delta);
+        } else if (type == LUA_CFG_FLOAT) {
+            lua_manager_config_increment_float(row->mod_index, row->cfg_index, (double)delta * 0.1);
+        }
     }
 
     rebuild_rows();
@@ -824,22 +1143,1993 @@ static void activate_selected(void) {
         return;
     }
 
-    if (row->kind != ROW_CONFIG) return;
-
-    int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
-    if (type == LUA_CFG_BOOL) {
-        lua_manager_config_toggle_bool(row->mod_index, row->cfg_index);
-    } else if (type == LUA_CFG_INT) {
-        lua_manager_config_increment_int(row->mod_index, row->cfg_index, 1);
-    } else if (type == LUA_CFG_FLOAT) {
-        lua_manager_config_increment_float(row->mod_index, row->cfg_index, 0.1);
-    } else if (type == LUA_CFG_ACTION) {
-        lua_manager_config_trigger_action(row->mod_index, row->cfg_index);
-    } else if (type == LUA_CFG_STRING) {
-        begin_string_capture(row->mod_index, row->cfg_index);
+    if (row->kind == ROW_MOD_HEADER) {
+        mods_toggle_collapsed(row->mod_index);
+    } else if (row->kind == ROW_MOD_TOGGLE) {
+        lua_manager_set_mod_enabled(row->mod_index, lua_manager_get_mod_enabled(row->mod_index) ? 0 : 1);
+    } else if (row->kind == ROW_BIND) {
+        begin_bind_capture(row->mod_index, row->cfg_index);
+    } else if (row->kind == ROW_CONFIG) {
+        int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
+        if (type == LUA_CFG_BOOL) {
+            lua_manager_config_toggle_bool(row->mod_index, row->cfg_index);
+        } else if (type == LUA_CFG_INT) {
+            lua_manager_config_increment_int(row->mod_index, row->cfg_index, 1);
+        } else if (type == LUA_CFG_FLOAT) {
+            lua_manager_config_increment_float(row->mod_index, row->cfg_index, 0.1);
+        } else if (type == LUA_CFG_ACTION) {
+            lua_manager_config_trigger_action(row->mod_index, row->cfg_index);
+        } else if (type == LUA_CFG_STRING) {
+            begin_string_capture(row->mod_index, row->cfg_index);
+        }
     }
 
     rebuild_rows();
+}
+
+static char* trim_ws(char* s) {
+    char* end;
+    if (!s) return s;
+    while (*s && isspace((unsigned char)*s)) s++;
+    end = s + strlen(s);
+    while (end > s && isspace((unsigned char)end[-1])) end--;
+    *end = '\0';
+    return s;
+}
+
+static void console_clear_output(void) {
+    g_console_line_head = 0;
+    g_console_line_count = 0;
+    g_console_scroll = 0;
+}
+
+static ConsoleLine* console_line_at_oldest_index(int idx) {
+    int first;
+    int slot;
+    if (idx < 0 || idx >= g_console_line_count) return NULL;
+    first = g_console_line_head - g_console_line_count;
+    while (first < 0) first += CONSOLE_MAX_LINES;
+    slot = first + idx;
+    while (slot >= CONSOLE_MAX_LINES) slot -= CONSOLE_MAX_LINES;
+    return &g_console_lines[slot];
+}
+
+static void console_push_line_rgb(const char* text, float r, float g, float b) {
+    ConsoleLine* line = &g_console_lines[g_console_line_head];
+    safe_copy(line->text, sizeof(line->text), text ? text : "");
+    line->r = r;
+    line->g = g;
+    line->b = b;
+
+    g_console_line_head++;
+    if (g_console_line_head >= CONSOLE_MAX_LINES) g_console_line_head = 0;
+    if (g_console_line_count < CONSOLE_MAX_LINES) g_console_line_count++;
+    g_console_scroll = 0;
+}
+
+static void console_push_command_line(const char* cmd) {
+    char line[CONSOLE_LINE_TEXT];
+    snprintf(line, sizeof(line), "> %s", cmd ? cmd : "");
+    console_push_line_rgb(line, 0.95f, 0.86f, 0.34f);
+}
+
+static const char* k_console_commands[] = {
+    "help", "commands", "clear", "history", "echo", "console.stats",
+    "state", "state.last", "state.return", "state.switch", "sys.info", "ui.size",
+    "time.scale", "framework.api",
+    "mods.count", "mods.list", "mods.find", "mods.info", "mods.enable", "mods.disable", "mods.toggle",
+    "mods.config", "mods.config.find", "mods.config.get", "mods.config.set", "mods.config.action",
+    "binds.list", "binds.find", "binds.set", "binds.clear",
+    "profiles.list", "profiles.save", "profiles.load", "profiles.delete", "profiles.current",
+    "reload.mods", "mods.reload", "reload.assets",
+    "log.level", "log.tail", "input.show", "input.override", "input.clear",
+    "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
+};
+
+static void console_history_path(char* out, size_t out_sz) {
+    profile_ensure_dir();
+    snprintf(out, out_sz, "mods\\console_history.txt");
+}
+
+static void console_history_save(void) {
+    char path[MAX_PATH];
+    FILE* f;
+    console_history_path(path, sizeof(path));
+    f = fopen(path, "w");
+    if (!f) return;
+    for (int i = 0; i < g_console_history_count; i++) {
+        fprintf(f, "%s\n", g_console_history[i]);
+    }
+    fclose(f);
+}
+
+static void console_history_load(void) {
+    char path[MAX_PATH];
+    FILE* f;
+    char line[CONSOLE_INPUT_BUF];
+    if (g_console_history_loaded) return;
+    g_console_history_loaded = 1;
+    g_console_history_count = 0;
+    console_history_path(path, sizeof(path));
+    f = fopen(path, "r");
+    if (!f) return;
+    while (fgets(line, sizeof(line), f)) {
+        console_strip_crlf(line);
+        if (!line[0]) continue;
+        if (g_console_history_count >= CONSOLE_HISTORY_MAX) break;
+        safe_copy(g_console_history[g_console_history_count], sizeof(g_console_history[0]), line);
+        g_console_history_count++;
+    }
+    fclose(f);
+}
+
+static void console_history_add(const char* cmd) {
+    int i;
+    if (!cmd || !cmd[0]) return;
+
+    if (g_console_history_count > 0) {
+        const char* last = g_console_history[g_console_history_count - 1];
+        if (_stricmp(last, cmd) == 0) return;
+    }
+
+    if (g_console_history_count >= CONSOLE_HISTORY_MAX) {
+        for (i = 1; i < CONSOLE_HISTORY_MAX; i++) {
+            safe_copy(g_console_history[i - 1], sizeof(g_console_history[0]), g_console_history[i]);
+        }
+        g_console_history_count = CONSOLE_HISTORY_MAX - 1;
+    }
+
+    safe_copy(g_console_history[g_console_history_count], sizeof(g_console_history[0]), cmd);
+    g_console_history_count++;
+    console_history_save();
+}
+
+static int console_common_prefix_len(const char* a, const char* b) {
+    int n = 0;
+    if (!a || !b) return 0;
+    while (a[n] && b[n] && tolower((unsigned char)a[n]) == tolower((unsigned char)b[n])) n++;
+    return n;
+}
+
+static void console_autocomplete(void) {
+    char prefix[128];
+    int prefix_len = 0;
+    int match_count = 0;
+    const char* first_match = NULL;
+    int common_len = 0;
+
+    while (prefix_len < g_console_cursor && prefix_len < (int)sizeof(prefix) - 1) {
+        char c = g_console_input[prefix_len];
+        if (!c || isspace((unsigned char)c)) break;
+        prefix[prefix_len++] = c;
+    }
+    prefix[prefix_len] = '\0';
+    if (strchr(g_console_input, ' ')) return;
+
+    for (int i = 0; i < (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0])); i++) {
+        const char* cmd = k_console_commands[i];
+        if (_strnicmp(cmd, prefix, (size_t)prefix_len) != 0) continue;
+        if (!first_match) {
+            first_match = cmd;
+            common_len = (int)strlen(cmd);
+        } else {
+            int cur = console_common_prefix_len(first_match, cmd);
+            if (cur < common_len) common_len = cur;
+        }
+        match_count++;
+        if (match_count <= CONSOLE_MAX_MATCHES) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "  %s", cmd);
+            if (match_count == 1) console_push_line_rgb("Matches:", 0.72f, 0.90f, 1.00f);
+            console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+        }
+    }
+
+    if (!first_match) return;
+    if (match_count == 1) {
+        char full[CONSOLE_INPUT_BUF];
+        snprintf(full, sizeof(full), "%s ", first_match);
+        console_set_input(full);
+        return;
+    }
+    if (common_len > prefix_len) {
+        char partial[128];
+        memcpy(partial, first_match, (size_t)common_len);
+        partial[common_len] = '\0';
+        console_set_input(partial);
+    }
+}
+
+static void console_reset_history_nav(void) {
+    g_console_history_pos = -1;
+    g_console_has_edit_stash = 0;
+    g_console_edit_stash[0] = '\0';
+}
+
+static void console_set_input(const char* s) {
+    size_t len;
+    safe_copy(g_console_input, sizeof(g_console_input), s ? s : "");
+    len = strlen(g_console_input);
+    g_console_cursor = (int)len;
+}
+
+static void console_detach_from_history(void) {
+    if (g_console_history_pos == -1) return;
+    g_console_history_pos = -1;
+    g_console_has_edit_stash = 0;
+    g_console_edit_stash[0] = '\0';
+}
+
+static void console_history_step(int dir) {
+    if (g_console_history_count <= 0) return;
+
+    if (dir < 0) {
+        if (g_console_history_pos == -1) {
+            safe_copy(g_console_edit_stash, sizeof(g_console_edit_stash), g_console_input);
+            g_console_has_edit_stash = 1;
+            g_console_history_pos = g_console_history_count - 1;
+        } else if (g_console_history_pos > 0) {
+            g_console_history_pos--;
+        }
+        console_set_input(g_console_history[g_console_history_pos]);
+    } else {
+        if (g_console_history_pos == -1) return;
+        if (g_console_history_pos < g_console_history_count - 1) {
+            g_console_history_pos++;
+            console_set_input(g_console_history[g_console_history_pos]);
+            return;
+        }
+        g_console_history_pos = -1;
+        if (g_console_has_edit_stash) console_set_input(g_console_edit_stash);
+        else console_set_input("");
+        g_console_has_edit_stash = 0;
+    }
+}
+
+static void console_insert_text(const char* text) {
+    size_t len;
+    size_t ins_len;
+    if (!text || !text[0]) return;
+    len = strlen(g_console_input);
+    ins_len = strlen(text);
+    if ((size_t)g_console_cursor > len) g_console_cursor = (int)len;
+    if (ins_len > (sizeof(g_console_input) - 1) - len) {
+        ins_len = (sizeof(g_console_input) - 1) - len;
+    }
+    if (ins_len <= 0) return;
+    console_detach_from_history();
+    memmove(g_console_input + g_console_cursor + ins_len,
+            g_console_input + g_console_cursor,
+            len - (size_t)g_console_cursor + 1);
+    memcpy(g_console_input + g_console_cursor, text, ins_len);
+    g_console_cursor += (int)ins_len;
+}
+
+static void console_backspace(void) {
+    size_t len = strlen(g_console_input);
+    if (g_console_cursor <= 0 || len <= 0) return;
+    console_detach_from_history();
+    memmove(g_console_input + g_console_cursor - 1,
+            g_console_input + g_console_cursor,
+            len - (size_t)g_console_cursor + 1);
+    g_console_cursor--;
+}
+
+static void console_delete(void) {
+    size_t len = strlen(g_console_input);
+    if ((size_t)g_console_cursor >= len) return;
+    console_detach_from_history();
+    memmove(g_console_input + g_console_cursor,
+            g_console_input + g_console_cursor + 1,
+            len - (size_t)g_console_cursor);
+}
+
+static void console_scroll_by(int delta) {
+    int max_scroll = g_console_line_count > 0 ? g_console_line_count - 1 : 0;
+    g_console_scroll += delta;
+    if (g_console_scroll < 0) g_console_scroll = 0;
+    if (g_console_scroll > max_scroll) g_console_scroll = max_scroll;
+}
+
+static void console_downsample_rgba(const unsigned char* src, int sw, int sh, unsigned char* dst, int dw, int dh) {
+    int y;
+    int x;
+    if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+
+    for (y = 0; y < dh; y++) {
+        int sy0 = (y * sh) / dh;
+        int sy1 = ((y + 1) * sh) / dh;
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        if (sy1 > sh) sy1 = sh;
+
+        for (x = 0; x < dw; x++) {
+            int sx0 = (x * sw) / dw;
+            int sx1 = ((x + 1) * sw) / dw;
+            uint64_t ar = 0, ag = 0, ab = 0, aa = 0, count = 0;
+            int sy;
+            int sx;
+            if (sx1 <= sx0) sx1 = sx0 + 1;
+            if (sx1 > sw) sx1 = sw;
+
+            for (sy = sy0; sy < sy1; sy++) {
+                const unsigned char* row = src + ((size_t)sy * (size_t)sw * 4);
+                for (sx = sx0; sx < sx1; sx++) {
+                    const unsigned char* p = row + ((size_t)sx * 4);
+                    ar += p[0];
+                    ag += p[1];
+                    ab += p[2];
+                    aa += p[3];
+                    count++;
+                }
+            }
+
+            if (count == 0) count = 1;
+            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 0] = (unsigned char)(ar / count);
+            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 1] = (unsigned char)(ag / count);
+            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 2] = (unsigned char)(ab / count);
+            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 3] = (unsigned char)(aa / count);
+        }
+    }
+}
+
+static void console_box_blur_rgba(const unsigned char* src, unsigned char* dst, int w, int h, int radius) {
+    int y;
+    int x;
+    if (!src || !dst || w <= 0 || h <= 0 || radius <= 0) return;
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            uint64_t ar = 0, ag = 0, ab = 0, aa = 0, count = 0;
+            int ky;
+            for (ky = -radius; ky <= radius; ky++) {
+                int sy = y + ky;
+                int kx;
+                if (sy < 0) sy = 0;
+                if (sy >= h) sy = h - 1;
+                for (kx = -radius; kx <= radius; kx++) {
+                    int sx = x + kx;
+                    const unsigned char* p;
+                    if (sx < 0) sx = 0;
+                    if (sx >= w) sx = w - 1;
+                    p = src + ((size_t)sy * (size_t)w + (size_t)sx) * 4;
+                    ar += p[0];
+                    ag += p[1];
+                    ab += p[2];
+                    aa += p[3];
+                    count++;
+                }
+            }
+            if (count == 0) count = 1;
+            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 0] = (unsigned char)(ar / count);
+            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 1] = (unsigned char)(ag / count);
+            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 2] = (unsigned char)(ab / count);
+            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 3] = (unsigned char)(aa / count);
+        }
+    }
+}
+
+static int console_capture_background_now(void) {
+    int w = (int)(p_mad_w ? p_mad_w() : BASE_UI_W);
+    int h = (int)(p_mad_h ? p_mad_h() : BASE_UI_H);
+    int bw;
+    int bh;
+    GLint prev_pack_alignment = 4;
+    GLint prev_read_buffer = GL_BACK;
+    GLint prev_tex_binding_2d = 0;
+    unsigned char* src;
+    unsigned char* small;
+    unsigned char* blur_tmp;
+
+    if (w < 2 || h < 2) return 0;
+    bw = w / CONSOLE_BG_DOWNSAMPLE;
+    bh = h / CONSOLE_BG_DOWNSAMPLE;
+    if (bw < 16) bw = 16;
+    if (bh < 16) bh = 16;
+
+    src = (unsigned char*)malloc((size_t)w * (size_t)h * 4);
+    small = (unsigned char*)malloc((size_t)bw * (size_t)bh * 4);
+    blur_tmp = (unsigned char*)malloc((size_t)bw * (size_t)bh * 4);
+    if (!src || !small || !blur_tmp) {
+        free(src);
+        free(small);
+        free(blur_tmp);
+        return 0;
+    }
+
+    glGetIntegerv(GL_PACK_ALIGNMENT, &prev_pack_alignment);
+    glGetIntegerv(GL_READ_BUFFER, &prev_read_buffer);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex_binding_2d);
+
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, src);
+
+    console_downsample_rgba(src, w, h, small, bw, bh);
+    console_box_blur_rgba(small, blur_tmp, bw, bh, 1);
+    console_box_blur_rgba(blur_tmp, small, bw, bh, 1);
+
+    if (!g_console_bg_tex) {
+        glGenTextures(1, &g_console_bg_tex);
+    }
+    glBindTexture(GL_TEXTURE_2D, g_console_bg_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+#ifdef GL_CLAMP_TO_EDGE
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#else
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+#endif
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, bw, bh, 0, GL_RGBA, GL_UNSIGNED_BYTE, small);
+
+    g_console_bg_w = bw;
+    g_console_bg_h = bh;
+    g_console_bg_ready = 1;
+
+    glPixelStorei(GL_PACK_ALIGNMENT, prev_pack_alignment);
+    glReadBuffer(prev_read_buffer);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prev_tex_binding_2d);
+
+    free(src);
+    free(small);
+    free(blur_tmp);
+    return 1;
+}
+
+static void console_open(void) {
+    void* cur;
+    if (!p_state_switch) return;
+    if (is_console_state_active()) return;
+    if (g_console_open_pending || g_console_open_ready) return;
+
+    cur = p_state_current ? p_state_current() : NULL;
+    if (!cur || cur == (void*)&g_console_state) {
+        cur = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    } else if (cur == (void*)&g_mods_entry_state) {
+        cur = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
+    }
+
+    g_console_pending_return_state = cur;
+    g_console_open_pending = 1;
+    g_console_open_ready = 0;
+    g_console_suppress_next_textinput = 1;
+}
+
+static void console_close(void) {
+    void* target = g_console_return_state;
+    g_console_open_pending = 0;
+    g_console_open_ready = 0;
+    if (!p_state_switch) return;
+    if (!target || target == (void*)&g_console_state) {
+        target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    p_state_switch(target);
+}
+
+static int console_find_mod_index_by_id(const char* id) {
+    int count = lua_manager_get_mod_count();
+    if (!id || !id[0]) return -1;
+    for (int i = 0; i < count; i++) {
+        const char* mid = lua_manager_get_mod_id(i);
+        if (mid && _stricmp(mid, id) == 0) return i;
+    }
+    return -1;
+}
+
+static const char* console_cfg_type_name(int type) {
+    switch (type) {
+        case LUA_CFG_BOOL: return "bool";
+        case LUA_CFG_INT: return "int";
+        case LUA_CFG_FLOAT: return "float";
+        case LUA_CFG_STRING: return "string";
+        case LUA_CFG_ACTION: return "action";
+        default: return "unknown";
+    }
+}
+
+static const char* console_stristr(const char* haystack, const char* needle) {
+    const char* h;
+    size_t nlen;
+    if (!haystack || !needle) return NULL;
+    if (!needle[0]) return haystack;
+    nlen = strlen(needle);
+    for (h = haystack; *h; h++) {
+        size_t i;
+        for (i = 0; i < nlen; i++) {
+            unsigned char hc = (unsigned char)h[i];
+            unsigned char nc = (unsigned char)needle[i];
+            if (!hc) break;
+            if (tolower(hc) != tolower(nc)) break;
+        }
+        if (i == nlen) return h;
+    }
+    return NULL;
+}
+
+static char* console_parse_token(char** inout_cursor) {
+    char* s;
+    char* tok;
+    char quote;
+    if (!inout_cursor || !*inout_cursor) return NULL;
+    s = trim_ws(*inout_cursor);
+    if (!s || !s[0]) {
+        *inout_cursor = s;
+        return NULL;
+    }
+
+    if (*s == '"' || *s == '\'') {
+        quote = *s;
+        s++;
+        tok = s;
+        while (*s && *s != quote) s++;
+        if (*s == quote) {
+            *s = '\0';
+            s++;
+        }
+        *inout_cursor = s;
+        return tok;
+    }
+
+    tok = s;
+    while (*s && !isspace((unsigned char)*s)) s++;
+    if (*s) {
+        *s = '\0';
+        s++;
+    }
+    *inout_cursor = s;
+    return tok;
+}
+
+static int console_try_parse_long(const char* s, long* out_value) {
+    char* end = NULL;
+    long v;
+    if (!s) return 0;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (!s[0]) return 0;
+    v = strtol(s, &end, 0);
+    if (end == s) return 0;
+    while (*end && isspace((unsigned char)*end)) end++;
+    if (*end) return 0;
+    if (out_value) *out_value = v;
+    return 1;
+}
+
+static int console_try_parse_double(const char* s, double* out_value) {
+    char* end = NULL;
+    double v;
+    if (!s) return 0;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (!s[0]) return 0;
+    v = strtod(s, &end);
+    if (end == s) return 0;
+    while (*end && isspace((unsigned char)*end)) end++;
+    if (*end) return 0;
+    if (out_value) *out_value = v;
+    return 1;
+}
+
+static int console_try_parse_bool(const char* s, int* out_value) {
+    if (!s || !s[0]) return 0;
+    if (str_bool_true(s)) {
+        if (out_value) *out_value = 1;
+        return 1;
+    }
+    if (str_bool_false(s)) {
+        if (out_value) *out_value = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static void console_strip_crlf(char* s) {
+    size_t len;
+    if (!s) return;
+    len = strlen(s);
+    while (len > 0 && (s[len - 1] == '\r' || s[len - 1] == '\n')) {
+        s[len - 1] = '\0';
+        len--;
+    }
+}
+
+static void console_show_help(const char* topic) {
+    char topic_buf[CONSOLE_INPUT_BUF];
+    const char* t = "";
+    if (topic && topic[0]) {
+        safe_copy(topic_buf, sizeof(topic_buf), topic);
+        t = trim_ws(topic_buf);
+    }
+    if (!t || !t[0]) {
+        console_push_line_rgb("Commands:", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("  help [topic]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  commands", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  clear", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  history [count]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  echo <text>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  console.stats", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  state", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  state.last", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  state.return [main|main_initial|options|options_paused|mods|mods_entry]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  state.switch <main|main_initial|options|options_paused|mods|mods_entry|console|return>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  sys.info", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ui.size", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  time.scale [value|auto]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  framework.api", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.count", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.list", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.find <text>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.info <id>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.enable <id|all>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.disable <id|all>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.toggle <id|all>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.config <id>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.config.find <text>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.config.get <id> <key>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.config.set <id> <key> <value>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.config.action <id> <key>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  binds.list [id]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  binds.find <text>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  binds.set <id> <key> <value>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  binds.clear <id> <key>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.list", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.save <name>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.load <name>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.delete <name>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.current", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  reload.mods", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  input.override <player> <mask> [frames] [replace]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  input.clear <player>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  lua <code>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  eval <code>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  lua.mod <id> <code>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  eval.mod <id> <code>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  lua.file <path>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  exit", 0.87f, 0.87f, 0.87f);
+        return;
+    }
+
+    if (_stricmp(t, "mods.config.set") == 0) {
+        console_push_line_rgb("mods.config.set <id> <key> <value>: set bool/int/float/string config by key.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "mods.config.action") == 0) {
+        console_push_line_rgb("mods.config.action <id> <key>: trigger an action config entry.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "mods.info") == 0) {
+        console_push_line_rgb("mods.info <id>: show name/version/enabled/config-count plus deps/conflicts.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "binds.set") == 0) {
+        console_push_line_rgb("binds.set <id> <key> <value>: set a named mod bind (example values: space, a, left, escape).", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "profiles.save") == 0 || _stricmp(t, "profiles.load") == 0) {
+        console_push_line_rgb("profiles.save/load <name>: persist enabled states, config values, and bind values.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "mods.toggle") == 0) {
+        console_push_line_rgb("mods.toggle <id|all>: invert enabled state.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "mods.config.find") == 0) {
+        console_push_line_rgb("mods.config.find <text>: search mod config keys/labels/values.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "log.level") == 0) {
+        console_push_line_rgb("log.level <debug|info|warn|error>: set framework log threshold.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "log.tail") == 0) {
+        console_push_line_rgb("log.tail [lines]: show last lines from mods/modframework.log.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "time.scale") == 0) {
+        console_push_line_rgb("time.scale: show current timescale.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("time.scale <value>: set manual timescale (0.05..100).", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("time.scale auto: clear manual override.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "reload.assets") == 0) {
+        console_push_line_rgb("reload.assets: reload tracked texture/font overlays and rebuild atlases.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "reload.mods") == 0) {
+        console_push_line_rgb("reload.mods: unload+reload all mods and refresh runtime.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "input.override") == 0) {
+        console_push_line_rgb("input.override <player> <mask> [frames] [replace]: force command bits.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("mask supports decimal or hex (example: 0x10). frames<0 means persistent.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "state.switch") == 0) {
+        console_push_line_rgb("state.switch <name>: switch to main/main_initial/options/options_paused/mods/mods_entry/console/return.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "state.return") == 0) {
+        console_push_line_rgb("state.return [main|main_initial|options|options_paused|mods|mods_entry]: show/set return state.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "lua") == 0) {
+        console_push_line_rgb("lua <code>: execute Lua code in global runtime.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "lua.mod") == 0) {
+        console_push_line_rgb("lua.mod <id> <code>: execute Lua code in a mod environment.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "lua.file") == 0) {
+        console_push_line_rgb("lua.file <path>: execute a Lua file in global runtime.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+
+    {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "No detailed help for topic: %s", t);
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+    }
+}
+
+static void console_show_history(const char* count_arg) {
+    int limit = 20;
+    int start;
+    if (count_arg && count_arg[0]) {
+        long parsed = 0;
+        if (!console_try_parse_long(count_arg, &parsed) || parsed <= 0) {
+            console_push_line_rgb("Usage: history [positive_count]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (parsed > CONSOLE_HISTORY_MAX) parsed = CONSOLE_HISTORY_MAX;
+        limit = (int)parsed;
+    }
+    if (g_console_history_count <= 0) {
+        console_push_line_rgb("(history empty)", 0.62f, 0.70f, 0.82f);
+        return;
+    }
+    start = g_console_history_count > limit ? (g_console_history_count - limit) : 0;
+    for (int i = start; i < g_console_history_count; i++) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "%2d: %s", i + 1, g_console_history[i]);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    }
+}
+
+static void console_show_console_stats(void) {
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out),
+             "console.stats: lines=%d/%d history=%d/%d scroll=%d cursor=%d input_len=%d",
+             g_console_line_count, CONSOLE_MAX_LINES,
+             g_console_history_count, CONSOLE_HISTORY_MAX,
+             g_console_scroll, g_console_cursor, (int)strlen(g_console_input));
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+}
+
+static void console_echo(const char* text) {
+    console_push_line_rgb((text && text[0]) ? text : "", 0.80f, 0.83f, 0.90f);
+}
+
+static void console_show_state(void) {
+    void* cur = p_state_current ? p_state_current() : NULL;
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "current=%s (%p) return=%s (%p)",
+             state_name_from_ptr(cur), cur,
+             state_name_from_ptr(g_console_return_state), g_console_return_state);
+    console_push_line_rgb(out, 0.60f, 0.88f, 0.72f);
+}
+
+static void* console_state_ptr_from_name(const char* name, int allow_return_alias) {
+    if (!name || !name[0]) return NULL;
+    if (_stricmp(name, "main") == 0) return (void*)(uintptr_t)ADDR_MAIN_STATE;
+    if (_stricmp(name, "main_initial") == 0) return (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL;
+    if (_stricmp(name, "options") == 0) return (void*)(uintptr_t)ADDR_OPTIONS_STATE;
+    if (_stricmp(name, "options_paused") == 0) return (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED;
+    if (_stricmp(name, "mods") == 0) return (void*)&g_mods_state;
+    if (_stricmp(name, "mods_entry") == 0) return (void*)&g_mods_entry_state;
+    if (_stricmp(name, "console") == 0) return (void*)&g_console_state;
+    if (allow_return_alias && _stricmp(name, "return") == 0) return g_console_return_state;
+    return NULL;
+}
+
+static void console_show_last_state(void) {
+    void* st = p_state_last ? p_state_last() : NULL;
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "last=%s (%p)", state_name_from_ptr(st), st);
+    console_push_line_rgb(out, 0.60f, 0.88f, 0.72f);
+}
+
+static void console_show_return_state(void) {
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "return=%s (%p)", state_name_from_ptr(g_console_return_state), g_console_return_state);
+    console_push_line_rgb(out, 0.60f, 0.88f, 0.72f);
+}
+
+static void console_set_return_state(const char* state_arg) {
+    char name_buf[CONSOLE_INPUT_BUF];
+    char* name;
+    void* target;
+    char out[CONSOLE_LINE_TEXT];
+
+    safe_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
+    name = trim_ws(name_buf);
+    if (!name || !name[0]) {
+        console_show_return_state();
+        return;
+    }
+
+    target = console_state_ptr_from_name(name, 0);
+    if (!target || target == (void*)&g_console_state) {
+        console_push_line_rgb("Usage: state.return [main|main_initial|options|options_paused|mods|mods_entry]", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    g_console_return_state = target;
+    snprintf(out, sizeof(out), "state.return -> %s", state_name_from_ptr(target));
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_switch_state(const char* state_arg) {
+    char name_buf[CONSOLE_INPUT_BUF];
+    char* name;
+    void* target;
+    safe_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
+    name = trim_ws(name_buf);
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: state.switch <main|main_initial|options|options_paused|mods|mods_entry|console|return>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!p_state_switch) {
+        console_push_line_rgb("state.switch unavailable: missing state switch pointer", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    target = console_state_ptr_from_name(name, 1);
+    if (!target) {
+        console_push_line_rgb("Unknown state. Use: main/main_initial/options/options_paused/mods/mods_entry/console/return", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    p_state_switch(target);
+    {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "state.switch -> %s", state_name_from_ptr(target));
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    }
+}
+
+static void console_show_ui_size(void) {
+    float w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    float ui = calc_ui_scale();
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "ui.size: %.1fx%.1f ui_scale=%.3f", w, h, ui);
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+}
+
+static void console_show_system_info(void) {
+    char out[CONSOLE_LINE_TEXT];
+    int manual_ts = lua_manager_get_time_scale_manual(NULL);
+    snprintf(out, sizeof(out), "framework.api=%d mods=%d state=%s time.scale=%.3f%s log=%s",
+             lua_manager_framework_api(),
+             lua_manager_get_mod_count(),
+             state_name_from_ptr(p_state_current ? p_state_current() : NULL),
+             (double)lua_manager_get_time_scale(),
+             manual_ts ? "(manual)" : "",
+             log_get_level_name());
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    console_show_ui_size();
+}
+
+static void console_show_mods_count(void) {
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "mods.count: %d", lua_manager_get_mod_count());
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+}
+
+static void console_show_mods_list(void) {
+    int count = lua_manager_get_mod_count();
+    if (count <= 0) {
+        console_push_line_rgb("No mods loaded.", 0.62f, 0.70f, 0.82f);
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        const char* id = lua_manager_get_mod_id(i);
+        const char* name = lua_manager_get_mod_name(i);
+        const char* ver = lua_manager_get_mod_version(i);
+        int enabled = lua_manager_get_mod_enabled(i);
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "[%s] %s (%s) id=%s",
+                 enabled ? "on" : "off",
+                 name ? name : "",
+                 ver ? ver : "",
+                 id ? id : "");
+        console_push_line_rgb(out, enabled ? 0.64f : 0.72f, enabled ? 0.92f : 0.72f, enabled ? 0.66f : 0.72f);
+    }
+}
+
+static void console_find_mods(const char* query) {
+    int count = lua_manager_get_mod_count();
+    int found = 0;
+    if (!query || !query[0]) {
+        console_push_line_rgb("Usage: mods.find <text>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        const char* id = lua_manager_get_mod_id(i);
+        const char* name = lua_manager_get_mod_name(i);
+        const char* ver = lua_manager_get_mod_version(i);
+        if (console_stristr(id, query) || console_stristr(name, query) || console_stristr(ver, query)) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "[%s] %s (%s) id=%s",
+                     lua_manager_get_mod_enabled(i) ? "on" : "off",
+                     name ? name : "",
+                     ver ? ver : "",
+                     id ? id : "");
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            found++;
+        }
+    }
+    if (!found) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "mods.find: no matches for '%s'", query);
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+    }
+}
+
+static void console_show_mod_info(const char* id) {
+    int idx;
+    char out[CONSOLE_LINE_TEXT];
+    if (!id || !id[0]) {
+        console_push_line_rgb("Usage: mods.info <id>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    snprintf(out, sizeof(out), "id=%s name=%s version=%s enabled=%s cfg=%d binds=%d",
+             lua_manager_get_mod_id(idx),
+             lua_manager_get_mod_name(idx),
+             lua_manager_get_mod_version(idx),
+             lua_manager_get_mod_enabled(idx) ? "true" : "false",
+             lua_manager_get_mod_config_count(idx),
+             lua_manager_get_mod_bind_count(idx));
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    if (lua_manager_get_mod_author(idx)[0]) {
+        snprintf(out, sizeof(out), "author=%s", lua_manager_get_mod_author(idx));
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    }
+    if (lua_manager_get_mod_description(idx)[0]) {
+        console_push_line_rgb(lua_manager_get_mod_description(idx), 0.80f, 0.83f, 0.90f);
+    }
+    for (int di = 0; di < lua_manager_get_mod_dependency_count(idx); di++) {
+        snprintf(out, sizeof(out), "dep %s%s%s",
+                 lua_manager_get_mod_dependency_id(idx, di),
+                 lua_manager_get_mod_dependency_optional(idx, di) ? " [optional]" : "",
+                 lua_manager_mod_dependency_satisfied(idx, di) ? "" : " [missing]");
+        console_push_line_rgb(out,
+                              lua_manager_mod_dependency_satisfied(idx, di) ? 0.80f : 0.98f,
+                              lua_manager_mod_dependency_satisfied(idx, di) ? 0.83f : 0.72f,
+                              lua_manager_mod_dependency_satisfied(idx, di) ? 0.90f : 0.40f);
+    }
+    for (int ci = 0; ci < lua_manager_get_mod_conflict_count(idx); ci++) {
+        snprintf(out, sizeof(out), "conflict %s%s",
+                 lua_manager_get_mod_conflict_id(idx, ci),
+                 lua_manager_mod_conflict_active(idx, ci) ? " [active]" : "");
+        console_push_line_rgb(out,
+                              lua_manager_mod_conflict_active(idx, ci) ? 0.98f : 0.80f,
+                              lua_manager_mod_conflict_active(idx, ci) ? 0.72f : 0.83f,
+                              lua_manager_mod_conflict_active(idx, ci) ? 0.40f : 0.90f);
+    }
+}
+
+static void console_set_mod_enabled(const char* id, int enabled) {
+    int idx;
+    char out[CONSOLE_LINE_TEXT];
+    if (!id || !id[0]) {
+        console_push_line_rgb(enabled ? "Usage: mods.enable <id|all>" : "Usage: mods.disable <id|all>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (_stricmp(id, "all") == 0) {
+        int count = lua_manager_get_mod_count();
+        int changed = 0;
+        for (int i = 0; i < count; i++) {
+            if (lua_manager_get_mod_enabled(i) == (enabled ? 1 : 0)) continue;
+            lua_manager_set_mod_enabled(i, enabled ? 1 : 0);
+            changed++;
+        }
+        snprintf(out, sizeof(out), "%s all: changed=%d total=%d",
+                 enabled ? "mods.enable" : "mods.disable", changed, count);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        return;
+    }
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    lua_manager_set_mod_enabled(idx, enabled ? 1 : 0);
+    snprintf(out, sizeof(out), "%s: %s",
+             enabled ? "mods.enable" : "mods.disable",
+             lua_manager_get_mod_id(idx));
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_toggle_mod_enabled(const char* id) {
+    char out[CONSOLE_LINE_TEXT];
+    if (!id || !id[0]) {
+        console_push_line_rgb("Usage: mods.toggle <id|all>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (_stricmp(id, "all") == 0) {
+        int count = lua_manager_get_mod_count();
+        int on_count = 0;
+        int off_count = 0;
+        for (int i = 0; i < count; i++) {
+            int new_enabled = lua_manager_get_mod_enabled(i) ? 0 : 1;
+            lua_manager_set_mod_enabled(i, new_enabled);
+            if (new_enabled) on_count++;
+            else off_count++;
+        }
+        snprintf(out, sizeof(out), "mods.toggle all: now_on=%d now_off=%d total=%d", on_count, off_count, count);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        return;
+    }
+    {
+        int idx = console_find_mod_index_by_id(id);
+        if (idx < 0) {
+            snprintf(out, sizeof(out), "Mod not found: %s", id);
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        {
+            int new_enabled = lua_manager_get_mod_enabled(idx) ? 0 : 1;
+            lua_manager_set_mod_enabled(idx, new_enabled);
+            snprintf(out, sizeof(out), "mods.toggle: %s -> %s",
+                     lua_manager_get_mod_id(idx),
+                     new_enabled ? "on" : "off");
+            console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        }
+    }
+}
+
+static void console_show_mod_config(const char* id) {
+    int idx;
+    int cfg_count;
+    if (!id || !id[0]) {
+        console_push_line_rgb("Usage: mods.config <id>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    cfg_count = lua_manager_get_mod_config_count(idx);
+    {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "mods.config %s: %d entries", lua_manager_get_mod_id(idx), cfg_count);
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    }
+    if (cfg_count <= 0) return;
+
+    for (int ci = 0; ci < cfg_count; ci++) {
+        const char* key = lua_manager_get_mod_config_key(idx, ci);
+        const char* val = lua_manager_get_mod_config_value_str(idx, ci);
+        const char* label = lua_manager_get_mod_config_label(idx, ci);
+        int type = lua_manager_get_mod_config_type(idx, ci);
+        char out[CONSOLE_LINE_TEXT];
+        if (label && label[0] && _stricmp(label, key) != 0) {
+            snprintf(out, sizeof(out), "  %s (%s) = %s [%s]",
+                     key ? key : "", console_cfg_type_name(type),
+                     val ? val : "", label);
+        } else {
+            snprintf(out, sizeof(out), "  %s (%s) = %s",
+                     key ? key : "", console_cfg_type_name(type),
+                     val ? val : "");
+        }
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    }
+}
+
+static void console_find_mod_config(const char* query) {
+    int match_count = 0;
+    if (!query || !query[0]) {
+        console_push_line_rgb("Usage: mods.config.find <text>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    for (int mi = 0; mi < lua_manager_get_mod_count(); mi++) {
+        const char* mod_id = lua_manager_get_mod_id(mi);
+        int cfg_count = lua_manager_get_mod_config_count(mi);
+        for (int ci = 0; ci < cfg_count; ci++) {
+            const char* key = lua_manager_get_mod_config_key(mi, ci);
+            const char* label = lua_manager_get_mod_config_label(mi, ci);
+            const char* value = lua_manager_get_mod_config_value_str(mi, ci);
+            if (!console_stristr(mod_id, query) &&
+                !console_stristr(key, query) &&
+                !console_stristr(label, query) &&
+                !console_stristr(value, query)) {
+                continue;
+            }
+            {
+                char out[CONSOLE_LINE_TEXT];
+                snprintf(out, sizeof(out), "%s.%s (%s) = %s",
+                         mod_id ? mod_id : "",
+                         key ? key : "",
+                         console_cfg_type_name(lua_manager_get_mod_config_type(mi, ci)),
+                         value ? value : "");
+                console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+            }
+            match_count++;
+        }
+    }
+
+    if (match_count == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "mods.config.find: no matches for '%s'", query);
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+    } else {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "mods.config.find: %d match(es)", match_count);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    }
+}
+
+static int console_find_cfg_index_by_key(int mod_index, const char* key) {
+    return lua_manager_find_mod_config_index(mod_index, key);
+}
+
+static void console_show_mod_config_value(const char* id, const char* key) {
+    int idx;
+    int cfg_idx;
+    char out[CONSOLE_LINE_TEXT];
+    if (!id || !id[0] || !key || !key[0]) {
+        console_push_line_rgb("Usage: mods.config.get <id> <key>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    cfg_idx = console_find_cfg_index_by_key(idx, key);
+    if (cfg_idx < 0) {
+        snprintf(out, sizeof(out), "Config key not found: %s", key);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    snprintf(out, sizeof(out), "%s.%s (%s) = %s",
+             lua_manager_get_mod_id(idx),
+             lua_manager_get_mod_config_key(idx, cfg_idx),
+             console_cfg_type_name(lua_manager_get_mod_config_type(idx, cfg_idx)),
+             lua_manager_get_mod_config_value_str(idx, cfg_idx));
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+}
+
+static void console_set_mod_config_value(const char* id, const char* key, const char* value) {
+    int idx;
+    int cfg_idx;
+    int type;
+    int ok = 0;
+    char out[CONSOLE_LINE_TEXT];
+    if (!id || !id[0] || !key || !key[0] || !value) {
+        console_push_line_rgb("Usage: mods.config.set <id> <key> <value>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    cfg_idx = console_find_cfg_index_by_key(idx, key);
+    if (cfg_idx < 0) {
+        snprintf(out, sizeof(out), "Config key not found: %s", key);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    type = lua_manager_get_mod_config_type(idx, cfg_idx);
+    if (type == LUA_CFG_BOOL) {
+        int want = 0;
+        int cur = str_bool_true(lua_manager_get_mod_config_value_str(idx, cfg_idx)) ? 1 : 0;
+        if (!console_try_parse_bool(value, &want)) {
+            console_push_line_rgb("Bool value must be true/false/on/off/1/0", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        ok = (want == cur) ? 1 : lua_manager_config_toggle_bool(idx, cfg_idx);
+    } else if (type == LUA_CFG_INT) {
+        long want = 0;
+        long cur = 0;
+        const char* cur_text = lua_manager_get_mod_config_value_str(idx, cfg_idx);
+        if (!console_try_parse_long(value, &want)) {
+            console_push_line_rgb("Int value is invalid", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!console_try_parse_long(cur_text, &cur)) cur = strtol(cur_text, NULL, 10);
+        ok = lua_manager_config_increment_int(idx, cfg_idx, (int)(want - cur));
+    } else if (type == LUA_CFG_FLOAT) {
+        double want = 0.0;
+        double cur = 0.0;
+        const char* cur_text = lua_manager_get_mod_config_value_str(idx, cfg_idx);
+        if (!console_try_parse_double(value, &want)) {
+            console_push_line_rgb("Float value is invalid", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!console_try_parse_double(cur_text, &cur)) cur = atof(cur_text);
+        ok = lua_manager_config_increment_float(idx, cfg_idx, want - cur);
+    } else if (type == LUA_CFG_STRING) {
+        ok = lua_manager_config_set_string(idx, cfg_idx, value);
+    } else if (type == LUA_CFG_ACTION) {
+        console_push_line_rgb("Use mods.config.action for action config keys.", 0.98f, 0.76f, 0.40f);
+        return;
+    } else {
+        console_push_line_rgb("Unsupported config type", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    if (!ok) {
+        console_push_line_rgb("Config update failed (see modframework.log)", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    snprintf(out, sizeof(out), "%s.%s = %s",
+             lua_manager_get_mod_id(idx),
+             lua_manager_get_mod_config_key(idx, cfg_idx),
+             lua_manager_get_mod_config_value_str(idx, cfg_idx));
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_trigger_mod_config_action(const char* id, const char* key) {
+    int idx;
+    int cfg_idx;
+    int type;
+    char out[CONSOLE_LINE_TEXT];
+    if (!id || !id[0] || !key || !key[0]) {
+        console_push_line_rgb("Usage: mods.config.action <id> <key>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    cfg_idx = console_find_cfg_index_by_key(idx, key);
+    if (cfg_idx < 0) {
+        snprintf(out, sizeof(out), "Config key not found: %s", key);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    type = lua_manager_get_mod_config_type(idx, cfg_idx);
+    if (type != LUA_CFG_ACTION) {
+        console_push_line_rgb("Config key is not an action.", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    lua_manager_config_trigger_action(idx, cfg_idx);
+    snprintf(out, sizeof(out), "Triggered action: %s.%s", lua_manager_get_mod_id(idx), key);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_run_reload_mods(void) {
+    int ok = lua_manager_reload_mods();
+    if (ok) console_push_line_rgb("reload.mods: success", 0.64f, 0.92f, 0.66f);
+    else console_push_line_rgb("reload.mods: failed (see modframework.log)", 0.98f, 0.45f, 0.45f);
+}
+
+static void console_run_reload_assets(void) {
+    int tex_reloaded = 0;
+    int tex_failed = 0;
+    int tex_restart = 0;
+    int font_reloaded = 0;
+    int font_failed = 0;
+    int font_restart = 0;
+    int ok = lua_manager_reload_assets(
+        &tex_reloaded, &tex_failed, &tex_restart,
+        &font_reloaded, &font_failed, &font_restart
+    );
+
+    {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out),
+                 "reload.assets: ok=%s tex=%d fail=%d restart=%d font=%d fail=%d restart=%d",
+                 ok ? "true" : "false",
+                 tex_reloaded, tex_failed, tex_restart,
+                 font_reloaded, font_failed, font_restart);
+        console_push_line_rgb(out, ok ? 0.64f : 0.98f, ok ? 0.92f : 0.45f, ok ? 0.66f : 0.45f);
+    }
+}
+
+static void console_set_log_level(const char* level_arg) {
+    char out[CONSOLE_LINE_TEXT];
+    if (!level_arg || !level_arg[0]) {
+        snprintf(out, sizeof(out), "log.level is %s", log_get_level_name());
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        return;
+    }
+
+    if (!log_set_level_name(level_arg)) {
+        console_push_line_rgb("Usage: log.level <debug|info|warn|error>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    snprintf(out, sizeof(out), "log.level set to %s", log_get_level_name());
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_handle_time_scale(const char* arg) {
+    char out[CONSOLE_LINE_TEXT];
+    int manual_active = lua_manager_get_time_scale_manual(NULL);
+
+    if (!arg || !arg[0]) {
+        snprintf(out, sizeof(out), "time.scale: %.6g%s",
+                 (double)lua_manager_get_time_scale(),
+                 manual_active ? " (manual)" : "");
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        return;
+    }
+
+    {
+        char arg_buf[CONSOLE_INPUT_BUF];
+        char* a;
+        double value = 1.0;
+        safe_copy(arg_buf, sizeof(arg_buf), arg);
+        a = trim_ws(arg_buf);
+        if (!a || !a[0]) {
+            snprintf(out, sizeof(out), "time.scale: %.6g%s",
+                     (double)lua_manager_get_time_scale(),
+                     manual_active ? " (manual)" : "");
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+
+        if (_stricmp(a, "auto") == 0 || _stricmp(a, "default") == 0) {
+            lua_manager_clear_time_scale();
+            snprintf(out, sizeof(out), "time.scale manual override cleared (current %.6g)",
+                     (double)lua_manager_get_time_scale());
+            console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+            return;
+        }
+
+        if (!console_try_parse_double(a, &value)) {
+            console_push_line_rgb("Usage: time.scale [value|auto]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+
+        lua_manager_set_time_scale((float)value);
+        snprintf(out, sizeof(out), "time.scale set to %.6g",
+                 (double)lua_manager_get_time_scale());
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    }
+}
+
+static void console_tail_log(const char* lines_arg) {
+    const char* path = "mods\\modframework.log";
+    FILE* f;
+    long want = 30;
+    int total = 0;
+    int skip = 0;
+    char line[1024];
+    char out[CONSOLE_LINE_TEXT];
+
+    if (lines_arg && lines_arg[0]) {
+        long parsed = 0;
+        if (!console_try_parse_long(lines_arg, &parsed) || parsed <= 0) {
+            console_push_line_rgb("Usage: log.tail [positive_line_count]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (parsed > 300) parsed = 300;
+        want = parsed;
+    }
+
+    f = fopen(path, "r");
+    if (!f) {
+        console_push_line_rgb("log.tail: failed to open mods/modframework.log", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), f)) total++;
+    if (total > want) skip = total - (int)want;
+    rewind(f);
+    while (skip > 0 && fgets(line, sizeof(line), f)) skip--;
+
+    snprintf(out, sizeof(out), "log.tail: showing last %d of %d line(s)", total < (int)want ? total : (int)want, total);
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+
+    while (fgets(line, sizeof(line), f)) {
+        console_strip_crlf(line);
+        if (!line[0]) continue;
+        console_push_line_rgb(line, 0.78f, 0.82f, 0.88f);
+    }
+    fclose(f);
+}
+
+static void console_run_lua_code(const char* code) {
+    char out[1024];
+    int ok;
+    if (!code || !code[0]) {
+        console_push_line_rgb("Usage: lua <code>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    ok = lua_manager_console_eval(code, out, (int)sizeof(out));
+    console_push_line_rgb(out[0] ? out : (ok ? "ok" : "lua error"),
+                          ok ? 0.64f : 0.98f,
+                          ok ? 0.92f : 0.45f,
+                          ok ? 0.66f : 0.45f);
+}
+
+static void console_run_lua_mod_code(const char* args) {
+    char buf[CONSOLE_INPUT_BUF];
+    char* cursor;
+    char* mod_id;
+    char* code;
+    char out[1024];
+    int ok;
+
+    if (!args || !args[0]) {
+        console_push_line_rgb("Usage: lua.mod <id> <code>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    safe_copy(buf, sizeof(buf), args);
+    cursor = buf;
+    mod_id = console_parse_token(&cursor);
+    code = trim_ws(cursor ? cursor : "");
+    if (!mod_id || !mod_id[0] || !code || !code[0]) {
+        console_push_line_rgb("Usage: lua.mod <id> <code>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    ok = lua_manager_console_eval_mod(mod_id, code, out, (int)sizeof(out));
+    console_push_line_rgb(out[0] ? out : (ok ? "ok" : "lua error"),
+                          ok ? 0.64f : 0.98f,
+                          ok ? 0.92f : 0.45f,
+                          ok ? 0.66f : 0.45f);
+}
+
+static void console_run_lua_file(const char* arg) {
+    char buf[CONSOLE_INPUT_BUF];
+    char* cursor;
+    char* path;
+    char out[1024];
+    int ok;
+
+    if (!arg || !arg[0]) {
+        console_push_line_rgb("Usage: lua.file <path>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    safe_copy(buf, sizeof(buf), arg);
+    cursor = buf;
+    path = console_parse_token(&cursor);
+    if (!path || !path[0]) {
+        console_push_line_rgb("Usage: lua.file <path>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    ok = lua_manager_console_run_file(path, out, (int)sizeof(out));
+    console_push_line_rgb(out[0] ? out : (ok ? "ok" : "lua error"),
+                          ok ? 0.64f : 0.98f,
+                          ok ? 0.92f : 0.45f,
+                          ok ? 0.66f : 0.45f);
+}
+
+static void console_show_input_override(const char* player_arg) {
+    int p0 = 0;
+    int p1 = 1;
+    if (player_arg && player_arg[0]) {
+        long p = 0;
+        if (!console_try_parse_long(player_arg, &p) || p < 0 || p > 1) {
+            console_push_line_rgb("Usage: input.show [0|1]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        p0 = (int)p;
+        p1 = (int)p;
+    }
+
+    for (int pi = p0; pi <= p1; pi++) {
+        uint32_t mask = 0;
+        int frames = 0;
+        int replace = 0;
+        int active = hooks_get_input_override(pi, &mask, &frames, &replace);
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "input[%d]: active=%s mask=0x%08X frames=%d replace=%d",
+                 pi, active ? "true" : "false", (unsigned int)mask, frames, replace);
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    }
+}
+
+static void console_set_input_override_cmd(const char* args) {
+    char buf[CONSOLE_INPUT_BUF];
+    char* cursor;
+    char* tok_player;
+    char* tok_mask;
+    char* tok_frames;
+    char* tok_replace;
+    long p = 0;
+    long mask = 0;
+    long frames = -1;
+    long replace = 0;
+    if (!args || !args[0]) {
+        console_push_line_rgb("Usage: input.override <player> <mask> [frames] [replace]", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    safe_copy(buf, sizeof(buf), args);
+    cursor = buf;
+    tok_player = console_parse_token(&cursor);
+    tok_mask = console_parse_token(&cursor);
+    tok_frames = console_parse_token(&cursor);
+    tok_replace = console_parse_token(&cursor);
+
+    if (!tok_player || !tok_mask) {
+        console_push_line_rgb("Usage: input.override <player> <mask> [frames] [replace]", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_try_parse_long(tok_player, &p) || p < 0 || p > 1) {
+        console_push_line_rgb("input.override: player must be 0 or 1", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_try_parse_long(tok_mask, &mask)) {
+        console_push_line_rgb("input.override: mask must be an integer (decimal or hex)", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (tok_frames && tok_frames[0]) {
+        if (!console_try_parse_long(tok_frames, &frames)) {
+            console_push_line_rgb("input.override: frames must be an integer", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+    }
+    if (tok_replace && tok_replace[0]) {
+        if (!console_try_parse_long(tok_replace, &replace)) {
+            console_push_line_rgb("input.override: replace must be 0 or 1", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        replace = replace ? 1 : 0;
+    }
+
+    hooks_set_input_override((int)p, (uint32_t)mask, (int)frames, (int)replace);
+    console_show_input_override(tok_player);
+}
+
+static void console_clear_input_override_cmd(const char* player_arg) {
+    long p = 0;
+    if (!player_arg || !player_arg[0]) {
+        console_push_line_rgb("Usage: input.clear <player>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_try_parse_long(player_arg, &p) || p < 0 || p > 1) {
+        console_push_line_rgb("input.clear: player must be 0 or 1", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    hooks_clear_input_override((int)p);
+    console_show_input_override(player_arg);
+}
+
+static void console_show_binds(const char* id) {
+    int start = 0;
+    int end = lua_manager_get_mod_count() - 1;
+    if (id && id[0]) {
+        int idx = console_find_mod_index_by_id(id);
+        if (idx < 0) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "Mod not found: %s", id);
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        start = idx;
+        end = idx;
+    }
+    for (int mi = start; mi <= end; mi++) {
+        int bind_count = lua_manager_get_mod_bind_count(mi);
+        char head[CONSOLE_LINE_TEXT];
+        snprintf(head, sizeof(head), "binds %s: %d entries", lua_manager_get_mod_id(mi), bind_count);
+        console_push_line_rgb(head, 0.72f, 0.90f, 1.00f);
+        for (int bi = 0; bi < bind_count; bi++) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "  %s (%s) = %s%s",
+                     lua_manager_get_mod_bind_key(mi, bi),
+                     lua_manager_get_mod_bind_label(mi, bi),
+                     lua_manager_get_mod_bind_value_str(mi, bi),
+                     lua_manager_mod_bind_has_conflict(mi, bi) ? " [conflict]" : "");
+            console_push_line_rgb(out,
+                                  lua_manager_mod_bind_has_conflict(mi, bi) ? 0.98f : 0.80f,
+                                  lua_manager_mod_bind_has_conflict(mi, bi) ? 0.72f : 0.83f,
+                                  lua_manager_mod_bind_has_conflict(mi, bi) ? 0.40f : 0.90f);
+        }
+    }
+}
+
+static void console_find_binds(const char* query) {
+    int matches = 0;
+    if (!query || !query[0]) {
+        console_push_line_rgb("Usage: binds.find <text>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    for (int mi = 0; mi < lua_manager_get_mod_count(); mi++) {
+        for (int bi = 0; bi < lua_manager_get_mod_bind_count(mi); bi++) {
+            const char* mod_id = lua_manager_get_mod_id(mi);
+            const char* key = lua_manager_get_mod_bind_key(mi, bi);
+            const char* label = lua_manager_get_mod_bind_label(mi, bi);
+            const char* value = lua_manager_get_mod_bind_value_str(mi, bi);
+            if (!console_stristr(mod_id, query) && !console_stristr(key, query) && !console_stristr(label, query) && !console_stristr(value, query)) continue;
+            {
+                char out[CONSOLE_LINE_TEXT];
+                snprintf(out, sizeof(out), "%s.%s = %s%s", mod_id, key, value, lua_manager_mod_bind_has_conflict(mi, bi) ? " [conflict]" : "");
+                console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+            }
+            matches++;
+        }
+    }
+    if (matches == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "binds.find: no matches for '%s'", query);
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+    }
+}
+
+static void console_set_bind_cmd(const char* args, int clear_only) {
+    char buf[CONSOLE_INPUT_BUF];
+    char* cursor;
+    char* id;
+    char* key;
+    char* value;
+    int idx;
+    int bind_idx;
+    if (!args || !args[0]) {
+        console_push_line_rgb(clear_only ? "Usage: binds.clear <id> <key>" : "Usage: binds.set <id> <key> <value>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    safe_copy(buf, sizeof(buf), args);
+    cursor = buf;
+    id = console_parse_token(&cursor);
+    key = console_parse_token(&cursor);
+    value = cursor ? trim_ws(cursor) : "";
+    if (!id || !id[0] || !key || !key[0] || (!clear_only && (!value || !value[0]))) {
+        console_push_line_rgb(clear_only ? "Usage: binds.clear <id> <key>" : "Usage: binds.set <id> <key> <value>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    idx = console_find_mod_index_by_id(id);
+    if (idx < 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "Mod not found: %s", id);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    bind_idx = console_find_bind_index_by_key(idx, key);
+    if (bind_idx < 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "Bind key not found: %s", key);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    if (!(clear_only ? lua_manager_clear_mod_bind_value(idx, bind_idx) : console_apply_bind_value(idx, bind_idx, value))) {
+        console_push_line_rgb("binds.set: invalid bind value", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    console_show_binds(lua_manager_get_mod_id(idx));
+}
+
+static int console_profile_save_named(const char* name) {
+    char clean[PROFILE_NAME_MAX];
+    char path[PROFILE_PATH_MAX];
+    FILE* f;
+    if (!profile_sanitize_name(name, clean, sizeof(clean)) || !profile_build_path(name, path, sizeof(path))) return 0;
+    f = fopen(path, "w");
+    if (!f) return 0;
+    fprintf(f, "# modframework profile v1\n");
+    for (int mi = 0; mi < lua_manager_get_mod_count(); mi++) {
+        fprintf(f, "mod %s %d\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_enabled(mi));
+        for (int ci = 0; ci < lua_manager_get_mod_config_count(mi); ci++) {
+            fprintf(f, "cfg %s %s %s\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_config_key(mi, ci), lua_manager_get_mod_config_value_str(mi, ci));
+        }
+        for (int bi = 0; bi < lua_manager_get_mod_bind_count(mi); bi++) {
+            const char* val = lua_manager_get_mod_bind_value_str(mi, bi);
+            fprintf(f, "bind %s %s %s\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_bind_key(mi, bi), (val && val[0]) ? val : "none");
+        }
+    }
+    fclose(f);
+    safe_copy(g_active_profile_name, sizeof(g_active_profile_name), clean);
+    return 1;
+}
+
+static int console_profile_load_named(const char* name) {
+    char path[PROFILE_PATH_MAX];
+    char line[768];
+    FILE* f;
+    char clean[PROFILE_NAME_MAX];
+    if (!profile_sanitize_name(name, clean, sizeof(clean)) || !profile_build_path(name, path, sizeof(path))) return 0;
+    f = fopen(path, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof(line), f)) {
+        char* cursor;
+        char* kind;
+        char* id;
+        char* key;
+        char* value;
+        console_strip_crlf(line);
+        cursor = trim_ws(line);
+        if (!cursor[0] || cursor[0] == '#') continue;
+        kind = console_parse_token(&cursor);
+        id = console_parse_token(&cursor);
+        if (!kind || !id) continue;
+        if (_stricmp(kind, "mod") == 0) {
+            long enabled = 0;
+            int idx = console_find_mod_index_by_id(id);
+            key = console_parse_token(&cursor);
+            if (idx >= 0 && key && console_try_parse_long(key, &enabled)) lua_manager_set_mod_enabled(idx, enabled ? 1 : 0);
+            continue;
+        }
+        key = console_parse_token(&cursor);
+        value = cursor ? trim_ws(cursor) : "";
+        if (!key || !key[0]) continue;
+        if (_stricmp(kind, "cfg") == 0) {
+            int idx = console_find_mod_index_by_id(id);
+            int cfg_idx = (idx >= 0) ? lua_manager_find_mod_config_index(idx, key) : -1;
+            if (idx >= 0 && cfg_idx >= 0) (void)console_apply_config_value(idx, cfg_idx, value ? value : "");
+        } else if (_stricmp(kind, "bind") == 0) {
+            int idx = console_find_mod_index_by_id(id);
+            int bind_idx = (idx >= 0) ? console_find_bind_index_by_key(idx, key) : -1;
+            if (idx >= 0 && bind_idx >= 0) (void)console_apply_bind_value(idx, bind_idx, value ? value : "none");
+        }
+    }
+    fclose(f);
+    safe_copy(g_active_profile_name, sizeof(g_active_profile_name), clean);
+    return 1;
+}
+
+static void console_profiles_list(void) {
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    profile_ensure_dir();
+    h = FindFirstFileA("mods\\profiles\\*.profile", &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        console_push_line_rgb("(no profiles)", 0.62f, 0.70f, 0.82f);
+        return;
+    }
+    do {
+        char out[CONSOLE_LINE_TEXT];
+        safe_copy(out, sizeof(out), fd.cFileName);
+        {
+            char* ext = strstr(out, ".profile");
+            if (ext) *ext = '\0';
+        }
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+
+static void console_profiles_save_cmd(const char* name) {
+    char out[CONSOLE_LINE_TEXT];
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: profiles.save <name>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_profile_save_named(name)) {
+        console_push_line_rgb("profiles.save: failed", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    snprintf(out, sizeof(out), "profiles.save: %s", g_active_profile_name);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_profiles_load_cmd(const char* name) {
+    char out[CONSOLE_LINE_TEXT];
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: profiles.load <name>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_profile_load_named(name)) {
+        console_push_line_rgb("profiles.load: failed", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    rebuild_rows();
+    snprintf(out, sizeof(out), "profiles.load: %s", g_active_profile_name);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_profiles_delete_cmd(const char* name) {
+    char path[PROFILE_PATH_MAX];
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: profiles.delete <name>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!profile_build_path(name, path, sizeof(path)) || !DeleteFileA(path)) {
+        console_push_line_rgb("profiles.delete: failed", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    if (g_active_profile_name[0] && _stricmp(g_active_profile_name, name) == 0) {
+        g_active_profile_name[0] = '\0';
+    }
+    console_push_line_rgb("profiles.delete: ok", 0.64f, 0.92f, 0.66f);
+}
+
+static void console_profiles_current(void) {
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "profiles.current: %s", g_active_profile_name[0] ? g_active_profile_name : "(none)");
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+}
+
+static void console_execute_input(void) {
+    char work[CONSOLE_INPUT_BUF];
+    char* cmd;
+    char* arg = NULL;
+    char* p;
+
+    safe_copy(work, sizeof(work), g_console_input);
+    cmd = trim_ws(work);
+    if (!cmd || !cmd[0]) {
+        console_set_input("");
+        console_reset_history_nav();
+        return;
+    }
+
+    console_push_command_line(cmd);
+    console_history_add(cmd);
+    console_reset_history_nav();
+
+    p = cmd;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    if (*p) {
+        *p = '\0';
+        p++;
+        arg = trim_ws(p);
+    } else {
+        arg = "";
+    }
+
+    if (_stricmp(cmd, "help") == 0 || _stricmp(cmd, "commands") == 0) {
+        console_show_help(arg);
+    } else if (_stricmp(cmd, "clear") == 0) {
+        console_clear_output();
+    } else if (_stricmp(cmd, "history") == 0) {
+        console_show_history(arg);
+    } else if (_stricmp(cmd, "echo") == 0) {
+        console_echo(arg);
+    } else if (_stricmp(cmd, "console.stats") == 0) {
+        console_show_console_stats();
+    } else if (_stricmp(cmd, "state") == 0) {
+        console_show_state();
+    } else if (_stricmp(cmd, "state.last") == 0) {
+        console_show_last_state();
+    } else if (_stricmp(cmd, "state.return") == 0) {
+        console_set_return_state(arg);
+    } else if (_stricmp(cmd, "state.switch") == 0) {
+        console_switch_state(arg);
+    } else if (_stricmp(cmd, "sys.info") == 0) {
+        console_show_system_info();
+    } else if (_stricmp(cmd, "ui.size") == 0) {
+        console_show_ui_size();
+    } else if (_stricmp(cmd, "time.scale") == 0) {
+        console_handle_time_scale(arg);
+    } else if (_stricmp(cmd, "framework.api") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "framework.api: %d", lua_manager_framework_api());
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    } else if (_stricmp(cmd, "mods.count") == 0) {
+        console_show_mods_count();
+    } else if (_stricmp(cmd, "mods.list") == 0) {
+        console_show_mods_list();
+    } else if (_stricmp(cmd, "mods.find") == 0) {
+        console_find_mods(arg);
+    } else if (_stricmp(cmd, "mods.info") == 0) {
+        console_show_mod_info(arg);
+    } else if (_stricmp(cmd, "mods.enable") == 0) {
+        console_set_mod_enabled(arg, 1);
+    } else if (_stricmp(cmd, "mods.disable") == 0) {
+        console_set_mod_enabled(arg, 0);
+    } else if (_stricmp(cmd, "mods.toggle") == 0) {
+        console_toggle_mod_enabled(arg);
+    } else if (_stricmp(cmd, "mods.config") == 0 || _stricmp(cmd, "mods.cfg") == 0) {
+        console_show_mod_config(arg);
+    } else if (_stricmp(cmd, "mods.config.find") == 0 || _stricmp(cmd, "mods.cfg.find") == 0) {
+        console_find_mod_config(arg);
+    } else if (_stricmp(cmd, "mods.config.get") == 0 || _stricmp(cmd, "mods.cfg.get") == 0) {
+        char args_buf[CONSOLE_INPUT_BUF];
+        char* cursor;
+        char* id;
+        char* key;
+        safe_copy(args_buf, sizeof(args_buf), arg);
+        cursor = args_buf;
+        id = console_parse_token(&cursor);
+        key = console_parse_token(&cursor);
+        console_show_mod_config_value(id ? id : "", key ? key : "");
+    } else if (_stricmp(cmd, "mods.config.set") == 0 || _stricmp(cmd, "mods.cfg.set") == 0) {
+        char args_buf[CONSOLE_INPUT_BUF];
+        char* cursor;
+        char* id;
+        char* key;
+        char* value;
+        safe_copy(args_buf, sizeof(args_buf), arg);
+        cursor = args_buf;
+        id = console_parse_token(&cursor);
+        key = console_parse_token(&cursor);
+        value = cursor ? trim_ws(cursor) : "";
+        if (value && value[0] && (value[0] == '"' || value[0] == '\'')) {
+            char q = value[0];
+            size_t len;
+            value++;
+            len = strlen(value);
+            if (len > 0 && value[len - 1] == q) value[len - 1] = '\0';
+        }
+        console_set_mod_config_value(id ? id : "", key ? key : "", value ? value : "");
+    } else if (_stricmp(cmd, "mods.config.action") == 0 || _stricmp(cmd, "mods.cfg.action") == 0) {
+        char args_buf[CONSOLE_INPUT_BUF];
+        char* cursor;
+        char* id;
+        char* key;
+        safe_copy(args_buf, sizeof(args_buf), arg);
+        cursor = args_buf;
+        id = console_parse_token(&cursor);
+        key = console_parse_token(&cursor);
+        console_trigger_mod_config_action(id ? id : "", key ? key : "");
+    } else if (_stricmp(cmd, "binds.list") == 0) {
+        console_show_binds(arg);
+    } else if (_stricmp(cmd, "binds.find") == 0) {
+        console_find_binds(arg);
+    } else if (_stricmp(cmd, "binds.set") == 0) {
+        console_set_bind_cmd(arg, 0);
+    } else if (_stricmp(cmd, "binds.clear") == 0) {
+        console_set_bind_cmd(arg, 1);
+    } else if (_stricmp(cmd, "profiles.list") == 0) {
+        console_profiles_list();
+    } else if (_stricmp(cmd, "profiles.save") == 0) {
+        console_profiles_save_cmd(arg);
+    } else if (_stricmp(cmd, "profiles.load") == 0) {
+        console_profiles_load_cmd(arg);
+    } else if (_stricmp(cmd, "profiles.delete") == 0) {
+        console_profiles_delete_cmd(arg);
+    } else if (_stricmp(cmd, "profiles.current") == 0) {
+        console_profiles_current();
+    } else if (_stricmp(cmd, "reload.mods") == 0) {
+        console_run_reload_mods();
+    } else if (_stricmp(cmd, "mods.reload") == 0) {
+        console_run_reload_mods();
+    } else if (_stricmp(cmd, "reload.assets") == 0) {
+        console_run_reload_assets();
+    } else if (_stricmp(cmd, "log.level") == 0) {
+        console_set_log_level(arg);
+    } else if (_stricmp(cmd, "log.tail") == 0) {
+        console_tail_log(arg);
+    } else if (_stricmp(cmd, "input.show") == 0) {
+        console_show_input_override(arg);
+    } else if (_stricmp(cmd, "input.override") == 0) {
+        console_set_input_override_cmd(arg);
+    } else if (_stricmp(cmd, "input.clear") == 0) {
+        console_clear_input_override_cmd(arg);
+    } else if (_stricmp(cmd, "lua") == 0 || _stricmp(cmd, "eval") == 0) {
+        console_run_lua_code(arg);
+    } else if (_stricmp(cmd, "lua.mod") == 0 || _stricmp(cmd, "eval.mod") == 0) {
+        console_run_lua_mod_code(arg);
+    } else if (_stricmp(cmd, "lua.file") == 0) {
+        console_run_lua_file(arg);
+    } else if (_stricmp(cmd, "exit") == 0) {
+        console_close();
+    } else if (_stricmp(cmd, "quit") == 0) {
+        console_close();
+    } else {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "Unknown command: %s (type 'help')", cmd);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+    }
+
+    console_set_input("");
 }
 
 static char keycode_to_char(int sym, int mod) {
@@ -882,6 +3172,141 @@ static char keycode_to_char(int sym, int mod) {
     }
 }
 
+int hooks_console_active(void) {
+    return is_console_state_active();
+}
+
+void hooks_console_on_pre_swap(void) {
+    if (!g_console_open_pending) return;
+
+    g_console_bg_ready = 0;
+    g_console_bg_w = 0;
+    g_console_bg_h = 0;
+    (void)console_capture_background_now();
+
+    g_console_open_pending = 0;
+    g_console_open_ready = 1;
+}
+
+void hooks_console_pump(void) {
+    if (!g_console_open_ready) return;
+    g_console_open_ready = 0;
+    g_console_return_state = g_console_pending_return_state;
+    if (!g_console_return_state || g_console_return_state == (void*)&g_console_state) {
+        g_console_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    if (p_state_switch && !is_console_state_active()) {
+        p_state_switch((void*)&g_console_state);
+    }
+}
+
+int hooks_console_textinput(const char* text) {
+    if (g_console_suppress_next_textinput > 0) {
+        g_console_suppress_next_textinput--;
+        return 1;
+    }
+    if (!is_console_state_active()) return 0;
+    if (text && text[0]) {
+        console_insert_text(text);
+    }
+    return 1;
+}
+
+int hooks_console_control_action(int action) {
+    if (!is_console_state_active()) return 0;
+    switch (action) {
+        case 1: console_history_step(-1); return 1;
+        case 2: console_history_step(1);  return 1;
+        case 3:
+            if (g_console_cursor > 0) g_console_cursor--;
+            return 1;
+        case 4:
+            if ((size_t)g_console_cursor < strlen(g_console_input)) g_console_cursor++;
+            return 1;
+        case 5: console_execute_input(); return 1;
+        case 6: console_close(); return 1;
+        default: return 1;
+    }
+}
+
+int hooks_console_mousewheel(int y) {
+    if (!is_console_state_active()) return 0;
+    if (y > 0) console_scroll_by(3);
+    else if (y < 0) console_scroll_by(-3);
+    return 1;
+}
+
+int hooks_console_keydown(int sym, int scancode, int mod) {
+    (void)scancode;
+
+    if (sym == '`') {
+        g_console_suppress_next_textinput = 1;
+        if (is_console_state_active()) {
+            console_close();
+        } else if (g_console_open_pending || g_console_open_ready) {
+            g_console_open_pending = 0;
+            g_console_open_ready = 0;
+        } else {
+            console_open();
+        }
+        return 1;
+    }
+
+    if (!is_console_state_active()) return 0;
+
+    switch (sym) {
+        case SDLK_ESCAPE:
+            console_close();
+            return 1;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+            console_execute_input();
+            return 1;
+        case SDLK_TAB:
+            console_autocomplete();
+            return 1;
+        case SDLK_BACKSPACE:
+            console_backspace();
+            return 1;
+        case SDLK_DELETE:
+            console_delete();
+            return 1;
+        case SDLK_LEFT:
+            if (g_console_cursor > 0) g_console_cursor--;
+            return 1;
+        case SDLK_RIGHT:
+            if ((size_t)g_console_cursor < strlen(g_console_input)) g_console_cursor++;
+            return 1;
+        case SDLK_HOME:
+            g_console_cursor = 0;
+            return 1;
+        case SDLK_END:
+            g_console_cursor = (int)strlen(g_console_input);
+            return 1;
+        case SDLK_UP:
+            console_history_step(-1);
+            return 1;
+        case SDLK_DOWN:
+            console_history_step(1);
+            return 1;
+        case SDLK_PAGEUP:
+            console_scroll_by(8);
+            return 1;
+        case SDLK_PAGEDOWN:
+            console_scroll_by(-8);
+            return 1;
+        case 'l':
+        case 'L':
+            if (mod & KMOD_CTRL) {
+                console_clear_output();
+                return 1;
+            }
+            return 1;
+        default:
+            return 1;
+    }
+}
+
 int hooks_text_capture_active(void) {
     return g_capture_active;
 }
@@ -891,9 +3316,7 @@ int hooks_mods_menu_active(void) {
 }
 
 void hooks_mods_menu_notify_reload(void) {
-    g_capture_active = 0;
-    g_capture_mod = -1;
-    g_capture_cfg = -1;
+    capture_clear();
 
     if (is_mods_state_active()) {
         rebuild_rows();
@@ -906,22 +3329,41 @@ int hooks_text_capture_keydown(int sym, int scancode, int mod) {
 
     if (!g_capture_active) return 0;
     if (!is_mods_state_active()) {
-        g_capture_active = 0;
+        capture_clear();
         return 0;
     }
 
+    if (g_capture_kind == CAPTURE_BIND) {
+        if (sym == SDLK_ESCAPE) {
+            capture_clear();
+            rebuild_rows();
+            return 1;
+        }
+        if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
+            lua_manager_clear_mod_bind_value(g_capture_mod, g_capture_cfg);
+            capture_clear();
+            rebuild_rows();
+            return 1;
+        }
+        if (sym == '`') {
+            capture_clear();
+            rebuild_rows();
+            return 1;
+        }
+        lua_manager_set_mod_bind_value(g_capture_mod, g_capture_cfg, sym);
+        capture_clear();
+        rebuild_rows();
+        return 1;
+    }
+
     if (sym == SDLK_ESCAPE) {
-        g_capture_active = 0;
-        g_capture_mod = -1;
-        g_capture_cfg = -1;
+        capture_clear();
         return 1;
     }
 
     if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
         lua_manager_config_set_string(g_capture_mod, g_capture_cfg, g_capture_buf);
-        g_capture_active = 0;
-        g_capture_mod = -1;
-        g_capture_cfg = -1;
+        capture_clear();
         rebuild_rows();
         return 1;
     }
@@ -1099,141 +3541,152 @@ static void render_rows(void) {
     ModsLayout L;
     mods_calc_layout(&L);
     g_ui_scale = L.text_scale;
-
     float ui = L.ui;
 
-    // Header + help: center to the *content* region, and position them relative
-    // to list_top so it scales with window height.
-    float header_cx = (L.left + L.right) * 0.5f;
-    float header_y = L.list_top - (70.0f * ui);
-    float help_y   = L.list_top - (44.0f * ui);
-    if (header_y < 18.0f * ui) header_y = 18.0f * ui;
-    if (help_y   < 42.0f * ui) help_y   = 42.0f * ui;
+    mods_restore_render_state();
 
-    draw_text_centered_scaled(header_cx, header_y, g_ui_scale * 1.34f,
-                              0.95f, 0.95f, 0.95f, "MOD OPTIONS");
+    float header_cx = L.center_x;
+    float title_y   = 28.0f * ui;
+    float help_y    = 60.0f * ui;
 
-    if (g_capture_active) {
-        draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 1.00f,
-                                  1.00f, 0.85f, 0.35f,
-                                  "Editing text (Enter = apply, Esc = cancel)");
-    } else {
+    draw_text_centered_scaled(header_cx, title_y, g_ui_scale * 1.16f,
+                              0.90f, 0.94f, 0.98f,
+                              "MOD MANAGER");
+    if (g_capture_active && g_capture_kind == CAPTURE_CONFIG_STRING) {
         draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 0.92f,
-                                  0.60f, 0.70f, 0.82f,
-                                  "Up/Down to navigate, Enter to toggle/run, Left/Right to adjust, Esc to go back");
+                                  0.90f, 0.80f, 0.40f,
+                                  "Editing text (Enter = apply, Esc = cancel)");
+    } else if (g_capture_active && g_capture_kind == CAPTURE_BIND) {
+        draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 0.92f,
+                                  0.90f, 0.80f, 0.40f,
+                                  "Binding key (press key, Backspace/Delete = clear, Esc = cancel)");
+    } else {
+        draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 0.88f,
+                                  0.58f, 0.64f, 0.72f,
+                                  "Enter expand/collapse or edit   Left/Right adjust   Esc back");
     }
 
     int cap = visible_rows_capacity();
-    int start = g_scroll_row;
-    if (start < 0) start = 0;
-    if (start > g_row_count) start = g_row_count;
+    int start_row = g_scroll_row;
+    if (start_row < 0) start_row = 0;
+    if (start_row > g_row_count) start_row = g_row_count;
+    int end_row = start_row + cap;
+    if (end_row > g_row_count) end_row = g_row_count;
 
-    int end = start + cap;
-    if (end > g_row_count) end = g_row_count;
-
-    // Dynamic divider string sized to our content width.
-    char divider[256];
-    {
-        float scale = g_ui_scale * 0.86f;
-        int count = (int)((L.content_w - (28.0f * ui)) / (4.2f * scale));
-        if (count < 8) count = 8;
-        if (count > (int)sizeof(divider) - 1) count = (int)sizeof(divider) - 1;
-        build_repeat(divider, sizeof(divider), '-', count);
-    }
-
-    for (int i = start; i < end; i++) {
-        float y = L.list_top + (float)(i - start) * L.row_h;
+    for (int i = start_row; i < end_row; i++) {
+        float y = L.list_top + (float)(i - start_row) * L.row_h;
         MenuRow* row = &g_rows[i];
         int selected = (i == g_selected_row);
+        float base_r = 0.78f, base_g = 0.82f, base_b = 0.88f;
+        float dim_r  = 0.54f, dim_g  = 0.60f, dim_b  = 0.68f;
+        /* Without a selection bar, the active row needs a clearly different
+           text tint. Use a warm gold instead of subtle near-white. */
+        float sel_r  = 0.96f, sel_g  = 0.86f, sel_b  = 0.42f;
+        float muted_r = 0.42f, muted_g = 0.48f, muted_b = 0.56f;
+        float label_x = L.left + (24.0f * ui);
+        float option_x = L.left + (44.0f * ui);
+        float right_x = L.right - (20.0f * ui);
 
-        // Spacer rows (blank info rows) - keep them as vertical padding only.
-        if (row->kind == ROW_INFO && row->left[0] == '\0' && row->right[0] == '\0') {
-            continue;
-        }
-
-        // Palette
-        float base_r = 0.92f, base_g = 0.92f, base_b = 0.92f;
-        float dim_r  = 0.58f, dim_g  = 0.66f, dim_b  = 0.76f;
-        float acc_r  = 1.00f, acc_g  = 0.85f, acc_b  = 0.35f;
+        if (row->kind == ROW_INFO && row->left[0] == '\0' && row->right[0] == '\0') continue;
 
         switch (row->kind) {
             case ROW_MOD_HEADER: {
-                float name_scale = g_ui_scale * 1.22f;
-                float ver_scale  = g_ui_scale * 0.98f;
-
-                draw_text_scaled(L.left + (26.0f * ui), y, name_scale,
-                                 0.80f, 0.86f, 0.94f,
-                                 row->left);
-
+                float rr = selected ? sel_r : 0.76f;
+                float gg = selected ? sel_g : 0.82f;
+                float bb = selected ? sel_b : 0.88f;
+                draw_text_scaled(label_x, y, g_ui_scale * 1.02f, rr, gg, bb, row->left);
                 if (row->right[0]) {
-                    draw_text_right_scaled(L.right - (16.0f * ui), y, ver_scale,
-                                           dim_r, dim_g, dim_b,
-                                           row->right);
+                    float sr = 0.50f, sg = 0.80f, sb = 0.58f;
+                    if (_stricmp(row->right, "enabled") != 0) { sr = 0.66f; sg = 0.70f; sb = 0.76f; }
+                    if (selected) {
+                        sr = clampf(sr + 0.14f, 0.0f, 1.0f);
+                        sg = clampf(sg + 0.14f, 0.0f, 1.0f);
+                        sb = clampf(sb + 0.14f, 0.0f, 1.0f);
+                    }
+                    draw_text_right_scaled(right_x, y, g_ui_scale * 0.82f, sr, sg, sb, row->right);
                 }
-                // (no ASCII underline; spacing comes from divider rows)
             } break;
 
             case ROW_DIVIDER: {
-                // Pure spacing row (no ASCII divider)
+                /* No divider bar here; the section spacing already does the job,
+                   and the old line read as a purple stripe over the scene. */
             } break;
 
-            case ROW_CONFIG: {
-                float label_x = L.label_x + (18.0f * ui);
-                float right_x = L.right - (16.0f * ui);
-
-                // Label
-                if (selected) {
-                    draw_text_scaled(label_x, y, g_ui_scale * 1.08f, acc_r, acc_g, acc_b, row->left);
-                } else {
-                    draw_text_scaled(label_x, y, g_ui_scale * 1.08f, base_r, base_g, base_b, row->left);
-                }
-
-                // Value (right aligned)
+            case ROW_MOD_TOGGLE:
+            case ROW_CONFIG:
+            case ROW_BIND: {
+                float lr = selected ? sel_r : base_r;
+                float lg = selected ? sel_g : base_g;
+                float lb = selected ? sel_b : base_b;
                 float vr = dim_r, vg = dim_g, vb = dim_b;
-                int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
-
-                if (type == LUA_CFG_BOOL) {
-                    if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.45f; vg = 0.92f; vb = 0.55f; }
-                    else { vr = 0.95f; vg = 0.45f; vb = 0.45f; }
-                } else if (type == LUA_CFG_ACTION) {
-                    vr = 0.78f; vg = 0.84f; vb = 0.95f;
+                if (row->kind == ROW_MOD_TOGGLE) {
+                    if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.48f; vg = 0.88f; vb = 0.58f; }
+                    else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
+                } else if (row->kind == ROW_BIND) {
+                    if (lua_manager_mod_bind_has_conflict(row->mod_index, row->cfg_index)) {
+                        vr = 0.92f; vg = 0.72f; vb = 0.44f;
+                    } else {
+                        vr = 0.62f; vg = 0.72f; vb = 0.84f;
+                    }
+                } else {
+                    int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
+                    if (type == LUA_CFG_BOOL) {
+                        if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.48f; vg = 0.88f; vb = 0.58f; }
+                        else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
+                    } else if (type == LUA_CFG_ACTION) {
+                        vr = 0.62f; vg = 0.72f; vb = 0.84f;
+                    }
+                }
+                if (selected) {
+                    vr = clampf(vr + 0.04f, 0.0f, 1.0f);
+                    vg = clampf(vg + 0.04f, 0.0f, 1.0f);
+                    vb = clampf(vb + 0.04f, 0.0f, 1.0f);
                 }
 
-                // If we're capturing text on this row, show live buffer with a caret.
-                if (g_capture_active &&
-                    row->mod_index == g_capture_mod &&
-                    row->cfg_index == g_capture_cfg &&
-                    type == LUA_CFG_STRING)
-                {
-                    char live[CAPTURE_BUF_SIZE + 8];
-                    snprintf(live, sizeof(live), "\"%s|\"", g_capture_buf);
-                    draw_text_right_scaled(right_x, y, g_ui_scale * 1.00f,
-                                           selected ? acc_r : vr,
-                                           selected ? acc_g : vg,
-                                           selected ? acc_b : vb,
-                                           live);
+                draw_text_scaled(option_x, y, g_ui_scale * 0.96f, lr, lg, lb, row->left);
+
+                if (g_capture_active && row->mod_index == g_capture_mod && row->cfg_index == g_capture_cfg) {
+                    if (row->kind == ROW_BIND && g_capture_kind == CAPTURE_BIND) {
+                        draw_text_right_scaled(right_x, y, g_ui_scale * 0.92f, vr, vg, vb, "<press key>");
+                    } else if (row->kind == ROW_CONFIG && g_capture_kind == CAPTURE_CONFIG_STRING) {
+                        char live[CAPTURE_BUF_SIZE + 8];
+                        snprintf(live, sizeof(live), "\"%s|\"", g_capture_buf);
+                        draw_text_right_scaled(right_x, y, g_ui_scale * 0.92f, vr, vg, vb, live);
+                    } else {
+                        draw_text_right_scaled(right_x, y, g_ui_scale * 0.92f, vr, vg, vb, row->right);
+                    }
                 } else {
-                    draw_text_right_scaled(right_x, y, g_ui_scale * 1.00f,
-                                           selected ? acc_r : vr,
-                                           selected ? acc_g : vg,
-                                           selected ? acc_b : vb,
-                                           row->right);
+                    draw_text_right_scaled(right_x, y, g_ui_scale * 0.92f, vr, vg, vb, row->right);
                 }
             } break;
 
             case ROW_BACK: {
-                float back_scale = g_ui_scale * 1.12f;
-                draw_text_centered_scaled(L.center_x, y, back_scale,
-                                          selected ? acc_r : base_r,
-                                          selected ? acc_g : base_g,
-                                          selected ? acc_b : base_b,
-                                          row->left);
+                float rr = selected ? sel_r : base_r;
+                float gg = selected ? sel_g : base_g;
+                float bb = selected ? sel_b : base_b;
+                draw_text_centered_scaled(L.center_x, y, g_ui_scale * 1.00f, rr, gg, bb, row->left);
             } break;
 
             case ROW_INFO: {
-                draw_text_centered_scaled(L.center_x, y, g_ui_scale * 0.96f,
-                                          dim_r, dim_g, dim_b,
-                                          row->left);
+                if (row->mod_index >= 0) {
+                    float ir = dim_r, ig = dim_g, ib = dim_b;
+                    float ix = label_x + (18.0f * ui);
+                    float scale = g_ui_scale * 0.82f;
+                    if (_stricmp(row->left, "Options") == 0) {
+                        ir = muted_r; ig = muted_g; ib = muted_b;
+                        ix = option_x;
+                        scale = g_ui_scale * 0.78f;
+                    } else if (console_stristr(row->left, "Status:")) {
+                        ir = 0.90f; ig = 0.72f; ib = 0.44f;
+                        ix = option_x;
+                    }
+                    draw_text_scaled(ix, y, scale, ir, ig, ib, row->left);
+                    if (row->right[0]) {
+                        draw_text_right_scaled(right_x, y, scale, ir, ig, ib, row->right);
+                    }
+                } else {
+                    draw_text_centered_scaled(L.center_x, y, g_ui_scale * 0.90f, dim_r, dim_g, dim_b, row->left);
+                }
             } break;
 
             default:
@@ -1241,28 +3694,300 @@ static void render_rows(void) {
         }
     }
 
-    // Scroll affordances (subtle)
     if (g_scroll_row > 0) {
-        draw_text_right_scaled(L.right - (16.0f * ui), L.list_top - (10.0f * ui),
-                               g_ui_scale * 0.96f,
-                               0.55f, 0.64f, 0.74f, "^");
+        draw_text_right_scaled(L.right - (16.0f * ui), L.list_top - (10.0f * ui), g_ui_scale * 0.92f, 0.44f, 0.50f, 0.58f, "^");
     }
     if (g_scroll_row + cap < g_row_count) {
-        draw_text_right_scaled(L.right - (16.0f * ui), L.list_bottom - (10.0f * ui),
-                               g_ui_scale * 0.96f,
-                               0.55f, 0.64f, 0.74f, "v");
-    }
-
-    // Position indicator
-    if (g_row_count > 0 && g_selected_row >= 0) {
-        char pos[64];
-        snprintf(pos, sizeof(pos), "%d/%d", g_selected_row + 1, g_row_count);
-        draw_text_right_scaled(L.right - (16.0f * ui), 44.0f * ui,
-                               g_ui_scale * 0.82f,
-                               0.46f, 0.54f, 0.64f, pos);
+        draw_text_right_scaled(L.right - (16.0f * ui), L.list_bottom - (10.0f * ui), g_ui_scale * 0.92f, 0.44f, 0.50f, 0.58f, "v");
     }
 
     mods_restore_render_state();
+}
+
+static void console_draw_rect(float x, float y, float w, float h, float r, float g, float b, float a) {
+    glColor4f(r, g, b, a);
+    glBegin(GL_QUADS);
+    glVertex2f(x, y);
+    glVertex2f(x + w, y);
+    glVertex2f(x + w, y + h);
+    glVertex2f(x, y + h);
+    glEnd();
+}
+
+static void console_draw_rect_outline(float x, float y, float w, float h, float line_w, float r, float g, float b, float a) {
+    glLineWidth(line_w < 1.0f ? 1.0f : line_w);
+    glColor4f(r, g, b, a);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(x + 0.5f, y + 0.5f);
+    glVertex2f(x + w - 0.5f, y + 0.5f);
+    glVertex2f(x + w - 0.5f, y + h - 0.5f);
+    glVertex2f(x + 0.5f, y + h - 0.5f);
+    glEnd();
+    glLineWidth(1.0f);
+}
+
+static void console_draw_background(float w, float h) {
+    GLint prev_matrix_mode = GL_MODELVIEW;
+    glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
+
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (double)w, (double)h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_TEXTURE);
+    glPushMatrix();
+    glLoadIdentity();
+
+    if (g_console_bg_ready && g_console_bg_tex != 0 && g_console_bg_w > 0 && g_console_bg_h > 0) {
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, g_console_bg_tex);
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 0.0f);
+        glTexCoord2f(1.0f, 1.0f); glVertex2f(w, 0.0f);
+        glTexCoord2f(1.0f, 0.0f); glVertex2f(w, h);
+        glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, h);
+        glEnd();
+    } else {
+        glDisable(GL_TEXTURE_2D);
+        console_draw_rect(0.0f, 0.0f, w, h, 0.05f, 0.06f, 0.08f, 1.0f);
+    }
+
+    glDisable(GL_TEXTURE_2D);
+    console_draw_rect(0.0f, 0.0f, w, h, 0.02f, 0.03f, 0.04f, 0.24f);
+
+    glMatrixMode(GL_TEXTURE);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(prev_matrix_mode);
+    glPopAttrib();
+}
+
+static void mods_draw_background(const ModsLayout* L) {
+    GLint prev_matrix_mode = GL_MODELVIEW;
+    float ui;
+    float x;
+    float y;
+    float w;
+    float h;
+
+    if (!L) return;
+
+    ui = L->ui;
+    x = L->left - (52.0f * ui);
+    y = L->list_top - (42.0f * ui);
+    w = L->content_w + (104.0f * ui);
+    h = (L->list_bottom - L->list_top) + (84.0f * ui);
+
+    if (x < 18.0f * ui) x = 18.0f * ui;
+    if (y < 18.0f * ui) y = 18.0f * ui;
+    if (x + w > L->w - (18.0f * ui)) w = (L->w - (18.0f * ui)) - x;
+    if (y + h > L->h - (18.0f * ui)) h = (L->h - (18.0f * ui)) - y;
+
+    glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
+
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (double)L->w, (double)L->h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_TEXTURE);
+    glPushMatrix();
+    glLoadIdentity();
+
+    /* Keep the scene visible, but give the menu text its own neutral sheet so
+       the swords can remain bright on the sides. */
+    console_draw_rect(x, y, w, h, 0.06f, 0.08f, 0.10f, 0.40f);
+
+    glMatrixMode(GL_TEXTURE);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(prev_matrix_mode);
+    glPopAttrib();
+}
+
+static void console_render_ui(void) {
+    float w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    float ui = calc_ui_scale();
+    float panel_x = 36.0f * ui;
+    float panel_w = w - (72.0f * ui);
+    float panel_h = h * 0.50f;
+    float panel_y;
+    float title_scale;
+    float text_scale;
+    float line_h;
+    float lines_top;
+    float input_y;
+    int visible_lines;
+    int newest;
+    int first;
+    int line_no;
+    int text_q;
+
+    if (panel_w < 320.0f) panel_w = 320.0f;
+    // Give taller consoles on larger windows while keeping safe margins.
+    if (h >= 860.0f) panel_h = h * 0.58f;
+    if (h >= 1080.0f) panel_h = h * 0.62f;
+    if (panel_h > h - (82.0f * ui)) panel_h = h - (82.0f * ui);
+    if (panel_h < 220.0f) panel_h = 220.0f;
+    panel_y = h - panel_h - (26.0f * ui);
+    if (panel_y < 20.0f * ui) panel_y = 20.0f * ui;
+
+    GLint prev_matrix_mode = GL_MODELVIEW;
+    glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
+
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_TEXTURE_2D);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (double)w, (double)h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    console_draw_rect(panel_x, panel_y, panel_w, panel_h, 0.03f, 0.05f, 0.08f, 0.82f);
+    console_draw_rect(panel_x, panel_y, panel_w, 32.0f * ui, 0.07f, 0.11f, 0.18f, 0.92f);
+    console_draw_rect(panel_x, panel_y + panel_h - (42.0f * ui), panel_w, 42.0f * ui, 0.02f, 0.04f, 0.06f, 0.92f);
+    glColor4f(0.35f, 0.42f, 0.56f, 0.9f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(panel_x, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y + panel_h);
+    glVertex2f(panel_x, panel_y + panel_h);
+    glEnd();
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(prev_matrix_mode);
+    glPopAttrib();
+
+    title_scale = clampf(1.00f * ui, 0.95f, 1.55f);
+    text_scale = clampf(0.82f * ui, 0.80f, 1.20f);
+    text_q = (int)(text_scale * 4.0f + 0.5f);
+    if (text_q < 1) text_q = 1;
+    text_scale = (float)text_q / 4.0f;
+    title_scale = text_scale * 1.18f;
+    line_h = (10.0f * text_scale) + (9.0f * ui);
+    lines_top = panel_y + (48.0f * ui);
+    input_y = panel_y + panel_h - (27.0f * ui);
+    visible_lines = (int)((input_y - lines_top - (8.0f * ui)) / line_h);
+    if (visible_lines < 3) visible_lines = 3;
+
+    draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (22.0f * ui) + 0.5f)),
+                     title_scale, 0.94f, 0.96f, 0.99f, "DEV CONSOLE");
+    {
+        char hdr[192];
+        snprintf(hdr, sizeof(hdr), "ret=%s  hist=%d  scroll=%d", state_name_from_ptr(g_console_return_state), g_console_history_count, g_console_scroll);
+        draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (22.0f * ui) + 0.5f)),
+                               text_scale, 0.66f, 0.74f, 0.86f, hdr);
+    }
+
+    newest = g_console_line_count - 1 - g_console_scroll;
+    if (newest >= 0) {
+        first = newest - visible_lines + 1;
+        if (first < 0) first = 0;
+        line_no = 0;
+        for (int i = first; i <= newest; i++) {
+            ConsoleLine* line = console_line_at_oldest_index(i);
+            float y = (float)((int)(lines_top + (line_no * line_h) + 0.5f));
+            if (!line) continue;
+            draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), y, text_scale, line->r, line->g, line->b, line->text);
+            line_no++;
+        }
+    } else {
+        draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(lines_top + 0.5f)), text_scale, 0.62f, 0.70f, 0.82f,
+                         "No output yet. Type 'help'.");
+    }
+
+    {
+        char input_line[CONSOLE_INPUT_BUF + 8];
+        size_t in_len = strlen(g_console_input);
+        int avail_chars;
+        int start_idx = 0;
+        if (g_console_cursor < 0) g_console_cursor = 0;
+        if ((size_t)g_console_cursor > in_len) g_console_cursor = (int)in_len;
+        avail_chars = (int)((panel_w - (36.0f * ui)) / (6.0f * text_scale));
+        if (avail_chars < 12) avail_chars = 12;
+        if (g_console_cursor > avail_chars - 4) {
+            start_idx = g_console_cursor - (avail_chars - 4);
+        }
+        if (start_idx < 0) start_idx = 0;
+        snprintf(input_line, sizeof(input_line), "> %.*s|%s",
+                 g_console_cursor - start_idx, g_console_input + start_idx, g_console_input + g_console_cursor);
+        if ((int)strlen(input_line) > avail_chars + 2) {
+            input_line[avail_chars + 2] = '\0';
+        }
+        draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
+                         0.95f, 0.88f, 0.40f, input_line);
+        draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
+                               0.66f, 0.74f, 0.86f, "Tab=complete  Wheel/PgUp/PgDn=scroll");
+    }
+}
+
+static void __cdecl console_enter(void) {
+    capture_clear();
+    g_console_scroll = 0;
+    console_history_load();
+    if (g_console_line_count == 0) {
+        console_push_line_rgb("Type 'help' for a list of commands.", 0.72f, 0.90f, 1.00f);
+    }
+}
+
+static void __cdecl console_update(void) {
+    // Intentionally no menu-button update path here.
+}
+
+static void __cdecl console_render(void) {
+    mods_restore_render_state();
+    console_draw_background(p_mad_w ? p_mad_w() : BASE_UI_W, p_mad_h ? p_mad_h() : BASE_UI_H);
+    console_render_ui();
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    mods_restore_render_state();
+}
+
+static void __cdecl console_leave(void) {
+    g_console_open_pending = 0;
+    g_console_open_ready = 0;
+    g_console_suppress_next_textinput = 0;
 }
 
 
@@ -1270,12 +3995,16 @@ static void __cdecl mods_enter(void) {
     LOG_INFO("MODS: entering mods menu");
     if (p_main_buttons_start) p_main_buttons_start();
 
-    g_capture_active = 0;
-    g_capture_mod = -1;
-    g_capture_cfg = -1;
+    capture_clear();
 
     g_mods_return_state = p_state_last ? p_state_last() : (void*)(uintptr_t)ADDR_OPTIONS_STATE;
-    if (!g_mods_return_state || g_mods_return_state == (void*)&g_mods_state) {
+    if (g_mods_return_state == (void*)&g_console_state) {
+        g_mods_return_state = g_console_return_state;
+    }
+    if (!g_mods_return_state ||
+        g_mods_return_state == (void*)&g_mods_state ||
+        g_mods_return_state == (void*)&g_mods_entry_state ||
+        g_mods_return_state == (void*)&g_console_state) {
         g_mods_return_state = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
     }
 
@@ -1291,27 +4020,39 @@ static void __cdecl mods_update(void) {
 }
 
 static void __cdecl mods_render(void) {
+    ModsLayout L;
+    mods_calc_layout(&L);
+
+    /* Keep this simple: draw the live scene, let the vanilla menu visuals
+       (including the swords) render normally, then draw the mod-manager text
+       on top. No extra tint sheet or overlay pass. */
     mods_restore_render_state();
-    p_menu_common_render();
-    render_rows();
-    // don't inherit text render scale/tint.
-    mods_restore_render_state();
-    // In base menus, rendering is finalized via main_draw(), which flushes sprite
-    // batches and draws particles/cursors/button sprites in the expected order.
-    // the vanilla menus.
     if (p_main_draw) {
         p_main_draw();
     } else if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
+    mods_restore_render_state();
 
+    if (p_menu_common_render) {
+        p_menu_common_render();
+    }
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    mods_restore_render_state();
+
+    render_rows();
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
     mods_restore_render_state();
 }
 
 static void __cdecl mods_leave(void) {
-    g_capture_active = 0;
-    g_capture_mod = -1;
-    g_capture_cfg = -1;
+    capture_clear();
     mods_restore_render_state();
 }
 
@@ -1449,9 +4190,9 @@ static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint
         : p_main_player_poll_cmds;
 
     uint32_t cmd = real_poll ? real_poll(player_index, mode) : 0u;
+    int pi = (int)(player_index & 1u);
 
     {
-        int pi = (int)(player_index & 1u);
         int frames = g_input_override_frames[pi];
         if (frames != 0) {
             uint32_t mask = g_input_override_mask[pi];
@@ -1479,12 +4220,6 @@ static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint
 //
 // Logs are rate-limited and written to mods/modframework.log.
 
-// Turtle color globals (float 0..1) used to build vertex colors (see quad_batch).
-#define ADDR_TURTLE_R 0x448110u
-#define ADDR_TURTLE_G 0x448114u
-#define ADDR_TURTLE_B 0x448118u
-#define ADDR_TURTLE_A 0x44811Cu
-
 // Query-only enums (guarded so we don't redefine what gl.h/glext.h already provides)
 
 static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
@@ -1492,6 +4227,7 @@ static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
     RgbaImage* img = real ? real(path) : NULL;
     if (img) {
         font_ext_on_rgba_load(path, img);
+        texture_ext_on_rgba_load(path, img);
     }
     return img;
 }
@@ -1499,6 +4235,37 @@ static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
 static void __cdecl hooked_mapgen_init(void) {
     fn_void_void_t real = p_mapgen_init_trampoline ? p_mapgen_init_trampoline : p_mapgen_init;
     custom_maps_handle_mapgen_init(real);
+}
+
+static int __cdecl hooked_high_water_action(void* tile, int mode, int arg3, int arg4, int arg5) {
+    int result = 0;
+
+    if (p_high_water_action_trampoline) {
+        // Preserve vanilla deep-water geometry/animation (the tall look).
+        result = p_high_water_action_trampoline(tile, mode, arg3, arg4, arg5);
+    }
+
+    // During draw mode, replace the fallback textured high-water tile draw with
+    // the tintable water sprite path while keeping the high-water transform.
+    if (mode == 2) {
+        float color[3] = { 0.0f, 0.0f, 0.0f };
+        if (p_game_water_hi_colour) p_game_water_hi_colour(color);
+        else if (p_game_water_colour) p_game_water_colour(color);
+
+        *(volatile float*)(uintptr_t)ADDR_TURTLE_R = color[0];
+        *(volatile float*)(uintptr_t)ADDR_TURTLE_G = color[1];
+        *(volatile float*)(uintptr_t)ADDR_TURTLE_B = color[2];
+        *(volatile float*)(uintptr_t)ADDR_TURTLE_A = 1.0f;
+
+        if (tile && p_sprite_batch_plot && g_layer) {
+            int flip = (int)(signed char)((unsigned char*)tile)[2];
+            int sprite = *g_layer + 0x0b0c;
+            p_sprite_batch_plot(sprite, flip, 0);
+            return 1; // Prevent fallback sprite draw (which has the heavy texture).
+        }
+    }
+
+    return result;
 }
 
 
@@ -1549,6 +4316,17 @@ void hooks_init(void) {
         return;
     }
     p_mapgen_init_trampoline = (fn_void_void_t)g_mapgen_init_detour.trampoline;
+
+    // high_water_action starts with:
+    //   push ebx         (1)
+    //   sub esp, 0x28    (3)
+    //   cmp [esp+0x34],2 (5)
+    // Patch 9 bytes to avoid splitting instructions.
+    if (!install_detour(&g_high_water_action_detour, (void*)(uintptr_t)ADDR_HIGH_WATER_ACTION, (void*)&hooked_high_water_action, 9)) {
+        LOG_WARN("hooks_init: failed to detour high_water_action (W will keep vanilla rendering)");
+    } else {
+        p_high_water_action_trampoline = (fn_tile_action_t)g_high_water_action_detour.trampoline;
+    }
 
     
 

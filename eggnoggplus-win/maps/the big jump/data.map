@@ -1,0 +1,30 @@
+; eggnogg-map/v1
+
+[center]
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@       C       ff       C    @@"
+"             ~   ff              "
+"         ~   ~   ff   ~          "
+"mmmmmmmmmmmm ~   ff   mmmmmmmmmmm"
+"@@@@@@@@@@@  ~   ff    @@@@@@@@@@"
+"@  ~      ~  ~   ff    ~    ~~~ @"
+"@  ~~     ~  ~  @@f    ~   ~~~~ @"
+"@  ~~     @@@m@@@@@@m@@@   ~~~~ @"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+
+
+[outer_1]
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@vv@@@@"
+"@@@@@@@@@             #      @@v "
+"@@         #                     "
+"             #             #     "
+"@@^^^^^^^^^^^^^^^^^^^^^^^^^^@@@@@"
+"@@EEEEEEEEEEEEEEEEEEEEEEEE@@@@@@@"
+"@@@EEEEEEEEEEEEEEEEEEEEE@@@@@@@@@"
+"@@@@@EEEEEEEEEEEEEEEEEEE@@@@@@@@@"
+"@@@@@EEEEEEEEEEEEEEEEEEE@@@@@@@@@"
+"@@@@@@EEEEEEEEEEEEEEEEEE@@@@@@@@@"
+"@@@@@@EEEEEEEEEEEEEEEEEE@@@@@@@@@"

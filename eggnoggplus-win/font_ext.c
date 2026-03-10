@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #include "log.h"
 
@@ -12,6 +13,7 @@
 // They are absolute VAs (base + 0x401000 offset already applied).
 #define ADDR_STBI_LOAD       0x4140A0u
 #define ADDR_STBI_IMAGE_FREE 0x411C80u
+#define HOT_RELOAD_POLL_MS   1000
 
 typedef unsigned char* (__cdecl *fn_stbi_load_t)(const char* filename, int* x, int* y, int* comp, int req_comp);
 typedef void (__cdecl *fn_stbi_image_free_t)(void* p);
@@ -23,6 +25,10 @@ typedef struct GlyphSlot {
     int used;
     char owner[64];
     char relpath[128];
+    char fullpath[MAX_PATH];
+    char fullpath_norm[MAX_PATH];
+    uint64_t src_write_time;
+    uint64_t src_size;
     uint8_t rgba[8 * 8 * 4];
 } GlyphSlot;
 
@@ -37,6 +43,7 @@ static AllocKey* g_allocs = NULL;
 static int g_alloc_count = 0;
 static int g_alloc_cap = 0;
 static int g_font_loaded = 0;
+static ULONGLONG g_next_poll_ms = 0;
 
 static int str_ends_with_icase(const char* s, const char* suffix) {
     if (!s || !suffix) return 0;
@@ -63,6 +70,33 @@ static void safe_snprintf(char* out, int out_sz, const char* fmt, ...) {
     _vsnprintf(out, out_sz - 1, fmt, va);
     va_end(va);
     out[out_sz - 1] = '\0';
+}
+
+static void normalize_slashes_lower(const char* in, char* out, int out_sz) {
+    int oi = 0;
+    if (!out || out_sz <= 0) return;
+    out[0] = '\0';
+    if (!in) return;
+    while (*in && oi < out_sz - 1) {
+        char c = *in++;
+        if (c == '\\') c = '/';
+        out[oi++] = (char)tolower((unsigned char)c);
+    }
+    out[oi] = '\0';
+}
+
+static int query_file_signature(const char* full_path, uint64_t* out_write_time, uint64_t* out_size) {
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    uint64_t write_time;
+    uint64_t size;
+    if (!full_path || !full_path[0]) return 0;
+    if (!GetFileAttributesExA(full_path, GetFileExInfoStandard, &fad)) return 0;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return 0;
+    write_time = ((uint64_t)fad.ftLastWriteTime.dwHighDateTime << 32) | fad.ftLastWriteTime.dwLowDateTime;
+    size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    if (out_write_time) *out_write_time = write_time;
+    if (out_size) *out_size = size;
+    return 1;
 }
 
 static int load_icon_8x8_rgba(const char* full_path, uint8_t out_rgba[8 * 8 * 4], char* err, int err_sz) {
@@ -120,7 +154,7 @@ static void add_alloc_cache(const char* owner, const char* relpath, uint8_t byte
 }
 
 void font_ext_init(void) {
-    // Nothing to do; globals are zeroed.
+    g_next_poll_ms = GetTickCount64() + HOT_RELOAD_POLL_MS;
 }
 
 void font_ext_shutdown(void) {
@@ -130,6 +164,7 @@ void font_ext_shutdown(void) {
     g_alloc_cap = 0;
     memset(g_slots, 0, sizeof(g_slots));
     g_font_loaded = 0;
+    g_next_poll_ms = 0;
 }
 
 int font_ext_font_loaded(void) {
@@ -169,11 +204,21 @@ static int set_slot(
     safe_snprintf(full, (int)sizeof(full), "%s\\%s", owner_mod_folder, rel_path);
     uint8_t tmp[8 * 8 * 4];
     if (!load_icon_8x8_rgba(full, tmp, err, err_sz)) return 0;
+    uint64_t write_time = 0;
+    uint64_t size = 0;
+    if (!query_file_signature(full, &write_time, &size)) {
+        safe_snprintf(err, err_sz, "failed to stat %s", full);
+        return 0;
+    }
 
     memset(s, 0, sizeof(*s));
     s->used = 1;
     strncpy(s->owner, owner_mod_id, sizeof(s->owner) - 1);
     strncpy(s->relpath, rel_path, sizeof(s->relpath) - 1);
+    strncpy(s->fullpath, full, sizeof(s->fullpath) - 1);
+    normalize_slashes_lower(full, s->fullpath_norm, (int)sizeof(s->fullpath_norm));
+    s->src_write_time = write_time;
+    s->src_size = size;
     memcpy(s->rgba, tmp, sizeof(s->rgba));
     return 1;
 }
@@ -187,13 +232,7 @@ int font_ext_register_glyph(
     char* err,
     int err_sz
 ) {
-    // If the font already loaded, we can still accept the registration, but it
-    // won't show until restart (we don't hot-patch the GL atlas yet).
-    int ok = set_slot(owner_mod_id, owner_mod_folder, byte_value, rel_path, override_other, err, err_sz);
-    if (ok && g_font_loaded) {
-        LOG_WARN("font_ext: %s registered 0x%02X after font load; restart required", owner_mod_id, (unsigned)byte_value);
-    }
-    return ok;
+    return set_slot(owner_mod_id, owner_mod_folder, byte_value, rel_path, override_other, err, err_sz);
 }
 
 int font_ext_alloc_glyph(
@@ -225,15 +264,99 @@ int font_ext_alloc_glyph(
             }
             add_alloc_cache(owner_mod_id, rel_path, (uint8_t)b);
             *out_byte = (uint8_t)b;
-            if (g_font_loaded) {
-                LOG_WARN("font_ext: %s alloc_glyph after font load; restart required", owner_mod_id);
-            }
             return 1;
         }
     }
 
     safe_snprintf(err, err_sz, "no free glyph slots left (0x80..0xFF)");
     return 0;
+}
+
+static int glyph_slot_needs_reload(const GlyphSlot* s, int force_reload, uint64_t* out_write_time, uint64_t* out_size) {
+    uint64_t write_time = 0;
+    uint64_t size = 0;
+    if (!s || !s->used || !s->fullpath[0]) return 0;
+    if (!query_file_signature(s->fullpath, &write_time, &size)) {
+        if (!force_reload) return 0;
+        if (out_write_time) *out_write_time = 0;
+        if (out_size) *out_size = 0;
+        return 1;
+    }
+    if (out_write_time) *out_write_time = write_time;
+    if (out_size) *out_size = size;
+    if (force_reload) return 1;
+    if (write_time != s->src_write_time) return 1;
+    if (size != s->src_size) return 1;
+    return 0;
+}
+
+static int glyph_slot_reload(GlyphSlot* s, uint64_t write_time, uint64_t size, char* err, int err_sz) {
+    uint8_t rgba[8 * 8 * 4];
+    if (!s || !s->used) {
+        safe_snprintf(err, err_sz, "invalid glyph slot");
+        return 0;
+    }
+    if (!load_icon_8x8_rgba(s->fullpath, rgba, err, err_sz)) return 0;
+    memcpy(s->rgba, rgba, sizeof(s->rgba));
+    s->src_write_time = write_time;
+    s->src_size = size;
+    return 1;
+}
+
+static void font_ext_reload_impl(int force_reload, int emit_info_log,
+                                 int* out_reloaded, int* out_failed, int* out_restart_required) {
+    int reloaded = 0;
+    int failed = 0;
+    int restart_required = 0;
+    for (int i = 0; i < 256; i++) {
+        GlyphSlot* s = &g_slots[i];
+        uint64_t write_time = 0;
+        uint64_t size = 0;
+        char err[256] = {0};
+        if (!s->used) continue;
+
+        if (!glyph_slot_needs_reload(s, force_reload, &write_time, &size)) continue;
+        if (!glyph_slot_reload(s, write_time, size, err, (int)sizeof(err))) {
+            LOG_WARN("font_ext: failed to reload glyph 0x%02X from %s: %s",
+                     (unsigned)i, s->fullpath, err[0] ? err : "unknown error");
+            failed++;
+            continue;
+        }
+
+        reloaded++;
+        if (emit_info_log) {
+            LOG_INFO("font_ext: reloaded glyph 0x%02X from %s", (unsigned)i, s->fullpath);
+        }
+    }
+
+    if (out_reloaded) *out_reloaded = reloaded;
+    if (out_failed) *out_failed = failed;
+    if (out_restart_required) *out_restart_required = restart_required;
+}
+
+int font_ext_is_tracked_path(const char* full_path) {
+    char norm[MAX_PATH];
+    if (!full_path || !full_path[0]) return 0;
+    normalize_slashes_lower(full_path, norm, (int)sizeof(norm));
+    for (int i = 0; i < 256; i++) {
+        GlyphSlot* s = &g_slots[i];
+        if (!s->used || !s->fullpath_norm[0]) continue;
+        if (_stricmp(s->fullpath_norm, norm) == 0) return 1;
+    }
+    return 0;
+}
+
+int font_ext_poll_hot_reload(void) {
+    int reloaded = 0;
+    ULONGLONG now = GetTickCount64();
+    if (now < g_next_poll_ms) return 0;
+    g_next_poll_ms = now + HOT_RELOAD_POLL_MS;
+    font_ext_reload_impl(0, 1, &reloaded, NULL, NULL);
+    return reloaded;
+}
+
+void font_ext_reload_all(int* out_reloaded, int* out_failed, int* out_restart_required) {
+    font_ext_reload_impl(1, 1, out_reloaded, out_failed, out_restart_required);
 }
 
 static void blit_icon_into_font(RgbaImage* img, uint8_t code, const uint8_t src_rgba[8 * 8 * 4]) {

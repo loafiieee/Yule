@@ -40,8 +40,26 @@ Required:
 
 Recommended:
 - `description` (string)
-- `api_version` (number): framework API version the mod was written against
- - `config` (string): optional path to a **line-based config file** (relative to the mod folder). If present, the framework will surface it in the in-game **Options → Mods** menu.
+- `api_version` (number): framework API version the mod was written against.
+  - If this does not match the current framework version, the mod is rejected by default.
+  - You can explicitly override this by setting `"allow_api_mismatch": true` (not recommended for released mods).
+  - For local testing only, you can also set environment variable `LUNA_ALLOW_API_MISMATCH=1`.
+- `config` (string): optional path to a **line-based config file** (relative to the mod folder). If present, the framework will surface it in the in-game **Options → Mods** menu.
+- `storage` (string): optional path to a **line-based persistent storage file** (relative to the mod folder). Defaults to `storage.cfg`.
+- `binds` (string): optional path to the mod bind file (relative to the mod folder). Defaults to `binds.cfg`.
+- `priority` (number): load-order tie breaker; higher numbers load earlier.
+- `depends` (array of dependency specs): hard dependency list. Mod will not load unless all dependencies load and satisfy version constraints.
+- `optional_deps` (array of dependency specs): soft dependencies. If present and compatible, they affect load order but do not block loading.
+- `conflicts` (array of mod ids): incompatible mods. When conflicts occur, deterministic precedence decides which mod is kept.
+- `load_after` / `load_before` (array of mod ids): soft ordering constraints.
+
+Dependency spec formats:
+- `"other_mod"` (any version)
+- `"other_mod@>=1.2.0 <2.0.0"`
+- `"other_mod>=1.2.0"`
+- operators: `=`, `==`, `!=`, `>`, `>=`, `<`, `<=`, `^`, `~`
+
+Manifest parsing is strict JSON (full-file parse, explicit type validation). Invalid `mod.json` now fails with a concrete error in `mods/modframework.log`.
 
 Example:
 
@@ -53,8 +71,14 @@ Example:
   "author": "you",
   "description": "Adds something neat",
   "api_version": 1,
+  "priority": 10,
+  "depends": ["shared_lib@>=1.0.0 <2.0.0"],
+  "optional_deps": ["ui_pack@^1.3.0"],
+  "load_after": ["ui_pack"],
+  "conflicts": ["other_cool_mod"],
   "entry": "main.lua",
-  "config": "config.cfg"
+  "config": "config.cfg",
+  "storage": "storage.cfg"
 }
 ```
 
@@ -93,12 +117,12 @@ end)
 
 | field | meaning |
 |------:|---------|
-| `type` | one of: `keydown`, `keyup`, `mousebuttondown`, `mousebuttonup`, `mousemotion` |
-| `sym` | SDL keycode (for key events) |
-| `scancode` | SDL scancode (for key events) |
-| `mod` | SDL modifier bitmask (Shift/Ctrl/Alt, etc.) |
-| `x`, `y` | mouse coordinates (for mouse events) |
-| `button` | mouse button (for mouse button events) |
+| `type` | one of: `keydown`, `keyup`, `textinput`, `mousebuttondown`, `mousebuttonup`, `mousemotion`, `mousewheel`, `controlleraxismotion`, `controllerbuttondown`, `controllerbuttonup`, `joyaxismotion`, `joybuttondown`, `joybuttonup`, `joyhatmotion`, `quit` |
+| `sym` | Primary event code. For keyboard: SDL keycode. For controller/joy button/axis/hat events: button/axis/hat id. For `textinput`: first byte of input text. |
+| `scancode` | SDL scancode (keyboard events). |
+| `mod` | SDL modifier bitmask (keyboard events). |
+| `x`, `y` | Event payload values by type. Mouse: coordinates. Mousewheel: wheel delta `(x,y)`. Controller/Joy: device `which` in `x`, event value/state in `y`. |
+| `button` | Mouse button for mouse button events. For mousewheel: wheel direction flag. |
 
 If any `on_event` handler returns `true`, the framework will **consume** the SDL event (the game won't see it).
 
@@ -190,6 +214,104 @@ Notes:
 - `config.set(key, value)` returns `true/false`.
 - `config.on_action(key, fn)` registers a handler for action buttons.
 
+
+---
+
+## Named input bindings (`mod.input`)
+
+Mods can register named keyboard bindings and let players rebind them in the in-game **Options → Mods** menu or through the console.
+
+Example:
+
+```lua
+mod.input.bind("dash", "space", "Dash")
+
+mod.on_frame(function()
+  if mod.input.pressed("dash") then
+    mod.log("dash pressed")
+  end
+end)
+```
+
+API:
+
+```lua
+mod.input.bind(key, default_binding, label)  -- registers or updates a named bind
+mod.input.get(key)                           -- returns current binding name
+mod.input.set(key, binding_name)             -- returns true/false[, err]
+mod.input.clear(key)                         -- unbinds the key
+mod.input.down(key)                          -- true while held
+mod.input.pressed(key)                       -- true on the press edge
+mod.input.released(key)                      -- true on the release edge
+mod.input.list()                             -- returns an array of bind tables
+```
+
+Notes:
+- `key` is the stable internal id used by your mod.
+- `default_binding` is optional; examples: `"space"`, `"a"`, `"left"`, `"escape"`, `"F1"`.
+- `label` is the user-facing name shown in the mods menu.
+- `mod.input.list()` returns entries with `key`, `label`, `binding`, and `conflict`.
+- Bind overrides are stored in the mod's bind file (default `binds.cfg`).
+- The mods menu supports live key capture: select a bind row, press `Enter`, then press the new key.
+
+---
+
+## Persistent Storage (`storage` / `mod.storage`)
+
+Each mod gets a persistent key/value store backed by a file (default: `storage.cfg`):
+
+```lua
+local runs = storage.get("runs", 0)
+storage.set("runs", runs + 1)
+
+if storage.schema() < 2 then
+  local ok, err = storage.migrate(2, function(from_schema, to_schema)
+    if from_schema < 1 then storage.set("coins", 0) end
+    if from_schema < 2 then storage.set("xp", 0) end
+    return true
+  end)
+  if not ok then mod.error("storage migrate failed: " .. tostring(err)) end
+end
+
+print(storage.path)
+```
+
+Supported value types: `bool`, `number`, `string`, and `nil` (delete).
+
+API:
+- `storage.get(key [,default]) -> value`
+- `storage.set(key, value) -> true | false, err`
+- `storage.delete(key) -> bool`
+- `storage.save() -> true | false, err`
+- `storage.schema() -> int`
+- `storage.set_schema(version) -> true | false, err`
+- `storage.migrate(target_schema, fn(from_schema, target_schema)) -> true, schema | false, err`
+
+---
+
+## Mod Interop (`mod.interop`)
+
+Use this to share small service tables between mods with version checks.
+
+```lua
+-- provider mod
+mod.interop.provide("my_mod:api", "1.0.0", {
+  ping = function() return "pong" end
+})
+
+-- consumer mod
+local api, ver = mod.interop.require("my_mod:api", ">=1.0.0 <2.0.0")
+if api then
+  mod.log("interop version=" .. ver .. " ping=" .. tostring(api.ping()))
+end
+```
+
+API:
+- `mod.interop.provide(namespace, version, table) -> true | false, err`
+- `mod.interop.require(namespace [,range]) -> table, version | nil, err`
+
+Namespaces are global, so use a unique prefix like `"your_mod_id:service_name"`.
+
 ---
 
 ## UI API (draw anywhere, including main menu)
@@ -234,6 +356,25 @@ if mod.ui.button_at("x", "X", 1180, 20, 40, 28) then
   mod.log("Close clicked")
 end
 ```
+
+Sprite helpers:
+
+```lua
+local id = mod.ui.sprite_id("sprites", 12) -- base spritesheet + 12
+mod.ui.draw_sprite(id, 400, 240, {
+  flip = false,
+  scale = 2.0,
+  tint = {1.0, 0.8, 0.8, 1.0},
+  layer = 0,
+})
+```
+
+- `mod.ui.sheet_base(name) -> sprite_base | nil`
+  - Known names: `sprites`, `tiles`, `misc`, `glyphs` (+ `data/*.png` aliases).
+- `mod.ui.sprite_id(sheet_or_base, index) -> sprite_id | nil, err`
+  - `sheet_or_base` can be a sheet name or numeric base id.
+- `mod.ui.draw_sprite(sprite_id_or_frame, x, y [,opts]) -> bool`
+  - Supports `flip`, `scale`/`scale_x`/`scale_y`, `tint` (`{r,g,b,a}`), `r/g/b/a`, `angle`, `layer`.
 
 Tile preview helper:
 
@@ -383,6 +524,94 @@ end
 `input_status(player_index) -> { active, mask, frames, replace }`
 - Returns current override state.
 
+## Audio API (`mod.audio`)
+
+`mod.audio` supports two SFX paths:
+- **asset path**: plays a file from your mod folder via `SDL2_mixer` (e.g. `.wav`, `.ogg`, `.mp3` if your mixer build supports it).
+- **built-in id**: triggers Eggnogg's native synth SFX (`pip`, `noise`, `thump`, etc.).
+
+```lua
+-- file-based SFX (relative to mod folder)
+mod.audio.play_sfx("assets/click.wav")
+
+-- built-in synth IDs
+mod.audio.play_sfx("pip", { pitch = 1.2, duration = 80 })
+mod.audio.play_sfx("sword_ching")
+
+-- music (single global track; ownership is tracked per mod)
+mod.audio.play_music("assets/loop.ogg", { loops = -1 })
+mod.audio.set_music_volume(0.6)
+mod.audio.set_sfx_volume(0.8)
+mod.audio.stop_music()
+```
+
+`play_sfx(path_or_id [,opts]) -> true | false, err`
+- If `path_or_id` resolves to a file, it plays that file.
+- Otherwise it is treated as a built-in id.
+- `opts`:
+  - `volume` (0..1, default `1.0`) multiplies the mod's current SFX volume.
+  - `loops` (default `0`) for file-based sounds (`0` = once, `-1` = loop forever).
+  - `ticks` (default `-1`) max playback duration in ms for file-based sounds.
+- Built-in ids currently available:
+  - `pip` (`pitch`, `duration`)
+  - `noise` (`freq`, `duration`)
+  - `thump` (`freq`)
+  - `shred` (`amount`, `duration`)
+  - `fm` (`carrier`, `mod`, `index`)
+  - `ringmod` (`freq`, `duration`)
+  - `warble` (`amount`)
+  - `creepy` (`freq`)
+  - `pulse` (`pitch`, `duration`)
+  - `sword_ching` / `ching` (`pitch`, `tone`)
+
+`play_music(path [,opts]) -> true | false, err`
+- Plays a music file (relative to mod folder unless absolute).
+- `opts.loops` defaults to `-1` (loop forever).
+- `opts.volume` (0..1) multiplies the mod's music volume.
+- Music is a single global channel; calling `play_music` replaces currently active mod music.
+
+`stop_music() -> true | false, err`
+- Stops music if your mod currently owns the active track.
+
+`set_music_volume(v) -> true`
+- Sets this mod's music volume scalar (`0..1`).
+- If this mod owns active music, the new volume is applied immediately.
+
+`set_sfx_volume(v) -> true`
+- Sets this mod's SFX volume scalar (`0..1`) used by `play_sfx`.
+
+## Animation helpers (`mod.anim`)
+
+`mod.anim` is a lightweight frame-animation helper that pairs with `mod.ui.draw_sprite`.
+
+```lua
+local walk = mod.anim.new({
+  strip = { sheet = "sprites", start = 32, count = 6, step = 1 },
+  fps = 10,
+  loop = true,
+  ping_pong = true,
+  scale = 2.0,
+  tint = {1, 1, 1, 1},
+})
+
+mod.on_frame(function()
+  walk:update(1/60)
+  walk:draw(640, 360, { flip = false })
+end)
+```
+
+- `mod.anim.frame_strip(opts) -> frames`
+  - Builds frame tables from an atlas strip.
+  - `opts`: `sheet|atlas`, `start|first`, `count|len`, `step`.
+- `mod.anim.frame_table(opts_or_frames) -> frames`
+  - Normalizes explicit frame lists (`number` ids or frame tables).
+- `mod.anim.new(opts) -> anim`
+  - Common options: `frames`, `strip`, `fps`, `loop`, `ping_pong`/`pingpong`, `speed`, `start_frame`, `flip`, `scale`, `scale_x`, `scale_y`, `tint`.
+- `mod.anim.update(anim, dt)` and `anim:update(dt)`
+- `mod.anim.frame(anim) -> frame, index` and `anim:frame()`
+- `mod.anim.draw(anim, x, y [,opts]) -> bool` and `anim:draw(x, y [,opts])`
+- `anim:reset([frame_index])`
+
 ## Font glyph overlays (`mod.font`)
 
 If you like the "icons-as-bytes" style for menu labels:
@@ -403,12 +632,68 @@ The framework patches `data/font8x8.png` **as it is loaded** so the base game te
   - `opts.override = true` allows replacing a glyph owned by another mod.
 - `mod.font.font_loaded() -> bool`
   - Returns true after the game has loaded `data/font8x8.png` once.
-  - If you register/allocate **after** this, you'll need to restart for it to show (no hot-patch yet).
+  - If you register/allocate after this, the framework attempts a live atlas rebuild.
+
+Registered glyph PNGs are now watched for source-file changes:
+- Changes are reloaded from disk and applied live by rebuilding graphics atlases.
+- If live rebuild fails, the framework logs that restart may still be required.
+
+## Texture pack overlays (`mod.texture`)
+
+Use this for resource-pack style atlas swaps from your mod folder:
+
+```lua
+mod.texture.register_spritesheet("assets/sprites.png")
+mod.texture.register_tilesheet("assets/tiles.png")
+mod.texture.register_miscsheet("assets/misc.png")
+mod.texture.register_glowsheet("assets/glow.png")
+```
+
+The framework patches `data/*.png` atlases **as they are loaded** by the game.
+
+- `mod.texture.register(target_path, rel_path [,opts]) -> true | false, err`
+  - Generic replacement API.
+  - `target_path` can be `data/tiles.png` style or shorthand like `tiles.png`.
+  - `rel_path` is relative to your mod folder.
+  - The replacement PNG must have the exact same dimensions as the target image.
+  - `opts.override = true` allows replacing a target registration owned by another mod.
+- `mod.texture.loaded(target_path) -> bool`
+  - Returns true after that target atlas has loaded at least once.
+- `mod.texture.register_spritesheet(rel_path [,opts]) -> true | false, err`
+- `mod.texture.register_tilesheet(rel_path [,opts]) -> true | false, err`
+- `mod.texture.register_miscsheet(rel_path [,opts]) -> true | false, err`
+- `mod.texture.register_glowsheet(rel_path [,opts]) -> true | false, err`
+  - Convenience wrappers for `data/sprites.png`, `data/tiles.png`, `data/misc.png`, `data/glow.png`.
+- `mod.texture.sprites_loaded() -> bool`
+  - Shorthand for `mod.texture.loaded("data/sprites.png")`.
+- `mod.texture.reload_all() -> ok, info`
+  - Force-reloads registered texture replacement PNGs and registered font glyph PNGs.
+  - `info` fields:
+    - `textures_reloaded`, `textures_failed`, `textures_restart_required`
+    - `fonts_reloaded`, `fonts_failed`, `fonts_restart_required`
+
+Registered texture PNGs are watched for source-file changes:
+- Updates are reloaded from disk and applied live by rebuilding graphics atlases.
+- If live rebuild fails, the framework logs that restart may still be required.
+
+- `storage.get(key [,default]) -> value`
+- `storage.set(key, value) -> true | false, err`
+- `storage.delete(key) -> bool`
+- `storage.save() -> true | false, err`
+- `storage.schema() -> int`
+- `storage.set_schema(version) -> true | false, err`
+- `storage.migrate(target_schema, fn(from_schema, target_schema)) -> true, schema | false, err`
+- `mod.interop.provide(namespace, version, table) -> true | false, err`
+- `mod.interop.require(namespace [,range]) -> table, version | nil, err`
+
 - `mod.ui.state_name() -> string`
 - `mod.ui.state_ptr() -> number`
 - `mod.ui.is_state(name) -> bool`
 - `mod.ui.screen_size() -> w, h`
 - `mod.ui.mouse_pos() -> x, y`
+- `mod.ui.sheet_base(name) -> sprite_base | nil`
+- `mod.ui.sprite_id(sheet_or_base, index) -> sprite_id | nil, err`
+- `mod.ui.draw_sprite(sprite_id_or_frame, x, y [,opts]) -> bool`
 - `mod.ui.native_button(id, label, grid_x, grid_y [,layout_x [,layout_y]]) -> clicked`
 - `mod.ui.native_set_pos(id, x, y) -> bool`
 - `mod.ui.native_set_layout(id, layout_x, layout_y) -> bool`
@@ -437,6 +722,14 @@ my_state = { counter = 0 }
 ```
 
 …without clobbering other mods.
+
+### Isolation policy (important)
+
+The framework uses a **trusted-mod** model:
+- Mods get isolated global tables, but all mods run inside one shared Lua VM/runtime.
+- Standard Lua libraries are available.
+- This is not a security sandbox; treat installed mods as trusted code.
+- A mod can still impact process stability/performance (infinite loops, heavy allocations, etc.).
 
 ### Multi-file mods
 

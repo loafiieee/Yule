@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <limits.h>
 #include <luajit-2.1/lua.h>
 #include <luajit-2.1/lauxlib.h>
 #include <luajit-2.1/lualib.h>
@@ -11,8 +12,13 @@
 #include "lua_manager.h"
 #include "hooks.h"
 #include "font_ext.h"
+#include "texture_ext.h"
 
 static lua_State *L = NULL;
+
+typedef struct SDL_RWops SDL_RWops;
+extern SDL_RWops* SDL_RWFromFile(const char* file, const char* mode);
+extern const char* SDL_GetError(void);
 
 void luna_force_crash_report(unsigned int exit_code);
 
@@ -46,6 +52,33 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_MAIN_PLAYER_POLL_CMDS   0x433F90u
 #define ADDR_MAP_TILES_H             0x434950u
 #define ADDR_MAP_TILE                0x434A50u
+#define ADDR_SPRITE_BATCH_PLOT       0x405890u
+#define ADDR_SPRITE_GET              0x405D20u
+#define ADDR_ATLAS_EXIT              0x402560u
+#define ADDR_SPRITES_RESET           0x405D70u
+#define ADDR_LOAD_GFX                0x42FB00u
+#define ADDR_MISC_ID                 0x547B7Cu
+#define ADDR_TILES_ID                0x547B80u
+#define ADDR_SPRITES_ID              0x547B94u
+#define ADDR_GLYPHS_ID               0x547B98u
+
+// Built-in synth SFX entry points (reverse engineered from ghidra symbols).
+#define ADDR_SOUND_SWORD_CHING       0x425D70u
+#define ADDR_SOUND_NOISE             0x43BEA0u
+#define ADDR_SOUND_THUMP             0x43BF60u
+#define ADDR_SOUND_SHRED             0x43BF80u
+#define ADDR_SOUND_PIP               0x43C030u
+#define ADDR_SOUND_FM                0x43C080u
+#define ADDR_SOUND_RINGMOD           0x43C0E0u
+#define ADDR_SOUND_WARBLE            0x43C150u
+#define ADDR_SOUND_CREEPY            0x43C3A0u
+#define ADDR_SOUND_PULSE             0x43C3F0u
+
+// SDL_mixer runtime constants (we resolve functions dynamically at runtime).
+#define AUDIO_MIX_FORMAT_S16SYS      0x8010u
+#define AUDIO_MIX_MAX_VOLUME         128
+#define AUDIO_DEFAULT_CHANNELS       32
+#define AUDIO_CHANNELS_PER_MOD       8
 
 // Globals used by click/state-transition logic.
 #define ADDR_BTN_RESET_COUNTER     0x50E3A8u
@@ -109,6 +142,41 @@ typedef void  (__cdecl *fn_button_set_h_ex_t)(int, float, float);
 typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 typedef int   (__cdecl *fn_map_tiles_h_t)(void);
 typedef int   (__cdecl *fn_map_tile_t)(int, int);
+typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite_ptr, int flip, int layer);
+typedef void* (__cdecl *fn_sprite_get_t)(uint32_t sprite_id);
+typedef void  (__cdecl *fn_atlas_exit_t)(void);
+typedef void  (__cdecl *fn_sprites_reset_t)(void);
+typedef int   (__cdecl *fn_load_gfx_t)(void);
+typedef void* (__cdecl *fn_sound_sword_ching_t)(float, float);
+typedef void  (__cdecl *fn_sound_noise_t)(float, int);
+typedef void  (__cdecl *fn_sound_thump_t)(float);
+typedef void  (__cdecl *fn_sound_shred_t)(float, int);
+typedef void  (__cdecl *fn_sound_pip_t)(float, int);
+typedef void  (__cdecl *fn_sound_fm_t)(float, float, float);
+typedef void  (__cdecl *fn_sound_ringmod_t)(float, int);
+typedef void  (__cdecl *fn_sound_warble_t)(float);
+typedef void  (__cdecl *fn_sound_creepy_t)(float);
+typedef void  (__cdecl *fn_sound_pulse_t)(float, int);
+
+typedef struct Mix_Chunk Mix_Chunk;
+typedef struct Mix_Music Mix_Music;
+
+typedef int       (__cdecl *fn_mix_open_audio_t)(int, unsigned short, int, int);
+typedef void      (__cdecl *fn_mix_close_audio_t)(void);
+typedef int       (__cdecl *fn_mix_allocate_channels_t)(int);
+typedef Mix_Chunk*(__cdecl *fn_mix_load_wav_rw_t)(SDL_RWops*, int);
+typedef int       (__cdecl *fn_mix_play_channel_timed_t)(int, Mix_Chunk*, int, int);
+typedef int       (__cdecl *fn_mix_playing_t)(int);
+typedef int       (__cdecl *fn_mix_halt_channel_t)(int);
+typedef int       (__cdecl *fn_mix_volume_channel_t)(int, int);
+typedef void      (__cdecl *fn_mix_free_chunk_t)(Mix_Chunk*);
+typedef Mix_Music*(__cdecl *fn_mix_load_mus_t)(const char*);
+typedef int       (__cdecl *fn_mix_play_music_t)(Mix_Music*, int);
+typedef int       (__cdecl *fn_mix_halt_music_t)(void);
+typedef int       (__cdecl *fn_mix_volume_music_t)(int);
+typedef void      (__cdecl *fn_mix_free_music_t)(Mix_Music*);
+typedef const char* (__cdecl *fn_mix_get_error_t)(void);
+typedef BOOL (WINAPI *fn_play_sound_a_t)(LPCSTR, HMODULE, DWORD);
 
 static fn_state_current_t   p_state_current   = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_switch_t    p_state_switch    = (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
@@ -133,6 +201,38 @@ static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintp
 static fn_main_player_poll_cmds_t p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_map_tiles_h_t      p_map_tiles_h       = (fn_map_tiles_h_t)(uintptr_t)ADDR_MAP_TILES_H;
 static fn_map_tile_t         p_map_tile          = (fn_map_tile_t)(uintptr_t)ADDR_MAP_TILE;
+static fn_sprite_batch_plot_t p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
+static fn_sprite_get_t        p_sprite_get        = (fn_sprite_get_t)(uintptr_t)ADDR_SPRITE_GET;
+static fn_atlas_exit_t        p_atlas_exit        = (fn_atlas_exit_t)(uintptr_t)ADDR_ATLAS_EXIT;
+static fn_sprites_reset_t     p_sprites_reset     = (fn_sprites_reset_t)(uintptr_t)ADDR_SPRITES_RESET;
+static fn_load_gfx_t          p_load_gfx          = (fn_load_gfx_t)(uintptr_t)ADDR_LOAD_GFX;
+static fn_sound_sword_ching_t p_sound_sword_ching = (fn_sound_sword_ching_t)(uintptr_t)ADDR_SOUND_SWORD_CHING;
+static fn_sound_noise_t      p_sound_noise      = (fn_sound_noise_t)(uintptr_t)ADDR_SOUND_NOISE;
+static fn_sound_thump_t      p_sound_thump      = (fn_sound_thump_t)(uintptr_t)ADDR_SOUND_THUMP;
+static fn_sound_shred_t      p_sound_shred      = (fn_sound_shred_t)(uintptr_t)ADDR_SOUND_SHRED;
+static fn_sound_pip_t        p_sound_pip        = (fn_sound_pip_t)(uintptr_t)ADDR_SOUND_PIP;
+static fn_sound_fm_t         p_sound_fm         = (fn_sound_fm_t)(uintptr_t)ADDR_SOUND_FM;
+static fn_sound_ringmod_t    p_sound_ringmod    = (fn_sound_ringmod_t)(uintptr_t)ADDR_SOUND_RINGMOD;
+static fn_sound_warble_t     p_sound_warble     = (fn_sound_warble_t)(uintptr_t)ADDR_SOUND_WARBLE;
+static fn_sound_creepy_t     p_sound_creepy     = (fn_sound_creepy_t)(uintptr_t)ADDR_SOUND_CREEPY;
+static fn_sound_pulse_t      p_sound_pulse      = (fn_sound_pulse_t)(uintptr_t)ADDR_SOUND_PULSE;
+
+static fn_mix_open_audio_t        p_mix_open_audio = NULL;
+static fn_mix_close_audio_t       p_mix_close_audio = NULL;
+static fn_mix_allocate_channels_t p_mix_allocate_channels = NULL;
+static fn_mix_load_wav_rw_t       p_mix_load_wav_rw = NULL;
+static fn_mix_play_channel_timed_t p_mix_play_channel_timed = NULL;
+static fn_mix_playing_t           p_mix_playing = NULL;
+static fn_mix_halt_channel_t      p_mix_halt_channel = NULL;
+static fn_mix_volume_channel_t    p_mix_volume_channel = NULL;
+static fn_mix_free_chunk_t        p_mix_free_chunk = NULL;
+static fn_mix_load_mus_t          p_mix_load_mus = NULL;
+static fn_mix_play_music_t        p_mix_play_music = NULL;
+static fn_mix_halt_music_t        p_mix_halt_music = NULL;
+static fn_mix_volume_music_t      p_mix_volume_music = NULL;
+static fn_mix_free_music_t        p_mix_free_music = NULL;
+static fn_mix_get_error_t         p_mix_get_error = NULL;
+static fn_play_sound_a_t          p_play_sound_a = NULL;
 
 static volatile int* p_btn_reset_counter = (volatile int*)(uintptr_t)ADDR_BTN_RESET_COUNTER;
 static volatile int* p_game_active_room = (volatile int*)(uintptr_t)ADDR_GAME_ACTIVE_ROOM;
@@ -140,6 +240,10 @@ static volatile uintptr_t* p_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_
 static volatile int* p_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
 static volatile int* p_start_countdown = (volatile int*)(uintptr_t)ADDR_START_COUNTDOWN;
 static volatile int* p_room_w = (volatile int*)(uintptr_t)ADDR_ROOM_W;
+static volatile int* p_misc_id = (volatile int*)(uintptr_t)ADDR_MISC_ID;
+static volatile int* p_tiles_id = (volatile int*)(uintptr_t)ADDR_TILES_ID;
+static volatile int* p_sprites_id = (volatile int*)(uintptr_t)ADDR_SPRITES_ID;
+static volatile int* p_glyphs_id = (volatile int*)(uintptr_t)ADDR_GLYPHS_ID;
 static uintptr_t* p_player_slots = (uintptr_t*)(uintptr_t)ADDR_PLAYER_ARRAY;
 static uint8_t* p_things = (uint8_t*)(uintptr_t)ADDR_THINGS;
 static uint8_t* p_thing_info = (uint8_t*)(uintptr_t)ADDR_THING_INFO;
@@ -189,11 +293,37 @@ typedef struct LuaRefList {
     int  cap;
 } LuaRefList;
 
+typedef struct AudioChunkCacheEntry {
+    char path[MAX_PATH];
+    Mix_Chunk* chunk;
+} AudioChunkCacheEntry;
+
 // Forward declarations for helper functions used before definition
 static void reflist_clear(lua_State* Ls, LuaRefList* list);
 static int ui_engine_button_exists(void* btn_ptr);
 static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden);
 
+
+#define MOD_ID_LIST_MAX 32
+#define MOD_DEP_RANGE_MAX 96
+#define MOD_STORAGE_KEY_MAX 64
+#define MOD_STORAGE_STR_MAX 256
+#define MOD_INTEROP_NAMESPACE_MAX 96
+
+typedef struct ModIdList {
+    char ids[MOD_ID_LIST_MAX][64];
+    int count;
+} ModIdList;
+
+typedef struct ModDepSpec {
+    char id[64];
+    char range[MOD_DEP_RANGE_MAX];
+} ModDepSpec;
+
+typedef struct ModDepList {
+    ModDepSpec items[MOD_ID_LIST_MAX];
+    int count;
+} ModDepList;
 
 typedef struct LoadedMod {
     char id[64];
@@ -207,6 +337,10 @@ typedef struct LoadedMod {
 
     int  enabled;
     int  error_count;
+
+    ModDepList depends;
+    ModDepList optional_deps;
+    ModIdList conflicts;
 
     // Registry refs
     int  env_ref;       // mod environment table
@@ -250,7 +384,65 @@ typedef struct LoadedMod {
     struct ConfigAction* cfg_actions;
     int cfg_action_count;
     int cfg_action_cap;
+
+    struct InputBinding* binds;
+    int bind_count;
+    int bind_cap;
+    char binds_path[MAX_PATH];
+
+    // Optional persistent key/value storage (saved across sessions).
+    char storage_rel[128];
+    char binds_rel[128];
+    char storage_path[MAX_PATH];
+    int storage_schema_version;
+    int storage_suspend_save;
+    struct StorageEntry* storage_entries;
+    int storage_count;
+    int storage_cap;
+
+    // Per-mod audio state.
+    float audio_sfx_volume;
+    float audio_music_volume;
+    int audio_channel_base;
+    int audio_channel_count;
+    int audio_next_channel;
+    AudioChunkCacheEntry* audio_chunks;
+    int audio_chunk_count;
+    int audio_chunk_cap;
 } LoadedMod;
+
+
+typedef struct ModManifest {
+    char folder_name[MAX_PATH];
+    char folder_path[MAX_PATH];
+    char manifest_path[MAX_PATH];
+
+    char id[64];
+    char name[64];
+    char version[32];
+    char author[64];
+    char description[256];
+    char entry[128];
+    char config_rel[128];
+    char storage_rel[128];
+    char binds_rel[128];
+
+    int api_version;
+    int allow_api_mismatch;
+    int priority;
+
+    ModDepList depends;
+    ModDepList optional_deps;
+    ModIdList conflicts;
+    ModIdList load_before;
+    ModIdList load_after;
+} ModManifest;
+
+typedef struct DiscoveredMod {
+    ModManifest manifest;
+    int active;
+    int loaded;
+} DiscoveredMod;
 
 // =============================
 // Config model
@@ -272,9 +464,44 @@ typedef struct ConfigAction {
     LuaRefList handlers;     // Lua functions
 } ConfigAction;
 
+typedef struct InputBinding {
+    char key[64];
+    char label[64];
+    int  sym;
+    int  default_sym;
+    int  down;
+    int  pressed;
+    int  released;
+    char value_name[64];
+} InputBinding;
+
+enum {
+    MOD_STORAGE_BOOL = 1,
+    MOD_STORAGE_NUMBER = 2,
+    MOD_STORAGE_STRING = 3,
+};
+
+typedef struct StorageEntry {
+    char key[MOD_STORAGE_KEY_MAX];
+    int type;
+    int bool_value;
+    double num_value;
+    char str_value[MOD_STORAGE_STR_MAX];
+} StorageEntry;
+
+typedef struct InteropProvider {
+    char ns[MOD_INTEROP_NAMESPACE_MAX];
+    char version[32];
+    int table_ref;
+    LoadedMod* owner;
+} InteropProvider;
+
 static LoadedMod* g_mods = NULL;
 static int        g_mod_count = 0;
 static int        g_mod_cap = 0;
+static InteropProvider* g_interop_providers = NULL;
+static int g_interop_provider_count = 0;
+static int g_interop_provider_cap = 0;
 
 // UI input state shared across mods.
 static int g_ui_mouse_x = 0;
@@ -303,48 +530,834 @@ static int g_orphan_ui_string_count = 0;
 static int g_orphan_ui_string_cap = 0;
 static const char g_orphan_empty_label[] = "";
 
+// Optional SDL_mixer-backed audio runtime used by mod.audio.* APIs.
+static HMODULE g_audio_mixer_module = NULL;
+static int g_audio_mixer_ready = 0;
+static int g_audio_mixer_disabled = 0;
+static int g_audio_mixer_warned = 0;
+static int g_audio_channels_reserved = 0;
+static int g_audio_next_channel_base = 0;
+static LoadedMod* g_audio_music_owner = NULL;
+static Mix_Music* g_audio_music = NULL;
+static HMODULE g_audio_winmm_module = NULL;
+static int g_audio_winmm_ready = 0;
+static int g_audio_winmm_warned = 0;
+static LoadedMod* g_audio_fallback_music_owner = NULL;
+static char g_audio_backend_error[256] = "";
+
+#ifndef SND_SYNC
+#define SND_SYNC        0x0000u
+#endif
+#ifndef SND_ASYNC
+#define SND_ASYNC       0x0001u
+#endif
+#ifndef SND_NODEFAULT
+#define SND_NODEFAULT   0x0002u
+#endif
+#ifndef SND_LOOP
+#define SND_LOOP        0x0008u
+#endif
+#ifndef SND_NOSTOP
+#define SND_NOSTOP      0x0010u
+#endif
+#ifndef SND_FILENAME
+#define SND_FILENAME    0x00020000u
+#endif
+
 // =============================
-// Tiny JSON helpers
-// (kept intentionally simple – good enough for our stable mod.json format)
+// Mod manifest JSON parsing
 // =============================
 
-static const char* skip_ws(const char* p) {
-    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-    return p;
+typedef struct JsonCursor {
+    const char* start;
+    const char* cur;
+    const char* end;
+    char err[256];
+} JsonCursor;
+
+static int g_allow_api_mismatch_global = -1;
+
+static void mod_id_list_reset(ModIdList* list) {
+    if (!list) return;
+    list->count = 0;
 }
 
-static int json_find_key(const char* json, const char* key, const char** out_value) {
-    char search[128];
-    snprintf(search, sizeof(search), "\"%s\"", key);
-    const char* p = strstr(json, search);
-    if (!p) return 0;
-    p += strlen(search);
-    p = skip_ws(p);
-    if (*p != ':') return 0;
-    p++;
-    p = skip_ws(p);
-    *out_value = p;
-    return 1;
-}
-
-static int json_get_string(const char* json, const char* key, char* out, int out_size) {
-    const char* p = NULL;
-    if (!json_find_key(json, key, &p)) return 0;
-    if (*p != '"') return 0;
-    p++;
-    int i = 0;
-    while (*p && *p != '"' && i < out_size - 1) {
-        out[i++] = *p++;
+static int mod_id_list_contains(const ModIdList* list, const char* id) {
+    if (!list || !id || !id[0]) return 0;
+    for (int i = 0; i < list->count; i++) {
+        if (_stricmp(list->ids[i], id) == 0) return 1;
     }
-    out[i] = '\0';
+    return 0;
+}
+
+static int mod_id_list_add(ModIdList* list, const char* id, const char* field, char* err, int err_sz) {
+    if (!list || !id || !id[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "manifest field \"%s\" contains an empty mod id", field ? field : "?");
+        return 0;
+    }
+    if (mod_id_list_contains(list, id)) return 1;
+    if (list->count >= MOD_ID_LIST_MAX) {
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "manifest field \"%s\" has too many entries (max=%d)",
+                     field ? field : "?", MOD_ID_LIST_MAX);
+        }
+        return 0;
+    }
+    snprintf(list->ids[list->count], sizeof(list->ids[list->count]), "%s", id);
+    list->count++;
     return 1;
 }
 
-static int json_get_int(const char* json, const char* key, int* out) {
-    const char* p = NULL;
-    if (!json_find_key(json, key, &p)) return 0;
-    *out = atoi(p);
+static void mod_dep_list_reset(ModDepList* list) {
+    if (!list) return;
+    list->count = 0;
+}
+
+static int mod_dep_list_find_by_id(const ModDepList* list, const char* id) {
+    if (!list || !id || !id[0]) return -1;
+    for (int i = 0; i < list->count; i++) {
+        if (_stricmp(list->items[i].id, id) == 0) return i;
+    }
+    return -1;
+}
+
+static int dep_spec_split(const char* spec, char* out_id, int out_id_sz, char* out_range, int out_range_sz) {
+    const char* p = spec;
+    const char* at = NULL;
+    const char* cmp = NULL;
+    const char* id_end = NULL;
+    const char* range_start = NULL;
+
+    if (!out_id || out_id_sz <= 0 || !out_range || out_range_sz <= 0) return 0;
+    out_id[0] = '\0';
+    out_range[0] = '\0';
+    if (!spec) return 0;
+
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (!*p) return 0;
+    spec = p;
+    for (; *p; p++) {
+        if (*p == '@') { at = p; break; }
+    }
+
+    if (at) {
+        id_end = at;
+        range_start = at + 1;
+    } else {
+        for (p = spec; *p; p++) {
+            if (*p == '<' || *p == '>' || *p == '=' || *p == '!' || *p == '~' || *p == '^') {
+                cmp = p;
+                break;
+            }
+        }
+        if (cmp) {
+            id_end = cmp;
+            range_start = cmp;
+        } else {
+            id_end = spec + strlen(spec);
+            range_start = id_end;
+        }
+    }
+
+    while (id_end > spec && isspace((unsigned char)id_end[-1])) id_end--;
+    while (range_start && *range_start && isspace((unsigned char)*range_start)) range_start++;
+
+    if (id_end <= spec) return 0;
+
+    {
+        size_t id_len = (size_t)(id_end - spec);
+        if ((int)id_len >= out_id_sz) return 0;
+        memcpy(out_id, spec, id_len);
+        out_id[id_len] = '\0';
+    }
+
+    if (range_start && *range_start) {
+        size_t range_len = strlen(range_start);
+        while (range_len > 0 && isspace((unsigned char)range_start[range_len - 1])) range_len--;
+        if ((int)range_len >= out_range_sz) return 0;
+        memcpy(out_range, range_start, range_len);
+        out_range[range_len] = '\0';
+    } else {
+        out_range[0] = '\0';
+    }
+
     return 1;
+}
+
+static int mod_dep_list_add(ModDepList* list, const char* spec, const char* field, char* err, int err_sz) {
+    char dep_id[64];
+    char dep_range[MOD_DEP_RANGE_MAX];
+    int existing = -1;
+
+    if (!list || !spec || !spec[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "manifest field \"%s\" contains an empty dependency spec", field ? field : "?");
+        return 0;
+    }
+    if (!dep_spec_split(spec, dep_id, (int)sizeof(dep_id), dep_range, (int)sizeof(dep_range))) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "manifest field \"%s\" has invalid dependency spec \"%s\"", field ? field : "?", spec);
+        return 0;
+    }
+
+    existing = mod_dep_list_find_by_id(list, dep_id);
+    if (existing >= 0) {
+        if (_stricmp(list->items[existing].range, dep_range) == 0) return 1;
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "manifest field \"%s\" duplicates dependency \"%s\" with a different version range",
+                     field ? field : "?", dep_id);
+        }
+        return 0;
+    }
+
+    if (list->count >= MOD_ID_LIST_MAX) {
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "manifest field \"%s\" has too many entries (max=%d)",
+                     field ? field : "?", MOD_ID_LIST_MAX);
+        }
+        return 0;
+    }
+
+    snprintf(list->items[list->count].id, sizeof(list->items[list->count].id), "%s", dep_id);
+    snprintf(list->items[list->count].range, sizeof(list->items[list->count].range), "%s", dep_range);
+    list->count++;
+    return 1;
+}
+
+static void mod_manifest_set_defaults(ModManifest* manifest, const char* folder_name) {
+    if (!manifest) return;
+    memset(manifest, 0, sizeof(*manifest));
+    if (!folder_name) folder_name = "unknown_mod";
+
+    snprintf(manifest->folder_name, sizeof(manifest->folder_name), "%s", folder_name);
+    snprintf(manifest->folder_path, sizeof(manifest->folder_path), "mods\\%s", folder_name);
+    snprintf(manifest->manifest_path, sizeof(manifest->manifest_path), "%s\\mod.json", manifest->folder_path);
+
+    snprintf(manifest->id, sizeof(manifest->id), "%s", folder_name);
+    snprintf(manifest->name, sizeof(manifest->name), "%s", folder_name);
+    snprintf(manifest->version, sizeof(manifest->version), "?.?.?");
+    snprintf(manifest->author, sizeof(manifest->author), "Unknown");
+    manifest->description[0] = '\0';
+    manifest->entry[0] = '\0';
+    manifest->config_rel[0] = '\0';
+    snprintf(manifest->binds_rel, sizeof(manifest->binds_rel), "binds.cfg");
+    snprintf(manifest->storage_rel, sizeof(manifest->storage_rel), "storage.cfg");
+    manifest->api_version = MOD_API_VERSION;
+    manifest->allow_api_mismatch = 0;
+    manifest->priority = 0;
+    mod_dep_list_reset(&manifest->depends);
+    mod_dep_list_reset(&manifest->optional_deps);
+    mod_id_list_reset(&manifest->conflicts);
+    mod_id_list_reset(&manifest->load_before);
+    mod_id_list_reset(&manifest->load_after);
+}
+
+static void json_cursor_set_error(JsonCursor* jc, const char* msg) {
+    if (!jc || jc->err[0]) return;
+    if (!msg) msg = "invalid json";
+    size_t off = 0;
+    if (jc->start && jc->cur && jc->cur >= jc->start) {
+        off = (size_t)(jc->cur - jc->start);
+    }
+    snprintf(jc->err, sizeof(jc->err), "%s at byte %u", msg, (unsigned)off);
+}
+
+static void json_cursor_skip_ws(JsonCursor* jc) {
+    if (!jc) return;
+    while (jc->cur < jc->end) {
+        char c = *jc->cur;
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        jc->cur++;
+    }
+}
+
+static int json_cursor_expect_char(JsonCursor* jc, char expected, const char* what) {
+    json_cursor_skip_ws(jc);
+    if (!jc || jc->cur >= jc->end || *jc->cur != expected) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "expected %s", what ? what : "token");
+        json_cursor_set_error(jc, buf);
+        return 0;
+    }
+    jc->cur++;
+    return 1;
+}
+
+static int json_hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
+static int json_cursor_parse_hex4(JsonCursor* jc, unsigned* out_codepoint) {
+    unsigned v = 0;
+    if (!jc || !out_codepoint) return 0;
+    if ((jc->end - jc->cur) < 4) {
+        json_cursor_set_error(jc, "invalid \\u escape");
+        return 0;
+    }
+    for (int i = 0; i < 4; i++) {
+        int hv = json_hex_value(jc->cur[i]);
+        if (hv < 0) {
+            json_cursor_set_error(jc, "invalid \\u escape");
+            return 0;
+        }
+        v = (v << 4) | (unsigned)hv;
+    }
+    jc->cur += 4;
+    *out_codepoint = v;
+    return 1;
+}
+
+static int json_cursor_parse_string(JsonCursor* jc, char* out, int out_sz) {
+    int capture = (out && out_sz > 0);
+    int oi = 0;
+    json_cursor_skip_ws(jc);
+
+    if (capture) out[0] = '\0';
+    if (!jc || jc->cur >= jc->end || *jc->cur != '"') {
+        json_cursor_set_error(jc, "expected string");
+        return 0;
+    }
+
+    jc->cur++; // consume opening quote
+    while (jc->cur < jc->end) {
+        unsigned ch = (unsigned char)*jc->cur++;
+        if (ch == '"') {
+            if (capture) out[oi] = '\0';
+            return 1;
+        }
+
+        if (ch == '\\') {
+            if (jc->cur >= jc->end) {
+                json_cursor_set_error(jc, "unterminated escape sequence");
+                return 0;
+            }
+            char esc = *jc->cur++;
+            switch (esc) {
+                case '"':  ch = '"';  break;
+                case '\\': ch = '\\'; break;
+                case '/':  ch = '/';  break;
+                case 'b':  ch = '\b'; break;
+                case 'f':  ch = '\f'; break;
+                case 'n':  ch = '\n'; break;
+                case 'r':  ch = '\r'; break;
+                case 't':  ch = '\t'; break;
+                case 'u': {
+                    unsigned cp = 0;
+                    if (!json_cursor_parse_hex4(jc, &cp)) return 0;
+                    ch = (cp <= 0x7Fu) ? cp : '?';
+                    break;
+                }
+                default:
+                    json_cursor_set_error(jc, "invalid escape sequence");
+                    return 0;
+            }
+        } else if (ch < 0x20u) {
+            json_cursor_set_error(jc, "invalid control character in string");
+            return 0;
+        }
+
+        if (capture) {
+            if (oi + 1 >= out_sz) {
+                json_cursor_set_error(jc, "string value is too long");
+                return 0;
+            }
+            out[oi++] = (char)ch;
+        }
+    }
+
+    json_cursor_set_error(jc, "unterminated string");
+    return 0;
+}
+
+static int json_cursor_parse_bool(JsonCursor* jc, int* out_value) {
+    json_cursor_skip_ws(jc);
+    if (!jc || jc->cur >= jc->end || !out_value) return 0;
+    if ((jc->end - jc->cur) >= 4 && strncmp(jc->cur, "true", 4) == 0) {
+        jc->cur += 4;
+        *out_value = 1;
+        return 1;
+    }
+    if ((jc->end - jc->cur) >= 5 && strncmp(jc->cur, "false", 5) == 0) {
+        jc->cur += 5;
+        *out_value = 0;
+        return 1;
+    }
+    json_cursor_set_error(jc, "expected boolean");
+    return 0;
+}
+
+static int json_cursor_skip_number(JsonCursor* jc) {
+    const char* p = NULL;
+    if (!jc) return 0;
+    p = jc->cur;
+    if (p >= jc->end) {
+        json_cursor_set_error(jc, "expected number");
+        return 0;
+    }
+
+    if (*p == '-') p++;
+    if (p >= jc->end || !isdigit((unsigned char)*p)) {
+        json_cursor_set_error(jc, "expected number");
+        return 0;
+    }
+
+    if (*p == '0') {
+        p++;
+    } else {
+        while (p < jc->end && isdigit((unsigned char)*p)) p++;
+    }
+
+    if (p < jc->end && *p == '.') {
+        p++;
+        if (p >= jc->end || !isdigit((unsigned char)*p)) {
+            json_cursor_set_error(jc, "invalid decimal number");
+            return 0;
+        }
+        while (p < jc->end && isdigit((unsigned char)*p)) p++;
+    }
+
+    if (p < jc->end && (*p == 'e' || *p == 'E')) {
+        p++;
+        if (p < jc->end && (*p == '+' || *p == '-')) p++;
+        if (p >= jc->end || !isdigit((unsigned char)*p)) {
+            json_cursor_set_error(jc, "invalid exponent");
+            return 0;
+        }
+        while (p < jc->end && isdigit((unsigned char)*p)) p++;
+    }
+
+    jc->cur = p;
+    return 1;
+}
+
+static int json_cursor_parse_int(JsonCursor* jc, int* out_value) {
+    const char* tok_start = NULL;
+    char numbuf[64];
+    char* endp = NULL;
+    long v = 0;
+
+    json_cursor_skip_ws(jc);
+    if (!jc || !out_value) return 0;
+    tok_start = jc->cur;
+    if (!json_cursor_skip_number(jc)) return 0;
+
+    for (const char* p = tok_start; p < jc->cur; p++) {
+        if (*p == '.' || *p == 'e' || *p == 'E') {
+            json_cursor_set_error(jc, "expected integer");
+            return 0;
+        }
+    }
+
+    size_t len = (size_t)(jc->cur - tok_start);
+    if (len == 0 || len >= sizeof(numbuf)) {
+        json_cursor_set_error(jc, "invalid integer");
+        return 0;
+    }
+    memcpy(numbuf, tok_start, len);
+    numbuf[len] = '\0';
+
+    v = strtol(numbuf, &endp, 10);
+    if (!endp || *endp != '\0') {
+        json_cursor_set_error(jc, "invalid integer");
+        return 0;
+    }
+    if (v < (long)INT_MIN || v > (long)INT_MAX) {
+        json_cursor_set_error(jc, "integer out of range");
+        return 0;
+    }
+
+    *out_value = (int)v;
+    return 1;
+}
+
+static int json_cursor_skip_value(JsonCursor* jc);
+
+static int json_cursor_skip_array(JsonCursor* jc) {
+    if (!json_cursor_expect_char(jc, '[', "'['")) return 0;
+    json_cursor_skip_ws(jc);
+    if (jc->cur < jc->end && *jc->cur == ']') {
+        jc->cur++;
+        return 1;
+    }
+
+    while (jc->cur < jc->end) {
+        if (!json_cursor_skip_value(jc)) return 0;
+        json_cursor_skip_ws(jc);
+        if (jc->cur < jc->end && *jc->cur == ',') {
+            jc->cur++;
+            continue;
+        }
+        if (jc->cur < jc->end && *jc->cur == ']') {
+            jc->cur++;
+            return 1;
+        }
+        json_cursor_set_error(jc, "expected ',' or ']'");
+        return 0;
+    }
+
+    json_cursor_set_error(jc, "unterminated array");
+    return 0;
+}
+
+static int json_cursor_skip_object(JsonCursor* jc) {
+    if (!json_cursor_expect_char(jc, '{', "'{'")) return 0;
+    json_cursor_skip_ws(jc);
+    if (jc->cur < jc->end && *jc->cur == '}') {
+        jc->cur++;
+        return 1;
+    }
+
+    while (jc->cur < jc->end) {
+        if (!json_cursor_parse_string(jc, NULL, 0)) return 0;
+        if (!json_cursor_expect_char(jc, ':', "':'")) return 0;
+        if (!json_cursor_skip_value(jc)) return 0;
+        json_cursor_skip_ws(jc);
+        if (jc->cur < jc->end && *jc->cur == ',') {
+            jc->cur++;
+            continue;
+        }
+        if (jc->cur < jc->end && *jc->cur == '}') {
+            jc->cur++;
+            return 1;
+        }
+        json_cursor_set_error(jc, "expected ',' or '}'");
+        return 0;
+    }
+
+    json_cursor_set_error(jc, "unterminated object");
+    return 0;
+}
+
+static int json_cursor_skip_value(JsonCursor* jc) {
+    json_cursor_skip_ws(jc);
+    if (!jc || jc->cur >= jc->end) {
+        json_cursor_set_error(jc, "unexpected end of json");
+        return 0;
+    }
+
+    switch (*jc->cur) {
+        case '"':
+            return json_cursor_parse_string(jc, NULL, 0);
+        case '{':
+            return json_cursor_skip_object(jc);
+        case '[':
+            return json_cursor_skip_array(jc);
+        case 't':
+            if ((jc->end - jc->cur) >= 4 && strncmp(jc->cur, "true", 4) == 0) {
+                jc->cur += 4;
+                return 1;
+            }
+            break;
+        case 'f':
+            if ((jc->end - jc->cur) >= 5 && strncmp(jc->cur, "false", 5) == 0) {
+                jc->cur += 5;
+                return 1;
+            }
+            break;
+        case 'n':
+            if ((jc->end - jc->cur) >= 4 && strncmp(jc->cur, "null", 4) == 0) {
+                jc->cur += 4;
+                return 1;
+            }
+            break;
+        default:
+            if (*jc->cur == '-' || isdigit((unsigned char)*jc->cur)) {
+                return json_cursor_skip_number(jc);
+            }
+            break;
+    }
+
+    json_cursor_set_error(jc, "invalid json value");
+    return 0;
+}
+
+static int json_cursor_parse_string_array(JsonCursor* jc, ModIdList* out_list, const char* field_name) {
+    if (!out_list) return 0;
+    mod_id_list_reset(out_list);
+    if (!json_cursor_expect_char(jc, '[', "'['")) return 0;
+    json_cursor_skip_ws(jc);
+
+    if (jc->cur < jc->end && *jc->cur == ']') {
+        jc->cur++;
+        return 1;
+    }
+
+    while (jc->cur < jc->end) {
+        char item[64];
+        item[0] = '\0';
+        if (!json_cursor_parse_string(jc, item, (int)sizeof(item))) return 0;
+        if (!mod_id_list_add(out_list, item, field_name, jc->err, (int)sizeof(jc->err))) return 0;
+
+        json_cursor_skip_ws(jc);
+        if (jc->cur < jc->end && *jc->cur == ',') {
+            jc->cur++;
+            continue;
+        }
+        if (jc->cur < jc->end && *jc->cur == ']') {
+            jc->cur++;
+            return 1;
+        }
+        json_cursor_set_error(jc, "expected ',' or ']'");
+        return 0;
+    }
+
+    json_cursor_set_error(jc, "unterminated string array");
+    return 0;
+}
+
+static int json_cursor_parse_dep_array(JsonCursor* jc, ModDepList* out_list, const char* field_name) {
+    if (!out_list) return 0;
+    mod_dep_list_reset(out_list);
+    if (!json_cursor_expect_char(jc, '[', "'['")) return 0;
+    json_cursor_skip_ws(jc);
+
+    if (jc->cur < jc->end && *jc->cur == ']') {
+        jc->cur++;
+        return 1;
+    }
+
+    while (jc->cur < jc->end) {
+        char item[160];
+        item[0] = '\0';
+        if (!json_cursor_parse_string(jc, item, (int)sizeof(item))) return 0;
+        if (!mod_dep_list_add(out_list, item, field_name, jc->err, (int)sizeof(jc->err))) return 0;
+
+        json_cursor_skip_ws(jc);
+        if (jc->cur < jc->end && *jc->cur == ',') {
+            jc->cur++;
+            continue;
+        }
+        if (jc->cur < jc->end && *jc->cur == ']') {
+            jc->cur++;
+            return 1;
+        }
+        json_cursor_set_error(jc, "expected ',' or ']'");
+        return 0;
+    }
+
+    json_cursor_set_error(jc, "unterminated dependency array");
+    return 0;
+}
+
+static int read_text_file_alloc(const char* path, char** out_text, size_t* out_len, char* err, int err_sz) {
+    FILE* f = NULL;
+    long sz = 0;
+    size_t read_bytes = 0;
+    char* buf = NULL;
+
+    if (out_text) *out_text = NULL;
+    if (out_len) *out_len = 0;
+    if (!path || !out_text) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "invalid file read args");
+        return 0;
+    }
+
+    f = fopen(path, "rb");
+    if (!f) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "could not open %s", path);
+        return 0;
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        if (err && err_sz > 0) snprintf(err, err_sz, "could not seek %s", path);
+        return 0;
+    }
+
+    sz = ftell(f);
+    if (sz < 0) {
+        fclose(f);
+        if (err && err_sz > 0) snprintf(err, err_sz, "could not size %s", path);
+        return 0;
+    }
+
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        if (err && err_sz > 0) snprintf(err, err_sz, "could not rewind %s", path);
+        return 0;
+    }
+
+    buf = (char*)malloc((size_t)sz + 1u);
+    if (!buf) {
+        fclose(f);
+        if (err && err_sz > 0) snprintf(err, err_sz, "out of memory reading %s", path);
+        return 0;
+    }
+
+    if (sz > 0) {
+        read_bytes = fread(buf, 1, (size_t)sz, f);
+        if (read_bytes != (size_t)sz) {
+            free(buf);
+            fclose(f);
+            if (err && err_sz > 0) snprintf(err, err_sz, "failed to read %s", path);
+            return 0;
+        }
+    }
+    buf[(size_t)sz] = '\0';
+    fclose(f);
+
+    *out_text = buf;
+    if (out_len) *out_len = (size_t)sz;
+    return 1;
+}
+
+static int parse_mod_manifest_json(const char* json_text, size_t json_len, ModManifest* manifest, char* err, int err_sz) {
+    JsonCursor jc;
+    int saw_id = 0;
+    int saw_name = 0;
+    int saw_version = 0;
+    int saw_author = 0;
+    int saw_entry = 0;
+
+    if (!json_text || !manifest) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "invalid manifest parse args");
+        return 0;
+    }
+
+    memset(&jc, 0, sizeof(jc));
+    jc.start = json_text;
+    jc.cur = json_text;
+    jc.end = json_text + json_len;
+    jc.err[0] = '\0';
+
+    if (!json_cursor_expect_char(&jc, '{', "'{'")) goto fail;
+    json_cursor_skip_ws(&jc);
+    if (jc.cur < jc.end && *jc.cur == '}') {
+        json_cursor_set_error(&jc, "manifest must be a non-empty object");
+        goto fail;
+    }
+
+    while (jc.cur < jc.end) {
+        char key[64];
+        key[0] = '\0';
+
+        if (!json_cursor_parse_string(&jc, key, (int)sizeof(key))) goto fail;
+        if (!json_cursor_expect_char(&jc, ':', "':'")) goto fail;
+
+        if (_stricmp(key, "id") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->id, (int)sizeof(manifest->id))) goto fail;
+            saw_id = 1;
+        } else if (_stricmp(key, "name") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->name, (int)sizeof(manifest->name))) goto fail;
+            saw_name = 1;
+        } else if (_stricmp(key, "version") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->version, (int)sizeof(manifest->version))) goto fail;
+            saw_version = 1;
+        } else if (_stricmp(key, "author") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->author, (int)sizeof(manifest->author))) goto fail;
+            saw_author = 1;
+        } else if (_stricmp(key, "description") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->description, (int)sizeof(manifest->description))) goto fail;
+        } else if (_stricmp(key, "entry") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->entry, (int)sizeof(manifest->entry))) goto fail;
+            saw_entry = 1;
+        } else if (_stricmp(key, "config") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->config_rel, (int)sizeof(manifest->config_rel))) goto fail;
+        } else if (_stricmp(key, "binds") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->binds_rel, (int)sizeof(manifest->binds_rel))) goto fail;
+        } else if (_stricmp(key, "storage") == 0) {
+            if (!json_cursor_parse_string(&jc, manifest->storage_rel, (int)sizeof(manifest->storage_rel))) goto fail;
+        } else if (_stricmp(key, "api_version") == 0) {
+            if (!json_cursor_parse_int(&jc, &manifest->api_version)) goto fail;
+        } else if (_stricmp(key, "allow_api_mismatch") == 0) {
+            if (!json_cursor_parse_bool(&jc, &manifest->allow_api_mismatch)) goto fail;
+        } else if (_stricmp(key, "priority") == 0) {
+            if (!json_cursor_parse_int(&jc, &manifest->priority)) goto fail;
+        } else if (_stricmp(key, "depends") == 0) {
+            if (!json_cursor_parse_dep_array(&jc, &manifest->depends, "depends")) goto fail;
+        } else if (_stricmp(key, "optional_deps") == 0) {
+            if (!json_cursor_parse_dep_array(&jc, &manifest->optional_deps, "optional_deps")) goto fail;
+        } else if (_stricmp(key, "conflicts") == 0) {
+            if (!json_cursor_parse_string_array(&jc, &manifest->conflicts, "conflicts")) goto fail;
+        } else if (_stricmp(key, "load_before") == 0) {
+            if (!json_cursor_parse_string_array(&jc, &manifest->load_before, "load_before")) goto fail;
+        } else if (_stricmp(key, "load_after") == 0) {
+            if (!json_cursor_parse_string_array(&jc, &manifest->load_after, "load_after")) goto fail;
+        } else {
+            if (!json_cursor_skip_value(&jc)) goto fail;
+        }
+
+        json_cursor_skip_ws(&jc);
+        if (jc.cur < jc.end && *jc.cur == ',') {
+            jc.cur++;
+            continue;
+        }
+        if (jc.cur < jc.end && *jc.cur == '}') {
+            jc.cur++;
+            break;
+        }
+        json_cursor_set_error(&jc, "expected ',' or '}'");
+        goto fail;
+    }
+
+    json_cursor_skip_ws(&jc);
+    if (jc.cur != jc.end) {
+        json_cursor_set_error(&jc, "unexpected trailing data");
+        goto fail;
+    }
+
+    if (!saw_id || !manifest->id[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing required string field \"id\"");
+        return 0;
+    }
+    if (!saw_name || !manifest->name[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing required string field \"name\"");
+        return 0;
+    }
+    if (!saw_version || !manifest->version[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing required string field \"version\"");
+        return 0;
+    }
+    if (!saw_author || !manifest->author[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing required string field \"author\"");
+        return 0;
+    }
+    if (!saw_entry || !manifest->entry[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing required string field \"entry\"");
+        return 0;
+    }
+
+    return 1;
+
+fail:
+    if (err && err_sz > 0) {
+        snprintf(err, err_sz, "%s", jc.err[0] ? jc.err : "invalid mod.json");
+    }
+    return 0;
+}
+
+static int parse_mod_manifest_file(const char* folder_name, ModManifest* out_manifest, char* err, int err_sz) {
+    char* json_text = NULL;
+    size_t json_len = 0;
+
+    if (!folder_name || !out_manifest) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "invalid manifest load args");
+        return 0;
+    }
+
+    mod_manifest_set_defaults(out_manifest, folder_name);
+    if (!read_text_file_alloc(out_manifest->manifest_path, &json_text, &json_len, err, err_sz)) {
+        return 0;
+    }
+
+    int ok = parse_mod_manifest_json(json_text, json_len, out_manifest, err, err_sz);
+    free(json_text);
+    return ok;
+}
+
+static int global_allow_api_mismatch(void) {
+    if (g_allow_api_mismatch_global >= 0) return g_allow_api_mismatch_global;
+    g_allow_api_mismatch_global = 0;
+    const char* env = getenv("LUNA_ALLOW_API_MISMATCH");
+    if (!env || !env[0]) return g_allow_api_mismatch_global;
+    if (_stricmp(env, "1") == 0 ||
+        _stricmp(env, "true") == 0 ||
+        _stricmp(env, "yes") == 0 ||
+        _stricmp(env, "on") == 0) {
+        g_allow_api_mismatch_global = 1;
+    }
+    return g_allow_api_mismatch_global;
 }
 
 // =============================
@@ -405,6 +1418,234 @@ static int parse_bool(const char* s) {
     if (_stricmp(s, "on") == 0) return 1;
     if (strcmp(s, "1") == 0) return 1;
     return 0;
+}
+
+typedef struct SemVersion {
+    int major;
+    int minor;
+    int patch;
+    int has_prerelease;
+    char prerelease[64];
+} SemVersion;
+
+static int semver_is_numeric_token(const char* s) {
+    if (!s || !s[0]) return 0;
+    for (const char* p = s; *p; p++) {
+        if (!isdigit((unsigned char)*p)) return 0;
+    }
+    return 1;
+}
+
+static int semver_parse(const char* src, SemVersion* out) {
+    char buf[128];
+    char* p = NULL;
+    char* dash = NULL;
+    char* plus = NULL;
+    int parts[3] = {0, 0, 0};
+    int part_count = 0;
+
+    if (!src || !out) return 0;
+    memset(out, 0, sizeof(*out));
+
+    snprintf(buf, sizeof(buf), "%s", src);
+    str_trim(buf);
+    if (!buf[0]) return 0;
+
+    p = buf;
+    if (p[0] == 'v' || p[0] == 'V') p++;
+
+    plus = strchr(p, '+');
+    if (plus) *plus = '\0';
+
+    dash = strchr(p, '-');
+    if (dash) {
+        *dash = '\0';
+        dash++;
+        str_trim(dash);
+        if (dash[0]) {
+            out->has_prerelease = 1;
+            snprintf(out->prerelease, sizeof(out->prerelease), "%s", dash);
+        }
+    }
+
+    for (char* tok = strtok(p, "."); tok; tok = strtok(NULL, ".")) {
+        long v;
+        char* endp = NULL;
+        if (part_count >= 3) return 0;
+        if (!tok[0]) return 0;
+        for (char* q = tok; *q; q++) {
+            if (!isdigit((unsigned char)*q)) return 0;
+        }
+        v = strtol(tok, &endp, 10);
+        if (!endp || *endp != '\0' || v < 0 || v > INT_MAX) return 0;
+        parts[part_count++] = (int)v;
+    }
+    if (part_count <= 0) return 0;
+
+    out->major = parts[0];
+    out->minor = (part_count >= 2) ? parts[1] : 0;
+    out->patch = (part_count >= 3) ? parts[2] : 0;
+    return 1;
+}
+
+static int semver_compare_prerelease(const char* a, const char* b) {
+    const char* pa = a ? a : "";
+    const char* pb = b ? b : "";
+
+    while (1) {
+        char ta[32];
+        char tb[32];
+        int tai = 0;
+        int tbi = 0;
+
+        while (*pa && *pa != '.') {
+            if (tai + 1 < (int)sizeof(ta)) ta[tai++] = *pa;
+            pa++;
+        }
+        while (*pb && *pb != '.') {
+            if (tbi + 1 < (int)sizeof(tb)) tb[tbi++] = *pb;
+            pb++;
+        }
+        ta[tai] = '\0';
+        tb[tbi] = '\0';
+
+        if (!ta[0] && !tb[0]) return 0;
+        if (!ta[0]) return -1;
+        if (!tb[0]) return 1;
+
+        {
+            int a_num = semver_is_numeric_token(ta);
+            int b_num = semver_is_numeric_token(tb);
+            if (a_num && b_num) {
+                long av = strtol(ta, NULL, 10);
+                long bv = strtol(tb, NULL, 10);
+                if (av < bv) return -1;
+                if (av > bv) return 1;
+            } else if (a_num && !b_num) {
+                return -1;
+            } else if (!a_num && b_num) {
+                return 1;
+            } else {
+                int c = strcmp(ta, tb);
+                if (c < 0) return -1;
+                if (c > 0) return 1;
+            }
+        }
+
+        if (*pa == '.') pa++;
+        if (*pb == '.') pb++;
+        if (!*pa && !*pb) return 0;
+        if (!*pa && *pb) return -1;
+        if (*pa && !*pb) return 1;
+    }
+}
+
+static int semver_compare(const SemVersion* a, const SemVersion* b) {
+    if (!a || !b) return 0;
+    if (a->major != b->major) return (a->major < b->major) ? -1 : 1;
+    if (a->minor != b->minor) return (a->minor < b->minor) ? -1 : 1;
+    if (a->patch != b->patch) return (a->patch < b->patch) ? -1 : 1;
+    if (!a->has_prerelease && !b->has_prerelease) return 0;
+    if (a->has_prerelease && !b->has_prerelease) return -1;
+    if (!a->has_prerelease && b->has_prerelease) return 1;
+    return semver_compare_prerelease(a->prerelease, b->prerelease);
+}
+
+static int semver_eval_clause(const SemVersion* have, const char* clause) {
+    char token[96];
+    const char* p = clause;
+    const char* ver_text = NULL;
+    int op = 0; // 1==,2!=,3>,4>=,5<,6<=,7^,8~
+    SemVersion want;
+    SemVersion upper;
+    int cmp = 0;
+
+    if (!have || !clause) return 0;
+    snprintf(token, sizeof(token), "%s", clause);
+    str_trim(token);
+    if (!token[0] || strcmp(token, "*") == 0 || _stricmp(token, "x") == 0) return 1;
+    p = token;
+
+    if (strncmp(p, ">=", 2) == 0) { op = 4; ver_text = p + 2; }
+    else if (strncmp(p, "<=", 2) == 0) { op = 6; ver_text = p + 2; }
+    else if (strncmp(p, "==", 2) == 0) { op = 1; ver_text = p + 2; }
+    else if (strncmp(p, "!=", 2) == 0) { op = 2; ver_text = p + 2; }
+    else if (*p == '>') { op = 3; ver_text = p + 1; }
+    else if (*p == '<') { op = 5; ver_text = p + 1; }
+    else if (*p == '=') { op = 1; ver_text = p + 1; }
+    else if (*p == '^') { op = 7; ver_text = p + 1; }
+    else if (*p == '~') { op = 8; ver_text = p + 1; }
+    else { op = 1; ver_text = p; }
+
+    if (!ver_text || !ver_text[0]) return 0;
+    if (!semver_parse(ver_text, &want)) return 0;
+
+    cmp = semver_compare(have, &want);
+    if (op == 1) return cmp == 0;
+    if (op == 2) return cmp != 0;
+    if (op == 3) return cmp > 0;
+    if (op == 4) return cmp >= 0;
+    if (op == 5) return cmp < 0;
+    if (op == 6) return cmp <= 0;
+
+    if (op == 7 || op == 8) {
+        upper = want;
+        upper.has_prerelease = 0;
+        upper.prerelease[0] = '\0';
+        if (op == 7) {
+            if (want.major > 0) {
+                upper.major = want.major + 1;
+                upper.minor = 0;
+                upper.patch = 0;
+            } else if (want.minor > 0) {
+                upper.major = 0;
+                upper.minor = want.minor + 1;
+                upper.patch = 0;
+            } else {
+                upper.major = 0;
+                upper.minor = 0;
+                upper.patch = want.patch + 1;
+            }
+        } else {
+            upper.major = want.major;
+            upper.minor = want.minor + 1;
+            upper.patch = 0;
+        }
+        return semver_compare(have, &want) >= 0 && semver_compare(have, &upper) < 0;
+    }
+
+    return 0;
+}
+
+static int semver_satisfies_range(const char* version, const char* range) {
+    SemVersion have;
+    char buf[192];
+    char clause[96];
+    int ci = 0;
+
+    if (!range || !range[0] || strcmp(range, "*") == 0) return 1;
+    if (!version || !version[0]) return 0;
+    if (!semver_parse(version, &have)) return 0;
+
+    snprintf(buf, sizeof(buf), "%s", range);
+    for (size_t i = 0;; i++) {
+        char c = buf[i];
+        int at_end = (c == '\0');
+        int is_sep = (!at_end && (c == ',' || isspace((unsigned char)c)));
+        if (!at_end && !is_sep) {
+            if (ci + 1 < (int)sizeof(clause)) clause[ci++] = c;
+            continue;
+        }
+
+        if (ci > 0) {
+            clause[ci] = '\0';
+            if (!semver_eval_clause(&have, clause)) return 0;
+            ci = 0;
+        }
+        if (at_end) break;
+    }
+
+    return 1;
 }
 
 static const char* type_to_string(int type) {
@@ -600,6 +1841,214 @@ static ConfigAction* mod_config_get_or_add_action(LoadedMod* mod, const char* ke
     a->handlers.count = 0;
     a->handlers.cap = 0;
     return a;
+}
+
+static InputBinding* mod_bind_by_index(LoadedMod* mod, int bind_index) {
+    if (!mod) return NULL;
+    if (bind_index < 0 || bind_index >= mod->bind_count) return NULL;
+    return &mod->binds[bind_index];
+}
+
+typedef struct BindNameMap {
+    int sym;
+    const char* name;
+} BindNameMap;
+
+static const BindNameMap k_bind_name_map[] = {
+    { 8, "Backspace" },
+    { 9, "Tab" },
+    { 13, "Enter" },
+    { 27, "Escape" },
+    { 32, "Space" },
+    { 127, "Delete" },
+    { 1073741882, "F1" }, { 1073741883, "F2" }, { 1073741884, "F3" },
+    { 1073741885, "F4" }, { 1073741886, "F5" }, { 1073741887, "F6" },
+    { 1073741888, "F7" }, { 1073741889, "F8" }, { 1073741890, "F9" },
+    { 1073741891, "F10" }, { 1073741892, "F11" }, { 1073741893, "F12" },
+    { 1073741898, "Home" },
+    { 1073741899, "PageUp" },
+    { 1073741901, "End" },
+    { 1073741902, "PageDown" },
+    { 1073741903, "Right" },
+    { 1073741904, "Left" },
+    { 1073741905, "Down" },
+    { 1073741906, "Up" },
+    { 1073741912, "KeypadEnter" },
+    { '`', "Backtick" },
+};
+
+static int bind_sym_to_name(int sym, char* out, size_t outsz) {
+    if (!out || outsz == 0) return 0;
+    out[0] = '\0';
+    if (sym == 0) {
+        snprintf(out, outsz, "Unbound");
+        return 1;
+    }
+    for (size_t i = 0; i < sizeof(k_bind_name_map) / sizeof(k_bind_name_map[0]); i++) {
+        if (k_bind_name_map[i].sym == sym) {
+            snprintf(out, outsz, "%s", k_bind_name_map[i].name);
+            return 1;
+        }
+    }
+    if (sym >= 33 && sym <= 126) {
+        if (sym >= 'a' && sym <= 'z') sym = toupper(sym);
+        snprintf(out, outsz, "%c", (char)sym);
+        return 1;
+    }
+    snprintf(out, outsz, "Key%d", sym);
+    return 1;
+}
+
+static int bind_name_to_sym(const char* name, int* out_sym) {
+    if (!name || !name[0]) return 0;
+    while (*name && isspace((unsigned char)*name)) name++;
+    if (!name[0]) return 0;
+    if (_stricmp(name, "none") == 0 || _stricmp(name, "unbound") == 0 || _stricmp(name, "clear") == 0) {
+        if (out_sym) *out_sym = 0;
+        return 1;
+    }
+    for (size_t i = 0; i < sizeof(k_bind_name_map) / sizeof(k_bind_name_map[0]); i++) {
+        if (_stricmp(name, k_bind_name_map[i].name) == 0) {
+            if (out_sym) *out_sym = k_bind_name_map[i].sym;
+            return 1;
+        }
+    }
+    if ((_strnicmp(name, "Key", 3) == 0 || _strnicmp(name, "SDLK_", 5) == 0) && isdigit((unsigned char)name[strlen(name)-1])) {
+        const char* n = (_strnicmp(name, "Key", 3) == 0) ? (name + 3) : (name + 5);
+        int v = atoi(n);
+        if (out_sym) *out_sym = v;
+        return 1;
+    }
+    if (!name[1]) {
+        int sym = (unsigned char)name[0];
+        if (sym >= 'A' && sym <= 'Z') sym = tolower(sym);
+        if (out_sym) *out_sym = sym;
+        return 1;
+    }
+    return 0;
+}
+
+static void mod_bind_update_name(InputBinding* bind) {
+    if (!bind) return;
+    bind_sym_to_name(bind->sym, bind->value_name, sizeof(bind->value_name));
+}
+
+static void mod_bind_clear(LoadedMod* mod) {
+    if (!mod) return;
+    if (mod->binds) {
+        free(mod->binds);
+        mod->binds = NULL;
+    }
+    mod->bind_count = 0;
+    mod->bind_cap = 0;
+    mod->binds_path[0] = '\0';
+}
+
+static int mod_bind_find_index(LoadedMod* mod, const char* key) {
+    if (!mod || !key || !key[0]) return -1;
+    for (int i = 0; i < mod->bind_count; i++) {
+        if (_stricmp(mod->binds[i].key, key) == 0) return i;
+    }
+    return -1;
+}
+
+static int mod_bind_ensure_capacity(LoadedMod* mod, int needed) {
+    int newcap;
+    InputBinding* nb;
+    if (!mod) return 0;
+    if (needed <= mod->bind_cap) return 1;
+    newcap = (mod->bind_cap == 0) ? 4 : (mod->bind_cap * 2);
+    while (newcap < needed) newcap *= 2;
+    nb = (InputBinding*)realloc(mod->binds, sizeof(InputBinding) * newcap);
+    if (!nb) return 0;
+    mod->binds = nb;
+    mod->bind_cap = newcap;
+    return 1;
+}
+
+static int mod_bind_register(LoadedMod* mod, const char* key, const char* label, int default_sym) {
+    int idx;
+    if (!mod || !key || !key[0]) return -1;
+    idx = mod_bind_find_index(mod, key);
+    if (idx >= 0) {
+        InputBinding* b = &mod->binds[idx];
+        if (label && label[0]) snprintf(b->label, sizeof(b->label), "%s", label);
+        if (default_sym != 0 && b->default_sym == 0) b->default_sym = default_sym;
+        if (b->sym == 0 && default_sym != 0) b->sym = default_sym;
+        mod_bind_update_name(b);
+        return idx;
+    }
+    if (!mod_bind_ensure_capacity(mod, mod->bind_count + 1)) return -1;
+    idx = mod->bind_count++;
+    memset(&mod->binds[idx], 0, sizeof(mod->binds[idx]));
+    snprintf(mod->binds[idx].key, sizeof(mod->binds[idx].key), "%s", key);
+    snprintf(mod->binds[idx].label, sizeof(mod->binds[idx].label), "%s", (label && label[0]) ? label : key);
+    mod->binds[idx].default_sym = default_sym;
+    mod->binds[idx].sym = default_sym;
+    mod_bind_update_name(&mod->binds[idx]);
+    return idx;
+}
+
+static int mod_bind_save(LoadedMod* mod) {
+    FILE* f;
+    if (!mod || !mod->binds_path[0]) return 0;
+    f = fopen(mod->binds_path, "w");
+    if (!f) return 0;
+    fprintf(f, "# Luna binds v1\n");
+    for (int i = 0; i < mod->bind_count; i++) {
+        char name[64];
+        bind_sym_to_name(mod->binds[i].sym, name, sizeof(name));
+        fprintf(f, "%s: %s\n", mod->binds[i].key, name);
+    }
+    fclose(f);
+    return 1;
+}
+
+static int mod_bind_load(LoadedMod* mod) {
+    FILE* f;
+    if (!mod || !mod->binds_path[0]) return 0;
+    f = fopen(mod->binds_path, "r");
+    if (!f) return 1;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        char* colon;
+        char* key;
+        char* value;
+        int idx;
+        int sym = 0;
+        str_trim(line);
+        if (!line[0] || line[0] == '#') continue;
+        colon = strchr(line, ':');
+        if (!colon) continue;
+        *colon = '\0';
+        key = line;
+        value = colon + 1;
+        str_trim(key);
+        str_trim(value);
+        if (!key[0]) continue;
+        idx = mod_bind_find_index(mod, key);
+        if (idx < 0) continue;
+        if (!bind_name_to_sym(value, &sym)) continue;
+        mod->binds[idx].sym = sym;
+        mod_bind_update_name(&mod->binds[idx]);
+    }
+    fclose(f);
+    return 1;
+}
+
+static int mod_bind_has_conflict(LoadedMod* mod, int bind_index) {
+    InputBinding* bind = mod_bind_by_index(mod, bind_index);
+    if (!bind || bind->sym == 0) return 0;
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* other = &g_mods[mi];
+        for (int bi = 0; bi < other->bind_count; bi++) {
+            InputBinding* other_bind = &other->binds[bi];
+            if (other == mod && bi == bind_index) continue;
+            if (other_bind->sym == 0) continue;
+            if (other_bind->sym == bind->sym) return 1;
+        }
+    }
+    return 0;
 }
 
 static void cfg_escape_and_quote(const char* in, char* out, size_t outsz) {
@@ -803,6 +2252,185 @@ static int mod_config_load(LoadedMod* mod) {
     return 1;
 }
 
+static void mod_storage_clear(LoadedMod* mod) {
+    if (!mod) return;
+    free(mod->storage_entries);
+    mod->storage_entries = NULL;
+    mod->storage_count = 0;
+    mod->storage_cap = 0;
+    mod->storage_schema_version = 0;
+    mod->storage_suspend_save = 0;
+}
+
+static int mod_storage_find_index(LoadedMod* mod, const char* key) {
+    if (!mod || !key || !key[0]) return -1;
+    for (int i = 0; i < mod->storage_count; i++) {
+        if (_stricmp(mod->storage_entries[i].key, key) == 0) return i;
+    }
+    return -1;
+}
+
+static int mod_storage_key_valid(const char* key) {
+    if (!key || !key[0]) return 0;
+    if (strlen(key) >= MOD_STORAGE_KEY_MAX) return 0;
+    if (_stricmp(key, "__schema") == 0) return 0;
+    for (const char* p = key; *p; p++) {
+        if (*p == ':' || *p == ',' || *p == '\r' || *p == '\n' || *p == '\t') return 0;
+    }
+    return 1;
+}
+
+static int mod_storage_ensure_capacity(LoadedMod* mod, int needed) {
+    if (!mod || needed <= 0) return 0;
+    if (needed <= mod->storage_cap) return 1;
+    int newcap = (mod->storage_cap == 0) ? 8 : (mod->storage_cap * 2);
+    while (newcap < needed) newcap *= 2;
+    StorageEntry* ne = (StorageEntry*)realloc(mod->storage_entries, sizeof(StorageEntry) * newcap);
+    if (!ne) return 0;
+    mod->storage_entries = ne;
+    mod->storage_cap = newcap;
+    return 1;
+}
+
+static int mod_storage_set_value(LoadedMod* mod, const char* key, int type, int bool_value, double num_value, const char* str_value) {
+    int idx;
+    StorageEntry* e;
+    if (!mod || !mod_storage_key_valid(key)) return 0;
+    if (type != MOD_STORAGE_BOOL && type != MOD_STORAGE_NUMBER && type != MOD_STORAGE_STRING) return 0;
+
+    idx = mod_storage_find_index(mod, key);
+    if (idx < 0) {
+        if (!mod_storage_ensure_capacity(mod, mod->storage_count + 1)) return 0;
+        idx = mod->storage_count++;
+        memset(&mod->storage_entries[idx], 0, sizeof(mod->storage_entries[idx]));
+        snprintf(mod->storage_entries[idx].key, sizeof(mod->storage_entries[idx].key), "%s", key);
+    }
+
+    e = &mod->storage_entries[idx];
+    e->type = type;
+    if (type == MOD_STORAGE_BOOL) {
+        e->bool_value = bool_value ? 1 : 0;
+        e->num_value = e->bool_value ? 1.0 : 0.0;
+        e->str_value[0] = '\0';
+    } else if (type == MOD_STORAGE_NUMBER) {
+        e->num_value = num_value;
+        e->bool_value = (num_value != 0.0) ? 1 : 0;
+        e->str_value[0] = '\0';
+    } else {
+        if (!str_value) str_value = "";
+        snprintf(e->str_value, sizeof(e->str_value), "%s", str_value);
+        e->bool_value = parse_bool(str_value);
+        e->num_value = atof(str_value);
+    }
+    return 1;
+}
+
+static int mod_storage_remove_key(LoadedMod* mod, const char* key) {
+    int idx = mod_storage_find_index(mod, key);
+    if (!mod || idx < 0) return 0;
+    if (idx < mod->storage_count - 1) {
+        memmove(&mod->storage_entries[idx],
+                &mod->storage_entries[idx + 1],
+                sizeof(StorageEntry) * (size_t)(mod->storage_count - idx - 1));
+    }
+    mod->storage_count--;
+    return 1;
+}
+
+static int mod_storage_save(LoadedMod* mod) {
+    FILE* f = NULL;
+    if (!mod || !mod->storage_path[0]) return 0;
+    f = fopen(mod->storage_path, "w");
+    if (!f) return 0;
+
+    fprintf(f, "# Eggnogg+ mod storage (v1)\n");
+    fprintf(f, "__schema: int, %d\n", mod->storage_schema_version);
+    for (int i = 0; i < mod->storage_count; i++) {
+        const StorageEntry* e = &mod->storage_entries[i];
+        if (e->type == MOD_STORAGE_BOOL) {
+            fprintf(f, "%s: bool, %s\n", e->key, e->bool_value ? "true" : "false");
+        } else if (e->type == MOD_STORAGE_NUMBER) {
+            fprintf(f, "%s: num, %.17g\n", e->key, e->num_value);
+        } else if (e->type == MOD_STORAGE_STRING) {
+            char q[MOD_STORAGE_STR_MAX * 2];
+            cfg_escape_and_quote(e->str_value, q, sizeof(q));
+            fprintf(f, "%s: str, %s\n", e->key, q);
+        }
+    }
+
+    fclose(f);
+    return 1;
+}
+
+static int mod_storage_load(LoadedMod* mod) {
+    FILE* f = NULL;
+    char line[640];
+    if (!mod || !mod->storage_path[0]) return 0;
+
+    mod_storage_clear(mod);
+
+    f = fopen(mod->storage_path, "r");
+    if (!f) return 1; // storage is optional; create lazily on first write.
+
+    while (fgets(line, sizeof(line), f)) {
+        char key[MOD_STORAGE_KEY_MAX];
+        char rest[512];
+        char type_str[64];
+        char value_str[MOD_STORAGE_STR_MAX];
+        char* colon = NULL;
+        char* comma = NULL;
+
+        line[strcspn(line, "\r\n")] = '\0';
+        str_trim(line);
+        if (!line[0] || line[0] == '#' || line[0] == ';') continue;
+        if (line[0] == '/' && line[1] == '/') continue;
+
+        colon = strchr(line, ':');
+        if (!colon) continue;
+        *colon = '\0';
+        snprintf(key, sizeof(key), "%s", line);
+        str_trim(key);
+        if (!key[0]) continue;
+
+        snprintf(rest, sizeof(rest), "%s", colon + 1);
+        str_trim(rest);
+        if (!rest[0]) continue;
+
+        comma = find_top_level_comma(rest);
+        if (comma) {
+            *comma = '\0';
+            snprintf(type_str, sizeof(type_str), "%s", rest);
+            snprintf(value_str, sizeof(value_str), "%s", comma + 1);
+        } else {
+            snprintf(type_str, sizeof(type_str), "%s", rest);
+            value_str[0] = '\0';
+        }
+
+        str_trim(type_str);
+        str_trim(value_str);
+        unquote_inplace(value_str);
+
+        if (_stricmp(key, "__schema") == 0) {
+            mod->storage_schema_version = atoi(value_str);
+            if (mod->storage_schema_version < 0) mod->storage_schema_version = 0;
+            continue;
+        }
+
+        if (!mod_storage_key_valid(key)) continue;
+        if (_stricmp(type_str, "bool") == 0 || _stricmp(type_str, "boolean") == 0) {
+            mod_storage_set_value(mod, key, MOD_STORAGE_BOOL, parse_bool(value_str), 0.0, NULL);
+        } else if (_stricmp(type_str, "num") == 0 || _stricmp(type_str, "number") == 0 ||
+                   _stricmp(type_str, "int") == 0 || _stricmp(type_str, "float") == 0) {
+            mod_storage_set_value(mod, key, MOD_STORAGE_NUMBER, 0, atof(value_str), NULL);
+        } else if (_stricmp(type_str, "str") == 0 || _stricmp(type_str, "string") == 0) {
+            mod_storage_set_value(mod, key, MOD_STORAGE_STRING, 0, 0.0, value_str);
+        }
+    }
+
+    fclose(f);
+    return 1;
+}
+
 // =============================
 // Small helpers
 // =============================
@@ -829,6 +2457,77 @@ static void reflist_clear(lua_State* Ls, LuaRefList* list) {
     list->refs = NULL;
     list->count = 0;
     list->cap = 0;
+}
+
+static int reflist_snapshot(const LuaRefList* list, int** out_refs, int* out_count) {
+    if (out_refs) *out_refs = NULL;
+    if (out_count) *out_count = 0;
+    if (!list || list->count <= 0 || !list->refs) return 1;
+    if (!out_refs || !out_count) return 0;
+
+    int count = list->count;
+    int* refs = (int*)malloc(sizeof(int) * count);
+    if (!refs) return 0;
+
+    memcpy(refs, list->refs, sizeof(int) * count);
+    *out_refs = refs;
+    *out_count = count;
+    return 1;
+}
+
+static int interop_find_index_by_ns(const char* ns) {
+    if (!ns || !ns[0]) return -1;
+    for (int i = 0; i < g_interop_provider_count; i++) {
+        if (_stricmp(g_interop_providers[i].ns, ns) == 0) return i;
+    }
+    return -1;
+}
+
+static int interop_ensure_capacity(int needed) {
+    if (needed <= g_interop_provider_cap) return 1;
+    int newcap = (g_interop_provider_cap == 0) ? 8 : (g_interop_provider_cap * 2);
+    while (newcap < needed) newcap *= 2;
+    InteropProvider* ne = (InteropProvider*)realloc(g_interop_providers, sizeof(InteropProvider) * newcap);
+    if (!ne) return 0;
+    g_interop_providers = ne;
+    g_interop_provider_cap = newcap;
+    return 1;
+}
+
+static void interop_remove_index(lua_State* Ls, int idx) {
+    if (idx < 0 || idx >= g_interop_provider_count) return;
+    if (Ls && g_interop_providers[idx].table_ref != LUA_NOREF && g_interop_providers[idx].table_ref != LUA_REFNIL) {
+        luaL_unref(Ls, LUA_REGISTRYINDEX, g_interop_providers[idx].table_ref);
+    }
+    if (idx < g_interop_provider_count - 1) {
+        memmove(&g_interop_providers[idx],
+                &g_interop_providers[idx + 1],
+                sizeof(InteropProvider) * (size_t)(g_interop_provider_count - idx - 1));
+    }
+    g_interop_provider_count--;
+}
+
+static void interop_remove_owner(lua_State* Ls, LoadedMod* owner) {
+    if (!owner) return;
+    for (int i = g_interop_provider_count - 1; i >= 0; i--) {
+        if (g_interop_providers[i].owner == owner) {
+            interop_remove_index(Ls, i);
+        }
+    }
+}
+
+static void interop_clear_all(lua_State* Ls) {
+    if (Ls) {
+        for (int i = 0; i < g_interop_provider_count; i++) {
+            if (g_interop_providers[i].table_ref != LUA_NOREF && g_interop_providers[i].table_ref != LUA_REFNIL) {
+                luaL_unref(Ls, LUA_REGISTRYINDEX, g_interop_providers[i].table_ref);
+            }
+        }
+    }
+    free(g_interop_providers);
+    g_interop_providers = NULL;
+    g_interop_provider_count = 0;
+    g_interop_provider_cap = 0;
 }
 
 static LoadedMod* mods_add(void) {
@@ -862,6 +2561,10 @@ static LoadedMod* mods_add(void) {
     m->ui_native_count = 0;
     m->ui_native_cap = 0;
 
+    m->depends.count = 0;
+    m->optional_deps.count = 0;
+    m->conflicts.count = 0;
+
     m->config_rel[0] = '\0';
     m->config_path[0] = '\0';
     m->cfg_entries = NULL;
@@ -870,6 +2573,27 @@ static LoadedMod* mods_add(void) {
     m->cfg_actions = NULL;
     m->cfg_action_count = 0;
     m->cfg_action_cap = 0;
+    m->binds = NULL;
+    m->bind_count = 0;
+    m->bind_cap = 0;
+    m->binds_path[0] = '\0';
+    m->storage_rel[0] = '\0';
+    m->binds_rel[0] = '\0';
+    m->storage_path[0] = '\0';
+    m->storage_schema_version = 0;
+    m->storage_suspend_save = 0;
+    m->storage_entries = NULL;
+    m->storage_count = 0;
+    m->storage_cap = 0;
+
+    m->audio_sfx_volume = 1.0f;
+    m->audio_music_volume = 1.0f;
+    m->audio_channel_base = -1;
+    m->audio_channel_count = 0;
+    m->audio_next_channel = 0;
+    m->audio_chunks = NULL;
+    m->audio_chunk_count = 0;
+    m->audio_chunk_cap = 0;
     return m;
 }
 
@@ -891,6 +2615,567 @@ static void log_mod(LoadedMod* mod, const char* level, const char* msg) {
         return;
     }
     log_write(level, "[mod:%s] %s", mod->id[0] ? mod->id : "?", msg);
+}
+
+static float audio_clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static int audio_file_exists(const char* path) {
+    DWORD attrs;
+    if (!path || !path[0]) return 0;
+    attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) return 0;
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY) return 0;
+    return 1;
+}
+
+static int audio_is_absolute_path(const char* path) {
+    if (!path || !path[0]) return 0;
+    if (((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) &&
+        path[1] == ':' &&
+        (path[2] == '\\' || path[2] == '/')) {
+        return 1;
+    }
+    if ((path[0] == '\\' || path[0] == '/') &&
+        (path[1] == '\\' || path[1] == '/')) {
+        return 1;
+    }
+    return 0;
+}
+
+static void audio_normalize_slashes(char* path) {
+    if (!path) return;
+    for (int i = 0; path[i]; i++) {
+        if (path[i] == '/') path[i] = '\\';
+    }
+}
+
+static int audio_resolve_mod_path(LoadedMod* mod, const char* in_path, char* out, int out_sz) {
+    if (!out || out_sz <= 0) return 0;
+    out[0] = '\0';
+    if (!mod || !in_path || !in_path[0]) return 0;
+
+    if (audio_is_absolute_path(in_path)) {
+        snprintf(out, out_sz, "%s", in_path);
+    } else {
+        snprintf(out, out_sz, "%s\\%s", mod->folder_path, in_path);
+    }
+
+    audio_normalize_slashes(out);
+    return 1;
+}
+
+static int audio_opts_get_int(lua_State* Ls, int arg_index, const char* key, int fallback) {
+    int out = fallback;
+    if (!lua_istable(Ls, arg_index)) return out;
+    lua_getfield(Ls, arg_index, key);
+    if (lua_isnumber(Ls, -1)) out = (int)lua_tointeger(Ls, -1);
+    lua_pop(Ls, 1);
+    return out;
+}
+
+static float audio_opts_get_float(lua_State* Ls, int arg_index, const char* key, float fallback) {
+    float out = fallback;
+    if (!lua_istable(Ls, arg_index)) return out;
+    lua_getfield(Ls, arg_index, key);
+    if (lua_isnumber(Ls, -1)) out = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    return out;
+}
+
+static const char* audio_mix_error(void) {
+    if (p_mix_get_error) {
+        const char* err = p_mix_get_error();
+        if (err && err[0]) return err;
+    }
+    {
+        const char* sdl_err = SDL_GetError();
+        if (sdl_err && sdl_err[0]) return sdl_err;
+    }
+    return "unknown SDL_mixer error";
+}
+
+static void audio_set_backend_error(const char* reason) {
+    if (!reason) reason = "audio backend unavailable";
+    snprintf(g_audio_backend_error, sizeof(g_audio_backend_error), "%s", reason);
+}
+
+static const char* audio_backend_error_message(void) {
+    if (g_audio_backend_error[0]) return g_audio_backend_error;
+    return "audio mixer is not available";
+}
+
+static int audio_path_has_wav_extension(const char* path) {
+    const char* dot;
+    if (!path || !path[0]) return 0;
+    dot = strrchr(path, '.');
+    if (!dot) return 0;
+    return (_stricmp(dot, ".wav") == 0);
+}
+
+static int audio_winmm_ensure_ready(void) {
+    if (g_audio_winmm_ready && p_play_sound_a) return 1;
+
+    if (!g_audio_winmm_module) {
+        g_audio_winmm_module = LoadLibraryA("winmm.dll");
+        if (!g_audio_winmm_module) return 0;
+    }
+
+    p_play_sound_a = (fn_play_sound_a_t)GetProcAddress(g_audio_winmm_module, "PlaySoundA");
+    if (!p_play_sound_a) return 0;
+    g_audio_winmm_ready = 1;
+    return 1;
+}
+
+static int audio_fallback_play_wav(const char* full_path, int loop, int no_stop, char* err, int err_sz) {
+    DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT;
+    if (err && err_sz > 0) err[0] = '\0';
+
+    if (!full_path || !full_path[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing wav path");
+        return 0;
+    }
+    if (!audio_file_exists(full_path)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "file not found: %s", full_path);
+        return 0;
+    }
+    if (!audio_path_has_wav_extension(full_path)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "fallback backend only supports .wav files");
+        return 0;
+    }
+    if (!audio_winmm_ensure_ready()) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "winmm fallback unavailable");
+        return 0;
+    }
+
+    if (loop) flags |= SND_LOOP;
+    if (no_stop) flags |= SND_NOSTOP;
+
+    if (!p_play_sound_a(full_path, NULL, flags)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "PlaySoundA failed");
+        return 0;
+    }
+
+    if (!g_audio_winmm_warned) {
+        LOG_WARN("Audio API: using WinMM fallback backend (.wav only; limited mixing/volume control)");
+        g_audio_winmm_warned = 1;
+    }
+
+    return 1;
+}
+
+static void audio_fallback_stop_music_for_owner(LoadedMod* owner) {
+    if (owner && g_audio_fallback_music_owner != owner) return;
+    if (!g_audio_fallback_music_owner) return;
+    if (!audio_winmm_ensure_ready()) return;
+
+    p_play_sound_a(NULL, NULL, 0);
+    g_audio_fallback_music_owner = NULL;
+}
+
+static int audio_runtime_disable(const char* reason) {
+    audio_set_backend_error(reason && reason[0] ? reason : "audio backend unavailable");
+
+    if (!g_audio_mixer_warned) {
+        if (reason && reason[0]) LOG_WARN("%s", reason);
+        else LOG_WARN("Audio API disabled");
+        g_audio_mixer_warned = 1;
+    }
+
+    g_audio_mixer_disabled = 1;
+    g_audio_mixer_ready = 0;
+    g_audio_channels_reserved = 0;
+    g_audio_next_channel_base = 0;
+    g_audio_music_owner = NULL;
+    g_audio_music = NULL;
+
+    if (g_audio_mixer_module) {
+        FreeLibrary(g_audio_mixer_module);
+        g_audio_mixer_module = NULL;
+    }
+
+    p_mix_open_audio = NULL;
+    p_mix_close_audio = NULL;
+    p_mix_allocate_channels = NULL;
+    p_mix_load_wav_rw = NULL;
+    p_mix_play_channel_timed = NULL;
+    p_mix_playing = NULL;
+    p_mix_halt_channel = NULL;
+    p_mix_volume_channel = NULL;
+    p_mix_free_chunk = NULL;
+    p_mix_load_mus = NULL;
+    p_mix_play_music = NULL;
+    p_mix_halt_music = NULL;
+    p_mix_volume_music = NULL;
+    p_mix_free_music = NULL;
+    p_mix_get_error = NULL;
+    return 0;
+}
+
+static int audio_runtime_ensure_ready(void) {
+    int ch;
+    if (g_audio_mixer_ready) return 1;
+    if (g_audio_mixer_disabled) return 0;
+
+    g_audio_mixer_module = LoadLibraryA("SDL2_mixer.dll");
+    if (!g_audio_mixer_module) {
+        return audio_runtime_disable("Audio API unavailable: could not load SDL2_mixer.dll");
+    }
+
+    p_mix_open_audio = (fn_mix_open_audio_t)GetProcAddress(g_audio_mixer_module, "Mix_OpenAudio");
+    p_mix_close_audio = (fn_mix_close_audio_t)GetProcAddress(g_audio_mixer_module, "Mix_CloseAudio");
+    p_mix_allocate_channels = (fn_mix_allocate_channels_t)GetProcAddress(g_audio_mixer_module, "Mix_AllocateChannels");
+    p_mix_load_wav_rw = (fn_mix_load_wav_rw_t)GetProcAddress(g_audio_mixer_module, "Mix_LoadWAV_RW");
+    p_mix_play_channel_timed = (fn_mix_play_channel_timed_t)GetProcAddress(g_audio_mixer_module, "Mix_PlayChannelTimed");
+    p_mix_playing = (fn_mix_playing_t)GetProcAddress(g_audio_mixer_module, "Mix_Playing");
+    p_mix_halt_channel = (fn_mix_halt_channel_t)GetProcAddress(g_audio_mixer_module, "Mix_HaltChannel");
+    p_mix_volume_channel = (fn_mix_volume_channel_t)GetProcAddress(g_audio_mixer_module, "Mix_Volume");
+    p_mix_free_chunk = (fn_mix_free_chunk_t)GetProcAddress(g_audio_mixer_module, "Mix_FreeChunk");
+    p_mix_load_mus = (fn_mix_load_mus_t)GetProcAddress(g_audio_mixer_module, "Mix_LoadMUS");
+    p_mix_play_music = (fn_mix_play_music_t)GetProcAddress(g_audio_mixer_module, "Mix_PlayMusic");
+    p_mix_halt_music = (fn_mix_halt_music_t)GetProcAddress(g_audio_mixer_module, "Mix_HaltMusic");
+    p_mix_volume_music = (fn_mix_volume_music_t)GetProcAddress(g_audio_mixer_module, "Mix_VolumeMusic");
+    p_mix_free_music = (fn_mix_free_music_t)GetProcAddress(g_audio_mixer_module, "Mix_FreeMusic");
+    p_mix_get_error = (fn_mix_get_error_t)GetProcAddress(g_audio_mixer_module, "Mix_GetError");
+
+    if (!p_mix_open_audio ||
+        !p_mix_close_audio ||
+        !p_mix_allocate_channels ||
+        !p_mix_load_wav_rw ||
+        !p_mix_play_channel_timed ||
+        !p_mix_playing ||
+        !p_mix_halt_channel ||
+        !p_mix_volume_channel ||
+        !p_mix_free_chunk ||
+        !p_mix_load_mus ||
+        !p_mix_play_music ||
+        !p_mix_halt_music ||
+        !p_mix_volume_music ||
+        !p_mix_free_music) {
+        return audio_runtime_disable("Audio API unavailable: SDL2_mixer.dll is missing required exports");
+    }
+
+    if (p_mix_open_audio(22050, (unsigned short)AUDIO_MIX_FORMAT_S16SYS, 2, 1024) < 0) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Audio API unavailable: Mix_OpenAudio failed (%s)", audio_mix_error());
+        return audio_runtime_disable(msg);
+    }
+
+    ch = p_mix_allocate_channels(AUDIO_DEFAULT_CHANNELS);
+    if (ch < AUDIO_DEFAULT_CHANNELS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Audio API warning: requested %d mixer channels, got %d", AUDIO_DEFAULT_CHANNELS, ch);
+        LOG_WARN("%s", msg);
+    }
+
+    g_audio_channels_reserved = (ch > 0) ? ch : AUDIO_DEFAULT_CHANNELS;
+    g_audio_next_channel_base = 0;
+    g_audio_mixer_ready = 1;
+    return 1;
+}
+
+static void audio_release_music_for_owner(LoadedMod* owner) {
+    if (owner && g_audio_music_owner != owner) return;
+    if (!g_audio_music && !g_audio_music_owner) return;
+
+    if (g_audio_mixer_ready && p_mix_halt_music) {
+        p_mix_halt_music();
+    }
+    if (g_audio_music && p_mix_free_music) {
+        p_mix_free_music(g_audio_music);
+    }
+
+    g_audio_music = NULL;
+    g_audio_music_owner = NULL;
+}
+
+static void audio_runtime_reset_channels(void) {
+    g_audio_next_channel_base = 0;
+    if (!g_audio_mixer_ready || !p_mix_allocate_channels) {
+        g_audio_channels_reserved = 0;
+        return;
+    }
+    {
+        int ch = p_mix_allocate_channels(AUDIO_DEFAULT_CHANNELS);
+        g_audio_channels_reserved = (ch > 0) ? ch : AUDIO_DEFAULT_CHANNELS;
+    }
+}
+
+static int mod_audio_chunk_reserve(LoadedMod* mod, int want_count) {
+    int newcap;
+    AudioChunkCacheEntry* nc;
+    if (!mod) return 0;
+    if (want_count <= mod->audio_chunk_cap) return 1;
+
+    newcap = (mod->audio_chunk_cap == 0) ? 8 : (mod->audio_chunk_cap * 2);
+    while (newcap < want_count) newcap *= 2;
+
+    nc = (AudioChunkCacheEntry*)realloc(mod->audio_chunks, sizeof(AudioChunkCacheEntry) * newcap);
+    if (!nc) return 0;
+
+    mod->audio_chunks = nc;
+    mod->audio_chunk_cap = newcap;
+    return 1;
+}
+
+static Mix_Chunk* mod_audio_find_chunk(LoadedMod* mod, const char* full_path) {
+    if (!mod || !full_path || !full_path[0]) return NULL;
+    for (int i = 0; i < mod->audio_chunk_count; i++) {
+        AudioChunkCacheEntry* e = &mod->audio_chunks[i];
+        if (_stricmp(e->path, full_path) == 0) return e->chunk;
+    }
+    return NULL;
+}
+
+static Mix_Chunk* mod_audio_get_or_load_chunk(LoadedMod* mod, const char* full_path, char* err, int err_sz) {
+    Mix_Chunk* chunk;
+    SDL_RWops* rw;
+
+    if (err && err_sz > 0) err[0] = '\0';
+    if (!mod || !full_path || !full_path[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing sound path");
+        return NULL;
+    }
+
+    chunk = mod_audio_find_chunk(mod, full_path);
+    if (chunk) return chunk;
+
+    if (!audio_file_exists(full_path)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "file not found: %s", full_path);
+        return NULL;
+    }
+
+    rw = SDL_RWFromFile(full_path, "rb");
+    if (!rw) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "failed to open %s", full_path);
+        return NULL;
+    }
+
+    chunk = p_mix_load_wav_rw(rw, 1);
+    if (!chunk) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "Mix_LoadWAV_RW failed: %s", audio_mix_error());
+        return NULL;
+    }
+
+    if (!mod_audio_chunk_reserve(mod, mod->audio_chunk_count + 1)) {
+        if (p_mix_free_chunk) p_mix_free_chunk(chunk);
+        if (err && err_sz > 0) snprintf(err, err_sz, "out of memory");
+        return NULL;
+    }
+
+    {
+        AudioChunkCacheEntry* e = &mod->audio_chunks[mod->audio_chunk_count++];
+        memset(e, 0, sizeof(*e));
+        strncpy(e->path, full_path, sizeof(e->path) - 1);
+        e->chunk = chunk;
+    }
+    return chunk;
+}
+
+static int mod_audio_ensure_channel_range(LoadedMod* mod, char* err, int err_sz) {
+    int needed;
+    int got;
+    if (!mod) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "no mod context");
+        return 0;
+    }
+    if (mod->audio_channel_base >= 0 && mod->audio_channel_count > 0) return 1;
+
+    mod->audio_channel_base = g_audio_next_channel_base;
+    mod->audio_channel_count = AUDIO_CHANNELS_PER_MOD;
+    mod->audio_next_channel = 0;
+    g_audio_next_channel_base += AUDIO_CHANNELS_PER_MOD;
+
+    needed = mod->audio_channel_base + mod->audio_channel_count;
+    if (needed > g_audio_channels_reserved) {
+        got = p_mix_allocate_channels(needed);
+        if (got < needed) {
+            if (err && err_sz > 0) snprintf(err, err_sz, "Mix_AllocateChannels failed (%d/%d)", got, needed);
+            return 0;
+        }
+        g_audio_channels_reserved = got;
+    }
+
+    return 1;
+}
+
+static int mod_audio_pick_channel(LoadedMod* mod) {
+    int start;
+    int count;
+    int ch;
+    int i;
+    if (!mod || mod->audio_channel_base < 0 || mod->audio_channel_count <= 0) return -1;
+
+    start = mod->audio_channel_base;
+    count = mod->audio_channel_count;
+
+    for (i = 0; i < count; i++) {
+        ch = start + ((mod->audio_next_channel + i) % count);
+        if (!p_mix_playing(ch)) {
+            mod->audio_next_channel = (ch - start + 1) % count;
+            return ch;
+        }
+    }
+
+    ch = start + (mod->audio_next_channel % count);
+    mod->audio_next_channel = (mod->audio_next_channel + 1) % count;
+    if (p_mix_halt_channel) p_mix_halt_channel(ch);
+    return ch;
+}
+
+static int audio_play_builtin_sfx(LoadedMod* mod, lua_State* Ls, const char* id, int opts_index) {
+    float volume = mod ? mod->audio_sfx_volume : 1.0f;
+    if (!id || !id[0]) return 0;
+    volume *= audio_opts_get_float(Ls, opts_index, "volume", 1.0f);
+    volume = audio_clampf(volume, 0.0f, 1.0f);
+    if (volume <= 0.0f) return 1;
+
+    if (_stricmp(id, "pip") == 0 && p_sound_pip) {
+        float pitch = audio_opts_get_float(Ls, opts_index, "pitch", 1.0f);
+        int duration = audio_opts_get_int(Ls, opts_index, "duration", 100);
+        if (duration < 1) duration = 1;
+        p_sound_pip(pitch, duration);
+        return 1;
+    }
+    if (_stricmp(id, "noise") == 0 && p_sound_noise) {
+        float freq = audio_opts_get_float(Ls, opts_index, "freq", 250.0f);
+        int duration = audio_opts_get_int(Ls, opts_index, "duration", 100);
+        if (duration < 1) duration = 1;
+        p_sound_noise(freq, duration);
+        return 1;
+    }
+    if (_stricmp(id, "thump") == 0 && p_sound_thump) {
+        float freq = audio_opts_get_float(Ls, opts_index, "freq", 250.0f);
+        p_sound_thump(freq);
+        return 1;
+    }
+    if (_stricmp(id, "shred") == 0 && p_sound_shred) {
+        float amount = audio_opts_get_float(Ls, opts_index, "amount", 1.0f);
+        int duration = audio_opts_get_int(Ls, opts_index, "duration", 250);
+        if (duration < 1) duration = 1;
+        p_sound_shred(amount, duration);
+        return 1;
+    }
+    if (_stricmp(id, "fm") == 0 && p_sound_fm) {
+        float carrier = audio_opts_get_float(Ls, opts_index, "carrier", 5.0f);
+        float mod_freq = audio_opts_get_float(Ls, opts_index, "mod", 1000.0f);
+        float index = audio_opts_get_float(Ls, opts_index, "index", 100.0f);
+        p_sound_fm(carrier, mod_freq, index);
+        return 1;
+    }
+    if (_stricmp(id, "ringmod") == 0 && p_sound_ringmod) {
+        float freq = audio_opts_get_float(Ls, opts_index, "freq", 3.0f);
+        int duration = audio_opts_get_int(Ls, opts_index, "duration", 50);
+        if (duration < 1) duration = 1;
+        p_sound_ringmod(freq, duration);
+        return 1;
+    }
+    if (_stricmp(id, "warble") == 0 && p_sound_warble) {
+        float amount = audio_opts_get_float(Ls, opts_index, "amount", 1.0f);
+        p_sound_warble(amount);
+        return 1;
+    }
+    if (_stricmp(id, "creepy") == 0 && p_sound_creepy) {
+        float freq = audio_opts_get_float(Ls, opts_index, "freq", 50.0f);
+        p_sound_creepy(freq);
+        return 1;
+    }
+    if (_stricmp(id, "pulse") == 0 && p_sound_pulse) {
+        float pitch = audio_opts_get_float(Ls, opts_index, "pitch", 1.0f);
+        int duration = audio_opts_get_int(Ls, opts_index, "duration", 50);
+        if (duration < 1) duration = 1;
+        p_sound_pulse(pitch, duration);
+        return 1;
+    }
+    if ((_stricmp(id, "sword_ching") == 0 || _stricmp(id, "ching") == 0) && p_sound_sword_ching) {
+        float pitch = audio_opts_get_float(Ls, opts_index, "pitch", 1.0f);
+        float tone = audio_opts_get_float(Ls, opts_index, "tone", 1.0f);
+        p_sound_sword_ching(pitch, tone);
+        return 1;
+    }
+
+    return 0;
+}
+
+static void mod_audio_clear(LoadedMod* mod) {
+    if (!mod) return;
+
+    audio_release_music_for_owner(mod);
+    audio_fallback_stop_music_for_owner(mod);
+
+    if (g_audio_mixer_ready && p_mix_halt_channel &&
+        mod->audio_channel_base >= 0 && mod->audio_channel_count > 0) {
+        int start = mod->audio_channel_base;
+        int end = start + mod->audio_channel_count;
+        for (int ch = start; ch < end; ch++) {
+            p_mix_halt_channel(ch);
+        }
+    }
+
+    if (mod->audio_chunks) {
+        for (int i = 0; i < mod->audio_chunk_count; i++) {
+            if (mod->audio_chunks[i].chunk && p_mix_free_chunk) {
+                p_mix_free_chunk(mod->audio_chunks[i].chunk);
+            }
+        }
+        free(mod->audio_chunks);
+        mod->audio_chunks = NULL;
+    }
+    mod->audio_chunk_count = 0;
+    mod->audio_chunk_cap = 0;
+    mod->audio_channel_base = -1;
+    mod->audio_channel_count = 0;
+    mod->audio_next_channel = 0;
+}
+
+static void audio_runtime_shutdown(void) {
+    audio_release_music_for_owner(NULL);
+    audio_fallback_stop_music_for_owner(NULL);
+
+    if (g_audio_mixer_ready && p_mix_close_audio) {
+        p_mix_close_audio();
+    }
+
+    if (g_audio_mixer_module) {
+        FreeLibrary(g_audio_mixer_module);
+        g_audio_mixer_module = NULL;
+    }
+    if (g_audio_winmm_module) {
+        FreeLibrary(g_audio_winmm_module);
+        g_audio_winmm_module = NULL;
+    }
+
+    g_audio_mixer_ready = 0;
+    g_audio_mixer_disabled = 0;
+    g_audio_mixer_warned = 0;
+    g_audio_winmm_ready = 0;
+    g_audio_winmm_warned = 0;
+    g_audio_channels_reserved = 0;
+    g_audio_next_channel_base = 0;
+    g_audio_music_owner = NULL;
+    g_audio_music = NULL;
+    g_audio_fallback_music_owner = NULL;
+    g_audio_backend_error[0] = '\0';
+
+    p_mix_open_audio = NULL;
+    p_mix_close_audio = NULL;
+    p_mix_allocate_channels = NULL;
+    p_mix_load_wav_rw = NULL;
+    p_mix_play_channel_timed = NULL;
+    p_mix_playing = NULL;
+    p_mix_halt_channel = NULL;
+    p_mix_volume_channel = NULL;
+    p_mix_free_chunk = NULL;
+    p_mix_load_mus = NULL;
+    p_mix_play_music = NULL;
+    p_mix_halt_music = NULL;
+    p_mix_volume_music = NULL;
+    p_mix_free_music = NULL;
+    p_mix_get_error = NULL;
+    p_play_sound_a = NULL;
 }
 
 static int lua_os_exit_status(lua_State* Ls, int arg) {
@@ -1012,6 +3297,183 @@ static void ui_draw_text_mode(float x, float y, float scale, float r, float g, f
     else p_turtle_set_rgba(r, g, b, 1.0f);
     p_turtle_set_pos((double)x, (double)y);
     p_plot_text(text, mode);
+}
+
+static int reload_engine_gfx_atlases(const char* reason) {
+    int loaded = 0;
+    if (!p_atlas_exit || !p_sprites_reset || !p_load_gfx) return 0;
+    if (IsBadCodePtr((FARPROC)(void*)p_atlas_exit)) return 0;
+    if (IsBadCodePtr((FARPROC)(void*)p_sprites_reset)) return 0;
+    if (IsBadCodePtr((FARPROC)(void*)p_load_gfx)) return 0;
+
+    if (reason && reason[0]) LOG_INFO("Asset hot reload: rebuilding atlases (%s)", reason);
+    else LOG_INFO("Asset hot reload: rebuilding atlases");
+
+    p_atlas_exit();
+    p_sprites_reset();
+    loaded = p_load_gfx();
+    ui_reset_render_state();
+
+    if (loaded < 0) {
+        LOG_WARN("Asset hot reload: load_gfx returned %d; restart may still be required", loaded);
+        return 0;
+    }
+
+    LOG_INFO("Asset hot reload: atlas rebuild complete (load_gfx=%d)", loaded);
+    return 1;
+}
+
+static int ui_sheet_base_from_name(const char* name, int* out_base) {
+    int base = -1;
+    if (!name || !name[0] || !out_base) return 0;
+    if ((_stricmp(name, "sprites") == 0 || _stricmp(name, "sprite") == 0 ||
+         _stricmp(name, "spritesheet") == 0 || _stricmp(name, "data/sprites.png") == 0 ||
+         _stricmp(name, "data\\sprites.png") == 0 || _stricmp(name, "sprites.png") == 0) &&
+        p_sprites_id) {
+        base = *p_sprites_id;
+    } else if ((_stricmp(name, "tiles") == 0 || _stricmp(name, "tile") == 0 ||
+                _stricmp(name, "tilesheet") == 0 || _stricmp(name, "data/tiles.png") == 0 ||
+                _stricmp(name, "data\\tiles.png") == 0 || _stricmp(name, "tiles.png") == 0) &&
+               p_tiles_id) {
+        base = *p_tiles_id;
+    } else if ((_stricmp(name, "misc") == 0 || _stricmp(name, "miscsheet") == 0 ||
+                _stricmp(name, "data/misc.png") == 0 || _stricmp(name, "data\\misc.png") == 0 ||
+                _stricmp(name, "misc.png") == 0) &&
+               p_misc_id) {
+        base = *p_misc_id;
+    } else if ((_stricmp(name, "glyphs") == 0 || _stricmp(name, "font") == 0 ||
+                _stricmp(name, "data/font8x8.png") == 0 || _stricmp(name, "data\\font8x8.png") == 0 ||
+                _stricmp(name, "font8x8.png") == 0) &&
+               p_glyphs_id) {
+        base = *p_glyphs_id;
+    } else {
+        return 0;
+    }
+
+    if (base < 0) return 0;
+    *out_base = base;
+    return 1;
+}
+
+static void ui_lua_read_tint(lua_State* Ls, int table_index,
+                             float* out_r, float* out_g, float* out_b, float* out_a) {
+    if (!lua_istable(Ls, table_index)) return;
+
+    lua_getfield(Ls, table_index, "r");
+    if (lua_isnumber(Ls, -1)) *out_r = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "g");
+    if (lua_isnumber(Ls, -1)) *out_g = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "b");
+    if (lua_isnumber(Ls, -1)) *out_b = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "a");
+    if (lua_isnumber(Ls, -1)) *out_a = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_rawgeti(Ls, table_index, 1);
+    if (lua_isnumber(Ls, -1)) *out_r = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_rawgeti(Ls, table_index, 2);
+    if (lua_isnumber(Ls, -1)) *out_g = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_rawgeti(Ls, table_index, 3);
+    if (lua_isnumber(Ls, -1)) *out_b = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_rawgeti(Ls, table_index, 4);
+    if (lua_isnumber(Ls, -1)) *out_a = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+}
+
+static void ui_lua_apply_sprite_opts(lua_State* Ls,
+                                     int table_index,
+                                     int* inout_flip,
+                                     int* inout_layer,
+                                     float* inout_sx,
+                                     float* inout_sy,
+                                     float* inout_angle,
+                                     float* inout_r,
+                                     float* inout_g,
+                                     float* inout_b,
+                                     float* inout_a) {
+    if (!lua_istable(Ls, table_index)) return;
+
+    lua_getfield(Ls, table_index, "scale");
+    if (lua_isnumber(Ls, -1)) {
+        float s = (float)lua_tonumber(Ls, -1);
+        *inout_sx = s;
+        *inout_sy = s;
+    }
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "scale_x");
+    if (lua_isnumber(Ls, -1)) *inout_sx = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "sx");
+    if (lua_isnumber(Ls, -1)) *inout_sx = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "scale_y");
+    if (lua_isnumber(Ls, -1)) *inout_sy = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "sy");
+    if (lua_isnumber(Ls, -1)) *inout_sy = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "angle");
+    if (lua_isnumber(Ls, -1)) *inout_angle = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "flip");
+    if (lua_isboolean(Ls, -1)) {
+        *inout_flip = lua_toboolean(Ls, -1) ? 1 : 0;
+    } else if (lua_isnumber(Ls, -1)) {
+        *inout_flip = ((int)lua_tointeger(Ls, -1) != 0) ? 1 : 0;
+    }
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "flip_x");
+    if (lua_isboolean(Ls, -1)) {
+        *inout_flip = lua_toboolean(Ls, -1) ? 1 : 0;
+    } else if (lua_isnumber(Ls, -1)) {
+        *inout_flip = ((int)lua_tointeger(Ls, -1) != 0) ? 1 : 0;
+    }
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "layer");
+    if (lua_isnumber(Ls, -1)) *inout_layer = (int)lua_tointeger(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "r");
+    if (lua_isnumber(Ls, -1)) *inout_r = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "g");
+    if (lua_isnumber(Ls, -1)) *inout_g = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "b");
+    if (lua_isnumber(Ls, -1)) *inout_b = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "a");
+    if (lua_isnumber(Ls, -1)) *inout_a = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, table_index, "tint");
+    if (lua_istable(Ls, -1)) {
+        ui_lua_read_tint(Ls, lua_gettop(Ls), inout_r, inout_g, inout_b, inout_a);
+    }
+    lua_pop(Ls, 1);
 }
 
 static void orphan_ui_string_take(char* s) {
@@ -1662,6 +4124,275 @@ static void push_config_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushstring(Ls, mod->config_path); lua_setfield(Ls, -2, "path");
 }
 
+static int lua_storage_get(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int idx = mod_storage_find_index(mod, key);
+    if (idx < 0) {
+        if (!lua_isnoneornil(Ls, 2)) { lua_pushvalue(Ls, 2); return 1; }
+        lua_pushnil(Ls);
+        return 1;
+    }
+    StorageEntry* e = &mod->storage_entries[idx];
+    if (e->type == MOD_STORAGE_BOOL) {
+        lua_pushboolean(Ls, e->bool_value ? 1 : 0);
+    } else if (e->type == MOD_STORAGE_NUMBER) {
+        lua_pushnumber(Ls, e->num_value);
+    } else if (e->type == MOD_STORAGE_STRING) {
+        lua_pushstring(Ls, e->str_value);
+    } else {
+        lua_pushnil(Ls);
+    }
+    return 1;
+}
+
+static int lua_storage_set(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int ok = 0;
+
+    if (!mod_storage_key_valid(key)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "invalid storage key");
+        return 2;
+    }
+
+    if (lua_isnoneornil(Ls, 2)) {
+        mod_storage_remove_key(mod, key);
+        if (!mod->storage_suspend_save && !mod_storage_save(mod)) {
+            lua_pushboolean(Ls, 0);
+            lua_pushstring(Ls, "failed to save storage file");
+            return 2;
+        }
+        lua_pushboolean(Ls, 1);
+        return 1;
+    }
+
+    if (lua_isboolean(Ls, 2)) {
+        ok = mod_storage_set_value(mod, key, MOD_STORAGE_BOOL, lua_toboolean(Ls, 2), 0.0, NULL);
+    } else if (lua_isnumber(Ls, 2)) {
+        ok = mod_storage_set_value(mod, key, MOD_STORAGE_NUMBER, 0, lua_tonumber(Ls, 2), NULL);
+    } else if (lua_isstring(Ls, 2)) {
+        ok = mod_storage_set_value(mod, key, MOD_STORAGE_STRING, 0, 0.0, lua_tostring(Ls, 2));
+    } else {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "unsupported value type (expected bool, number, string, or nil)");
+        return 2;
+    }
+
+    if (!ok) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "failed to set storage value");
+        return 2;
+    }
+    if (!mod->storage_suspend_save && !mod_storage_save(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "failed to save storage file");
+        return 2;
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_storage_delete(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int existed = mod_storage_remove_key(mod, key);
+    if (!mod->storage_suspend_save && !mod_storage_save(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "failed to save storage file");
+        return 2;
+    }
+    lua_pushboolean(Ls, existed ? 1 : 0);
+    return 1;
+}
+
+static int lua_storage_schema(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    lua_pushinteger(Ls, mod->storage_schema_version);
+    return 1;
+}
+
+static int lua_storage_set_schema(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int schema = (int)luaL_checkinteger(Ls, 1);
+    if (schema < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "schema must be >= 0");
+        return 2;
+    }
+    mod->storage_schema_version = schema;
+    if (!mod->storage_suspend_save && !mod_storage_save(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "failed to save storage file");
+        return 2;
+    }
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_storage_migrate(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int target_schema = (int)luaL_checkinteger(Ls, 1);
+    int from_schema = mod->storage_schema_version;
+    char errbuf[256];
+
+    luaL_checktype(Ls, 2, LUA_TFUNCTION);
+
+    if (target_schema < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "target schema must be >= 0");
+        return 2;
+    }
+    if (target_schema <= from_schema) {
+        lua_pushboolean(Ls, 1);
+        lua_pushinteger(Ls, from_schema);
+        return 2;
+    }
+
+    mod->storage_suspend_save++;
+    lua_pushvalue(Ls, 2);
+    lua_pushinteger(Ls, from_schema);
+    lua_pushinteger(Ls, target_schema);
+    if (lua_pcall(Ls, 2, 2, 0) != 0) {
+        const char* err = lua_tostring(Ls, -1);
+        snprintf(errbuf, sizeof(errbuf), "%s", err ? err : "storage.migrate callback failed");
+        lua_pop(Ls, 1);
+        if (mod->storage_suspend_save > 0) mod->storage_suspend_save--;
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, errbuf);
+        return 2;
+    }
+
+    if (lua_isboolean(Ls, -2) && !lua_toboolean(Ls, -2)) {
+        const char* err = lua_tostring(Ls, -1);
+        lua_pop(Ls, 2);
+        if (mod->storage_suspend_save > 0) mod->storage_suspend_save--;
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err ? err : "storage migration callback returned false");
+        return 2;
+    }
+    lua_pop(Ls, 2);
+    if (mod->storage_suspend_save > 0) mod->storage_suspend_save--;
+
+    mod->storage_schema_version = target_schema;
+    if (!mod_storage_save(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "failed to save storage file");
+        return 2;
+    }
+
+    lua_pushboolean(Ls, 1);
+    lua_pushinteger(Ls, target_schema);
+    return 2;
+}
+
+static int lua_storage_save(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!mod_storage_save(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "failed to save storage file");
+        return 2;
+    }
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static void push_storage_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_get, 1);        lua_setfield(Ls, -2, "get");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_set, 1);        lua_setfield(Ls, -2, "set");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_delete, 1);     lua_setfield(Ls, -2, "delete");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_save, 1);       lua_setfield(Ls, -2, "save");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_schema, 1);     lua_setfield(Ls, -2, "schema");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_set_schema, 1); lua_setfield(Ls, -2, "set_schema");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_storage_migrate, 1);    lua_setfield(Ls, -2, "migrate");
+    lua_pushstring(Ls, mod->storage_path);                                             lua_setfield(Ls, -2, "path");
+}
+
+static int lua_interop_provide(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* ns = luaL_checkstring(Ls, 1);
+    const char* version = luaL_optstring(Ls, 2, mod->version);
+    SemVersion parsed;
+    int idx = -1;
+    int ref = LUA_NOREF;
+
+    luaL_checktype(Ls, 3, LUA_TTABLE);
+    if (!ns[0] || strlen(ns) >= MOD_INTEROP_NAMESPACE_MAX) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "namespace must be 1..95 chars");
+        return 2;
+    }
+    if (!semver_parse(version, &parsed)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "version must be valid semver (e.g. 1.2.3)");
+        return 2;
+    }
+    (void)parsed;
+
+    idx = interop_find_index_by_ns(ns);
+    if (idx >= 0 && g_interop_providers[idx].owner != mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "namespace already provided by another mod");
+        return 2;
+    }
+
+    lua_pushvalue(Ls, 3);
+    ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+
+    if (idx < 0) {
+        if (!interop_ensure_capacity(g_interop_provider_count + 1)) {
+            luaL_unref(Ls, LUA_REGISTRYINDEX, ref);
+            lua_pushboolean(Ls, 0);
+            lua_pushstring(Ls, "out of memory");
+            return 2;
+        }
+        idx = g_interop_provider_count++;
+        memset(&g_interop_providers[idx], 0, sizeof(g_interop_providers[idx]));
+    } else if (g_interop_providers[idx].table_ref != LUA_NOREF && g_interop_providers[idx].table_ref != LUA_REFNIL) {
+        luaL_unref(Ls, LUA_REGISTRYINDEX, g_interop_providers[idx].table_ref);
+    }
+
+    snprintf(g_interop_providers[idx].ns, sizeof(g_interop_providers[idx].ns), "%s", ns);
+    snprintf(g_interop_providers[idx].version, sizeof(g_interop_providers[idx].version), "%s", version);
+    g_interop_providers[idx].table_ref = ref;
+    g_interop_providers[idx].owner = mod;
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_interop_require(lua_State* Ls) {
+    const char* ns = luaL_checkstring(Ls, 1);
+    const char* range = luaL_optstring(Ls, 2, "");
+    int idx = interop_find_index_by_ns(ns);
+    if (idx < 0) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "namespace not provided");
+        return 2;
+    }
+    if (range[0] && !semver_satisfies_range(g_interop_providers[idx].version, range)) {
+        char err[192];
+        snprintf(err, sizeof(err), "provider version %s does not satisfy range %s",
+                 g_interop_providers[idx].version, range);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+    lua_rawgeti(Ls, LUA_REGISTRYINDEX, g_interop_providers[idx].table_ref);
+    lua_pushstring(Ls, g_interop_providers[idx].version);
+    return 2;
+}
+
+static void push_interop_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_interop_provide, 1); lua_setfield(Ls, -2, "provide");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_interop_require, 1); lua_setfield(Ls, -2, "require");
+}
+
 static UiLayout* mod_ui_layout_or_default(LoadedMod* mod) {
     if (!mod) return NULL;
     if (!mod->ui_layout.active) {
@@ -1702,6 +4433,116 @@ static int lua_ui_mouse_pos(lua_State* Ls) {
     lua_pushinteger(Ls, g_ui_mouse_x);
     lua_pushinteger(Ls, g_ui_mouse_y);
     return 2;
+}
+
+static int lua_ui_sheet_base(lua_State* Ls) {
+    const char* sheet = luaL_checkstring(Ls, 1);
+    int base = -1;
+    if (!ui_sheet_base_from_name(sheet, &base)) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    lua_pushinteger(Ls, base);
+    return 1;
+}
+
+static int lua_ui_sprite_id(lua_State* Ls) {
+    int base = -1;
+    int idx = (int)luaL_checkinteger(Ls, 2);
+    if (lua_isnumber(Ls, 1)) {
+        base = (int)lua_tointeger(Ls, 1);
+    } else {
+        const char* sheet = luaL_checkstring(Ls, 1);
+        if (!ui_sheet_base_from_name(sheet, &base)) {
+            lua_pushnil(Ls);
+            lua_pushfstring(Ls, "unknown sheet '%s'", sheet);
+            return 2;
+        }
+    }
+    lua_pushinteger(Ls, base + idx);
+    return 1;
+}
+
+static int lua_ui_draw_sprite(lua_State* Ls) {
+    int sprite_id = -1;
+    float x = (float)luaL_checknumber(Ls, 2);
+    float y = (float)luaL_checknumber(Ls, 3);
+    int flip = 0;
+    int layer = 0;
+    float sx = 1.0f;
+    float sy = 1.0f;
+    float angle = 0.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float a = 1.0f;
+    void* sprite_ptr;
+
+    if (lua_istable(Ls, 1)) {
+        int base = -1;
+        lua_getfield(Ls, 1, "sprite");
+        if (lua_isnumber(Ls, -1)) sprite_id = (int)lua_tointeger(Ls, -1);
+        lua_pop(Ls, 1);
+
+        if (sprite_id < 0) {
+            lua_getfield(Ls, 1, "id");
+            if (lua_isnumber(Ls, -1)) sprite_id = (int)lua_tointeger(Ls, -1);
+            lua_pop(Ls, 1);
+        }
+
+        if (sprite_id < 0) {
+            lua_getfield(Ls, 1, "sheet");
+            if (lua_isnumber(Ls, -1)) {
+                base = (int)lua_tointeger(Ls, -1);
+            } else if (lua_isstring(Ls, -1)) {
+                ui_sheet_base_from_name(lua_tostring(Ls, -1), &base);
+            }
+            lua_pop(Ls, 1);
+
+            if (base >= 0) {
+                lua_getfield(Ls, 1, "index");
+                if (lua_isnumber(Ls, -1)) {
+                    sprite_id = base + (int)lua_tointeger(Ls, -1);
+                }
+                lua_pop(Ls, 1);
+            }
+        }
+    } else {
+        sprite_id = (int)luaL_checkinteger(Ls, 1);
+    }
+
+    if (sprite_id < 0 || !p_sprite_get || !p_sprite_batch_plot || !p_turtle_set_pos || !p_turtle_set_scale || !p_turtle_set_angle) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    if (!p_turtle_set_rgba && !p_turtle_set_rgb) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    if (lua_istable(Ls, 1)) {
+        ui_lua_apply_sprite_opts(Ls, 1, &flip, &layer, &sx, &sy, &angle, &r, &g, &b, &a);
+    }
+    if (lua_istable(Ls, 4)) {
+        ui_lua_apply_sprite_opts(Ls, 4, &flip, &layer, &sx, &sy, &angle, &r, &g, &b, &a);
+    }
+
+    sprite_ptr = p_sprite_get((uint32_t)sprite_id);
+    if (!sprite_ptr) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    p_turtle_set_angle((double)angle);
+    p_turtle_set_scale((double)sx, (double)sy);
+    if (p_turtle_set_rgba) p_turtle_set_rgba(r, g, b, a);
+    else p_turtle_set_rgb(r, g, b);
+    p_turtle_set_pos((double)x, (double)y);
+    p_sprite_batch_plot((int)(intptr_t)sprite_ptr, flip ? 1 : 0, layer);
+
+    lua_pushboolean(Ls, 1);
+    return 1;
 }
 
 static int lua_ui_layout(lua_State* Ls) {
@@ -2365,6 +5206,129 @@ static int lua_game_input_status(lua_State* Ls) {
     return 1;
 }
 
+static int lua_input_bind(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    const char* default_name = luaL_optstring(Ls, 2, "");
+    const char* label = luaL_optstring(Ls, 3, key);
+    int default_sym = 0;
+    int idx;
+    if (default_name && default_name[0] && !bind_name_to_sym(default_name, &default_sym)) {
+        lua_pushnil(Ls);
+        lua_pushfstring(Ls, "unknown bind key '%s'", default_name);
+        return 2;
+    }
+    idx = mod_bind_register(mod, key, label, default_sym);
+    if (idx < 0) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "failed to register bind");
+        return 2;
+    }
+    lua_pushstring(Ls, mod->binds[idx].value_name);
+    return 1;
+}
+
+static int lua_input_get(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int idx = mod_bind_find_index(mod, key);
+    if (idx < 0) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    lua_pushstring(Ls, mod->binds[idx].value_name);
+    return 1;
+}
+
+static int lua_input_set(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    const char* value = luaL_checkstring(Ls, 2);
+    int idx = mod_bind_find_index(mod, key);
+    int sym = 0;
+    if (idx < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "bind not found");
+        return 2;
+    }
+    if (!bind_name_to_sym(value, &sym)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "unknown key name");
+        return 2;
+    }
+    mod->binds[idx].sym = sym;
+    mod_bind_update_name(&mod->binds[idx]);
+    mod_bind_save(mod);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_input_clear(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int idx = mod_bind_find_index(mod, key);
+    if (idx < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "bind not found");
+        return 2;
+    }
+    mod->binds[idx].sym = 0;
+    mod_bind_update_name(&mod->binds[idx]);
+    mod_bind_save(mod);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_input_down(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int idx = mod_bind_find_index(mod, key);
+    lua_pushboolean(Ls, (idx >= 0 && mod->binds[idx].down) ? 1 : 0);
+    return 1;
+}
+
+static int lua_input_pressed(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int idx = mod_bind_find_index(mod, key);
+    lua_pushboolean(Ls, (idx >= 0 && mod->binds[idx].pressed) ? 1 : 0);
+    return 1;
+}
+
+static int lua_input_released(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* key = luaL_checkstring(Ls, 1);
+    int idx = mod_bind_find_index(mod, key);
+    lua_pushboolean(Ls, (idx >= 0 && mod->binds[idx].released) ? 1 : 0);
+    return 1;
+}
+
+static int lua_input_list(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    lua_newtable(Ls);
+    for (int i = 0; i < mod->bind_count; i++) {
+        lua_newtable(Ls);
+        lua_pushstring(Ls, mod->binds[i].key); lua_setfield(Ls, -2, "key");
+        lua_pushstring(Ls, mod->binds[i].label); lua_setfield(Ls, -2, "label");
+        lua_pushstring(Ls, mod->binds[i].value_name); lua_setfield(Ls, -2, "binding");
+        lua_pushboolean(Ls, mod_bind_has_conflict(mod, i)); lua_setfield(Ls, -2, "conflict");
+        lua_rawseti(Ls, -2, i + 1);
+    }
+    return 1;
+}
+
+static void push_input_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_bind, 1);     lua_setfield(Ls, -2, "bind");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_get, 1);      lua_setfield(Ls, -2, "get");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_set, 1);      lua_setfield(Ls, -2, "set");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_clear, 1);    lua_setfield(Ls, -2, "clear");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_down, 1);     lua_setfield(Ls, -2, "down");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_pressed, 1);  lua_setfield(Ls, -2, "pressed");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_released, 1); lua_setfield(Ls, -2, "released");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_input_list, 1);     lua_setfield(Ls, -2, "list");
+}
+
 static int lua_game_snapshot(lua_State* Ls) {
     int player_index = (int)luaL_optinteger(Ls, 1, 0);
     int include_tiles = lua_isnoneornil(Ls, 2) ? 1 : (lua_toboolean(Ls, 2) ? 1 : 0);
@@ -2529,6 +5493,273 @@ static int lua_game_snapshot(lua_State* Ls) {
 }
 
 // =============================
+// Audio API (mod.audio)
+// =============================
+
+static int audio_string_looks_like_path(const char* s) {
+    if (!s || !s[0]) return 0;
+    if (audio_is_absolute_path(s)) return 1;
+    if (strchr(s, '\\') || strchr(s, '/')) return 1;
+    if (strchr(s, '.')) return 1;
+    return 0;
+}
+
+static int lua_audio_play_sfx(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* source = luaL_checkstring(Ls, 1);
+    char full_path[MAX_PATH];
+    char err[256] = {0};
+    int treat_as_path = 0;
+    int loops = 0;
+    int ticks = -1;
+    float volume = 1.0f;
+    int channel = -1;
+    Mix_Chunk* chunk = NULL;
+
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+
+    if (!source || !source[0]) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "missing path_or_id");
+        return 2;
+    }
+
+    treat_as_path = audio_string_looks_like_path(source);
+    if (!treat_as_path && audio_resolve_mod_path(mod, source, full_path, (int)sizeof(full_path))) {
+        treat_as_path = audio_file_exists(full_path);
+    }
+
+    if (!treat_as_path) {
+        if (audio_play_builtin_sfx(mod, Ls, source, 2)) {
+            lua_pushboolean(Ls, 1);
+            return 1;
+        }
+    }
+
+    if (!audio_resolve_mod_path(mod, source, full_path, (int)sizeof(full_path))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "invalid audio path");
+        return 2;
+    }
+
+    if (!audio_runtime_ensure_ready()) {
+        int fallback_loop;
+        loops = audio_opts_get_int(Ls, 2, "loops", 0);
+        fallback_loop = (loops != 0);
+
+        if (audio_fallback_play_wav(full_path, fallback_loop, 0, err, (int)sizeof(err))) {
+            lua_pushboolean(Ls, 1);
+            return 1;
+        }
+
+        if (!err[0]) snprintf(err, sizeof(err), "%s", audio_backend_error_message());
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    chunk = mod_audio_get_or_load_chunk(mod, full_path, err, (int)sizeof(err));
+    if (!chunk) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err[0] ? err : "failed to load sound");
+        return 2;
+    }
+
+    if (!mod_audio_ensure_channel_range(mod, err, (int)sizeof(err))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err[0] ? err : "failed to reserve channels");
+        return 2;
+    }
+
+    loops = audio_opts_get_int(Ls, 2, "loops", 0);
+    if (loops < -1) loops = -1;
+    ticks = audio_opts_get_int(Ls, 2, "ticks", -1);
+    volume = audio_clampf(mod->audio_sfx_volume * audio_opts_get_float(Ls, 2, "volume", 1.0f), 0.0f, 1.0f);
+
+    channel = mod_audio_pick_channel(mod);
+    if (channel < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no available mixer channel");
+        return 2;
+    }
+
+    if (p_mix_play_channel_timed(channel, chunk, loops, ticks) < 0) {
+        snprintf(err, sizeof(err), "Mix_PlayChannelTimed failed: %s", audio_mix_error());
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    if (p_mix_volume_channel) {
+        int ivol = (int)(volume * (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
+        if (ivol < 0) ivol = 0;
+        if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
+        p_mix_volume_channel(channel, ivol);
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_audio_play_music(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* rel_path = luaL_checkstring(Ls, 1);
+    char full_path[MAX_PATH];
+    char err[256];
+    int loops = -1;
+    float volume = 1.0f;
+    Mix_Music* music = NULL;
+
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+
+    if (!audio_resolve_mod_path(mod, rel_path, full_path, (int)sizeof(full_path))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "invalid music path");
+        return 2;
+    }
+    if (!audio_file_exists(full_path)) {
+        snprintf(err, sizeof(err), "file not found: %s", full_path);
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    loops = audio_opts_get_int(Ls, 2, "loops", -1);
+    volume = audio_clampf(mod->audio_music_volume * audio_opts_get_float(Ls, 2, "volume", 1.0f), 0.0f, 1.0f);
+
+    if (!audio_runtime_ensure_ready()) {
+        int fallback_loop = (loops != 0);
+        audio_fallback_stop_music_for_owner(NULL);
+
+        if (audio_fallback_play_wav(full_path, fallback_loop, 0, err, (int)sizeof(err))) {
+            g_audio_fallback_music_owner = mod;
+            lua_pushboolean(Ls, 1);
+            return 1;
+        }
+
+        if (!err[0]) snprintf(err, sizeof(err), "%s", audio_backend_error_message());
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    music = p_mix_load_mus(full_path);
+    if (!music) {
+        snprintf(err, sizeof(err), "Mix_LoadMUS failed: %s", audio_mix_error());
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    audio_fallback_stop_music_for_owner(NULL);
+    audio_release_music_for_owner(NULL);
+    if (p_mix_play_music(music, loops) < 0) {
+        snprintf(err, sizeof(err), "Mix_PlayMusic failed: %s", audio_mix_error());
+        if (p_mix_free_music) p_mix_free_music(music);
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    g_audio_music_owner = mod;
+    g_audio_music = music;
+
+    if (p_mix_volume_music) {
+        int ivol = (int)(volume * (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
+        if (ivol < 0) ivol = 0;
+        if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
+        p_mix_volume_music(ivol);
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_audio_stop_music(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+
+    if (!g_audio_music && !g_audio_fallback_music_owner) {
+        lua_pushboolean(Ls, 1);
+        return 1;
+    }
+
+    if ((g_audio_music_owner && g_audio_music_owner != mod) ||
+        (g_audio_fallback_music_owner && g_audio_fallback_music_owner != mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "music is currently owned by another mod");
+        return 2;
+    }
+
+    audio_release_music_for_owner(mod);
+    audio_fallback_stop_music_for_owner(mod);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_audio_set_music_volume(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    float v = (float)luaL_checknumber(Ls, 1);
+    int ivol;
+
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+
+    mod->audio_music_volume = audio_clampf(v, 0.0f, 1.0f);
+    if (g_audio_music_owner == mod && g_audio_music && p_mix_volume_music) {
+        ivol = (int)(mod->audio_music_volume * (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
+        if (ivol < 0) ivol = 0;
+        if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
+        p_mix_volume_music(ivol);
+    } else if (g_audio_fallback_music_owner == mod) {
+        if (!g_audio_winmm_warned) {
+            LOG_WARN("Audio API: WinMM fallback active; music volume changes are not supported");
+            g_audio_winmm_warned = 1;
+        }
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_audio_set_sfx_volume(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    float v = (float)luaL_checknumber(Ls, 1);
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+    mod->audio_sfx_volume = audio_clampf(v, 0.0f, 1.0f);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static void push_audio_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_play_sfx, 1);         lua_setfield(Ls, -2, "play_sfx");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_play_music, 1);       lua_setfield(Ls, -2, "play_music");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_stop_music, 1);       lua_setfield(Ls, -2, "stop_music");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_set_music_volume, 1); lua_setfield(Ls, -2, "set_music_volume");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_set_sfx_volume, 1);   lua_setfield(Ls, -2, "set_sfx_volume");
+}
+
+// =============================
 // Font glyph extension API
 // =============================
 
@@ -2552,6 +5783,11 @@ static int lua_font_alloc_glyph(lua_State* Ls) {
         lua_pushnil(Ls);
         lua_pushstring(Ls, err[0] ? err : "alloc_glyph failed");
         return 2;
+    }
+    if (font_ext_font_loaded()) {
+        if (!reload_engine_gfx_atlases("font glyph allocated after font load")) {
+            LOG_WARN("font_ext: alloc_glyph succeeded, but live apply failed; restart may still be required");
+        }
     }
     lua_pushinteger(Ls, (int)b);
     return 1;
@@ -2585,8 +5821,140 @@ static int lua_font_register_glyph(lua_State* Ls) {
         return 2;
     }
 
+    if (font_ext_font_loaded()) {
+        if (!reload_engine_gfx_atlases("font glyph registered after font load")) {
+            LOG_WARN("font_ext: register_glyph succeeded, but live apply failed; restart may still be required");
+        }
+    }
+
     lua_pushboolean(Ls, 1);
     return 1;
+}
+
+// =============================
+// Texture replacement API
+// =============================
+
+static int lua_texture_parse_override(lua_State* Ls, int arg_index) {
+    int override_other = 0;
+    if (lua_istable(Ls, arg_index)) {
+        lua_getfield(Ls, arg_index, "override");
+        override_other = lua_toboolean(Ls, -1) ? 1 : 0;
+        lua_pop(Ls, 1);
+    }
+    return override_other;
+}
+
+static int lua_texture_register_target(
+    lua_State* Ls,
+    LoadedMod* mod,
+    const char* target_path,
+    const char* rel_path,
+    int override_other,
+    const char* fallback_err
+) {
+    char err[256] = {0};
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+    if (!texture_ext_register_png(mod->id, mod->folder_path, target_path, rel_path, override_other, err, (int)sizeof(err))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err[0] ? err : fallback_err);
+        return 2;
+    }
+
+    if (texture_ext_path_loaded(target_path)) {
+        if (!reload_engine_gfx_atlases("texture registered after atlas load")) {
+            LOG_WARN("texture_ext: registration succeeded, but live apply failed for %s; restart may still be required", target_path);
+        }
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_texture_sprites_loaded(lua_State* Ls) {
+    (void)mod_from_upvalue(Ls);
+    lua_pushboolean(Ls, texture_ext_sprites_loaded() ? 1 : 0);
+    return 1;
+}
+
+static int lua_texture_loaded(lua_State* Ls) {
+    (void)mod_from_upvalue(Ls);
+    const char* target_path = luaL_checkstring(Ls, 1);
+    lua_pushboolean(Ls, texture_ext_path_loaded(target_path) ? 1 : 0);
+    return 1;
+}
+
+static int lua_texture_register(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* target_path = luaL_checkstring(Ls, 1);
+    const char* rel = luaL_checkstring(Ls, 2);
+    int override_other = lua_texture_parse_override(Ls, 3);
+    return lua_texture_register_target(Ls, mod, target_path, rel, override_other, "register failed");
+}
+
+static int lua_texture_register_spritesheet(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* rel = luaL_checkstring(Ls, 1);
+    int override_other = lua_texture_parse_override(Ls, 2);
+    return lua_texture_register_target(Ls, mod, "data/sprites.png", rel, override_other, "register_spritesheet failed");
+}
+
+static int lua_texture_register_tilesheet(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* rel = luaL_checkstring(Ls, 1);
+    int override_other = lua_texture_parse_override(Ls, 2);
+    return lua_texture_register_target(Ls, mod, "data/tiles.png", rel, override_other, "register_tilesheet failed");
+}
+
+static int lua_texture_register_miscsheet(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* rel = luaL_checkstring(Ls, 1);
+    int override_other = lua_texture_parse_override(Ls, 2);
+    return lua_texture_register_target(Ls, mod, "data/misc.png", rel, override_other, "register_miscsheet failed");
+}
+
+static int lua_texture_register_glowsheet(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* rel = luaL_checkstring(Ls, 1);
+    int override_other = lua_texture_parse_override(Ls, 2);
+    return lua_texture_register_target(Ls, mod, "data/glow.png", rel, override_other, "register_glowsheet failed");
+}
+
+static int lua_texture_reload_all(lua_State* Ls) {
+    int tex_reloaded = 0;
+    int tex_failed = 0;
+    int tex_restart = 0;
+    int font_reloaded = 0;
+    int font_failed = 0;
+    int font_restart = 0;
+    (void)mod_from_upvalue(Ls);
+
+    texture_ext_reload_all(&tex_reloaded, &tex_failed, &tex_restart);
+    font_ext_reload_all(&font_reloaded, &font_failed, &font_restart);
+
+    if ((tex_reloaded + font_reloaded) > 0) {
+        if (!reload_engine_gfx_atlases("manual mod.texture.reload_all()")) {
+            tex_restart = tex_reloaded;
+            font_restart = font_reloaded;
+        } else {
+            tex_restart = 0;
+            font_restart = 0;
+        }
+    }
+
+    lua_pushboolean(Ls, (tex_failed + font_failed) == 0);
+    lua_newtable(Ls);
+    lua_pushinteger(Ls, tex_reloaded); lua_setfield(Ls, -2, "textures_reloaded");
+    lua_pushinteger(Ls, tex_failed); lua_setfield(Ls, -2, "textures_failed");
+    lua_pushinteger(Ls, tex_restart); lua_setfield(Ls, -2, "textures_restart_required");
+    lua_pushinteger(Ls, font_reloaded); lua_setfield(Ls, -2, "fonts_reloaded");
+    lua_pushinteger(Ls, font_failed); lua_setfield(Ls, -2, "fonts_failed");
+    lua_pushinteger(Ls, font_restart); lua_setfield(Ls, -2, "fonts_restart_required");
+    return 2;
 }
 
 static int lua_ui_button_resize_ptr(lua_State* Ls) {
@@ -2659,6 +6027,9 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_is_state, 1);   lua_setfield(Ls, -2, "is_state");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_screen_size, 1);lua_setfield(Ls, -2, "screen_size");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_pos, 1);  lua_setfield(Ls, -2, "mouse_pos");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_sheet_base, 1); lua_setfield(Ls, -2, "sheet_base");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_sprite_id, 1);  lua_setfield(Ls, -2, "sprite_id");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_draw_sprite, 1);lua_setfield(Ls, -2, "draw_sprite");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_layout, 1);     lua_setfield(Ls, -2, "layout");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_cursor, 1);     lua_setfield(Ls, -2, "cursor");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_next_row, 1);   lua_setfield(Ls, -2, "next_row");
@@ -2700,6 +6071,18 @@ static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_loaded, 1);         lua_setfield(Ls, -2, "font_loaded");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_alloc_glyph, 1);    lua_setfield(Ls, -2, "alloc_glyph");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_register_glyph, 1); lua_setfield(Ls, -2, "register_glyph");
+}
+
+static void push_texture_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_loaded, 1);               lua_setfield(Ls, -2, "loaded");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_register, 1);             lua_setfield(Ls, -2, "register");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_sprites_loaded, 1);       lua_setfield(Ls, -2, "sprites_loaded");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_register_spritesheet, 1); lua_setfield(Ls, -2, "register_spritesheet");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_register_tilesheet, 1);   lua_setfield(Ls, -2, "register_tilesheet");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_register_miscsheet, 1);   lua_setfield(Ls, -2, "register_miscsheet");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_register_glowsheet, 1);   lua_setfield(Ls, -2, "register_glowsheet");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_reload_all, 1);           lua_setfield(Ls, -2, "reload_all");
 }
 
 static int lua_mod_on_layout(lua_State* Ls) {
@@ -2749,15 +6132,306 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     push_game_api_table(Ls, mod);
     lua_setfield(Ls, -2, "game");
 
+    // Named input bindings.
+    push_input_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "input");
+
+    // Audio helpers (SFX + music playback from mod assets and built-in IDs).
+    push_audio_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "audio");
+
     // Font glyph extension (for "VS " .. string.char(byte) style icons).
     push_font_api_table(Ls, mod);
     lua_setfield(Ls, -2, "font");
+
+    // Texture replacement helpers (resource-pack style sprite swaps).
+    push_texture_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "texture");
+
+    // Persistent key/value storage with schema migration helpers.
+    push_storage_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "storage");
+
+    // Shared mod-to-mod service table registry.
+    push_interop_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "interop");
 
     // Fields (convenience)
     lua_pushstring(Ls, mod->id);      lua_setfield(Ls, -2, "id");
     lua_pushstring(Ls, mod->name);    lua_setfield(Ls, -2, "name");
     lua_pushstring(Ls, mod->version); lua_setfield(Ls, -2, "version");
     lua_pushinteger(Ls, MOD_API_VERSION); lua_setfield(Ls, -2, "framework_api");
+}
+
+static const char* k_mod_anim_helpers_lua =
+    "local ui = mod and mod.ui\n"
+    "if not ui then return end\n"
+    "\n"
+    "local anim = mod.anim or {}\n"
+    "\n"
+    "local function resolve_base(sheet)\n"
+    "  if type(sheet) == 'number' then return math.floor(sheet) end\n"
+    "  if ui.sheet_base then\n"
+    "    local b = ui.sheet_base(tostring(sheet or 'sprites'))\n"
+    "    if type(b) == 'number' then return math.floor(b) end\n"
+    "  end\n"
+    "  return nil\n"
+    "end\n"
+    "\n"
+    "local function copy_table(src)\n"
+    "  local out = {}\n"
+    "  if type(src) ~= 'table' then return out end\n"
+    "  for k, v in pairs(src) do out[k] = v end\n"
+    "  return out\n"
+    "end\n"
+    "\n"
+    "local function normalize_frames(frames, default_base)\n"
+    "  local out = {}\n"
+    "  if type(frames) ~= 'table' then return out end\n"
+    "  for i = 1, #frames do\n"
+    "    local entry = frames[i]\n"
+    "    if type(entry) == 'number' then\n"
+    "      local sprite = math.floor(entry)\n"
+    "      if default_base then sprite = default_base + sprite end\n"
+    "      out[#out + 1] = { sprite = sprite }\n"
+    "    elseif type(entry) == 'table' then\n"
+    "      local f = copy_table(entry)\n"
+    "      local sprite = f.sprite\n"
+    "      if sprite == nil then sprite = f.id end\n"
+    "      if sprite == nil and f.index ~= nil and default_base then\n"
+    "        sprite = default_base + tonumber(f.index or 0)\n"
+    "      elseif sprite ~= nil and default_base and f.relative then\n"
+    "        sprite = default_base + tonumber(sprite or 0)\n"
+    "      end\n"
+    "      if sprite ~= nil then\n"
+    "        f.sprite = math.floor(tonumber(sprite) or 0)\n"
+    "        out[#out + 1] = f\n"
+    "      end\n"
+    "    end\n"
+    "  end\n"
+    "  return out\n"
+    "end\n"
+    "\n"
+    "function anim.frame_strip(opts)\n"
+    "  opts = opts or {}\n"
+    "  local base = resolve_base(opts.sheet or opts.atlas or 'sprites')\n"
+    "  local first = math.floor(tonumber(opts.first or opts.start or 0) or 0)\n"
+    "  local count = math.floor(tonumber(opts.count or opts.len or 0) or 0)\n"
+    "  local step = math.floor(tonumber(opts.step or 1) or 1)\n"
+    "  local out = {}\n"
+    "  if not base or count <= 0 then return out end\n"
+    "  for i = 0, count - 1 do\n"
+    "    out[#out + 1] = { sprite = base + first + (i * step) }\n"
+    "  end\n"
+    "  return out\n"
+    "end\n"
+    "\n"
+    "function anim.frame_table(opts)\n"
+    "  if type(opts) ~= 'table' then return {} end\n"
+    "  local list = opts\n"
+    "  local base = nil\n"
+    "  if opts.frames then\n"
+    "    list = opts.frames\n"
+    "    base = resolve_base(opts.sheet or opts.atlas)\n"
+    "  end\n"
+    "  if base then\n"
+    "    return normalize_frames(list, base)\n"
+    "  end\n"
+    "  return normalize_frames(list, nil)\n"
+    "end\n"
+    "\n"
+    "local function frame_count(a)\n"
+    "  return (a and type(a.frames) == 'table') and #a.frames or 0\n"
+    "end\n"
+    "\n"
+    "local function frame_duration(a, f)\n"
+    "  local duration = tonumber(f and f.duration)\n"
+    "  if duration and duration > 0 then return duration end\n"
+    "  local fps = tonumber(f and f.fps) or tonumber(a and a.fps) or 12\n"
+    "  if fps <= 0 then fps = 12 end\n"
+    "  return 1 / fps\n"
+    "end\n"
+    "\n"
+    "local function clamp_index(i, n)\n"
+    "  if n <= 0 then return 0 end\n"
+    "  if i < 1 then return 1 end\n"
+    "  if i > n then return n end\n"
+    "  return i\n"
+    "end\n"
+    "\n"
+    "function anim.new(opts)\n"
+    "  opts = opts or {}\n"
+    "  local frames = opts.frames\n"
+    "  if frames == nil and opts.strip then\n"
+    "    frames = anim.frame_strip(opts.strip)\n"
+    "  end\n"
+    "  if type(frames) ~= 'table' and type(opts.frame_table) == 'table' then\n"
+    "    frames = anim.frame_table(opts.frame_table)\n"
+    "  end\n"
+    "  if type(frames) == 'table' and (opts.sheet or opts.atlas) then\n"
+    "    frames = normalize_frames(frames, resolve_base(opts.sheet or opts.atlas))\n"
+    "  else\n"
+    "    frames = normalize_frames(frames or {}, nil)\n"
+    "  end\n"
+    "\n"
+    "  local n = #frames\n"
+    "  local start = math.floor(tonumber(opts.start_frame or opts.start or 1) or 1)\n"
+    "  local a = {\n"
+    "    frames = frames,\n"
+    "    fps = tonumber(opts.fps) or 12,\n"
+    "    loop = (opts.loop ~= false),\n"
+    "    ping_pong = (opts.ping_pong == true) or (opts.pingpong == true),\n"
+    "    speed = tonumber(opts.speed) or 1.0,\n"
+    "    flip = not not opts.flip,\n"
+    "    scale = tonumber(opts.scale),\n"
+    "    scale_x = tonumber(opts.scale_x),\n"
+    "    scale_y = tonumber(opts.scale_y),\n"
+    "    r = tonumber(opts.r),\n"
+    "    g = tonumber(opts.g),\n"
+    "    b = tonumber(opts.b),\n"
+    "    a = tonumber(opts.a),\n"
+    "    tint = opts.tint,\n"
+    "    paused = not not opts.paused,\n"
+    "    accum = tonumber(opts.accum) or 0,\n"
+    "    dir = ((tonumber(opts.direction) or 1) >= 0) and 1 or -1,\n"
+    "    index = clamp_index(start, n),\n"
+    "  }\n"
+    "  if n == 0 then\n"
+    "    a.index = 0\n"
+    "  elseif a.ping_pong and n == 1 then\n"
+    "    a.dir = 1\n"
+    "  end\n"
+    "  return setmetatable(a, { __index = anim.instance })\n"
+    "end\n"
+    "\n"
+    "function anim.frame(a)\n"
+    "  if type(a) ~= 'table' then return nil end\n"
+    "  local n = frame_count(a)\n"
+    "  if n <= 0 then return nil end\n"
+    "  local i = clamp_index(math.floor(tonumber(a.index) or 1), n)\n"
+    "  a.index = i\n"
+    "  return a.frames[i], i\n"
+    "end\n"
+    "\n"
+    "local function step_once(a, n)\n"
+    "  if n <= 0 then a.index = 0 return end\n"
+    "  local i = clamp_index(math.floor(tonumber(a.index) or 1), n)\n"
+    "  local dir = (tonumber(a.dir) or 1) >= 0 and 1 or -1\n"
+    "  if a.ping_pong and n > 1 then\n"
+    "    i = i + dir\n"
+    "    if i > n then i = n - 1 dir = -1 end\n"
+    "    if i < 1 then i = 2 dir = 1 end\n"
+    "    if i < 1 then i = 1 end\n"
+    "    if i > n then i = n end\n"
+    "    a.dir = dir\n"
+    "    a.index = i\n"
+    "    return\n"
+    "  end\n"
+    "  i = i + 1\n"
+    "  if i > n then\n"
+    "    if a.loop then i = 1 else i = n end\n"
+    "  end\n"
+    "  a.index = i\n"
+    "  a.dir = 1\n"
+    "end\n"
+    "\n"
+    "function anim.update(a, dt)\n"
+    "  if type(a) ~= 'table' then return nil end\n"
+    "  local n = frame_count(a)\n"
+    "  if n <= 0 then a.index = 0 return a end\n"
+    "  if a.paused then return a end\n"
+    "  local t = tonumber(dt) or 0\n"
+    "  local speed = tonumber(a.speed) or 1.0\n"
+    "  if t <= 0 or speed == 0 then return a end\n"
+    "  local accum = tonumber(a.accum) or 0\n"
+    "  accum = accum + (t * speed)\n"
+    "  local frame = anim.frame(a)\n"
+    "  local guard = 0\n"
+    "  while frame do\n"
+    "    local d = frame_duration(a, frame)\n"
+    "    if accum < d or d <= 0 then break end\n"
+    "    accum = accum - d\n"
+    "    step_once(a, n)\n"
+    "    frame = anim.frame(a)\n"
+    "    guard = guard + 1\n"
+    "    if guard > 1024 then break end\n"
+    "  end\n"
+    "  a.accum = accum\n"
+    "  return a\n"
+    "end\n"
+    "\n"
+    "local function merge_draw_opts(a, frame, opts)\n"
+    "  local out = {}\n"
+    "  if type(opts) == 'table' then\n"
+    "    for k, v in pairs(opts) do out[k] = v end\n"
+    "  end\n"
+    "  local function fill_from(src)\n"
+    "    if type(src) ~= 'table' then return end\n"
+    "    if out.flip == nil and src.flip ~= nil then out.flip = src.flip end\n"
+    "    if out.scale == nil and src.scale ~= nil then out.scale = src.scale end\n"
+    "    if out.scale_x == nil and src.scale_x ~= nil then out.scale_x = src.scale_x end\n"
+    "    if out.scale_y == nil and src.scale_y ~= nil then out.scale_y = src.scale_y end\n"
+    "    if out.sx == nil and src.sx ~= nil then out.sx = src.sx end\n"
+    "    if out.sy == nil and src.sy ~= nil then out.sy = src.sy end\n"
+    "    if out.layer == nil and src.layer ~= nil then out.layer = src.layer end\n"
+    "    if out.angle == nil and src.angle ~= nil then out.angle = src.angle end\n"
+    "    if out.r == nil and src.r ~= nil then out.r = src.r end\n"
+    "    if out.g == nil and src.g ~= nil then out.g = src.g end\n"
+    "    if out.b == nil and src.b ~= nil then out.b = src.b end\n"
+    "    if out.a == nil and src.a ~= nil then out.a = src.a end\n"
+    "    if out.tint == nil and src.tint ~= nil then out.tint = src.tint end\n"
+    "  end\n"
+    "  fill_from(a)\n"
+    "  fill_from(frame)\n"
+    "  return out\n"
+    "end\n"
+    "\n"
+    "function anim.draw(a, x, y, opts)\n"
+    "  if not ui.draw_sprite then return false end\n"
+    "  local frame = anim.frame(a)\n"
+    "  if type(frame) ~= 'table' then return false end\n"
+    "  local sprite = frame.sprite or frame.id\n"
+    "  if type(sprite) ~= 'number' then return false end\n"
+    "  return ui.draw_sprite(sprite, x, y, merge_draw_opts(a, frame, opts))\n"
+    "end\n"
+    "\n"
+    "anim.instance = anim.instance or {}\n"
+    "function anim.instance:update(dt) return anim.update(self, dt) end\n"
+    "function anim.instance:frame() return anim.frame(self) end\n"
+    "function anim.instance:draw(x, y, opts) return anim.draw(self, x, y, opts) end\n"
+    "function anim.instance:reset(frame_index)\n"
+    "  local n = frame_count(self)\n"
+    "  if n <= 0 then self.index = 0 self.accum = 0 self.dir = 1 return self end\n"
+    "  self.index = clamp_index(math.floor(tonumber(frame_index) or 1), n)\n"
+    "  self.accum = 0\n"
+    "  self.dir = 1\n"
+    "  return self\n"
+    "end\n"
+    "\n"
+    "mod.anim = anim\n";
+
+static void install_mod_anim_helpers(LoadedMod* mod) {
+    if (!L || !mod) return;
+    if (mod->env_ref == LUA_NOREF || mod->env_ref == LUA_REFNIL) return;
+
+    if (luaL_loadbuffer(L, k_mod_anim_helpers_lua, strlen(k_mod_anim_helpers_lua), "@mod_anim_helpers") != 0) {
+        const char* err = lua_tostring(L, -1);
+        char buf[512];
+        snprintf(buf, sizeof(buf), "failed to load anim helpers: %s", err ? err : "(unknown)");
+        log_mod(mod, "ERROR", buf);
+        lua_pop(L, 1);
+        return;
+    }
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, mod->env_ref);
+    lua_setfenv(L, -2);
+    if (lua_pcall(L, 0, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        char buf[512];
+        snprintf(buf, sizeof(buf), "failed to run anim helpers: %s", err ? err : "(unknown)");
+        log_mod(mod, "ERROR", buf);
+        lua_pop(L, 1);
+    }
 }
 
 static int call_lua_ref0(lua_State* Ls, LoadedMod* mod, int ref, const char* where) {
@@ -2779,39 +6453,27 @@ static int call_lua_ref0(lua_State* Ls, LoadedMod* mod, int ref, const char* whe
 // Loading
 // =============================
 
-static int load_mod_lua(LoadedMod* mod) {
-    char json_path[MAX_PATH];
-    snprintf(json_path, sizeof(json_path), "%s\\mod.json", mod->folder_path);
+static void loaded_mod_apply_manifest(LoadedMod* mod, const ModManifest* manifest) {
+    if (!mod || !manifest) return;
+    snprintf(mod->id, sizeof(mod->id), "%s", manifest->id);
+    snprintf(mod->name, sizeof(mod->name), "%s", manifest->name);
+    snprintf(mod->version, sizeof(mod->version), "%s", manifest->version);
+    snprintf(mod->author, sizeof(mod->author), "%s", manifest->author);
+    snprintf(mod->description, sizeof(mod->description), "%s", manifest->description);
+    snprintf(mod->entry, sizeof(mod->entry), "%s", manifest->entry);
+    snprintf(mod->folder_path, sizeof(mod->folder_path), "%s", manifest->folder_path);
+    snprintf(mod->config_rel, sizeof(mod->config_rel), "%s", manifest->config_rel);
+    snprintf(mod->storage_rel, sizeof(mod->storage_rel), "%s", manifest->storage_rel);
+    snprintf(mod->binds_rel, sizeof(mod->binds_rel), "%s", manifest->binds_rel);
+    mod->depends = manifest->depends;
+    mod->optional_deps = manifest->optional_deps;
+    mod->conflicts = manifest->conflicts;
+    mod->api_version = manifest->api_version;
+}
 
-    FILE* f = fopen(json_path, "r");
-    if (!f) {
-        LOG_WARN("No mod.json found in %s, skipping", mod->id);
-        return 0;
-    }
-
-    char json[2048] = {0};
-    fread(json, 1, sizeof(json) - 1, f);
-    fclose(f);
-
-    // Defaults
-    snprintf(mod->name, sizeof(mod->name), "%s", mod->id);
-    snprintf(mod->version, sizeof(mod->version), "?.?.?");
-    snprintf(mod->author, sizeof(mod->author), "Unknown");
-    mod->description[0] = '\0';
-    mod->entry[0] = '\0';
-    mod->api_version = MOD_API_VERSION;
-
-    mod->config_rel[0] = '\0';
-
-    // Parse
-    json_get_string(json, "id",          mod->id,          sizeof(mod->id));
-    json_get_string(json, "name",        mod->name,        sizeof(mod->name));
-    json_get_string(json, "version",     mod->version,     sizeof(mod->version));
-    json_get_string(json, "author",      mod->author,      sizeof(mod->author));
-    json_get_string(json, "description", mod->description, sizeof(mod->description));
-    json_get_string(json, "entry",       mod->entry,       sizeof(mod->entry));
-    json_get_int   (json, "api_version", &mod->api_version);
-    json_get_string(json, "config",      mod->config_rel,  sizeof(mod->config_rel));
+static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
+    if (!mod || !manifest) return 0;
+    loaded_mod_apply_manifest(mod, manifest);
 
     // Optional config (line-based config file)
     if (mod->config_rel[0]) {
@@ -2821,13 +6483,26 @@ static int load_mod_lua(LoadedMod* mod) {
         mod->config_path[0] = '\0';
     }
 
-    if (mod->entry[0] == '\0') {
-        LOG_WARN("mod.json in %s has no entry field, skipping", mod->id);
+    if (mod->storage_rel[0]) {
+        snprintf(mod->storage_path, sizeof(mod->storage_path), "%s\\%s", mod->folder_path, mod->storage_rel);
+    } else {
+        snprintf(mod->storage_path, sizeof(mod->storage_path), "%s\\storage.cfg", mod->folder_path);
+    }
+    if (mod->binds_rel[0]) {
+        snprintf(mod->binds_path, sizeof(mod->binds_path), "%s\\%s", mod->folder_path, mod->binds_rel);
+    } else {
+        snprintf(mod->binds_path, sizeof(mod->binds_path), "%s\\binds.cfg", mod->folder_path);
+    }
+    mod_storage_load(mod);
+
+    if (mod->api_version != MOD_API_VERSION && !(manifest->allow_api_mismatch || global_allow_api_mismatch())) {
+        LOG_ERROR("Skipping mod %s: api_version=%d but framework is %d (set allow_api_mismatch=true to override)",
+                  mod->id, mod->api_version, MOD_API_VERSION);
         return 0;
     }
 
-    if (mod->api_version != MOD_API_VERSION) {
-        LOG_WARN("Mod %s requests api_version=%d but framework is %d (loading anyway)",
+    if (mod->api_version != MOD_API_VERSION && (manifest->allow_api_mismatch || global_allow_api_mismatch())) {
+        LOG_WARN("Loading mod %s with api_version=%d on framework=%d due explicit override",
                  mod->id, mod->api_version, MOD_API_VERSION);
     }
 
@@ -2865,6 +6540,14 @@ static int load_mod_lua(LoadedMod* mod) {
     push_config_api_table(L, mod);
     lua_setfield(L, -2, "config");
 
+    // Create per-mod storage API table and store it in env.storage
+    push_storage_api_table(L, mod);
+    lua_setfield(L, -2, "storage");
+
+    // Create interop API table and store it in env.interop
+    push_interop_api_table(L, mod);
+    lua_setfield(L, -2, "interop");
+
     // Mods share one Lua state, so shadow os.exit per-mod to keep deliberate
     // process termination on the crash-handler path instead of a clean shutdown.
     push_mod_os_table(L, mod);
@@ -2873,6 +6556,7 @@ static int load_mod_lua(LoadedMod* mod) {
     // Keep env alive
     lua_pushvalue(L, -1);
     mod->env_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    install_mod_anim_helpers(mod);
 
     // Set env for the chunk (Lua 5.1 / LuaJIT)
     lua_setfenv(L, -2);
@@ -2884,6 +6568,9 @@ static int load_mod_lua(LoadedMod* mod) {
         lua_pop(L, 1);
         return 0;
     }
+
+    // Apply persisted bind overrides after the mod has had a chance to register named binds.
+    mod_bind_load(mod);
 
     // Call on_load if registered
     call_lua_ref0(L, mod, mod->on_load_ref, "on_load");
@@ -2933,70 +6620,138 @@ static int create_lua_runtime(void) {
     return 1;
 }
 
+static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
+    if (!mod || !L) return;
+
+    if (call_on_unload_cb && mod->enabled) {
+        call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
+    }
+
+    reflist_clear(L, &mod->on_frame);
+    reflist_clear(L, &mod->on_event);
+    mod_ui_free(mod);
+
+    if (mod->on_layout) {
+        for (int li = 0; li < mod->on_layout_count; li++) {
+            if (mod->on_layout[li].ref != LUA_NOREF && mod->on_layout[li].ref != LUA_REFNIL) {
+                luaL_unref(L, LUA_REGISTRYINDEX, mod->on_layout[li].ref);
+            }
+        }
+        free(mod->on_layout);
+        mod->on_layout = NULL;
+    }
+    mod->on_layout_count = 0;
+    mod->on_layout_cap = 0;
+
+    interop_remove_owner(L, mod);
+    mod_config_clear(L, mod);
+    mod_bind_clear(mod);
+    mod_storage_clear(mod);
+    mod_audio_clear(mod);
+
+    if (mod->on_load_ref != LUA_NOREF && mod->on_load_ref != LUA_REFNIL) {
+        luaL_unref(L, LUA_REGISTRYINDEX, mod->on_load_ref);
+    }
+    if (mod->on_unload_ref != LUA_NOREF && mod->on_unload_ref != LUA_REFNIL) {
+        luaL_unref(L, LUA_REGISTRYINDEX, mod->on_unload_ref);
+    }
+    if (mod->env_ref != LUA_NOREF && mod->env_ref != LUA_REFNIL) {
+        luaL_unref(L, LUA_REGISTRYINDEX, mod->env_ref);
+    }
+    if (mod->mod_ref != LUA_NOREF && mod->mod_ref != LUA_REFNIL) {
+        luaL_unref(L, LUA_REGISTRYINDEX, mod->mod_ref);
+    }
+}
+
 static void unload_all_mods(void) {
     if (!g_mods || g_mod_count <= 0) {
         free(g_mods);
         g_mods = NULL;
         g_mod_count = 0;
         g_mod_cap = 0;
+        interop_clear_all(L);
+        audio_runtime_reset_channels();
         return;
     }
 
     if (!L) {
+        for (int i = 0; i < g_mod_count; i++) {
+            mod_bind_clear(&g_mods[i]);
+            mod_storage_clear(&g_mods[i]);
+            mod_audio_clear(&g_mods[i]);
+        }
+        interop_clear_all(NULL);
         free(g_mods);
         g_mods = NULL;
         g_mod_count = 0;
         g_mod_cap = 0;
+        audio_runtime_reset_channels();
         return;
     }
 
-    // Call on_unload for mods (best-effort)
+    // Free refs + per-mod allocations (includes best-effort on_unload)
     for (int i = 0; i < g_mod_count; i++) {
         LoadedMod* mod = &g_mods[i];
-        if (!mod->enabled) continue;
-        call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
-    }
-
-    // Free refs + per-mod allocations
-    for (int i = 0; i < g_mod_count; i++) {
-        LoadedMod* mod = &g_mods[i];
-        reflist_clear(L, &mod->on_frame);
-        reflist_clear(L, &mod->on_event);
-        mod_ui_free(mod);
-
-        if (mod->on_layout) {
-            for (int li = 0; li < mod->on_layout_count; li++) {
-                if (mod->on_layout[li].ref != LUA_NOREF && mod->on_layout[li].ref != LUA_REFNIL) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, mod->on_layout[li].ref);
-                }
-            }
-            free(mod->on_layout);
-            mod->on_layout = NULL;
-        }
-        mod->on_layout_count = 0;
-        mod->on_layout_cap = 0;
-
-        // Config entries + action handlers
-        mod_config_clear(L, mod);
-
-        if (mod->on_load_ref != LUA_NOREF && mod->on_load_ref != LUA_REFNIL) {
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->on_load_ref);
-        }
-        if (mod->on_unload_ref != LUA_NOREF && mod->on_unload_ref != LUA_REFNIL) {
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->on_unload_ref);
-        }
-        if (mod->env_ref != LUA_NOREF && mod->env_ref != LUA_REFNIL) {
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->env_ref);
-        }
-        if (mod->mod_ref != LUA_NOREF && mod->mod_ref != LUA_REFNIL) {
-            luaL_unref(L, LUA_REGISTRYINDEX, mod->mod_ref);
-        }
+        unload_single_mod_runtime(mod, 1);
     }
 
     free(g_mods);
     g_mods = NULL;
     g_mod_count = 0;
     g_mod_cap = 0;
+    interop_clear_all(L);
+    audio_runtime_reset_channels();
+}
+
+static int discovered_mods_push(DiscoveredMod** mods, int* count, int* cap, const DiscoveredMod* item) {
+    if (!mods || !count || !cap || !item) return 0;
+    if (*count + 1 > *cap) {
+        int newcap = (*cap == 0) ? 8 : (*cap * 2);
+        DiscoveredMod* nm = (DiscoveredMod*)realloc(*mods, sizeof(DiscoveredMod) * newcap);
+        if (!nm) return 0;
+        *mods = nm;
+        *cap = newcap;
+    }
+    (*mods)[*count] = *item;
+    (*count)++;
+    return 1;
+}
+
+static int manifest_precedence_cmp(const ModManifest* a, const ModManifest* b) {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    if (a->priority != b->priority) return (a->priority > b->priority) ? -1 : 1;
+    int c = _stricmp(a->id, b->id);
+    if (c != 0) return c;
+    return _stricmp(a->folder_name, b->folder_name);
+}
+
+static int discovered_find_index_by_id(const DiscoveredMod* mods, const int* active, int count, const char* id) {
+    if (!mods || count <= 0 || !id || !id[0]) return -1;
+    for (int i = 0; i < count; i++) {
+        if (active && !active[i]) continue;
+        if (_stricmp(mods[i].manifest.id, id) == 0) return i;
+    }
+    return -1;
+}
+
+static int manifests_conflict(const ModManifest* a, const ModManifest* b) {
+    if (!a || !b) return 0;
+    if (mod_id_list_contains(&a->conflicts, b->id)) return 1;
+    if (mod_id_list_contains(&b->conflicts, a->id)) return 1;
+    return 0;
+}
+
+static void add_manifest_edge(const int* active, int count, uint8_t* edges, int* indegree, int from, int to) {
+    if (!active || !edges || !indegree) return;
+    if (from < 0 || to < 0 || from >= count || to >= count) return;
+    if (!active[from] || !active[to]) return;
+    if (from == to) return;
+    size_t idx = (size_t)from * (size_t)count + (size_t)to;
+    if (edges[idx]) return;
+    edges[idx] = 1;
+    indegree[to]++;
 }
 
 static int scan_and_load_mods(void) {
@@ -3012,24 +6767,297 @@ static int scan_and_load_mods(void) {
     }
 
     int scanned = 0;
+    DiscoveredMod* discovered = NULL;
+    int discovered_count = 0;
+    int discovered_cap = 0;
+
     do {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
         if (fd.cFileName[0] == '_') continue; // allow _template or _disabled folders
 
-        LoadedMod* mod = mods_add();
-        if (!mod) break;
-
-        // Default id = folder name (can be overridden by mod.json "id")
-        snprintf(mod->id, sizeof(mod->id), "%s", fd.cFileName);
-        snprintf(mod->folder_path, sizeof(mod->folder_path), "mods\\%s", fd.cFileName);
-
-        load_mod_lua(mod);
         scanned++;
+
+        DiscoveredMod d;
+        memset(&d, 0, sizeof(d));
+        d.active = 1;
+        d.loaded = 0;
+
+        char err[256];
+        err[0] = '\0';
+        if (!parse_mod_manifest_file(fd.cFileName, &d.manifest, err, (int)sizeof(err))) {
+            LOG_WARN("Skipping mod folder %s: %s", fd.cFileName, err[0] ? err : "invalid mod.json");
+            continue;
+        }
+
+        if (!discovered_mods_push(&discovered, &discovered_count, &discovered_cap, &d)) {
+            LOG_ERROR("Out of memory while collecting mod manifests");
+            break;
+        }
     } while (FindNextFileA(hFind, &fd));
 
     FindClose(hFind);
-    LOG_INFO("Done. %d mod folder(s) scanned.", scanned);
+
+    if (discovered_count <= 0) {
+        LOG_INFO("Done. %d mod folder(s) scanned, 0 loaded.", scanned);
+        free(discovered);
+        return scanned;
+    }
+
+    int* active = (int*)malloc(sizeof(int) * discovered_count);
+    int* indegree = (int*)malloc(sizeof(int) * discovered_count);
+    int* placed = (int*)malloc(sizeof(int) * discovered_count);
+    int* ordered = (int*)malloc(sizeof(int) * discovered_count);
+    uint8_t* edges = (uint8_t*)calloc((size_t)discovered_count * (size_t)discovered_count, sizeof(uint8_t));
+
+    if (!active || !indegree || !placed || !ordered || !edges) {
+        LOG_ERROR("Out of memory while resolving mod load order");
+        free(active);
+        free(indegree);
+        free(placed);
+        free(ordered);
+        free(edges);
+        free(discovered);
+        return scanned;
+    }
+
+    for (int i = 0; i < discovered_count; i++) {
+        active[i] = discovered[i].active ? 1 : 0;
+        indegree[i] = 0;
+        placed[i] = 0;
+        ordered[i] = -1;
+    }
+
+    // Reject duplicate ids (fail closed: skip all duplicates).
+    for (int i = 0; i < discovered_count; i++) {
+        if (!active[i]) continue;
+        for (int j = i + 1; j < discovered_count; j++) {
+            if (!active[j]) continue;
+            if (_stricmp(discovered[i].manifest.id, discovered[j].manifest.id) == 0) {
+                LOG_ERROR("Skipping duplicate mod id \"%s\" (folders: %s, %s)",
+                          discovered[i].manifest.id,
+                          discovered[i].manifest.folder_name,
+                          discovered[j].manifest.folder_name);
+                active[i] = 0;
+                active[j] = 0;
+            }
+        }
+    }
+
+    // Enforce API compatibility unless explicitly overridden.
+    for (int i = 0; i < discovered_count; i++) {
+        if (!active[i]) continue;
+        const ModManifest* m = &discovered[i].manifest;
+        if (m->api_version == MOD_API_VERSION) continue;
+        if (m->allow_api_mismatch || global_allow_api_mismatch()) continue;
+        LOG_ERROR("Skipping mod %s: api_version=%d but framework is %d (set allow_api_mismatch=true to override)",
+                  m->id, m->api_version, MOD_API_VERSION);
+        active[i] = 0;
+    }
+
+    // Repeatedly prune invalid dependency/conflict sets until stable.
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+
+        // Dependency pruning (includes transitive pruning).
+        for (int i = 0; i < discovered_count; i++) {
+            if (!active[i]) continue;
+            const ModManifest* m = &discovered[i].manifest;
+            for (int d = 0; d < m->depends.count; d++) {
+                const ModDepSpec* dep = &m->depends.items[d];
+                int dep_idx = discovered_find_index_by_id(discovered, active, discovered_count, dep->id);
+                if (dep_idx < 0 || dep_idx == i) {
+                    LOG_ERROR("Skipping mod %s: unsatisfied dependency \"%s\"",
+                              m->id, dep->id);
+                    active[i] = 0;
+                    changed = 1;
+                    break;
+                }
+                if (dep->range[0] && !semver_satisfies_range(discovered[dep_idx].manifest.version, dep->range)) {
+                    LOG_ERROR("Skipping mod %s: dependency \"%s\" version %s does not satisfy \"%s\"",
+                              m->id,
+                              dep->id,
+                              discovered[dep_idx].manifest.version,
+                              dep->range);
+                    active[i] = 0;
+                    changed = 1;
+                    break;
+                }
+            }
+        }
+
+        // Conflict pruning (deterministic winner: priority desc, then id asc).
+        for (int i = 0; i < discovered_count; i++) {
+            if (!active[i]) continue;
+            for (int j = i + 1; j < discovered_count; j++) {
+                if (!active[j]) continue;
+                const ModManifest* a = &discovered[i].manifest;
+                const ModManifest* b = &discovered[j].manifest;
+                if (!manifests_conflict(a, b)) continue;
+
+                int loser = (manifest_precedence_cmp(a, b) <= 0) ? j : i;
+                int winner = (loser == i) ? j : i;
+                LOG_WARN("Conflict between %s and %s; keeping %s, skipping %s",
+                         a->id, b->id,
+                         discovered[winner].manifest.id,
+                         discovered[loser].manifest.id);
+                active[loser] = 0;
+                changed = 1;
+            }
+        }
+    }
+
+    // Build ordering graph across remaining active manifests.
+    for (int i = 0; i < discovered_count; i++) {
+        if (!active[i]) continue;
+        const ModManifest* m = &discovered[i].manifest;
+
+        for (int d = 0; d < m->depends.count; d++) {
+            const ModDepSpec* dep = &m->depends.items[d];
+            int dep_idx = discovered_find_index_by_id(discovered, active, discovered_count, dep->id);
+            if (dep_idx >= 0) add_manifest_edge(active, discovered_count, edges, indegree, dep_idx, i);
+        }
+
+        for (int d = 0; d < m->optional_deps.count; d++) {
+            const ModDepSpec* dep = &m->optional_deps.items[d];
+            int dep_idx = discovered_find_index_by_id(discovered, active, discovered_count, dep->id);
+            if (dep_idx < 0 || dep_idx == i) continue;
+            if (dep->range[0] && !semver_satisfies_range(discovered[dep_idx].manifest.version, dep->range)) {
+                LOG_WARN("Ignoring optional_deps on %s: dependency \"%s\" version %s does not satisfy \"%s\"",
+                         m->id,
+                         dep->id,
+                         discovered[dep_idx].manifest.version,
+                         dep->range);
+                continue;
+            }
+            add_manifest_edge(active, discovered_count, edges, indegree, dep_idx, i);
+        }
+
+        for (int d = 0; d < m->load_after.count; d++) {
+            const char* target = m->load_after.ids[d];
+            int target_idx = discovered_find_index_by_id(discovered, active, discovered_count, target);
+            if (target_idx < 0) {
+                LOG_WARN("Ignoring load_after on %s: target \"%s\" is not active", m->id, target);
+                continue;
+            }
+            add_manifest_edge(active, discovered_count, edges, indegree, target_idx, i);
+        }
+
+        for (int d = 0; d < m->load_before.count; d++) {
+            const char* target = m->load_before.ids[d];
+            int target_idx = discovered_find_index_by_id(discovered, active, discovered_count, target);
+            if (target_idx < 0) {
+                LOG_WARN("Ignoring load_before on %s: target \"%s\" is not active", m->id, target);
+                continue;
+            }
+            add_manifest_edge(active, discovered_count, edges, indegree, i, target_idx);
+        }
+    }
+
+    int active_count = 0;
+    for (int i = 0; i < discovered_count; i++) {
+        if (active[i]) active_count++;
+    }
+
+    // Kahn topological sort with deterministic tie-breaks.
+    int ordered_count = 0;
+    while (ordered_count < active_count) {
+        int pick = -1;
+        for (int i = 0; i < discovered_count; i++) {
+            if (!active[i] || placed[i]) continue;
+            if (indegree[i] != 0) continue;
+            if (pick < 0 || manifest_precedence_cmp(&discovered[i].manifest, &discovered[pick].manifest) < 0) {
+                pick = i;
+            }
+        }
+
+        if (pick < 0) {
+            // Cycle fallback.
+            for (int i = 0; i < discovered_count; i++) {
+                if (!active[i] || placed[i]) continue;
+                if (pick < 0 || manifest_precedence_cmp(&discovered[i].manifest, &discovered[pick].manifest) < 0) {
+                    pick = i;
+                }
+            }
+            if (pick < 0) break;
+            LOG_WARN("Load-order cycle detected; breaking cycle at %s", discovered[pick].manifest.id);
+        }
+
+        placed[pick] = 1;
+        ordered[ordered_count++] = pick;
+        for (int to = 0; to < discovered_count; to++) {
+            if (!active[to] || placed[to]) continue;
+            size_t edge_idx = (size_t)pick * (size_t)discovered_count + (size_t)to;
+            if (edges[edge_idx] && indegree[to] > 0) indegree[to]--;
+        }
+    }
+
+    int loaded_count = 0;
+    for (int oi = 0; oi < ordered_count; oi++) {
+        int idx = ordered[oi];
+        if (idx < 0 || idx >= discovered_count || !active[idx]) continue;
+        ModManifest* mf = &discovered[idx].manifest;
+
+        int blocked = 0;
+        for (int d = 0; d < mf->depends.count; d++) {
+            const ModDepSpec* dep = &mf->depends.items[d];
+            int dep_idx = discovered_find_index_by_id(discovered, NULL, discovered_count, dep->id);
+            if (dep_idx < 0 || !discovered[dep_idx].loaded) {
+                LOG_ERROR("Skipping mod %s: dependency \"%s\" did not load",
+                          mf->id, dep->id);
+                blocked = 1;
+                break;
+            }
+            if (dep->range[0] && !semver_satisfies_range(discovered[dep_idx].manifest.version, dep->range)) {
+                LOG_ERROR("Skipping mod %s: dependency \"%s\" version %s does not satisfy \"%s\"",
+                          mf->id,
+                          dep->id,
+                          discovered[dep_idx].manifest.version,
+                          dep->range);
+                blocked = 1;
+                break;
+            }
+        }
+        if (blocked) continue;
+
+        for (int j = 0; j < discovered_count; j++) {
+            if (!discovered[j].loaded) continue;
+            if (manifests_conflict(mf, &discovered[j].manifest)) {
+                LOG_WARN("Skipping mod %s: conflicts with already-loaded mod %s",
+                         mf->id, discovered[j].manifest.id);
+                blocked = 1;
+                break;
+            }
+        }
+        if (blocked) continue;
+
+        LoadedMod* mod = mods_add();
+        if (!mod) {
+            LOG_ERROR("Out of memory while creating runtime slot for %s", mf->id);
+            break;
+        }
+
+        if (!load_mod_lua(mod, mf)) {
+            unload_single_mod_runtime(mod, 0);
+            memset(mod, 0, sizeof(*mod));
+            g_mod_count--;
+            continue;
+        }
+
+        discovered[idx].loaded = 1;
+        loaded_count++;
+    }
+
+    LOG_INFO("Done. %d mod folder(s) scanned, %d candidate manifest(s), %d mod(s) loaded.",
+             scanned, active_count, loaded_count);
+
+    free(active);
+    free(indegree);
+    free(placed);
+    free(ordered);
+    free(edges);
+    free(discovered);
     return scanned;
 }
 
@@ -3070,10 +7098,12 @@ static void hot_reload_sig_add(uint64_t* xor_accum, uint64_t* add_accum, uint64_
 
 static int hot_reload_should_ignore_path(const char* full_path) {
     if (!full_path || !full_path[0]) return 0;
+    if (texture_ext_is_tracked_path(full_path)) return 1;
+    if (font_ext_is_tracked_path(full_path)) return 1;
     for (int i = 0; i < g_mod_count; i++) {
         LoadedMod* mod = &g_mods[i];
-        if (!mod->config_path[0]) continue;
-        if (_stricmp(mod->config_path, full_path) == 0) return 1;
+        if (mod->config_path[0] && _stricmp(mod->config_path, full_path) == 0) return 1;
+        if (mod->storage_path[0] && _stricmp(mod->storage_path, full_path) == 0) return 1;
     }
     return 0;
 }
@@ -3235,6 +7265,14 @@ static int reload_mod_runtime(const char* reason) {
 }
 
 static void hot_reload_poll(void) {
+    int tex_reloaded = texture_ext_poll_hot_reload();
+    int font_reloaded = font_ext_poll_hot_reload();
+    if ((tex_reloaded + font_reloaded) > 0) {
+        if (!reload_engine_gfx_atlases("overlay png changed")) {
+            LOG_WARN("Asset hot reload: atlas rebuild failed; restart may still be required");
+        }
+    }
+
     ULONGLONG now = GetTickCount64();
     if (now < g_hot_reload_next_poll_ms) return;
     g_hot_reload_next_poll_ms = now + HOT_RELOAD_INTERVAL_MS;
@@ -3267,9 +7305,18 @@ static void hot_reload_poll(void) {
     }
 }
 
+// Global time-scale state (read by SDL time wrappers through exported API).
+static float g_time_scale = 1.0f;
+static int g_manual_time_scale_enabled = 0;
+static float g_manual_time_scale = 1.0f;
+
 void lua_manager_init() {
     font_ext_init();
+    texture_ext_init();
     g_unloading_for_shutdown = 0;
+    g_manual_time_scale_enabled = 0;
+    g_manual_time_scale = 1.0f;
+    g_time_scale = 1.0f;
     reset_runtime_ui_state();
 
     LOG_INFO("Mod framework API version: %d", MOD_API_VERSION);
@@ -3294,6 +7341,8 @@ void lua_manager_shutdown() {
     g_unloading_for_shutdown = 0;
 
     font_ext_shutdown();
+    texture_ext_shutdown();
+    audio_runtime_shutdown();
     orphan_ui_strings_free_all();
     g_hot_reload_signature = 0;
     g_hot_reload_next_poll_ms = 0;
@@ -3304,17 +7353,85 @@ void lua_manager_shutdown() {
     g_force_layout_refresh = 1;
     g_last_layout_state = (void*)-1;
     g_last_btn_count = -1;
+    g_manual_time_scale_enabled = 0;
+    g_manual_time_scale = 1.0f;
+    g_time_scale = 1.0f;
 }
 
 // =============================
 // Runtime callbacks
 // =============================
 
-// Derived from the synthetic "delta_time" event.
-static float g_time_scale = 1.0f;
-
 float lua_manager_get_time_scale(void) {
     return g_time_scale;
+}
+
+int lua_manager_set_time_scale(float scale) {
+    if (scale < 0.05f) scale = 0.05f;
+    if (scale > 100.0f) scale = 100.0f;
+    g_manual_time_scale = scale;
+    g_manual_time_scale_enabled = 1;
+    g_time_scale = scale;
+    return 1;
+}
+
+void lua_manager_clear_time_scale(void) {
+    g_manual_time_scale_enabled = 0;
+    g_manual_time_scale = 1.0f;
+}
+
+int lua_manager_get_time_scale_manual(float* out_scale) {
+    if (out_scale) *out_scale = g_manual_time_scale;
+    return g_manual_time_scale_enabled;
+}
+
+int lua_manager_reload_mods(void) {
+    if (!reload_mod_runtime("manual console reload.mods")) {
+        return 0;
+    }
+    g_hot_reload_signature = hot_reload_compute_signature();
+    g_hot_reload_modset_signature = hot_reload_compute_modset_signature();
+    g_hot_reload_pending_signature = 0;
+    g_hot_reload_next_poll_ms = GetTickCount64() + HOT_RELOAD_INTERVAL_MS;
+    return 1;
+}
+
+int lua_manager_reload_assets(
+    int* out_textures_reloaded,
+    int* out_textures_failed,
+    int* out_textures_restart_required,
+    int* out_fonts_reloaded,
+    int* out_fonts_failed,
+    int* out_fonts_restart_required
+) {
+    int tex_reloaded = 0;
+    int tex_failed = 0;
+    int tex_restart = 0;
+    int font_reloaded = 0;
+    int font_failed = 0;
+    int font_restart = 0;
+
+    texture_ext_reload_all(&tex_reloaded, &tex_failed, &tex_restart);
+    font_ext_reload_all(&font_reloaded, &font_failed, &font_restart);
+
+    if ((tex_reloaded + font_reloaded) > 0) {
+        if (!reload_engine_gfx_atlases("manual console reload.assets")) {
+            tex_restart = tex_reloaded;
+            font_restart = font_reloaded;
+        } else {
+            tex_restart = 0;
+            font_restart = 0;
+        }
+    }
+
+    if (out_textures_reloaded) *out_textures_reloaded = tex_reloaded;
+    if (out_textures_failed) *out_textures_failed = tex_failed;
+    if (out_textures_restart_required) *out_textures_restart_required = tex_restart;
+    if (out_fonts_reloaded) *out_fonts_reloaded = font_reloaded;
+    if (out_fonts_failed) *out_fonts_failed = font_failed;
+    if (out_fonts_restart_required) *out_fonts_restart_required = font_restart;
+
+    return (tex_failed + font_failed) == 0;
 }
 
 static int ui_handle_event(const char* type, int x, int y, int button) {
@@ -3352,12 +7469,16 @@ static int ui_handle_event(const char* type, int x, int y, int button) {
 
 double lua_manager_on_delta_time(double dt_seconds) {
     if (!L) {
+        if (g_manual_time_scale_enabled) {
+            g_time_scale = g_manual_time_scale;
+            return dt_seconds * (double)g_manual_time_scale;
+        }
         g_time_scale = 1.0f;
         return dt_seconds;
     }
 
     if (dt_seconds <= 0.0) {
-        g_time_scale = 1.0f;
+        g_time_scale = g_manual_time_scale_enabled ? g_manual_time_scale : 1.0f;
         return dt_seconds;
     }
 
@@ -3369,8 +7490,16 @@ double lua_manager_on_delta_time(double dt_seconds) {
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod->enabled) continue;
-        for (int i = 0; i < mod->on_event.count; i++) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, mod->on_event.refs[i]);
+        int* refs = NULL;
+        int ref_count = 0;
+        if (!reflist_snapshot(&mod->on_event, &refs, &ref_count)) {
+            log_mod(mod, "ERROR", "on_event dispatch snapshot failed: out of memory");
+            mod->error_count++;
+            continue;
+        }
+
+        for (int i = 0; i < ref_count; i++) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
             lua_pushvalue(L, -2); // event table
             if (lua_pcall(L, 1, 1, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
@@ -3383,6 +7512,7 @@ double lua_manager_on_delta_time(double dt_seconds) {
             }
             lua_pop(L, 1); // handler return
         }
+        free(refs);
     }
 
     // Read back (potentially modified) dt
@@ -3394,8 +7524,12 @@ double lua_manager_on_delta_time(double dt_seconds) {
     lua_pop(L, 1); // value
     lua_pop(L, 1); // event
 
-    // Update time scale multiplier
+    // Update time scale multiplier (manual override is applied after mod events).
     double scale = out / dt_seconds;
+    if (g_manual_time_scale_enabled) {
+        scale = (double)g_manual_time_scale;
+        out = dt_seconds * scale;
+    }
     if (scale < 0.05) scale = 0.05;
     if (scale > 100.0)  scale = 100.0;
     g_time_scale = (float)scale;
@@ -3480,8 +7614,16 @@ void lua_manager_on_frame() {
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod->enabled) continue;
-        for (int i = 0; i < mod->on_frame.count; i++) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, mod->on_frame.refs[i]);
+        int* refs = NULL;
+        int ref_count = 0;
+        if (!reflist_snapshot(&mod->on_frame, &refs, &ref_count)) {
+            log_mod(mod, "ERROR", "on_frame dispatch snapshot failed: out of memory");
+            mod->error_count++;
+            continue;
+        }
+
+        for (int i = 0; i < ref_count; i++) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
                 char buf[512];
@@ -3491,6 +7633,7 @@ void lua_manager_on_frame() {
                 mod->error_count++;
             }
         }
+        free(refs);
     }
 
     // Reset turtle state after mod callbacks to avoid leaking transforms/tints into the next frame.
@@ -3509,6 +7652,14 @@ void lua_manager_on_frame() {
 
     ui_reset_render_state();
     g_ui_mouse_pressed_left = 0;
+
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        for (int bi = 0; bi < mod->bind_count; bi++) {
+            mod->binds[bi].pressed = 0;
+            mod->binds[bi].released = 0;
+        }
+    }
 }
 
 // Returns 1 if consumed by any mod (a handler returned true), else 0.
@@ -3530,8 +7681,16 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod->enabled) continue;
-        for (int i = 0; i < mod->on_event.count; i++) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, mod->on_event.refs[i]);
+        int* refs = NULL;
+        int ref_count = 0;
+        if (!reflist_snapshot(&mod->on_event, &refs, &ref_count)) {
+            log_mod(mod, "ERROR", "on_event dispatch snapshot failed: out of memory");
+            mod->error_count++;
+            continue;
+        }
+
+        for (int i = 0; i < ref_count; i++) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
             lua_pushvalue(L, -2); // event table
             if (lua_pcall(L, 1, 1, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
@@ -3547,10 +7706,29 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
             }
             lua_pop(L, 1); // handler return
         }
+        free(refs);
     }
 
     lua_pop(L, 1); // event table
     return consumed;
+}
+
+void lua_manager_on_key_event(int sym, int is_down) {
+    if (!L) return;
+
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled) continue;
+        for (int bi = 0; bi < mod->bind_count; bi++) {
+            InputBinding* bind = &mod->binds[bi];
+            int was_down;
+            if (bind->sym == 0 || bind->sym != sym) continue;
+            was_down = bind->down;
+            bind->down = is_down ? 1 : 0;
+            bind->pressed = (!was_down && is_down) ? 1 : 0;
+            bind->released = (was_down && !is_down) ? 1 : 0;
+        }
+    }
 }
 
 // =============================
@@ -3570,9 +7748,210 @@ static LoadedMod* get_mod_by_index(int mod_index) {
     return &g_mods[mod_index];
 }
 
+static LoadedMod* get_mod_by_id_ci(const char* mod_id) {
+    if (!mod_id || !mod_id[0]) return NULL;
+    for (int i = 0; i < g_mod_count; i++) {
+        if (_stricmp(g_mods[i].id, mod_id) == 0) return &g_mods[i];
+    }
+    return NULL;
+}
+
+static void console_out_set(char* out, int out_sz, const char* text) {
+    if (!out || out_sz <= 0) return;
+    if (!text) text = "";
+    strncpy(out, text, (size_t)out_sz - 1);
+    out[out_sz - 1] = '\0';
+}
+
+static void console_out_append(char* out, int out_sz, int* pos, const char* text) {
+    size_t len;
+    int remain;
+    if (!out || out_sz <= 0 || !pos || !text) return;
+    if (*pos < 0) *pos = 0;
+    if (*pos >= out_sz - 1) return;
+    len = strlen(text);
+    remain = (out_sz - 1) - *pos;
+    if ((int)len > remain) len = (size_t)remain;
+    if (len <= 0) return;
+    memcpy(out + *pos, text, len);
+    *pos += (int)len;
+    out[*pos] = '\0';
+}
+
+static void console_lua_format_results(lua_State* Ls, int first_result_index, char* out, int out_sz) {
+    int top = lua_gettop(Ls);
+    int pos = 0;
+
+    if (!out || out_sz <= 0) return;
+    out[0] = '\0';
+
+    if (first_result_index > top) {
+        console_out_set(out, out_sz, "ok");
+        return;
+    }
+
+    for (int i = first_result_index; i <= top; i++) {
+        const char* s = NULL;
+        int t;
+        char tmp[128];
+        if (i > first_result_index) {
+            console_out_append(out, out_sz, &pos, " | ");
+        }
+        t = lua_type(Ls, i);
+        switch (t) {
+            case LUA_TNIL:
+                s = "nil";
+                break;
+            case LUA_TBOOLEAN:
+                s = lua_toboolean(Ls, i) ? "true" : "false";
+                break;
+            case LUA_TNUMBER:
+            case LUA_TSTRING:
+                s = lua_tostring(Ls, i);
+                if (!s) s = "";
+                break;
+            default:
+                snprintf(tmp, sizeof(tmp), "<%s:%p>", lua_typename(Ls, t), lua_topointer(Ls, i));
+                s = tmp;
+                break;
+        }
+        console_out_append(out, out_sz, &pos, s);
+    }
+
+    if (!out[0]) {
+        console_out_set(out, out_sz, "ok");
+    }
+}
+
+static int console_lua_eval_impl(const char* code, int use_env, int env_ref, char* out, int out_sz) {
+    int top0;
+    int status;
+    int loaded_as_expr = 0;
+    char* expr_chunk = NULL;
+
+    if (!code || !code[0]) {
+        console_out_set(out, out_sz, "empty lua code");
+        return 0;
+    }
+    if (!L) {
+        console_out_set(out, out_sz, "lua runtime is not initialized");
+        return 0;
+    }
+
+    top0 = lua_gettop(L);
+
+    {
+        size_t n = strlen(code);
+        expr_chunk = (char*)malloc(n + 8);
+        if (expr_chunk) {
+            memcpy(expr_chunk, "return ", 7);
+            memcpy(expr_chunk + 7, code, n + 1);
+            status = luaL_loadstring(L, expr_chunk);
+            if (status == 0) loaded_as_expr = 1;
+            free(expr_chunk);
+            expr_chunk = NULL;
+        } else {
+            status = LUA_ERRMEM;
+        }
+    }
+
+    if (!loaded_as_expr) {
+        if (status != 0 && lua_gettop(L) > top0) {
+            lua_pop(L, 1); // drop expression compile error
+        }
+        status = luaL_loadstring(L, code);
+    }
+
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        console_out_set(out, out_sz, err ? err : "lua compile error");
+        lua_settop(L, top0);
+        return 0;
+    }
+
+    if (use_env) {
+        if (env_ref == LUA_NOREF || env_ref == LUA_REFNIL) {
+            console_out_set(out, out_sz, "target mod has no Lua environment");
+            lua_settop(L, top0);
+            return 0;
+        }
+        lua_rawgeti(L, LUA_REGISTRYINDEX, env_ref);
+        if (!lua_istable(L, -1)) {
+            console_out_set(out, out_sz, "target mod environment is not a table");
+            lua_settop(L, top0);
+            return 0;
+        }
+        lua_setfenv(L, -2);
+    }
+
+    status = lua_pcall(L, 0, LUA_MULTRET, 0);
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        console_out_set(out, out_sz, err ? err : "lua runtime error");
+        lua_settop(L, top0);
+        return 0;
+    }
+
+    console_lua_format_results(L, top0 + 1, out, out_sz);
+    lua_settop(L, top0);
+    return 1;
+}
+
 const char* lua_manager_get_mod_id(int mod_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     return m ? m->id : "";
+}
+
+int lua_manager_console_eval(const char* code, char* out, int out_sz) {
+    return console_lua_eval_impl(code, 0, LUA_NOREF, out, out_sz);
+}
+
+int lua_manager_console_eval_mod(const char* mod_id, const char* code, char* out, int out_sz) {
+    LoadedMod* m;
+    if (!mod_id || !mod_id[0]) {
+        console_out_set(out, out_sz, "missing mod id");
+        return 0;
+    }
+    m = get_mod_by_id_ci(mod_id);
+    if (!m) {
+        console_out_set(out, out_sz, "mod not found");
+        return 0;
+    }
+    return console_lua_eval_impl(code, 1, m->env_ref, out, out_sz);
+}
+
+int lua_manager_console_run_file(const char* path, char* out, int out_sz) {
+    int top0;
+    int status;
+    if (!path || !path[0]) {
+        console_out_set(out, out_sz, "missing file path");
+        return 0;
+    }
+    if (!L) {
+        console_out_set(out, out_sz, "lua runtime is not initialized");
+        return 0;
+    }
+
+    top0 = lua_gettop(L);
+    status = luaL_loadfile(L, path);
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        console_out_set(out, out_sz, err ? err : "failed to load lua file");
+        lua_settop(L, top0);
+        return 0;
+    }
+
+    status = lua_pcall(L, 0, LUA_MULTRET, 0);
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        console_out_set(out, out_sz, err ? err : "lua runtime error");
+        lua_settop(L, top0);
+        return 0;
+    }
+
+    console_lua_format_results(L, top0 + 1, out, out_sz);
+    lua_settop(L, top0);
+    return 1;
 }
 
 const char* lua_manager_get_mod_name(int mod_index) {
@@ -3585,9 +7964,77 @@ const char* lua_manager_get_mod_version(int mod_index) {
     return m ? m->version : "";
 }
 
+const char* lua_manager_get_mod_author(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? m->author : "";
+}
+
+const char* lua_manager_get_mod_description(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? m->description : "";
+}
+
+int lua_manager_get_mod_dependency_count(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? (m->depends.count + m->optional_deps.count) : 0;
+}
+
+const char* lua_manager_get_mod_dependency_id(int mod_index, int dep_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m || dep_index < 0) return "";
+    if (dep_index < m->depends.count) return m->depends.items[dep_index].id;
+    dep_index -= m->depends.count;
+    if (dep_index < m->optional_deps.count) return m->optional_deps.items[dep_index].id;
+    return "";
+}
+
+int lua_manager_get_mod_dependency_optional(int mod_index, int dep_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m || dep_index < 0) return 0;
+    if (dep_index < m->depends.count) return 0;
+    dep_index -= m->depends.count;
+    return (dep_index >= 0 && dep_index < m->optional_deps.count) ? 1 : 0;
+}
+
+int lua_manager_mod_dependency_satisfied(int mod_index, int dep_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    const char* dep_id = lua_manager_get_mod_dependency_id(mod_index, dep_index);
+    LoadedMod* other;
+    if (!m || !dep_id[0]) return 0;
+    other = get_mod_by_id_ci(dep_id);
+    return (other && other->enabled) ? 1 : 0;
+}
+
+int lua_manager_get_mod_conflict_count(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? m->conflicts.count : 0;
+}
+
+const char* lua_manager_get_mod_conflict_id(int mod_index, int conflict_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m || conflict_index < 0 || conflict_index >= m->conflicts.count) return "";
+    return m->conflicts.ids[conflict_index];
+}
+
+int lua_manager_mod_conflict_active(int mod_index, int conflict_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    const char* other_id = lua_manager_get_mod_conflict_id(mod_index, conflict_index);
+    LoadedMod* other;
+    if (!m || !other_id[0]) return 0;
+    other = get_mod_by_id_ci(other_id);
+    return (other && other->enabled) ? 1 : 0;
+}
+
 int lua_manager_get_mod_enabled(int mod_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     return m ? m->enabled : 0;
+}
+
+int lua_manager_set_mod_enabled(int mod_index, int enabled) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    m->enabled = enabled ? 1 : 0;
+    return 1;
 }
 
 int lua_manager_get_mod_config_count(int mod_index) {
@@ -3621,6 +8068,65 @@ const char* lua_manager_get_mod_config_value_str(int mod_index, int entry_index)
     if (!m) return "";
     if (entry_index < 0 || entry_index >= m->cfg_count) return "";
     return m->cfg_entries[entry_index].value;
+}
+
+int lua_manager_find_mod_config_index(int mod_index, const char* key) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m || !key || !key[0]) return -1;
+    for (int i = 0; i < m->cfg_count; i++) {
+        if (_stricmp(m->cfg_entries[i].key, key) == 0) return i;
+    }
+    return -1;
+}
+
+int lua_manager_get_mod_bind_count(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? m->bind_count : 0;
+}
+
+const char* lua_manager_get_mod_bind_key(int mod_index, int bind_index) {
+    InputBinding* b;
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return "";
+    b = mod_bind_by_index(m, bind_index);
+    return b ? b->key : "";
+}
+
+const char* lua_manager_get_mod_bind_label(int mod_index, int bind_index) {
+    InputBinding* b;
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return "";
+    b = mod_bind_by_index(m, bind_index);
+    return b ? b->label : "";
+}
+
+const char* lua_manager_get_mod_bind_value_str(int mod_index, int bind_index) {
+    InputBinding* b;
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return "";
+    b = mod_bind_by_index(m, bind_index);
+    return b ? b->value_name : "";
+}
+
+int lua_manager_set_mod_bind_value(int mod_index, int bind_index, int sym) {
+    InputBinding* b;
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    b = mod_bind_by_index(m, bind_index);
+    if (!b) return 0;
+    b->sym = sym;
+    mod_bind_update_name(b);
+    return mod_bind_save(m);
+}
+
+int lua_manager_clear_mod_bind_value(int mod_index, int bind_index) {
+    return lua_manager_set_mod_bind_value(mod_index, bind_index, 0);
+}
+
+int lua_manager_mod_bind_has_conflict(int mod_index, int bind_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    return mod_bind_has_conflict(m, bind_index);
 }
 
 int lua_manager_config_toggle_bool(int mod_index, int entry_index) {

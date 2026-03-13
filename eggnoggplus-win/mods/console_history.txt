@@ -3,3 +3,6 @@ mods.toggle vs_ai
 mods.list
 mods.toggle vs_ai
 help
+state.reload
+state.switch pregame
+state.switch main

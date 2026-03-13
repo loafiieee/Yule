@@ -1,44 +1,58 @@
-[09:54:53] [INFO] Mod framework initializing...
-[09:54:53] [INFO] Mod framework API version: 1
-[09:54:53] [INFO] Scanning mods/ folder...
-[09:54:53] [WARN] Skipping mod folder profiles: could not open mods\profiles\mod.json
-[09:54:53] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[09:54:53] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[09:54:53] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[09:54:53] [INFO] Loaded mod: crash
-[09:54:53] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[09:54:53] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[09:54:53] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[09:54:53] [INFO] [mod:poc_speedhack] enabled=true
-[09:54:53] [INFO] [mod:poc_speedhack] speed=1
-[09:54:53] [INFO] Loaded mod: poc_speedhack
-[09:54:53] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[09:54:53] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[09:54:53] [INFO] Loaded mod: test
-[09:54:53] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[09:54:53] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[09:54:53] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[09:54:53] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[09:54:53] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[09:54:53] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[09:54:53] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[09:54:53] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[09:54:53] [INFO] Loaded mod: texture_pack_test
-[09:54:53] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[09:54:53] [INFO] [maps] scanning maps/ for custom maps
-[09:54:53] [INFO] [maps][example_map] scanning folder: maps\example_map
-[09:54:53] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[09:54:53] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[09:54:53] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
-[09:54:53] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[09:54:53] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[09:54:53] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[09:54:53] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[09:54:53] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[09:54:53] [INFO] hooks_init: custom MODS menu ready
-[09:54:54] [INFO] [maps][example_map] applying custom map for selector index 5
-[09:54:57] [INFO] MODS: entering mods menu
-[09:55:07] [INFO] [maps][example_map] applying custom map for selector index 5
-[09:55:08] [INFO] [mod:crash] Unloaded
-[09:55:08] [INFO] [mod:poc_speedhack] Unloaded
-[09:55:08] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[14:50:47] [INFO] Mod framework initializing...
+[14:50:47] [INFO] Mod framework API version: 1
+[14:50:47] [INFO] Scanning mods/ folder...
+[14:50:47] [WARN] Skipping mod folder profiles: could not open mods\profiles\mod.json
+[14:50:47] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[14:50:47] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[14:50:47] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[14:50:47] [INFO] Loaded mod: crash
+[14:50:47] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[14:50:47] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[14:50:47] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[14:50:47] [INFO] [mod:poc_speedhack] enabled=true
+[14:50:47] [INFO] [mod:poc_speedhack] speed=1.1
+[14:50:47] [INFO] Loaded mod: poc_speedhack
+[14:50:47] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[14:50:47] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[14:50:47] [INFO] Loaded mod: test
+[14:50:47] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[14:50:47] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[14:50:47] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[14:50:47] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[14:50:47] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[14:50:47] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[14:50:47] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[14:50:47] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[14:50:47] [INFO] Loaded mod: texture_pack_test
+[14:50:47] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[14:50:47] [INFO] [maps] scanning maps/ for custom maps
+[14:50:47] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:50:47] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:50:47] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:50:47] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[14:50:47] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:50:47] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:50:47] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:50:47] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:50:47] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[14:50:47] [INFO] hooks_init: custom MODS menu ready
+[14:50:48] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:50:49] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:50:49] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:50:49] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:50:50] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:51:11] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:51:16] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:51:24] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:52:40] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:53:54] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:55:53] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:56:46] [INFO] MODS: entering mods menu
+[14:58:04] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:58:10] [INFO] MODS: entering mods menu
+[14:58:13] [INFO] MODS: entering mods menu
+[14:58:14] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:58:15] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:58:27] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:58:58] [INFO] [maps][big_jump] applying custom map for selector index 6
+[14:59:27] [INFO] [maps][big_jump] applying custom map for selector index 6

@@ -56,7 +56,7 @@ mod.on_event(function(e)
   -- Example: print key presses
   if e.type == "keydown" then
     -- e.sym is the SDL keycode
-    mod.log("keydown sym=" .. tostring(e.sym))
+    mod.log("keydown sym=" .. tostring(e.sym) .. "as 0x" .. string.format("%x", e.sym)  .. " scancode=" .. tostring(e.scancode))
   end
 
   -- return true

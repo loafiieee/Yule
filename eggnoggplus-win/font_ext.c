@@ -171,6 +171,25 @@ int font_ext_font_loaded(void) {
     return g_font_loaded;
 }
 
+void font_ext_reset_runtime_state(void) {
+    memset(g_slots, 0, sizeof(g_slots));
+    g_font_loaded = 0;
+    g_next_poll_ms = GetTickCount64() + HOT_RELOAD_POLL_MS;
+}
+
+void font_ext_forget_owner_cache(const char* owner_mod_id) {
+    if (!owner_mod_id || !owner_mod_id[0] || !g_allocs) return;
+    for (int i = g_alloc_count - 1; i >= 0; i--) {
+        if (_stricmp(g_allocs[i].owner, owner_mod_id) != 0) continue;
+        if (i < g_alloc_count - 1) {
+            memmove(&g_allocs[i],
+                    &g_allocs[i + 1],
+                    sizeof(AllocKey) * (size_t)(g_alloc_count - i - 1));
+        }
+        g_alloc_count--;
+    }
+}
+
 static int set_slot(
     const char* owner_mod_id,
     const char* owner_mod_folder,

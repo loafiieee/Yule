@@ -12,6 +12,15 @@ This project loads **Lua mods** from the `mods/` folder.
 
 Logs go to `mods/modframework.log`.
 
+Standalone tooling is available too:
+- `.\modtool.cmd validate <mod-folder|package.zip>`
+- `.\modtool.cmd pack <mod-folder>`
+- `.\modtool.cmd install <mod-folder|package.zip>`
+- `.\modtool.cmd update <mod-folder|package.zip>`
+- `.\modtool.cmd uninstall <mod-id>`
+
+See `MOD_TOOLING.md` for the package format and safety behavior.
+
 ---
 
 ## Folder layout
@@ -96,6 +105,8 @@ Each mod runs in its **own Lua environment**.
 mod.on_load(function() end)
 mod.on_unload(function() end)
 ```
+
+`on_unload` fires when the mod is disabled, hot reloaded, or the framework shuts down.
 
 ### Per-frame callback
 

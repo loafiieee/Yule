@@ -308,10 +308,27 @@ void texture_ext_shutdown(void) {
     g_next_poll_ms = 0;
 }
 
+void texture_ext_reset_runtime_state(void) {
+    for (int i = 0; i < MAX_TEXTURE_REPLACEMENTS; i++) {
+        if (g_replacements[i].rgba) {
+            free(g_replacements[i].rgba);
+            g_replacements[i].rgba = NULL;
+        }
+    }
+    memset(g_replacements, 0, sizeof(g_replacements));
+    memset(g_loaded_paths, 0, sizeof(g_loaded_paths));
+    g_loaded_count = 0;
+    g_next_poll_ms = GetTickCount64() + HOT_RELOAD_POLL_MS;
+}
+
 int texture_ext_path_loaded(const char* target_path) {
     char canonical[TEX_PATH_MAX];
     if (!canonicalize_target_path(target_path, canonical, (int)sizeof(canonical))) return 0;
     return loaded_path_index(canonical) >= 0;
+}
+
+int texture_ext_any_path_loaded(void) {
+    return g_loaded_count > 0;
 }
 
 int texture_ext_is_tracked_path(const char* full_path) {

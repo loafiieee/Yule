@@ -42,6 +42,7 @@
 - `mods.list`
 - `mods.find <text>`
 - `mods.info <id>`
+- `mods.trace <id|all> [on|off]`
 - `mods.enable <id|all>`
 - `mods.disable <id|all>`
 - `mods.toggle <id|all>`
@@ -85,6 +86,7 @@
 - `mods.toggle speedhack`
 - `mods.config.find speed`
 - `mods.info speedhack`
+- `mods.trace speedhack on`
 - `mods.config speedhack`
 - `binds.list speedhack`
 - `binds.set speedhack dash space`
@@ -106,8 +108,11 @@
 - `input.clear 1`
 
 ## Notes
-- `mods.enable` and `mods.disable` change runtime event participation for that mod.
-- `mods.toggle` flips enabled state immediately.
+- `mods.enable` recreates the mod runtime if dependencies/conflicts allow it.
+- `mods.disable` unloads the mod runtime and also disables enabled dependents that require it.
+- `mods.toggle` applies the same enable/disable lifecycle immediately.
+- `mods.info` includes runtime perf/memory diagnostics for the selected mod.
+- `mods.trace` toggles per-mod event trace logging into `mods\modframework.log`.
 - `mods.config.set` supports bool/int/float/string config types.
 - `time.scale <value>` sets a manual global timescale clamp-limited to `0.05..100`.
 - `time.scale auto` returns control back to mod-driven delta-time scaling.

@@ -63,6 +63,5 @@ mod.on_event(function(e)
 end)
 
 mod.on_unload(function()
-  -- Called when the mod framework is shutting down.
-  -- (Hot reload / disable will call this too once those features exist.)
+  -- Called when the mod is disabled, hot reloaded, or the framework shuts down.
 end)

@@ -298,10 +298,32 @@ typedef struct AudioChunkCacheEntry {
     Mix_Chunk* chunk;
 } AudioChunkCacheEntry;
 
+typedef struct FontRegistration {
+    uint8_t byte_value;
+    char relpath[128];
+} FontRegistration;
+
+typedef struct TextureRegistration {
+    char target[128];
+    char relpath[128];
+} TextureRegistration;
+
+typedef struct ModPerfCounter {
+    unsigned int call_count;
+    double total_ms;
+    double last_ms;
+    double max_ms;
+} ModPerfCounter;
+
 // Forward declarations for helper functions used before definition
+typedef struct LoadedMod LoadedMod;
+
 static void reflist_clear(lua_State* Ls, LuaRefList* list);
 static int ui_engine_button_exists(void* btn_ptr);
 static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden);
+static int reload_engine_gfx_atlases(const char* reason);
+static LoadedMod* get_mod_by_index(int mod_index);
+static LoadedMod* get_mod_by_id_ci(const char* mod_id);
 
 
 #define MOD_ID_LIST_MAX 32
@@ -325,7 +347,7 @@ typedef struct ModDepList {
     int count;
 } ModDepList;
 
-typedef struct LoadedMod {
+struct LoadedMod {
     char id[64];
     char name[64];
     char version[32];
@@ -337,6 +359,11 @@ typedef struct LoadedMod {
 
     int  enabled;
     int  error_count;
+    int  trace_events;
+
+    ModPerfCounter perf_frame;
+    ModPerfCounter perf_event;
+    ModPerfCounter perf_layout;
 
     ModDepList depends;
     ModDepList optional_deps;
@@ -409,7 +436,14 @@ typedef struct LoadedMod {
     AudioChunkCacheEntry* audio_chunks;
     int audio_chunk_count;
     int audio_chunk_cap;
-} LoadedMod;
+
+    FontRegistration* font_regs;
+    int font_reg_count;
+    int font_reg_cap;
+    TextureRegistration* texture_regs;
+    int texture_reg_count;
+    int texture_reg_cap;
+};
 
 
 typedef struct ModManifest {
@@ -2431,6 +2465,66 @@ static int mod_storage_load(LoadedMod* mod) {
     return 1;
 }
 
+static void mod_resource_regs_clear(LoadedMod* mod) {
+    if (!mod) return;
+    free(mod->font_regs);
+    mod->font_regs = NULL;
+    mod->font_reg_count = 0;
+    mod->font_reg_cap = 0;
+    free(mod->texture_regs);
+    mod->texture_regs = NULL;
+    mod->texture_reg_count = 0;
+    mod->texture_reg_cap = 0;
+}
+
+static int mod_font_reg_record(LoadedMod* mod, uint8_t byte_value, const char* relpath) {
+    FontRegistration* nr = NULL;
+    if (!mod || !relpath || !relpath[0]) return 0;
+    for (int i = 0; i < mod->font_reg_count; i++) {
+        if (mod->font_regs[i].byte_value != byte_value) continue;
+        snprintf(mod->font_regs[i].relpath, sizeof(mod->font_regs[i].relpath), "%s", relpath);
+        return 1;
+    }
+    if (mod->font_reg_count + 1 > mod->font_reg_cap) {
+        int newcap = (mod->font_reg_cap == 0) ? 4 : (mod->font_reg_cap * 2);
+        nr = (FontRegistration*)realloc(mod->font_regs, sizeof(FontRegistration) * newcap);
+        if (!nr) return 0;
+        mod->font_regs = nr;
+        mod->font_reg_cap = newcap;
+    }
+    mod->font_regs[mod->font_reg_count].byte_value = byte_value;
+    snprintf(mod->font_regs[mod->font_reg_count].relpath,
+             sizeof(mod->font_regs[mod->font_reg_count].relpath),
+             "%s", relpath);
+    mod->font_reg_count++;
+    return 1;
+}
+
+static int mod_texture_reg_record(LoadedMod* mod, const char* target, const char* relpath) {
+    TextureRegistration* nr = NULL;
+    if (!mod || !target || !target[0] || !relpath || !relpath[0]) return 0;
+    for (int i = 0; i < mod->texture_reg_count; i++) {
+        if (_stricmp(mod->texture_regs[i].target, target) != 0) continue;
+        snprintf(mod->texture_regs[i].relpath, sizeof(mod->texture_regs[i].relpath), "%s", relpath);
+        return 1;
+    }
+    if (mod->texture_reg_count + 1 > mod->texture_reg_cap) {
+        int newcap = (mod->texture_reg_cap == 0) ? 4 : (mod->texture_reg_cap * 2);
+        nr = (TextureRegistration*)realloc(mod->texture_regs, sizeof(TextureRegistration) * newcap);
+        if (!nr) return 0;
+        mod->texture_regs = nr;
+        mod->texture_reg_cap = newcap;
+    }
+    snprintf(mod->texture_regs[mod->texture_reg_count].target,
+             sizeof(mod->texture_regs[mod->texture_reg_count].target),
+             "%s", target);
+    snprintf(mod->texture_regs[mod->texture_reg_count].relpath,
+             sizeof(mod->texture_regs[mod->texture_reg_count].relpath),
+             "%s", relpath);
+    mod->texture_reg_count++;
+    return 1;
+}
+
 // =============================
 // Small helpers
 // =============================
@@ -2594,6 +2688,12 @@ static LoadedMod* mods_add(void) {
     m->audio_chunks = NULL;
     m->audio_chunk_count = 0;
     m->audio_chunk_cap = 0;
+    m->font_regs = NULL;
+    m->font_reg_count = 0;
+    m->font_reg_cap = 0;
+    m->texture_regs = NULL;
+    m->texture_reg_count = 0;
+    m->texture_reg_cap = 0;
     return m;
 }
 
@@ -2615,6 +2715,92 @@ static void log_mod(LoadedMod* mod, const char* level, const char* msg) {
         return;
     }
     log_write(level, "[mod:%s] %s", mod->id[0] ? mod->id : "?", msg);
+}
+
+static double perf_now_ms(void) {
+    static LARGE_INTEGER freq = { 0 };
+    static int freq_ready = 0;
+    LARGE_INTEGER now;
+    if (!freq_ready) {
+        if (!QueryPerformanceFrequency(&freq)) {
+            freq.QuadPart = 0;
+        }
+        freq_ready = 1;
+    }
+    if (freq.QuadPart > 0 && QueryPerformanceCounter(&now)) {
+        return ((double)now.QuadPart * 1000.0) / (double)freq.QuadPart;
+    }
+    return (double)GetTickCount64();
+}
+
+static void mod_perf_counter_record(ModPerfCounter* counter, double elapsed_ms) {
+    if (!counter) return;
+    if (elapsed_ms < 0.0) elapsed_ms = 0.0;
+    counter->call_count++;
+    counter->total_ms += elapsed_ms;
+    counter->last_ms = elapsed_ms;
+    if (elapsed_ms > counter->max_ms) counter->max_ms = elapsed_ms;
+}
+
+static void mod_perf_reset(LoadedMod* mod) {
+    if (!mod) return;
+    memset(&mod->perf_frame, 0, sizeof(mod->perf_frame));
+    memset(&mod->perf_event, 0, sizeof(mod->perf_event));
+    memset(&mod->perf_layout, 0, sizeof(mod->perf_layout));
+}
+
+static unsigned int mod_diag_estimate_memory_bytes(const LoadedMod* mod) {
+    unsigned long long bytes = 0;
+    if (!mod) return 0;
+
+    bytes += (unsigned long long)sizeof(*mod);
+    bytes += (unsigned long long)mod->on_frame.cap * (unsigned long long)sizeof(int);
+    bytes += (unsigned long long)mod->on_event.cap * (unsigned long long)sizeof(int);
+    bytes += (unsigned long long)mod->on_layout_cap * (unsigned long long)sizeof(LayoutHandler);
+    bytes += (unsigned long long)mod->ui_hitbox_cap * (unsigned long long)sizeof(UiHitBox);
+    bytes += (unsigned long long)mod->ui_native_cap * (unsigned long long)sizeof(UiNativeButton*);
+    bytes += (unsigned long long)mod->ui_string_cap * (unsigned long long)sizeof(char*);
+    bytes += (unsigned long long)mod->cfg_cap * (unsigned long long)sizeof(ConfigEntry);
+    bytes += (unsigned long long)mod->cfg_action_cap * (unsigned long long)sizeof(ConfigAction);
+    bytes += (unsigned long long)mod->bind_cap * (unsigned long long)sizeof(InputBinding);
+    bytes += (unsigned long long)mod->storage_cap * (unsigned long long)sizeof(StorageEntry);
+    bytes += (unsigned long long)mod->audio_chunk_cap * (unsigned long long)sizeof(AudioChunkCacheEntry);
+    bytes += (unsigned long long)mod->font_reg_cap * (unsigned long long)sizeof(FontRegistration);
+    bytes += (unsigned long long)mod->texture_reg_cap * (unsigned long long)sizeof(TextureRegistration);
+
+    if (mod->cfg_actions) {
+        for (int i = 0; i < mod->cfg_action_count; i++) {
+            bytes += (unsigned long long)mod->cfg_actions[i].handlers.cap * (unsigned long long)sizeof(int);
+        }
+    }
+    if (mod->ui_native_buttons) {
+        for (int i = 0; i < mod->ui_native_count; i++) {
+            if (mod->ui_native_buttons[i]) bytes += (unsigned long long)sizeof(UiNativeButton);
+        }
+    }
+    if (mod->ui_string_pool) {
+        for (int i = 0; i < mod->ui_string_count; i++) {
+            if (mod->ui_string_pool[i]) bytes += (unsigned long long)(strlen(mod->ui_string_pool[i]) + 1);
+        }
+    }
+
+    if (bytes > (unsigned long long)UINT_MAX) return UINT_MAX;
+    return (unsigned int)bytes;
+}
+
+static void mod_trace_event_log(LoadedMod* mod, const char* type, int sym, int x, int y, int button, int handler_count, int consumed) {
+    char buf[256];
+    if (!mod || !mod->trace_events || handler_count <= 0) return;
+    snprintf(buf, sizeof(buf),
+             "trace event type=%s sym=%d button=%d x=%d y=%d handlers=%d consumed=%s",
+             (type && type[0]) ? type : "?",
+             sym,
+             button,
+             x,
+             y,
+             handler_count,
+             consumed ? "true" : "false");
+    log_mod(mod, "INFO", buf);
 }
 
 static float audio_clampf(float v, float lo, float hi) {
@@ -5784,6 +5970,7 @@ static int lua_font_alloc_glyph(lua_State* Ls) {
         lua_pushstring(Ls, err[0] ? err : "alloc_glyph failed");
         return 2;
     }
+    (void)mod_font_reg_record(mod, b, rel);
     if (font_ext_font_loaded()) {
         if (!reload_engine_gfx_atlases("font glyph allocated after font load")) {
             LOG_WARN("font_ext: alloc_glyph succeeded, but live apply failed; restart may still be required");
@@ -5820,6 +6007,7 @@ static int lua_font_register_glyph(lua_State* Ls) {
         lua_pushstring(Ls, err[0] ? err : "register_glyph failed");
         return 2;
     }
+    (void)mod_font_reg_record(mod, (uint8_t)byte_value, rel);
 
     if (font_ext_font_loaded()) {
         if (!reload_engine_gfx_atlases("font glyph registered after font load")) {
@@ -5864,6 +6052,7 @@ static int lua_texture_register_target(
         lua_pushstring(Ls, err[0] ? err : fallback_err);
         return 2;
     }
+    (void)mod_texture_reg_record(mod, target_path, rel_path);
 
     if (texture_ext_path_loaded(target_path)) {
         if (!reload_engine_gfx_atlases("texture registered after atlas load")) {
@@ -6471,6 +6660,26 @@ static void loaded_mod_apply_manifest(LoadedMod* mod, const ModManifest* manifes
     mod->api_version = manifest->api_version;
 }
 
+static void loaded_mod_build_manifest(const LoadedMod* mod, ModManifest* manifest) {
+    if (!mod || !manifest) return;
+    memset(manifest, 0, sizeof(*manifest));
+    snprintf(manifest->id, sizeof(manifest->id), "%s", mod->id);
+    snprintf(manifest->name, sizeof(manifest->name), "%s", mod->name);
+    snprintf(manifest->version, sizeof(manifest->version), "%s", mod->version);
+    snprintf(manifest->author, sizeof(manifest->author), "%s", mod->author);
+    snprintf(manifest->description, sizeof(manifest->description), "%s", mod->description);
+    snprintf(manifest->entry, sizeof(manifest->entry), "%s", mod->entry);
+    snprintf(manifest->folder_path, sizeof(manifest->folder_path), "%s", mod->folder_path);
+    snprintf(manifest->config_rel, sizeof(manifest->config_rel), "%s", mod->config_rel);
+    snprintf(manifest->storage_rel, sizeof(manifest->storage_rel), "%s", mod->storage_rel);
+    snprintf(manifest->binds_rel, sizeof(manifest->binds_rel), "%s", mod->binds_rel);
+    manifest->api_version = mod->api_version;
+    manifest->allow_api_mismatch = 1;
+    manifest->depends = mod->depends;
+    manifest->optional_deps = mod->optional_deps;
+    manifest->conflicts = mod->conflicts;
+}
+
 static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
     if (!mod || !manifest) return 0;
     loaded_mod_apply_manifest(mod, manifest);
@@ -6648,19 +6857,25 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     mod_bind_clear(mod);
     mod_storage_clear(mod);
     mod_audio_clear(mod);
+    font_ext_forget_owner_cache(mod->id);
+    mod_resource_regs_clear(mod);
 
     if (mod->on_load_ref != LUA_NOREF && mod->on_load_ref != LUA_REFNIL) {
         luaL_unref(L, LUA_REGISTRYINDEX, mod->on_load_ref);
     }
+    mod->on_load_ref = LUA_NOREF;
     if (mod->on_unload_ref != LUA_NOREF && mod->on_unload_ref != LUA_REFNIL) {
         luaL_unref(L, LUA_REGISTRYINDEX, mod->on_unload_ref);
     }
+    mod->on_unload_ref = LUA_NOREF;
     if (mod->env_ref != LUA_NOREF && mod->env_ref != LUA_REFNIL) {
         luaL_unref(L, LUA_REGISTRYINDEX, mod->env_ref);
     }
+    mod->env_ref = LUA_NOREF;
     if (mod->mod_ref != LUA_NOREF && mod->mod_ref != LUA_REFNIL) {
         luaL_unref(L, LUA_REGISTRYINDEX, mod->mod_ref);
     }
+    mod->mod_ref = LUA_NOREF;
 }
 
 static void unload_all_mods(void) {
@@ -6754,6 +6969,70 @@ static void add_manifest_edge(const int* active, int count, uint8_t* edges, int*
     indegree[to]++;
 }
 
+static int mods_dir_name_ignored(const char* name) {
+    if (!name || !name[0]) return 1;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 1;
+    if (name[0] == '_') return 1;
+    if (_stricmp(name, "profiles") == 0) return 1;
+    return 0;
+}
+
+static int loaded_mod_requires_id(const LoadedMod* mod, const char* dep_id) {
+    if (!mod || !dep_id || !dep_id[0]) return 0;
+    for (int i = 0; i < mod->depends.count; i++) {
+        if (_stricmp(mod->depends.items[i].id, dep_id) == 0) return 1;
+    }
+    return 0;
+}
+
+static int rebuild_registered_assets_from_enabled_mods(const char* reason) {
+    int had_loaded_assets = font_ext_font_loaded() || texture_ext_any_path_loaded();
+    char err[256];
+
+    texture_ext_reset_runtime_state();
+    font_ext_reset_runtime_state();
+
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled) continue;
+
+        for (int fi = 0; fi < mod->font_reg_count; fi++) {
+            FontRegistration* reg = &mod->font_regs[fi];
+            err[0] = '\0';
+            if (!font_ext_register_glyph(mod->id, mod->folder_path,
+                                         reg->byte_value, reg->relpath, 1,
+                                         err, (int)sizeof(err))) {
+                LOG_WARN("font_ext: failed to replay glyph 0x%02X for %s: %s",
+                         (unsigned)reg->byte_value,
+                         mod->id,
+                         err[0] ? err : "unknown error");
+            }
+        }
+
+        for (int ti = 0; ti < mod->texture_reg_count; ti++) {
+            TextureRegistration* reg = &mod->texture_regs[ti];
+            err[0] = '\0';
+            if (!texture_ext_register_png(mod->id, mod->folder_path,
+                                          reg->target, reg->relpath, 1,
+                                          err, (int)sizeof(err))) {
+                LOG_WARN("texture_ext: failed to replay %s for %s: %s",
+                         reg->target,
+                         mod->id,
+                         err[0] ? err : "unknown error");
+            }
+        }
+    }
+
+    if (had_loaded_assets) {
+        if (!reload_engine_gfx_atlases(reason && reason[0] ? reason : "asset ownership changed")) {
+            LOG_WARN("Asset registry rebuild failed; restart may still be required");
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static int scan_and_load_mods(void) {
     if (!L) return 0;
 
@@ -6773,8 +7052,7 @@ static int scan_and_load_mods(void) {
 
     do {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
-        if (fd.cFileName[0] == '_') continue; // allow _template or _disabled folders
+        if (mods_dir_name_ignored(fd.cFileName)) continue;
 
         scanned++;
 
@@ -7042,6 +7320,7 @@ static int scan_and_load_mods(void) {
             unload_single_mod_runtime(mod, 0);
             memset(mod, 0, sizeof(*mod));
             g_mod_count--;
+            (void)rebuild_registered_assets_from_enabled_mods("failed mod load cleanup");
             continue;
         }
 
@@ -7104,6 +7383,7 @@ static int hot_reload_should_ignore_path(const char* full_path) {
         LoadedMod* mod = &g_mods[i];
         if (mod->config_path[0] && _stricmp(mod->config_path, full_path) == 0) return 1;
         if (mod->storage_path[0] && _stricmp(mod->storage_path, full_path) == 0) return 1;
+        if (mod->binds_path[0] && _stricmp(mod->binds_path, full_path) == 0) return 1;
     }
     return 0;
 }
@@ -7159,8 +7439,7 @@ static uint64_t hot_reload_compute_signature(void) {
     } else {
         do {
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
-            if (fd.cFileName[0] == '_') continue;
+            if (mods_dir_name_ignored(fd.cFileName)) continue;
 
             char mod_full[MAX_PATH];
             char mod_rel[MAX_PATH];
@@ -7195,8 +7474,7 @@ static uint64_t hot_reload_compute_modset_signature(void) {
     } else {
         do {
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
-            if (fd.cFileName[0] == '_') continue;
+            if (mods_dir_name_ignored(fd.cFileName)) continue;
 
             uint64_t h = hot_reload_hash_entry(fd.cFileName, FILE_ATTRIBUTE_DIRECTORY, 0, 0);
             hot_reload_sig_add(&xor_accum, &add_accum, &count, h);
@@ -7248,6 +7526,8 @@ static int reload_mod_runtime(const char* reason) {
 
     g_unloading_for_shutdown = 0;
     unload_all_mods();
+    texture_ext_reset_runtime_state();
+    font_ext_reset_runtime_state();
     if (L) {
         lua_close(L);
         L = NULL;
@@ -7569,8 +7849,10 @@ void lua_manager_on_frame() {
                 if (!mod->enabled) continue;
                 for (int i = 0; i < mod->on_layout_count; i++) {
                     LayoutHandler* h = &mod->on_layout[i];
+                    double started_ms;
                     if (_stricmp(h->state_name, new_name) != 0) continue;
                     if (h->ref == LUA_NOREF || h->ref == LUA_REFNIL) continue;
+                    started_ms = perf_now_ms();
                     lua_rawgeti(L, LUA_REGISTRYINDEX, h->ref);
                     if (lua_pcall(L, 0, 0, 0) != 0) {
                         const char* err = lua_tostring(L, -1);
@@ -7581,6 +7863,7 @@ void lua_manager_on_frame() {
                         lua_pop(L, 1);
                         mod->error_count++;
                     }
+                    mod_perf_counter_record(&mod->perf_layout, perf_now_ms() - started_ms);
                 }
             }
         }
@@ -7623,6 +7906,7 @@ void lua_manager_on_frame() {
         }
 
         for (int i = 0; i < ref_count; i++) {
+            double started_ms = perf_now_ms();
             lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
@@ -7632,6 +7916,7 @@ void lua_manager_on_frame() {
                 lua_pop(L, 1);
                 mod->error_count++;
             }
+            mod_perf_counter_record(&mod->perf_frame, perf_now_ms() - started_ms);
         }
         free(refs);
     }
@@ -7680,6 +7965,7 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
     int consumed = ui_consumed;
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
+        int mod_consumed = 0;
         if (!mod->enabled) continue;
         int* refs = NULL;
         int ref_count = 0;
@@ -7690,6 +7976,7 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
         }
 
         for (int i = 0; i < ref_count; i++) {
+            double started_ms = perf_now_ms();
             lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
             lua_pushvalue(L, -2); // event table
             if (lua_pcall(L, 1, 1, 0) != 0) {
@@ -7699,14 +7986,18 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
                 log_mod(mod, "ERROR", buf);
                 lua_pop(L, 1);
                 mod->error_count++;
+                mod_perf_counter_record(&mod->perf_event, perf_now_ms() - started_ms);
                 continue;
             }
             if (lua_toboolean(L, -1)) {
                 consumed = 1;
+                mod_consumed = 1;
             }
             lua_pop(L, 1); // handler return
+            mod_perf_counter_record(&mod->perf_event, perf_now_ms() - started_ms);
         }
         free(refs);
+        mod_trace_event_log(mod, type, sym, x, y, button, ref_count, mod_consumed);
     }
 
     lua_pop(L, 1); // event table
@@ -7729,6 +8020,125 @@ void lua_manager_on_key_event(int sym, int is_down) {
             bind->released = (was_down && !is_down) ? 1 : 0;
         }
     }
+}
+
+static int loaded_mod_can_enable(const LoadedMod* mod, char* err, int err_sz) {
+    LoadedMod* other = NULL;
+    if (err && err_sz > 0) err[0] = '\0';
+    if (!mod) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "invalid mod");
+        return 0;
+    }
+
+    for (int i = 0; i < mod->depends.count; i++) {
+        const ModDepSpec* dep = &mod->depends.items[i];
+        other = get_mod_by_id_ci(dep->id);
+        if (!other || !other->enabled) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "required dependency \"%s\" is not enabled", dep->id);
+            }
+            return 0;
+        }
+        if (dep->range[0] && !semver_satisfies_range(other->version, dep->range)) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "dependency \"%s\" version %s does not satisfy \"%s\"",
+                         dep->id, other->version, dep->range);
+            }
+            return 0;
+        }
+    }
+
+    for (int i = 0; i < mod->conflicts.count; i++) {
+        other = get_mod_by_id_ci(mod->conflicts.ids[i]);
+        if (!other || !other->enabled) continue;
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "conflicts with enabled mod \"%s\"", other->id);
+        }
+        return 0;
+    }
+
+    for (int i = 0; i < g_mod_count; i++) {
+        other = &g_mods[i];
+        if (other == mod || !other->enabled) continue;
+        if (!mod_id_list_contains(&other->conflicts, mod->id)) continue;
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "enabled mod \"%s\" conflicts with it", other->id);
+        }
+        return 0;
+    }
+
+    return 1;
+}
+
+static int disable_mod_runtime_with_dependents(int mod_index) {
+    int* to_disable = NULL;
+    int changed = 1;
+    int disabled_count = 0;
+
+    if (mod_index < 0 || mod_index >= g_mod_count) return 0;
+    to_disable = (int*)calloc((size_t)g_mod_count, sizeof(int));
+    if (!to_disable) return 0;
+    to_disable[mod_index] = 1;
+
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < g_mod_count; i++) {
+            LoadedMod* mod = &g_mods[i];
+            if (to_disable[i] || !mod->enabled) continue;
+            for (int j = 0; j < g_mod_count; j++) {
+                if (!to_disable[j]) continue;
+                if (!loaded_mod_requires_id(mod, g_mods[j].id)) continue;
+                to_disable[i] = 1;
+                changed = 1;
+                break;
+            }
+        }
+    }
+
+    for (int i = g_mod_count - 1; i >= 0; i--) {
+        LoadedMod* mod = &g_mods[i];
+        if (!to_disable[i] || !mod->enabled) continue;
+        unload_single_mod_runtime(mod, 1);
+        mod->enabled = 0;
+        disabled_count++;
+    }
+
+    free(to_disable);
+
+    if (disabled_count > 0) {
+        (void)rebuild_registered_assets_from_enabled_mods("mod disable/unload");
+    }
+
+    return disabled_count > 0;
+}
+
+static int enable_single_mod_runtime(int mod_index) {
+    LoadedMod* mod = get_mod_by_index(mod_index);
+    ModManifest manifest;
+    char err[256];
+
+    if (!mod) return 0;
+    if (mod->enabled) return 1;
+    if (!L) return 0;
+
+    if (!loaded_mod_can_enable(mod, err, (int)sizeof(err))) {
+        LOG_WARN("Cannot enable mod %s: %s", mod->id, err[0] ? err : "unsatisfied prerequisites");
+        return 0;
+    }
+
+    loaded_mod_build_manifest(mod, &manifest);
+    mod->error_count = 0;
+    mod_perf_reset(mod);
+    mod->enabled = 1;
+
+    if (!load_mod_lua(mod, &manifest)) {
+        unload_single_mod_runtime(mod, 0);
+        mod->enabled = 0;
+        (void)rebuild_registered_assets_from_enabled_mods("failed mod enable cleanup");
+        return 0;
+    }
+
+    return 1;
 }
 
 // =============================
@@ -8030,11 +8440,66 @@ int lua_manager_get_mod_enabled(int mod_index) {
     return m ? m->enabled : 0;
 }
 
+int lua_manager_get_mod_error_count(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? m->error_count : 0;
+}
+
+int lua_manager_get_mod_diagnostics(int mod_index, LuaModDiagnostics* out_diag) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m || !out_diag) return 0;
+
+    memset(out_diag, 0, sizeof(*out_diag));
+    out_diag->trace_events = m->trace_events ? 1 : 0;
+    out_diag->on_frame_handlers = m->on_frame.count;
+    out_diag->on_event_handlers = m->on_event.count;
+    out_diag->on_layout_handlers = m->on_layout_count;
+    out_diag->config_entries = m->cfg_count;
+    out_diag->bind_entries = m->bind_count;
+    out_diag->storage_entries = m->storage_count;
+    out_diag->audio_chunks = m->audio_chunk_count;
+    out_diag->font_registrations = m->font_reg_count;
+    out_diag->texture_registrations = m->texture_reg_count;
+    out_diag->approx_memory_bytes = mod_diag_estimate_memory_bytes(m);
+
+    out_diag->frame_calls = m->perf_frame.call_count;
+    out_diag->frame_last_ms = m->perf_frame.last_ms;
+    out_diag->frame_avg_ms = (m->perf_frame.call_count > 0)
+                           ? (m->perf_frame.total_ms / (double)m->perf_frame.call_count)
+                           : 0.0;
+    out_diag->frame_max_ms = m->perf_frame.max_ms;
+
+    out_diag->event_calls = m->perf_event.call_count;
+    out_diag->event_last_ms = m->perf_event.last_ms;
+    out_diag->event_avg_ms = (m->perf_event.call_count > 0)
+                           ? (m->perf_event.total_ms / (double)m->perf_event.call_count)
+                           : 0.0;
+    out_diag->event_max_ms = m->perf_event.max_ms;
+
+    out_diag->layout_calls = m->perf_layout.call_count;
+    out_diag->layout_last_ms = m->perf_layout.last_ms;
+    out_diag->layout_avg_ms = (m->perf_layout.call_count > 0)
+                            ? (m->perf_layout.total_ms / (double)m->perf_layout.call_count)
+                            : 0.0;
+    out_diag->layout_max_ms = m->perf_layout.max_ms;
+    return 1;
+}
+
+int lua_manager_set_mod_trace_events(int mod_index, int enabled) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    m->trace_events = enabled ? 1 : 0;
+    return 1;
+}
+
 int lua_manager_set_mod_enabled(int mod_index, int enabled) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
-    m->enabled = enabled ? 1 : 0;
-    return 1;
+    if (!!enabled == !!m->enabled) return 1;
+    if (enabled) {
+        return enable_single_mod_runtime(mod_index);
+    }
+    return disable_mod_runtime_with_dependents(mod_index);
 }
 
 int lua_manager_get_mod_config_count(int mod_index) {

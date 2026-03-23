@@ -9,11 +9,17 @@ typedef struct RgbaImage RgbaImage;
 void texture_ext_init(void);
 void texture_ext_shutdown(void);
 
+// Clears live replacement/runtime state.
+void texture_ext_reset_runtime_state(void);
+
 // Returns 1 after we've seen a target texture load once.
 // target_path accepts:
 // - "data/sprites.png" style paths
 // - "sprites.png" shorthand (maps to data/sprites.png)
 int texture_ext_path_loaded(const char* target_path);
+
+// Returns 1 if any tracked target texture has been seen load this session.
+int texture_ext_any_path_loaded(void);
 
 // Generic registration for data/*.png replacements.
 // target_path accepts the same formats as texture_ext_path_loaded.

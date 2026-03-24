@@ -25,6 +25,14 @@ void font_ext_shutdown(void);
 // Returns 1 after we've seen data/font8x8.png load once.
 int font_ext_font_loaded(void);
 
+// Clears live glyph-slot/runtime state but preserves alloc cache entries for
+// still-loaded mods so repeated alloc_glyph() calls remain stable.
+void font_ext_reset_runtime_state(void);
+
+// Removes cached alloc_glyph ownership for a mod being unloaded so a future
+// re-enable does not force a stale byte choice.
+void font_ext_forget_owner_cache(const char* owner_mod_id);
+
 // Allocate a glyph byte from the "extended" range 0x80..0xFF for this mod.
 // rel_path is relative to the mod folder.
 // On success, returns 1 and writes out_byte.

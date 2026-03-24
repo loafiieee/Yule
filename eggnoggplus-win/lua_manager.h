@@ -10,6 +10,32 @@ extern "C" {
 // Framework API version (bump on breaking Lua API changes)
 int lua_manager_framework_api(void);
 
+typedef struct LuaModDiagnostics {
+    int trace_events;
+    int on_frame_handlers;
+    int on_event_handlers;
+    int on_layout_handlers;
+    int config_entries;
+    int bind_entries;
+    int storage_entries;
+    int audio_chunks;
+    int font_registrations;
+    int texture_registrations;
+    unsigned int approx_memory_bytes;
+    unsigned int frame_calls;
+    unsigned int event_calls;
+    unsigned int layout_calls;
+    double frame_last_ms;
+    double frame_avg_ms;
+    double frame_max_ms;
+    double event_last_ms;
+    double event_avg_ms;
+    double event_max_ms;
+    double layout_last_ms;
+    double layout_avg_ms;
+    double layout_max_ms;
+} LuaModDiagnostics;
+
 // Mods
 int         lua_manager_get_mod_count(void);
 const char* lua_manager_get_mod_id(int mod_index);
@@ -18,6 +44,7 @@ const char* lua_manager_get_mod_version(int mod_index);
 const char* lua_manager_get_mod_author(int mod_index);
 const char* lua_manager_get_mod_description(int mod_index);
 int         lua_manager_get_mod_enabled(int mod_index);
+int         lua_manager_get_mod_error_count(int mod_index);
 int         lua_manager_get_mod_dependency_count(int mod_index);
 const char* lua_manager_get_mod_dependency_id(int mod_index, int dep_index);
 int         lua_manager_get_mod_dependency_optional(int mod_index, int dep_index);
@@ -25,6 +52,8 @@ int         lua_manager_mod_dependency_satisfied(int mod_index, int dep_index);
 int         lua_manager_get_mod_conflict_count(int mod_index);
 const char* lua_manager_get_mod_conflict_id(int mod_index, int conflict_index);
 int         lua_manager_mod_conflict_active(int mod_index, int conflict_index);
+int         lua_manager_get_mod_diagnostics(int mod_index, LuaModDiagnostics* out_diag);
+int         lua_manager_set_mod_trace_events(int mod_index, int enabled);
 int         lua_manager_set_mod_enabled(int mod_index, int enabled);
 
 // Config entry types

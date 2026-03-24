@@ -56,13 +56,12 @@ mod.on_event(function(e)
   -- Example: print key presses
   if e.type == "keydown" then
     -- e.sym is the SDL keycode
-    mod.log("keydown sym=" .. tostring(e.sym))
+    mod.log("keydown sym=" .. tostring(e.sym) .. "as 0x" .. string.format("%x", e.sym)  .. " scancode=" .. tostring(e.scancode))
   end
 
   -- return true
 end)
 
 mod.on_unload(function()
-  -- Called when the mod framework is shutting down.
-  -- (Hot reload / disable will call this too once those features exist.)
+  -- Called when the mod is disabled, hot reloaded, or the framework shuts down.
 end)

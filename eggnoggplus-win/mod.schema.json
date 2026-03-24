@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/eggnoggplus/mod.schema.json",
+  "title": "Eggnogg+ Mod Manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "author",
+    "entry"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "description": "Stable mod identifier used by the framework."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 31,
+      "description": "Human-readable version string. Semver is recommended but not required by the runtime."
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "entry": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 127,
+      "description": "Relative path to the Lua entry file."
+    },
+    "config": {
+      "type": "string",
+      "maxLength": 127
+    },
+    "storage": {
+      "type": "string",
+      "maxLength": 127
+    },
+    "binds": {
+      "type": "string",
+      "maxLength": 127
+    },
+    "api_version": {
+      "type": "integer"
+    },
+    "allow_api_mismatch": {
+      "type": "boolean"
+    },
+    "priority": {
+      "type": "integer"
+    },
+    "depends": {
+      "$ref": "#/definitions/depSpecList"
+    },
+    "optional_deps": {
+      "$ref": "#/definitions/depSpecList"
+    },
+    "conflicts": {
+      "$ref": "#/definitions/idList"
+    },
+    "load_before": {
+      "$ref": "#/definitions/idList"
+    },
+    "load_after": {
+      "$ref": "#/definitions/idList"
+    }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "depSpec": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 159,
+      "description": "Dependency spec like \"other_mod\", \"other_mod@>=1.2.0 <2.0.0\", or \"other_mod>=1.2.0\"."
+    },
+    "depSpecList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/depSpec"
+      },
+      "maxItems": 32
+    },
+    "idList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 63
+      },
+      "maxItems": 32
+    }
+  }
+}

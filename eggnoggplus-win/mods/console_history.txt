@@ -6,3 +6,6 @@ help
 state.reload
 state.switch pregame
 state.switch main
+1help
+help
+exit

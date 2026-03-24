@@ -500,6 +500,17 @@ static void safe_copy(char* dst, size_t dst_sz, const char* src) {
     dst[dst_sz - 1] = '\0';
 }
 
+static void format_bytes_compact(unsigned int bytes, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    if (bytes >= 1024u * 1024u) {
+        snprintf(out, out_sz, "%.2fMB", (double)bytes / (1024.0 * 1024.0));
+    } else if (bytes >= 1024u) {
+        snprintf(out, out_sz, "%.1fKB", (double)bytes / 1024.0);
+    } else {
+        snprintf(out, out_sz, "%uB", bytes);
+    }
+}
+
 static int str_bool_true(const char* s) {
     if (!s) return 0;
     if (_stricmp(s, "1") == 0) return 1;
@@ -958,18 +969,27 @@ static void rebuild_rows(void) {
 
     for (int mi = 0; mi < mod_count; mi++) {
         char header[192];
+        char header_right[64];
         char desc_line[192];
         char warn[192];
+        char runtime_line[192];
+        char perf_line[192];
+        char mem_buf[32];
         const char* name = lua_manager_get_mod_name(mi);
         const char* id = lua_manager_get_mod_id(mi);
         const char* author = lua_manager_get_mod_author(mi);
         const char* desc = lua_manager_get_mod_description(mi);
         int enabled = lua_manager_get_mod_enabled(mi);
+        int error_count = lua_manager_get_mod_error_count(mi);
         int dep_count = lua_manager_get_mod_dependency_count(mi);
         int conflict_count = lua_manager_get_mod_conflict_count(mi);
         int missing_required = 0;
         int active_conflicts = 0;
         int collapsed = mods_is_collapsed(mi);
+        LuaModDiagnostics diag;
+
+        memset(&diag, 0, sizeof(diag));
+        (void)lua_manager_get_mod_diagnostics(mi, &diag);
 
         if (!name || !name[0]) name = (id && id[0]) ? id : "(unnamed mod)";
 
@@ -983,13 +1003,6 @@ static void rebuild_rows(void) {
             snprintf(header, sizeof(header), "%s %s", collapsed ? "[+]" : "[-]", name);
         }
 
-        rows_add(ROW_MOD_HEADER, 1, mi, -1, header, "");
-
-        if (desc && desc[0]) {
-            safe_copy(desc_line, sizeof(desc_line), desc);
-            rows_add(ROW_INFO, 0, mi, -1, desc_line, "");
-        }
-
         for (int di = 0; di < dep_count; di++) {
             int optional = lua_manager_get_mod_dependency_optional(mi, di);
             int satisfied = lua_manager_mod_dependency_satisfied(mi, di);
@@ -1000,14 +1013,50 @@ static void rebuild_rows(void) {
             if (active) active_conflicts++;
         }
 
+        header_right[0] = '\0';
+        if (error_count > 0) {
+            snprintf(header_right, sizeof(header_right), "errors=%d", error_count);
+        } else if (missing_required > 0 || active_conflicts > 0) {
+            snprintf(header_right, sizeof(header_right), "issues");
+        }
+
+        rows_add(ROW_MOD_HEADER, 1, mi, -1, header, header_right);
+
+        if (desc && desc[0]) {
+            safe_copy(desc_line, sizeof(desc_line), desc);
+            rows_add(ROW_INFO, 0, mi, -1, desc_line, "");
+        }
+
         if (!collapsed) {
             rows_add(ROW_INFO, 0, mi, -1, "Options", "");
             rows_add(ROW_MOD_TOGGLE, 1, mi, -1, "  Enabled", enabled ? "ON" : "OFF");
 
-            if (missing_required > 0 || active_conflicts > 0) {
-                snprintf(warn, sizeof(warn), "  Status: %d missing required, %d active conflicts", missing_required, active_conflicts);
+            if (error_count > 0 || missing_required > 0 || active_conflicts > 0) {
+                snprintf(warn, sizeof(warn), "  Status: %d errors, %d missing required, %d active conflicts",
+                         error_count, missing_required, active_conflicts);
                 rows_add(ROW_INFO, 0, mi, -1, warn, "");
             }
+
+            format_bytes_compact(diag.approx_memory_bytes, mem_buf, sizeof(mem_buf));
+            snprintf(runtime_line, sizeof(runtime_line),
+                     "  Runtime: mem~%s handlers=%d/%d/%d trace=%s storage=%d audio=%d assets=%d/%d",
+                     mem_buf,
+                     diag.on_frame_handlers,
+                     diag.on_event_handlers,
+                     diag.on_layout_handlers,
+                     diag.trace_events ? "on" : "off",
+                     diag.storage_entries,
+                     diag.audio_chunks,
+                     diag.font_registrations,
+                     diag.texture_registrations);
+            rows_add(ROW_INFO, 0, mi, -1, runtime_line, "");
+
+            snprintf(perf_line, sizeof(perf_line),
+                     "  Perf: frame %u %.2f/%.2fms event %u %.2f/%.2fms layout %u %.2f/%.2fms",
+                     diag.frame_calls, diag.frame_avg_ms, diag.frame_max_ms,
+                     diag.event_calls, diag.event_avg_ms, diag.event_max_ms,
+                     diag.layout_calls, diag.layout_avg_ms, diag.layout_max_ms);
+            rows_add(ROW_INFO, 0, mi, -1, perf_line, "");
 
             {
                 int cfg_count = lua_manager_get_mod_config_count(mi);
@@ -1217,7 +1266,7 @@ static const char* k_console_commands[] = {
     "help", "commands", "clear", "history", "echo", "console.stats",
     "state", "state.last", "state.return", "state.switch", "sys.info", "ui.size",
     "time.scale", "framework.api",
-    "mods.count", "mods.list", "mods.find", "mods.info", "mods.enable", "mods.disable", "mods.toggle",
+    "mods.count", "mods.list", "mods.find", "mods.info", "mods.trace", "mods.enable", "mods.disable", "mods.toggle",
     "mods.config", "mods.config.find", "mods.config.get", "mods.config.set", "mods.config.action",
     "binds.list", "binds.find", "binds.set", "binds.clear",
     "profiles.list", "profiles.save", "profiles.load", "profiles.delete", "profiles.current",
@@ -1758,6 +1807,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  mods.list", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.find <text>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.info <id>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  mods.trace <id|all> [on|off]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.enable <id|all>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.disable <id|all>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.toggle <id|all>", 0.87f, 0.87f, 0.87f);
@@ -1801,7 +1851,11 @@ static void console_show_help(const char* topic) {
         return;
     }
     if (_stricmp(t, "mods.info") == 0) {
-        console_push_line_rgb("mods.info <id>: show name/version/enabled/config-count plus deps/conflicts.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("mods.info <id>: show runtime diagnostics, perf counters, config-count, deps, and conflicts.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "mods.trace") == 0) {
+        console_push_line_rgb("mods.trace <id|all> [on|off]: show or toggle per-mod event tracing in modframework.log.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "binds.set") == 0) {
@@ -2041,12 +2095,14 @@ static void console_show_mods_list(void) {
         const char* name = lua_manager_get_mod_name(i);
         const char* ver = lua_manager_get_mod_version(i);
         int enabled = lua_manager_get_mod_enabled(i);
+        int errors = lua_manager_get_mod_error_count(i);
         char out[CONSOLE_LINE_TEXT];
-        snprintf(out, sizeof(out), "[%s] %s (%s) id=%s",
+        snprintf(out, sizeof(out), "[%s] %s (%s) id=%s errors=%d",
                  enabled ? "on" : "off",
                  name ? name : "",
                  ver ? ver : "",
-                 id ? id : "");
+                 id ? id : "",
+                 errors);
         console_push_line_rgb(out, enabled ? 0.64f : 0.72f, enabled ? 0.92f : 0.72f, enabled ? 0.66f : 0.72f);
     }
 }
@@ -2064,11 +2120,12 @@ static void console_find_mods(const char* query) {
         const char* ver = lua_manager_get_mod_version(i);
         if (console_stristr(id, query) || console_stristr(name, query) || console_stristr(ver, query)) {
             char out[CONSOLE_LINE_TEXT];
-            snprintf(out, sizeof(out), "[%s] %s (%s) id=%s",
+            snprintf(out, sizeof(out), "[%s] %s (%s) id=%s errors=%d",
                      lua_manager_get_mod_enabled(i) ? "on" : "off",
                      name ? name : "",
                      ver ? ver : "",
-                     id ? id : "");
+                     id ? id : "",
+                     lua_manager_get_mod_error_count(i));
             console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
             found++;
         }
@@ -2083,6 +2140,8 @@ static void console_find_mods(const char* query) {
 static void console_show_mod_info(const char* id) {
     int idx;
     char out[CONSOLE_LINE_TEXT];
+    LuaModDiagnostics diag;
+    char mem_buf[32];
     if (!id || !id[0]) {
         console_push_line_rgb("Usage: mods.info <id>", 0.98f, 0.76f, 0.40f);
         return;
@@ -2095,14 +2154,41 @@ static void console_show_mod_info(const char* id) {
         return;
     }
 
-    snprintf(out, sizeof(out), "id=%s name=%s version=%s enabled=%s cfg=%d binds=%d",
+    snprintf(out, sizeof(out), "id=%s name=%s version=%s enabled=%s errors=%d cfg=%d binds=%d",
              lua_manager_get_mod_id(idx),
              lua_manager_get_mod_name(idx),
              lua_manager_get_mod_version(idx),
              lua_manager_get_mod_enabled(idx) ? "true" : "false",
+             lua_manager_get_mod_error_count(idx),
              lua_manager_get_mod_config_count(idx),
              lua_manager_get_mod_bind_count(idx));
     console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    memset(&diag, 0, sizeof(diag));
+    if (lua_manager_get_mod_diagnostics(idx, &diag)) {
+        format_bytes_compact(diag.approx_memory_bytes, mem_buf, sizeof(mem_buf));
+        snprintf(out, sizeof(out), "trace.events=%s mem~%s handlers frame=%d event=%d layout=%d",
+                 diag.trace_events ? "on" : "off",
+                 mem_buf,
+                 diag.on_frame_handlers,
+                 diag.on_event_handlers,
+                 diag.on_layout_handlers);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+        snprintf(out, sizeof(out), "runtime storage=%d audio=%d font_regs=%d texture_regs=%d",
+                 diag.storage_entries,
+                 diag.audio_chunks,
+                 diag.font_registrations,
+                 diag.texture_registrations);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+        snprintf(out, sizeof(out), "perf.frame calls=%u last=%.3f avg=%.3f max=%.3f ms",
+                 diag.frame_calls, diag.frame_last_ms, diag.frame_avg_ms, diag.frame_max_ms);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+        snprintf(out, sizeof(out), "perf.event calls=%u last=%.3f avg=%.3f max=%.3f ms",
+                 diag.event_calls, diag.event_last_ms, diag.event_avg_ms, diag.event_max_ms);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+        snprintf(out, sizeof(out), "perf.layout calls=%u last=%.3f avg=%.3f max=%.3f ms",
+                 diag.layout_calls, diag.layout_last_ms, diag.layout_avg_ms, diag.layout_max_ms);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    }
     if (lua_manager_get_mod_author(idx)[0]) {
         snprintf(out, sizeof(out), "author=%s", lua_manager_get_mod_author(idx));
         console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
@@ -2131,6 +2217,84 @@ static void console_show_mod_info(const char* id) {
     }
 }
 
+static void console_set_mod_trace(const char* args) {
+    char args_buf[CONSOLE_INPUT_BUF];
+    char out[CONSOLE_LINE_TEXT];
+    char* cursor;
+    char* id;
+    char* value;
+    int want = 0;
+
+    if (!args || !args[0]) {
+        console_push_line_rgb("Usage: mods.trace <id|all> [on|off]", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    safe_copy(args_buf, sizeof(args_buf), args);
+    cursor = args_buf;
+    id = console_parse_token(&cursor);
+    value = console_parse_token(&cursor);
+    if (!id || !id[0]) {
+        console_push_line_rgb("Usage: mods.trace <id|all> [on|off]", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+
+    if (_stricmp(id, "all") == 0) {
+        int count = lua_manager_get_mod_count();
+        int trace_on = 0;
+        if (!value || !value[0]) {
+            for (int i = 0; i < count; i++) {
+                LuaModDiagnostics diag;
+                memset(&diag, 0, sizeof(diag));
+                if (lua_manager_get_mod_diagnostics(i, &diag) && diag.trace_events) trace_on++;
+            }
+            snprintf(out, sizeof(out), "mods.trace all: on=%d off=%d total=%d", trace_on, count - trace_on, count);
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        if (!console_try_parse_bool(value, &want)) {
+            console_push_line_rgb("mods.trace: value must be on/off/true/false/1/0", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            (void)lua_manager_set_mod_trace_events(i, want);
+        }
+        snprintf(out, sizeof(out), "mods.trace all: %s", want ? "on" : "off");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        return;
+    }
+
+    {
+        int idx = console_find_mod_index_by_id(id);
+        LuaModDiagnostics diag;
+        if (idx < 0) {
+            snprintf(out, sizeof(out), "Mod not found: %s", id);
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        if (!value || !value[0]) {
+            memset(&diag, 0, sizeof(diag));
+            (void)lua_manager_get_mod_diagnostics(idx, &diag);
+            snprintf(out, sizeof(out), "mods.trace: %s -> %s",
+                     lua_manager_get_mod_id(idx),
+                     diag.trace_events ? "on" : "off");
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        if (!console_try_parse_bool(value, &want)) {
+            console_push_line_rgb("mods.trace: value must be on/off/true/false/1/0", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!lua_manager_set_mod_trace_events(idx, want)) {
+            snprintf(out, sizeof(out), "mods.trace failed: %s", lua_manager_get_mod_id(idx));
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out, sizeof(out), "mods.trace: %s -> %s", lua_manager_get_mod_id(idx), want ? "on" : "off");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    }
+}
+
 static void console_set_mod_enabled(const char* id, int enabled) {
     int idx;
     char out[CONSOLE_LINE_TEXT];
@@ -2140,14 +2304,36 @@ static void console_set_mod_enabled(const char* id, int enabled) {
     }
     if (_stricmp(id, "all") == 0) {
         int count = lua_manager_get_mod_count();
-        int changed = 0;
+        int before_on = 0;
+        int after_on = 0;
         for (int i = 0; i < count; i++) {
-            if (lua_manager_get_mod_enabled(i) == (enabled ? 1 : 0)) continue;
-            lua_manager_set_mod_enabled(i, enabled ? 1 : 0);
-            changed++;
+            if (lua_manager_get_mod_enabled(i)) before_on++;
         }
+
+        if (enabled) {
+            int progress;
+            do {
+                progress = 0;
+                for (int i = 0; i < count; i++) {
+                    if (lua_manager_get_mod_enabled(i)) continue;
+                    if (lua_manager_set_mod_enabled(i, 1)) progress++;
+                }
+            } while (progress > 0);
+        } else {
+            for (int i = 0; i < count; i++) {
+                if (!lua_manager_get_mod_enabled(i)) continue;
+                (void)lua_manager_set_mod_enabled(i, 0);
+            }
+        }
+
+        for (int i = 0; i < count; i++) {
+            if (lua_manager_get_mod_enabled(i)) after_on++;
+        }
+
         snprintf(out, sizeof(out), "%s all: changed=%d total=%d",
-                 enabled ? "mods.enable" : "mods.disable", changed, count);
+                 enabled ? "mods.enable" : "mods.disable",
+                 enabled ? (after_on - before_on) : (before_on - after_on),
+                 count);
         console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
         return;
     }
@@ -2157,7 +2343,13 @@ static void console_set_mod_enabled(const char* id, int enabled) {
         console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
         return;
     }
-    lua_manager_set_mod_enabled(idx, enabled ? 1 : 0);
+    if (!lua_manager_set_mod_enabled(idx, enabled ? 1 : 0)) {
+        snprintf(out, sizeof(out), "%s failed: %s",
+                 enabled ? "mods.enable" : "mods.disable",
+                 lua_manager_get_mod_id(idx));
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        return;
+    }
     snprintf(out, sizeof(out), "%s: %s",
              enabled ? "mods.enable" : "mods.disable",
              lua_manager_get_mod_id(idx));
@@ -2176,9 +2368,10 @@ static void console_toggle_mod_enabled(const char* id) {
         int off_count = 0;
         for (int i = 0; i < count; i++) {
             int new_enabled = lua_manager_get_mod_enabled(i) ? 0 : 1;
-            lua_manager_set_mod_enabled(i, new_enabled);
-            if (new_enabled) on_count++;
-            else off_count++;
+            if (lua_manager_set_mod_enabled(i, new_enabled)) {
+                if (lua_manager_get_mod_enabled(i)) on_count++;
+                else off_count++;
+            }
         }
         snprintf(out, sizeof(out), "mods.toggle all: now_on=%d now_off=%d total=%d", on_count, off_count, count);
         console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
@@ -2193,10 +2386,14 @@ static void console_toggle_mod_enabled(const char* id) {
         }
         {
             int new_enabled = lua_manager_get_mod_enabled(idx) ? 0 : 1;
-            lua_manager_set_mod_enabled(idx, new_enabled);
+            if (!lua_manager_set_mod_enabled(idx, new_enabled)) {
+                snprintf(out, sizeof(out), "mods.toggle failed: %s", lua_manager_get_mod_id(idx));
+                console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+                return;
+            }
             snprintf(out, sizeof(out), "mods.toggle: %s -> %s",
                      lua_manager_get_mod_id(idx),
-                     new_enabled ? "on" : "off");
+                     lua_manager_get_mod_enabled(idx) ? "on" : "off");
             console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
         }
     }
@@ -3030,6 +3227,8 @@ static void console_execute_input(void) {
         console_find_mods(arg);
     } else if (_stricmp(cmd, "mods.info") == 0) {
         console_show_mod_info(arg);
+    } else if (_stricmp(cmd, "mods.trace") == 0) {
+        console_set_mod_trace(arg);
     } else if (_stricmp(cmd, "mods.enable") == 0) {
         console_set_mod_enabled(arg, 1);
     } else if (_stricmp(cmd, "mods.disable") == 0) {

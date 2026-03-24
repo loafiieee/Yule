@@ -1,46 +1,45 @@
-[23:19:51] [INFO] Mod framework initializing...
-[23:19:51] [INFO] Mod framework API version: 1
-[23:19:51] [INFO] Scanning mods/ folder...
-[23:19:51] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[23:19:51] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[23:19:51] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[23:19:51] [INFO] Loaded mod: crash
-[23:19:51] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[23:19:51] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[23:19:51] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[23:19:51] [INFO] [mod:poc_speedhack] enabled=true
-[23:19:51] [INFO] [mod:poc_speedhack] speed=1
-[23:19:51] [INFO] Loaded mod: poc_speedhack
-[23:19:51] [INFO] Loading mod: test (test) v1.0.0 by loaf
-[23:19:51] [INFO]   Adds VS Human / VS AI buttons on the main menu.
-[23:19:51] [INFO] Loaded mod: test
-[23:19:51] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[23:19:51] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[23:19:51] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[23:19:51] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[23:19:51] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[23:19:51] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[23:19:51] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[23:19:51] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[23:19:51] [INFO] Loaded mod: texture_pack_test
-[23:19:51] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[23:19:51] [INFO] [maps] scanning maps/ for custom maps
-[23:19:51] [INFO] [maps][example_map] scanning folder: maps\example_map
-[23:19:51] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[23:19:51] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[23:19:51] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[23:19:51] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[23:19:51] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[23:19:51] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
-[23:19:51] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[23:19:51] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
-[23:19:51] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[23:19:51] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[23:19:51] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[23:19:51] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[23:19:51] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[23:19:51] [INFO] hooks_init: custom MODS menu ready
-[23:19:54] [INFO] MODS: entering mods menu
-[23:20:08] [INFO] [mod:crash] Unloaded
-[23:20:08] [INFO] [mod:poc_speedhack] Unloaded
-[23:20:08] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[16:02:31] [INFO] Mod framework initializing...
+[16:02:31] [INFO] Mod framework API version: 1
+[16:02:31] [INFO] Scanning mods/ folder...
+[16:02:31] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[16:02:31] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[16:02:31] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[16:02:31] [INFO] Loaded mod: crash
+[16:02:31] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[16:02:31] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[16:02:31] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[16:02:31] [INFO] [mod:poc_speedhack] enabled=true
+[16:02:31] [INFO] [mod:poc_speedhack] speed=1
+[16:02:31] [INFO] Loaded mod: poc_speedhack
+[16:02:31] [INFO] Loading mod: test (test) v1.0.0 by loaf
+[16:02:31] [INFO]   Adds VS Human / VS AI buttons on the main menu.
+[16:02:31] [INFO] Loaded mod: test
+[16:02:31] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[16:02:31] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[16:02:31] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[16:02:31] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[16:02:31] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[16:02:31] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[16:02:31] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[16:02:31] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[16:02:31] [INFO] Loaded mod: texture_pack_test
+[16:02:31] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[16:02:31] [INFO] [maps] scanning maps/ for custom maps
+[16:02:31] [INFO] [maps][example_map] scanning folder: maps\example_map
+[16:02:31] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[16:02:31] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[16:02:31] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[16:02:31] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[16:02:31] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[16:02:31] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
+[16:02:31] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[16:02:31] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[16:02:31] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[16:02:31] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[16:02:31] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[16:02:31] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[16:02:31] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[16:02:31] [INFO] hooks_init: custom MODS menu ready
+[16:02:37] [INFO] [mod:crash] Unloaded
+[16:02:37] [INFO] [mod:poc_speedhack] Unloaded
+[16:02:37] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

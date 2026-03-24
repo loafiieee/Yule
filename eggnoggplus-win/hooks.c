@@ -249,6 +249,7 @@ static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
 static fn_void_void_t                p_mapgen_init_trampoline = NULL;
 static fn_state_switch_t             p_state_switch_trampoline = NULL;
+static fn_main_update_with_buttons_t p_main_update_with_buttons_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
 static fn_tile_action_t              p_high_water_action_trampoline = NULL;
@@ -262,6 +263,7 @@ static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
 static Detour g_state_switch_detour;
+static Detour g_main_update_with_buttons_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
@@ -304,10 +306,18 @@ static int g_console_bg_w = 0;
 static int g_console_bg_h = 0;
 static int g_console_bg_ready = 0;
 
+// Tick-synchronous input scheduling (applied for an entire gameplay update).
+static volatile uint32_t g_tick_input_mask[2] = { 0, 0 };
+static volatile int g_tick_input_ticks[2] = { 0, 0 };
+static volatile int g_tick_input_replace[2] = { 0, 0 };
+
 // Command-bit overrides applied in the main_player_poll_cmds detour.
 static volatile uint32_t g_input_override_mask[2] = { 0, 0 };
 static volatile int g_input_override_frames[2] = { 0, 0 };
 static volatile int g_input_override_replace[2] = { 0, 0 };
+
+static volatile uint32_t g_last_raw_cmd[2] = { 0, 0 };
+static volatile uint32_t g_last_effective_cmd[2] = { 0, 0 };
 
 // Forward decls for UI layout + state checks used by cursor hijack.
 typedef struct ModsLayout {
@@ -328,6 +338,9 @@ typedef struct ModsLayout {
 
 static int is_mods_state_active(void);
 static int is_console_state_active(void);
+static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override);
+static void hooks_finish_game_tick(void);
+
 static void mods_calc_layout(ModsLayout* L);
 static void console_draw_rect(float x, float y, float w, float h, float r, float g, float b, float a);
 static void console_draw_rect_outline(float x, float y, float w, float h, float line_w, float r, float g, float b, float a);
@@ -3705,6 +3718,35 @@ int hooks_mods_menu_control_action(int action) {
     }
 }
 
+void hooks_set_tick_input(int player_index, uint32_t cmd_mask, int ticks, int replace) {
+    int pi = (player_index & 1);
+    if (ticks == 0) {
+        g_tick_input_mask[pi] = 0;
+        g_tick_input_ticks[pi] = 0;
+        g_tick_input_replace[pi] = 0;
+        return;
+    }
+    g_tick_input_mask[pi] = cmd_mask;
+    g_tick_input_ticks[pi] = ticks;
+    g_tick_input_replace[pi] = replace ? 1 : 0;
+}
+
+void hooks_clear_tick_input(int player_index) {
+    int pi = (player_index & 1);
+    g_tick_input_mask[pi] = 0;
+    g_tick_input_ticks[pi] = 0;
+    g_tick_input_replace[pi] = 0;
+}
+
+int hooks_get_tick_input(int player_index, uint32_t* out_mask, int* out_ticks, int* out_replace) {
+    int pi = (player_index & 1);
+    int ticks = g_tick_input_ticks[pi];
+    if (out_mask) *out_mask = g_tick_input_mask[pi];
+    if (out_ticks) *out_ticks = ticks;
+    if (out_replace) *out_replace = g_tick_input_replace[pi];
+    return ticks != 0;
+}
+
 void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace) {
     int pi = (player_index & 1);
     if (frames == 0) {
@@ -3732,6 +3774,70 @@ int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_fram
     if (out_frames) *out_frames = frames;
     if (out_replace) *out_replace = g_input_override_replace[pi];
     return frames != 0;
+}
+
+static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override) {
+    int pi = (int)(player_index & 1u);
+
+    {
+        int ticks = g_tick_input_ticks[pi];
+        if (ticks != 0) {
+            uint32_t mask = g_tick_input_mask[pi];
+            if (g_tick_input_replace[pi]) cmd = mask;
+            else cmd |= mask;
+        }
+    }
+
+    {
+        int frames = g_input_override_frames[pi];
+        if (frames != 0) {
+            uint32_t mask = g_input_override_mask[pi];
+            if (g_input_override_replace[pi]) cmd = mask;
+            else cmd |= mask;
+
+            if (consume_poll_override && frames > 0) {
+                frames--;
+                g_input_override_frames[pi] = frames;
+                if (frames == 0) {
+                    g_input_override_mask[pi] = 0;
+                    g_input_override_replace[pi] = 0;
+                }
+            }
+        }
+    }
+
+    g_last_effective_cmd[pi] = cmd;
+    return cmd;
+}
+
+static void hooks_finish_game_tick(void) {
+    for (int pi = 0; pi < 2; pi++) {
+        int ticks = g_tick_input_ticks[pi];
+        if (ticks > 0) {
+            ticks--;
+            g_tick_input_ticks[pi] = ticks;
+            if (ticks == 0) {
+                g_tick_input_mask[pi] = 0;
+                g_tick_input_replace[pi] = 0;
+            }
+        }
+    }
+}
+
+uint32_t hooks_peek_player_cmds_raw(int player_index, int mode) {
+    fn_main_player_poll_cmds_t real_poll = p_main_player_poll_cmds_trampoline
+        ? p_main_player_poll_cmds_trampoline
+        : p_main_player_poll_cmds;
+    uint32_t pi = (uint32_t)(player_index & 1);
+    uint32_t raw = real_poll ? real_poll(pi, (uint32_t)mode) : 0u;
+    g_last_raw_cmd[pi & 1u] = raw;
+    return raw;
+}
+
+uint32_t hooks_peek_player_cmds_effective(int player_index, int mode) {
+    uint32_t pi = (uint32_t)(player_index & 1);
+    uint32_t raw = hooks_peek_player_cmds_raw(player_index, mode);
+    return hooks_apply_effective_overrides(pi, raw, 0);
 }
 
 static void render_rows(void) {
@@ -4383,33 +4489,23 @@ static void __cdecl hooked_options_enter_paused(void) {
     add_mods_button_to_options();
 }
 
-static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint32_t mode) {
-    fn_main_player_poll_cmds_t real_poll = p_main_player_poll_cmds_trampoline
-        ? p_main_player_poll_cmds_trampoline
-        : p_main_player_poll_cmds;
+static int __cdecl hooked_main_update_with_buttons(int arg0) {
+    fn_main_update_with_buttons_t real_update = p_main_update_with_buttons_trampoline
+        ? p_main_update_with_buttons_trampoline
+        : p_main_update_with_buttons;
 
-    uint32_t cmd = real_poll ? real_poll(player_index, mode) : 0u;
-    int pi = (int)(player_index & 1u);
-
+    lua_manager_on_tick();
     {
-        int frames = g_input_override_frames[pi];
-        if (frames != 0) {
-            uint32_t mask = g_input_override_mask[pi];
-            if (g_input_override_replace[pi]) cmd = mask;
-            else cmd |= mask;
-
-            if (frames > 0) {
-                frames--;
-                g_input_override_frames[pi] = frames;
-                if (frames == 0) {
-                    g_input_override_mask[pi] = 0;
-                    g_input_override_replace[pi] = 0;
-                }
-            }
-        }
+        int result = real_update ? real_update(arg0) : 0;
+        lua_manager_on_tick_post();
+        hooks_finish_game_tick();
+        return result;
     }
+}
 
-    return cmd;
+static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint32_t mode) {
+    uint32_t raw = hooks_peek_player_cmds_raw((int)player_index, (int)mode);
+    return hooks_apply_effective_overrides(player_index, raw, 1);
 }
 
 
@@ -4490,6 +4586,12 @@ void hooks_init(void) {
     }
     p_options_enter_paused_trampoline = (fn_void_void_t)g_options_enter_paused_detour.trampoline;
 
+
+    if (!install_detour(&g_main_update_with_buttons_detour, (void*)(uintptr_t)ADDR_MAIN_UPDATE_WITH_BUTTONS, (void*)&hooked_main_update_with_buttons, 6)) {
+        LOG_WARN("hooks_init: failed to detour main_update_with_buttons (game tick API disabled)");
+    } else {
+        p_main_update_with_buttons_trampoline = (fn_main_update_with_buttons_t)g_main_update_with_buttons_detour.trampoline;
+    }
 
     if (!install_detour(&g_main_player_poll_cmds_detour, (void*)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS, (void*)&hooked_main_player_poll_cmds, 5)) {
         LOG_WARN("hooks_init: failed to detour main_player_poll_cmds (input override API disabled)");

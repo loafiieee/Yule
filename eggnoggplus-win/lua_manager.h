@@ -105,6 +105,11 @@ double lua_manager_on_delta_time(double dt_seconds);
 // when it detects a state transition. Mods register handlers via mod.on_layout().
 // (No external callers needed - no new hooks required.)
 
+// Deterministic gameplay update hook, fired from main_update_with_buttons.
+void lua_manager_on_tick(void);
+void lua_manager_on_tick_post(void);
+unsigned long long lua_manager_get_tick_count(void);
+
 // Current time-scale multiplier derived from delta_time (1.0 = normal).
 float lua_manager_get_time_scale(void);
 int lua_manager_set_time_scale(float scale);

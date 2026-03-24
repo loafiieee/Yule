@@ -114,7 +114,15 @@ mod.on_unload(function() end)
 mod.on_frame(function() end)
 ```
 
-Called once per frame (hooked from `SDL_GL_SwapWindow`).
+Called once per rendered frame (hooked from `SDL_GL_SwapWindow`). Good for UI, overlays, and presentation logic.
+
+### Per-tick callback
+
+```lua
+mod.on_tick(function() end)
+```
+
+Called once per gameplay update (hooked from `main_update_with_buttons`) **before** the game consumes player commands for that tick. Use this for bots, deterministic control logic, and data capture.
 
 ### Event callback
 
@@ -500,14 +508,7 @@ end
 ```
 
 `snapshot(player_index [,include_tiles=true]) -> table`
-- Returns a table with:
-  - `player_x`, `player_y`, `player_vx`, `player_vy`
-  - `enemy_dx`, `enemy_dy`, `enemy_vx`, `enemy_vy` (enemy relative position + velocity)
-  - `player_has_sword`, `enemy_has_sword`
-  - `start_countdown`, `end_countdown`, `leader_index` (0/1 or `nil` when unknown)
-  - `nearest_sword_dx`, `nearest_sword_dy` (relative to player, or `nil` if none)
-  - `tiles_of_current_room` (2D array of tile ids, or `nil` if not available)
-  - `room_index`, `room_width`, `room_height`, `in_game`
+- Returns a gameplay snapshot from the chosen player's perspective. A richer field list appears below after the input/tick APIs.
 
 `room_tile(col, row [,room_index]) -> table | nil`
 - Returns exact bytes for a room-relative tile cell.
@@ -519,21 +520,53 @@ end
   - `room_index`, `x`, `y`, `global_x`, `global_y`
 - Returns `nil` if the room dimensions are unavailable or the coordinate is out of bounds.
 
-`poll_cmds(player_index [,mode=1]) -> int`
-- Returns the game's raw command bitmask for the player.
+`tick_count() -> number`
+- Returns the current gameplay tick counter.
 
-`input_override(player_index, cmd_mask [,frames=1 [,replace=false]]) -> bool`
-- Simulates inputs by overriding command bits in `main_player_poll_cmds`.
+`poll_cmds(player_index [,mode=1]) -> int`
+- Returns the **effective** command bitmask for the player (real input plus any active framework overrides).
+
+`poll_cmds_raw(player_index [,mode=1]) -> int`
+- Returns the raw command bitmask from the game before framework overrides are applied.
+
+`set_input(player_index, cmd_mask_or_table [,ticks=1 [,replace=true]]) -> bool`
+- Tick-synchronous input scheduling for bots.
+- Applied for the entire gameplay tick from `mod.on_tick(...)`.
+- `cmd_mask_or_table` can be an integer mask or a table like `{ left=true, jump=true }`.
+- `ticks > 0`: apply for N gameplay ticks then clear.
+- `ticks = 0`: clear scheduled input.
+- `ticks < 0`: hold until cleared.
+- `replace=true` fully replaces real input; `replace=false` ORs into it.
+
+`input_override(player_index, cmd_mask_or_table [,frames=1 [,replace=false]]) -> bool`
+- Low-level poll-based override. Mostly useful for legacy mods and experiments.
 - `frames > 0`: apply for N polls then clear.
 - `frames = 0`: clear override.
 - `frames < 0`: hold until cleared.
-- `replace=false` ORs bits with real input, `replace=true` fully replaces real input.
 
 `input_clear(player_index) -> bool`
-- Clears any active override for that player.
+- Clears both tick-scheduled and poll-based overrides for that player.
 
-`input_status(player_index) -> { active, mask, frames, replace }`
-- Returns current override state.
+`input_status(player_index) -> table`
+- Returns both tick and poll override state, plus `raw_now` and `effective_now`.
+
+`entities([current_room_only=true [,include_players=false]]) -> table`
+- Returns active thing/entity tables with fields such as `type`, `x`, `y`, `vx`, `vy`, `dx`, `dy`, `room_index`, `state_id`, `flags`.
+
+`snapshot(player_index [,include_tiles=true]) -> table`
+- Still returns the legacy flat fields, and now also includes richer nested tables:
+  - `player`, `enemy`: `x`, `y`, `prev_x`, `prev_y`, `vx`, `vy`, `dx`, `dy`, `has_sword`, `facing`, `state_id`, `state_timer`, `cmd_bits`, `prev_cmd_bits`, `jump_buffer`, `attack_buffer`, `collision_flags`, `grounded`, `ceiling`, `wall_left`, `wall_right`
+  - `entities`: current-room active things/entities
+  - `tick`, `enemy_x`, `enemy_y`, `nearest_sword_x`, `nearest_sword_y`
+
+Command bit constants are available on `mod.game`:
+- `CMD_JUMP = 0x01`
+- `CMD_ATTACK = 0x02`
+- `CMD_RIGHT = 0x04`
+- `CMD_LEFT = 0x08`
+- `CMD_UP = 0x10`
+- `CMD_DOWN = 0x20`
+- `CMD_MENU = 0x40`
 
 ## Audio API (`mod.audio`)
 

@@ -35,6 +35,15 @@ void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, i
 void hooks_clear_input_override(int player_index);
 int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_frames, int* out_replace);
 
+// Tick-synchronous gameplay input API.
+void hooks_set_tick_input(int player_index, uint32_t cmd_mask, int ticks, int replace);
+void hooks_clear_tick_input(int player_index);
+int hooks_get_tick_input(int player_index, uint32_t* out_mask, int* out_ticks, int* out_replace);
+
+// Command inspection helpers.
+uint32_t hooks_peek_player_cmds_raw(int player_index, int mode);
+uint32_t hooks_peek_player_cmds_effective(int player_index, int mode);
+
 #ifdef __cplusplus
 }
 #endif

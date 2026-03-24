@@ -30,7 +30,7 @@
   },
   "rooms": {
     "center": {
-      "ambient": "bubbles",
+      "ambient": "dust",
       "appearance": {
         "primary": {
           "fg1": [

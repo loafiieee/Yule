@@ -1,9 +1,0 @@
-{
-  "id": "crash",
-  "name": "Crash Test",
-  "version": "1.0.0",
-  "author": "loaf",
-  "description": "When 8 is pressed, test crash handler by crashing the game.",
-  "api_version": 1,
-  "entry": "main.lua"
-}

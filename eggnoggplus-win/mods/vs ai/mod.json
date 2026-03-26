@@ -1,9 +1,9 @@
 {
-  "id": "test",
-  "name": "test",
-  "version": "1.0.0",
+  "id": "vs_ai",
+  "name": "VS AI",
+  "version": "0.3.0",
   "author": "loaf",
-  "description": "Adds VS Human / VS AI buttons on the main menu.",
+  "description": "Minimal UI skeleton for the VS AI menu button split. No bot runtime or training logic.",
   "api_version": 1,
   "entry": "main.lua",
   "config": "config.cfg"

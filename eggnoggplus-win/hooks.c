@@ -1050,27 +1050,6 @@ static void rebuild_rows(void) {
                 rows_add(ROW_INFO, 0, mi, -1, warn, "");
             }
 
-            format_bytes_compact(diag.approx_memory_bytes, mem_buf, sizeof(mem_buf));
-            snprintf(runtime_line, sizeof(runtime_line),
-                     "  Runtime: mem~%s handlers=%d/%d/%d trace=%s storage=%d audio=%d assets=%d/%d",
-                     mem_buf,
-                     diag.on_frame_handlers,
-                     diag.on_event_handlers,
-                     diag.on_layout_handlers,
-                     diag.trace_events ? "on" : "off",
-                     diag.storage_entries,
-                     diag.audio_chunks,
-                     diag.font_registrations,
-                     diag.texture_registrations);
-            rows_add(ROW_INFO, 0, mi, -1, runtime_line, "");
-
-            snprintf(perf_line, sizeof(perf_line),
-                     "  Perf: frame %u %.2f/%.2fms event %u %.2f/%.2fms layout %u %.2f/%.2fms",
-                     diag.frame_calls, diag.frame_avg_ms, diag.frame_max_ms,
-                     diag.event_calls, diag.event_avg_ms, diag.event_max_ms,
-                     diag.layout_calls, diag.layout_avg_ms, diag.layout_max_ms);
-            rows_add(ROW_INFO, 0, mi, -1, perf_line, "");
-
             {
                 int cfg_count = lua_manager_get_mod_config_count(mi);
                 for (int ci = 0; ci < cfg_count; ci++) {

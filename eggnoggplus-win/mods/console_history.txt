@@ -9,3 +9,10 @@ state.switch main
 1help
 help
 exit
+1help
+help
+input.override 1 left 5 yes
+input.override 1 1 999999 yes
+input.override 1 1 999999 1
+state.switch main_initial
+input.override 1 1 1 1

@@ -1,139 +1,128 @@
-[22:46:32] [INFO] Mod framework initializing...
-[22:46:32] [INFO] Mod framework API version: 1
-[22:46:32] [INFO] Scanning mods/ folder...
-[22:46:32] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[22:46:32] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[22:46:32] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[22:46:32] [INFO] Loaded mod: crash
-[22:46:32] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[22:46:32] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[22:46:32] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[22:46:32] [INFO] [mod:poc_speedhack] enabled=true
-[22:46:32] [INFO] [mod:poc_speedhack] speed=1
-[22:46:32] [INFO] Loaded mod: poc_speedhack
-[22:46:32] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[22:46:32] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[22:46:32] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[22:46:32] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[22:46:32] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[22:46:32] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[22:46:32] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[22:46:32] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[22:46:32] [INFO] Loaded mod: texture_pack_test
-[22:46:32] [INFO] Loading mod: vs_ai (VS AI) v0.2.0 by loaf
-[22:46:32] [INFO]   Main-menu VS AI mode with a trainable bot runtime, difficulty levels, and replay logging scaffolding.
-[22:46:32] [INFO] Loaded mod: vs_ai
-[22:46:32] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[22:46:32] [INFO] [maps] scanning maps/ for custom maps
-[22:46:32] [INFO] [maps][example_map] scanning folder: maps\example_map
-[22:46:32] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[22:46:32] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[22:46:32] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[22:46:32] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[22:46:32] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[22:46:32] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
-[22:46:32] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[22:46:32] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
-[22:46:32] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[22:46:32] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[22:46:32] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[22:46:32] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[22:46:32] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[22:46:32] [INFO] hooks_init: custom MODS menu ready
-[22:46:35] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (pregame_frame_exit; activity=1/0 confirm=1/0)
-[22:46:37] [INFO] MODS: entering mods menu
-[22:47:34] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (pregame_frame_exit; activity=1/0 confirm=1/0)
-[22:48:36] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (pregame_frame_exit; activity=1/0 confirm=1/0)
-[22:49:28] [INFO] Hot reload: mods/ filesystem change detected
-[22:49:28] [INFO] [mod:crash] Unloaded
-[22:49:28] [INFO] [mod:poc_speedhack] Unloaded
-[22:49:28] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
-[22:49:28] [INFO] Scanning mods/ folder...
-[22:49:28] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[22:49:28] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[22:49:28] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[22:49:28] [INFO] Loaded mod: crash
-[22:49:28] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[22:49:28] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[22:49:28] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[22:49:28] [INFO] [mod:poc_speedhack] enabled=true
-[22:49:28] [INFO] [mod:poc_speedhack] speed=1
-[22:49:28] [INFO] Loaded mod: poc_speedhack
-[22:49:28] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[22:49:28] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[22:49:28] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[22:49:28] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[22:49:28] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[22:49:28] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[22:49:28] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[22:49:28] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[22:49:28] [INFO] Loaded mod: texture_pack_test
-[22:49:28] [INFO] Loading mod: vs_ai (VS AI) v0.2.0 by loaf
-[22:49:28] [INFO]   Main-menu VS AI mode with a trainable bot runtime, difficulty levels, and replay logging scaffolding.
-[22:49:28] [INFO] Loaded mod: vs_ai
-[22:49:28] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[22:49:28] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (pregame_exit; activity=1/0 confirm=1/0)
-[22:51:07] [INFO] Hot reload: mods/ filesystem change detected
-[22:51:07] [INFO] [mod:crash] Unloaded
-[22:51:07] [INFO] [mod:poc_speedhack] Unloaded
-[22:51:07] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
-[22:51:07] [INFO] Scanning mods/ folder...
-[22:51:07] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[22:51:07] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[22:51:07] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[22:51:07] [INFO] Loaded mod: crash
-[22:51:07] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[22:51:07] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[22:51:07] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[22:51:07] [INFO] [mod:poc_speedhack] enabled=true
-[22:51:07] [INFO] [mod:poc_speedhack] speed=1
-[22:51:07] [INFO] Loaded mod: poc_speedhack
-[22:51:07] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[22:51:07] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[22:51:07] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[22:51:07] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[22:51:07] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[22:51:07] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[22:51:07] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[22:51:07] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[22:51:07] [INFO] Loaded mod: texture_pack_test
-[22:51:07] [INFO] Loading mod: vs_ai (VS AI) v0.2.0 by loaf
-[22:51:07] [INFO]   Main-menu VS AI mode with a trainable bot runtime, difficulty levels, and replay logging scaffolding.
-[22:51:07] [INFO] Loaded mod: vs_ai
-[22:51:07] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[22:51:11] [INFO] MODS: entering mods menu
-[22:51:16] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (pregame_frame_exit; activity=1/0 confirm=1/0)
-[22:51:52] [INFO] MODS: entering mods menu
-[22:51:54] [INFO] Hot reload: mods/ filesystem change detected
-[22:51:54] [INFO] [mod:crash] Unloaded
-[22:51:54] [INFO] [mod:poc_speedhack] Unloaded
-[22:51:54] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
-[22:51:54] [INFO] Scanning mods/ folder...
-[22:51:54] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[22:51:54] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[22:51:54] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[22:51:54] [INFO] Loaded mod: crash
-[22:51:54] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[22:51:54] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[22:51:54] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[22:51:54] [INFO] [mod:poc_speedhack] enabled=true
-[22:51:54] [INFO] [mod:poc_speedhack] speed=1
-[22:51:54] [INFO] Loaded mod: poc_speedhack
-[22:51:54] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[22:51:54] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[22:51:54] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[22:51:54] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[22:51:54] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[22:51:54] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[22:51:54] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[22:51:54] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[22:51:54] [INFO] Loaded mod: texture_pack_test
-[22:51:54] [INFO] Loading mod: vs_ai (VS AI) v0.2.0 by loaf
-[22:51:54] [INFO]   Main-menu VS AI mode with a trainable bot runtime, difficulty levels, and replay logging scaffolding.
-[22:51:54] [INFO] Loaded mod: vs_ai
-[22:51:54] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[22:51:54] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (fallback; activity=0/0 confirm=0/0)
-[22:52:36] [INFO] [mod:vs_ai] VS AI owner resolved: human=0 ai=1 (pregame_frame_exit; activity=1/0 confirm=1/0)
-[22:53:03] [INFO] [mod:crash] Unloaded
-[22:53:03] [INFO] [mod:poc_speedhack] Unloaded
-[22:53:03] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[16:22:20] [INFO] Mod framework initializing...
+[16:22:20] [INFO] Mod framework API version: 1
+[16:22:20] [INFO] Scanning mods/ folder...
+[16:22:20] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[16:22:20] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[16:22:20] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[16:22:20] [INFO] Loaded mod: crash
+[16:22:20] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[16:22:20] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[16:22:20] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[16:22:20] [INFO] [mod:poc_speedhack] enabled=true
+[16:22:20] [INFO] [mod:poc_speedhack] speed=1
+[16:22:20] [INFO] Loaded mod: poc_speedhack
+[16:22:20] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[16:22:20] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[16:22:20] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[16:22:20] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[16:22:20] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[16:22:20] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[16:22:20] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[16:22:20] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[16:22:20] [INFO] Loaded mod: texture_pack_test
+[16:22:20] [INFO] Loading mod: vs_ai (VS AI) v0.3.0 by loaf
+[16:22:20] [INFO]   Minimal UI skeleton for the VS AI menu button split. No bot runtime or training logic.
+[16:22:20] [INFO] [mod:vs_ai] VS AI skeleton loaded
+[16:22:20] [INFO] Loaded mod: vs_ai
+[16:22:20] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[16:22:20] [INFO] [maps] scanning maps/ for custom maps
+[16:22:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[16:22:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[16:22:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[16:22:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[16:22:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[16:22:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[16:22:20] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
+[16:22:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[16:22:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[16:22:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[16:22:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[16:22:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[16:22:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[16:22:20] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[16:22:20] [INFO] hooks_init: custom MODS menu ready
+[16:24:07] [INFO] MODS: entering mods menu
+[16:24:08] [INFO] MODS: entering mods menu
+[16:24:08] [INFO] MODS: entering mods menu
+[16:24:08] [INFO] MODS: entering mods menu
+[16:24:09] [INFO] MODS: entering mods menu
+[16:24:09] [INFO] MODS: entering mods menu
+[16:24:10] [INFO] MODS: entering mods menu
+[16:24:10] [INFO] MODS: entering mods menu
+[16:24:11] [INFO] MODS: entering mods menu
+[16:24:12] [INFO] MODS: entering mods menu
+[16:24:12] [INFO] MODS: entering mods menu
+[16:24:13] [INFO] MODS: entering mods menu
+[16:24:13] [INFO] MODS: entering mods menu
+[16:24:13] [INFO] MODS: entering mods menu
+[16:24:19] [INFO] MODS: entering mods menu
+[16:24:20] [INFO] MODS: entering mods menu
+[16:24:20] [INFO] MODS: entering mods menu
+[16:24:21] [INFO] MODS: entering mods menu
+[16:24:22] [INFO] MODS: entering mods menu
+[16:24:22] [INFO] MODS: entering mods menu
+[16:24:23] [INFO] MODS: entering mods menu
+[16:24:23] [INFO] MODS: entering mods menu
+[16:24:23] [INFO] MODS: entering mods menu
+[16:24:23] [INFO] MODS: entering mods menu
+[16:24:23] [INFO] MODS: entering mods menu
+[16:24:24] [INFO] MODS: entering mods menu
+[16:24:24] [INFO] MODS: entering mods menu
+[16:24:24] [INFO] MODS: entering mods menu
+[16:24:24] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:25] [INFO] MODS: entering mods menu
+[16:24:26] [INFO] MODS: entering mods menu
+[16:24:26] [INFO] MODS: entering mods menu
+[16:24:26] [INFO] MODS: entering mods menu
+[16:24:26] [INFO] MODS: entering mods menu
+[16:24:26] [INFO] MODS: entering mods menu
+[16:24:26] [INFO] MODS: entering mods menu
+[16:24:27] [INFO] MODS: entering mods menu
+[16:24:27] [INFO] MODS: entering mods menu
+[16:24:27] [INFO] MODS: entering mods menu
+[16:24:27] [INFO] MODS: entering mods menu
+[16:24:27] [INFO] MODS: entering mods menu
+[16:24:28] [INFO] MODS: entering mods menu
+[16:24:29] [INFO] MODS: entering mods menu
+[16:24:30] [INFO] MODS: entering mods menu
+[16:24:30] [INFO] MODS: entering mods menu
+[16:24:30] [INFO] MODS: entering mods menu
+[16:24:31] [INFO] MODS: entering mods menu
+[16:24:32] [INFO] MODS: entering mods menu
+[16:24:32] [INFO] MODS: entering mods menu
+[16:24:33] [INFO] MODS: entering mods menu
+[16:24:33] [INFO] MODS: entering mods menu
+[16:24:34] [INFO] MODS: entering mods menu
+[16:24:34] [INFO] MODS: entering mods menu
+[16:24:36] [INFO] MODS: entering mods menu
+[16:24:36] [INFO] MODS: entering mods menu
+[16:24:37] [INFO] MODS: entering mods menu
+[16:24:37] [INFO] MODS: entering mods menu
+[16:24:38] [INFO] MODS: entering mods menu
+[16:24:45] [INFO] MODS: entering mods menu
+[16:24:46] [INFO] MODS: entering mods menu
+[16:24:47] [INFO] MODS: entering mods menu
+[16:24:47] [INFO] MODS: entering mods menu
+[16:24:47] [INFO] MODS: entering mods menu
+[16:24:48] [INFO] MODS: entering mods menu
+[16:24:48] [INFO] MODS: entering mods menu
+[16:24:49] [INFO] MODS: entering mods menu
+[16:24:50] [INFO] MODS: entering mods menu
+[16:24:51] [INFO] MODS: entering mods menu
+[16:24:51] [INFO] MODS: entering mods menu
+[16:24:52] [INFO] MODS: entering mods menu
+[16:24:52] [INFO] MODS: entering mods menu
+[16:24:57] [INFO] MODS: entering mods menu
+[16:24:58] [INFO] MODS: entering mods menu
+[16:25:00] [INFO] [mod:crash] Unloaded
+[16:25:00] [INFO] [mod:poc_speedhack] Unloaded
+[16:25:00] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[16:25:00] [INFO] [mod:vs_ai] VS AI skeleton unloaded

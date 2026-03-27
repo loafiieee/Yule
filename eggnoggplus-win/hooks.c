@@ -138,6 +138,8 @@
 #define CONSOLE_MAX_MATCHES       32
 #define PROFILE_NAME_MAX          64
 #define PROFILE_PATH_MAX        MAX_PATH
+#define MAX_CUSTOM_STATES         16
+#define CUSTOM_STATE_NAME_MAX     64
 
 typedef struct GameState {
     void (__cdecl *enter)(void);
@@ -145,6 +147,13 @@ typedef struct GameState {
     void (__cdecl *render)(void);
     void (__cdecl *leave)(void);
 } GameState;
+
+typedef struct HookCustomState {
+    int used;
+    char name[CUSTOM_STATE_NAME_MAX];
+    void* return_state;
+    GameState state;
+} HookCustomState;
 
 typedef enum RowKind {
     ROW_NONE = 0,
@@ -439,6 +448,8 @@ static void mods_cursor_tick(void) {
 }
 
 static void* g_mods_return_state = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
+static HookCustomState g_custom_states[MAX_CUSTOM_STATES];
+
 static void __cdecl console_enter(void);
 static void __cdecl console_update(void);
 static void __cdecl console_render(void);
@@ -448,6 +459,18 @@ static void __cdecl mods_enter(void);
 static void __cdecl mods_update(void);
 static void __cdecl mods_render(void);
 static void __cdecl mods_leave(void);
+static void __cdecl custom_state_enter(void);
+static void __cdecl custom_state_update(void);
+static void __cdecl custom_state_render(void);
+static void __cdecl custom_state_leave(void);
+static HookCustomState* find_custom_state_by_name(const char* name);
+static HookCustomState* find_custom_state_by_ptr(void* state_ptr);
+static HookCustomState* find_active_custom_state(void);
+static int is_custom_state_ptr(void* state_ptr);
+static void __cdecl online_hub_enter(void);
+static void __cdecl online_hub_update(void);
+static void __cdecl online_hub_render(void);
+static void __cdecl online_hub_leave(void);
 static void __cdecl mods_entry_enter(void);
 static void __cdecl mods_entry_update(void);
 static void __cdecl mods_entry_render(void);
@@ -467,6 +490,13 @@ static GameState g_mods_state = {
     mods_update,
     mods_render,
     mods_leave,
+};
+
+static GameState g_online_hub_state = {
+    online_hub_enter,
+    online_hub_update,
+    online_hub_render,
+    online_hub_leave,
 };
 
 static GameState g_console_state = {
@@ -551,15 +581,48 @@ static int is_console_state_active(void) {
 }
 
 static const char* state_name_from_ptr(void* st) {
+    HookCustomState* custom;
     if (!st) return "none";
     if (st == (void*)&g_console_state) return "console";
     if (st == (void*)&g_mods_state) return "mods";
     if (st == (void*)&g_mods_entry_state) return "mods_entry";
+    custom = find_custom_state_by_ptr(st);
+    if (custom) return custom->name;
+    if (st == (void*)&g_online_hub_state) return "online_hub";
     if (st == (void*)(uintptr_t)ADDR_MAIN_STATE) return "main";
     if (st == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) return "main_initial";
     if (st == (void*)(uintptr_t)ADDR_OPTIONS_STATE) return "options";
     if (st == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED) return "options_paused";
     return "unknown";
+}
+
+static HookCustomState* find_custom_state_by_name(const char* name) {
+    int i;
+    if (!name || !name[0]) return NULL;
+    for (i = 0; i < MAX_CUSTOM_STATES; i++) {
+        if (!g_custom_states[i].used) continue;
+        if (_stricmp(g_custom_states[i].name, name) == 0) return &g_custom_states[i];
+    }
+    return NULL;
+}
+
+static HookCustomState* find_custom_state_by_ptr(void* state_ptr) {
+    int i;
+    if (!state_ptr) return NULL;
+    for (i = 0; i < MAX_CUSTOM_STATES; i++) {
+        if (!g_custom_states[i].used) continue;
+        if (state_ptr == (void*)&g_custom_states[i].state) return &g_custom_states[i];
+    }
+    return NULL;
+}
+
+static HookCustomState* find_active_custom_state(void) {
+    void* cur = p_state_current ? p_state_current() : NULL;
+    return find_custom_state_by_ptr(cur);
+}
+
+static int is_custom_state_ptr(void* state_ptr) {
+    return find_custom_state_by_ptr(state_ptr) ? 1 : 0;
 }
 
 static float approx_text_width(const char* text, float scale) {
@@ -4010,6 +4073,84 @@ static void console_draw_rect_outline(float x, float y, float w, float h, float 
     glLineWidth(1.0f);
 }
 
+void hooks_ui_fill_rect(float x, float y, float w, float h,
+                        float r, float g, float b, float a) {
+    GLint prev_matrix_mode = GL_MODELVIEW;
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float sh = p_mad_h ? p_mad_h() : BASE_UI_H;
+    if (w <= 0.0f || h <= 0.0f) return;
+
+    glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (double)sw, (double)sh, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_TEXTURE);
+    glPushMatrix();
+    glLoadIdentity();
+
+    console_draw_rect(x, y, w, h, r, g, b, a);
+
+    glMatrixMode(GL_TEXTURE);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(prev_matrix_mode);
+    glPopAttrib();
+}
+
+void hooks_ui_stroke_rect(float x, float y, float w, float h, float line_w,
+                          float r, float g, float b, float a) {
+    GLint prev_matrix_mode = GL_MODELVIEW;
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float sh = p_mad_h ? p_mad_h() : BASE_UI_H;
+    if (w <= 0.0f || h <= 0.0f) return;
+
+    glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (double)sw, (double)sh, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_TEXTURE);
+    glPushMatrix();
+    glLoadIdentity();
+
+    console_draw_rect_outline(x, y, w, h, line_w, r, g, b, a);
+
+    glMatrixMode(GL_TEXTURE);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(prev_matrix_mode);
+    glPopAttrib();
+}
+
 static void console_draw_background(float w, float h) {
     GLint prev_matrix_mode = GL_MODELVIEW;
     glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
@@ -4338,6 +4479,127 @@ static void __cdecl mods_render(void) {
 static void __cdecl mods_leave(void) {
     capture_clear();
     mods_restore_render_state();
+}
+
+/* ── Generic custom-state framework ─────────────────────────────────── */
+
+static void __cdecl custom_state_enter(void) {
+    HookCustomState* slot = find_active_custom_state();
+    void* fallback = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    void* last = p_state_last ? p_state_last() : fallback;
+
+    if (!slot) return;
+    slot->return_state = last;
+    if (!slot->return_state || slot->return_state == (void*)&slot->state) {
+        slot->return_state = fallback;
+    }
+    console_capture_background_now();
+    LOG_INFO("CUSTOM STATE: enter (%s)", slot->name);
+    mods_restore_render_state();
+}
+
+static void __cdecl custom_state_update(void) {
+    lua_manager_on_tick();
+    lua_manager_on_tick_post();
+    hooks_finish_game_tick();
+}
+
+static void __cdecl custom_state_render(void) {
+    mods_restore_render_state();
+    console_draw_background(p_mad_w ? p_mad_w() : BASE_UI_W, p_mad_h ? p_mad_h() : BASE_UI_H);
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    mods_restore_render_state();
+}
+
+static void __cdecl custom_state_leave(void) {
+    HookCustomState* slot = find_active_custom_state();
+    if (slot) {
+        LOG_INFO("CUSTOM STATE: leave (%s)", slot->name);
+    }
+    mods_restore_render_state();
+}
+
+int hooks_register_custom_state(const char* name) {
+    int i;
+    HookCustomState* slot;
+    if (!name || !name[0]) return 0;
+    if (find_custom_state_by_name(name)) return 1;
+    for (i = 0; i < MAX_CUSTOM_STATES; i++) {
+        if (!g_custom_states[i].used) {
+            slot = &g_custom_states[i];
+            memset(slot, 0, sizeof(*slot));
+            slot->used = 1;
+            safe_copy(slot->name, sizeof(slot->name), name);
+            slot->return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+            slot->state.enter = custom_state_enter;
+            slot->state.update = custom_state_update;
+            slot->state.render = custom_state_render;
+            slot->state.leave = custom_state_leave;
+            LOG_INFO("CUSTOM STATE: registered (%s)", slot->name);
+            return 1;
+        }
+    }
+    LOG_WARN("CUSTOM STATE: registration failed for '%s' (pool full)", name);
+    return 0;
+}
+
+int hooks_enter_custom_state(const char* name) {
+    HookCustomState* slot;
+    if (!p_state_switch) return 0;
+    slot = find_custom_state_by_name(name);
+    if (!slot) {
+        if (!hooks_register_custom_state(name)) return 0;
+        slot = find_custom_state_by_name(name);
+        if (!slot) return 0;
+    }
+    p_state_switch((void*)&slot->state);
+    return 1;
+}
+
+int hooks_leave_custom_state(void) {
+    HookCustomState* slot;
+    void* target;
+    if (!p_state_switch) return 0;
+    slot = find_active_custom_state();
+    if (!slot) return 0;
+    target = slot->return_state ? slot->return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
+    if (target == (void*)&slot->state) {
+        target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    p_state_switch(target);
+    return 1;
+}
+
+const char* hooks_custom_state_name_for_ptr(void* state_ptr) {
+    HookCustomState* slot = find_custom_state_by_ptr(state_ptr);
+    return slot ? slot->name : NULL;
+}
+
+const char* hooks_custom_state_active_name(void) {
+    HookCustomState* slot = find_active_custom_state();
+    return slot ? slot->name : NULL;
+}
+
+/* Legacy online hub helpers kept as thin wrappers around the generic API. */
+static void __cdecl online_hub_enter(void) { custom_state_enter(); }
+static void __cdecl online_hub_update(void) { custom_state_update(); }
+static void __cdecl online_hub_render(void) { custom_state_render(); }
+static void __cdecl online_hub_leave(void) { custom_state_leave(); }
+
+void hooks_enter_online_hub(void) {
+    hooks_enter_custom_state("online_hub");
+}
+
+void hooks_leave_online_hub(void) {
+    hooks_leave_custom_state();
+}
+
+int hooks_online_hub_active(void) {
+    const char* name = hooks_custom_state_active_name();
+    return (name && _stricmp(name, "online_hub") == 0) ? 1 : 0;
 }
 
 static void __cdecl mods_entry_enter(void) {

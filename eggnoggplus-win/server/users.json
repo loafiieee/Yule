@@ -1,0 +1,10 @@
+{
+  "loaf": {
+    "hash": "b149cdfafc41b7abe650759abf937793f9be937a28904923448fcef1474f3081",
+    "salt": "d5a1ad157e4dfa7309dc0a2517cfe618"
+  },
+  "loaf2": {
+    "hash": "3a027ec2107b48fdaa25a9d74c195ecfe723ab140d326ad08bfceae2a86724ab",
+    "salt": "c3b155a37f0d49bd94bfbc10284085b6"
+  }
+}

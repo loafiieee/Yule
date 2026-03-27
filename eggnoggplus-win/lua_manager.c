@@ -9,6 +9,7 @@
 #include <luajit-2.1/lauxlib.h>
 #include <luajit-2.1/lualib.h>
 #include "log.h"
+#include "net_ext.h"
 #include "lua_manager.h"
 #include "hooks.h"
 #include "font_ext.h"
@@ -111,6 +112,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_REMAP_STATE1          0x4483C8u
 
 // Gameplay globals (from bundled ghidra symbols).
+#define ADDR_MAP_SELECTOR          0x55A2F4u
 #define ADDR_GAME_ACTIVE_ROOM      0x541E08u
 #define ADDR_LEADER                0x541E0Cu
 #define ADDR_END_COUNTDOWN         0x542044u
@@ -3415,7 +3417,9 @@ static void* ui_current_state_ptr(void) {
 }
 
 static int ui_is_menu_state_name(const char* name) {
+    const char* active_custom = hooks_custom_state_active_name();
     if (!name) return 0;
+    if (active_custom && _stricmp(name, active_custom) == 0) return 1;
     return (_stricmp(name, "main") == 0 ||
             _stricmp(name, "main_initial") == 0 ||
             _stricmp(name, "options") == 0 ||
@@ -3427,9 +3431,12 @@ static int ui_is_menu_state_name(const char* name) {
 }
 
 static const char* ui_state_name_from_ptr(void* st) {
+    const char* custom_name;
     uintptr_t p = (uintptr_t)st;
     if (!st) return "none";
     if (hooks_mods_menu_active()) return "mods";
+    custom_name = hooks_custom_state_name_for_ptr(st);
+    if (custom_name && custom_name[0]) return custom_name;
     if (p == (uintptr_t)ADDR_MAIN_STATE) return "main";
     if (p == (uintptr_t)ADDR_MAIN_STATE_INITIAL) return "main_initial";
     if (p == (uintptr_t)ADDR_OPTIONS_STATE) return "options";
@@ -4656,6 +4663,33 @@ static int lua_ui_mouse_pos(lua_State* Ls) {
     lua_pushinteger(Ls, g_ui_mouse_x);
     lua_pushinteger(Ls, g_ui_mouse_y);
     return 2;
+}
+
+static int lua_ui_fill_rect(lua_State* Ls) {
+    float x = (float)luaL_checknumber(Ls, 1);
+    float y = (float)luaL_checknumber(Ls, 2);
+    float w = (float)luaL_checknumber(Ls, 3);
+    float h = (float)luaL_checknumber(Ls, 4);
+    float r = (float)luaL_optnumber(Ls, 5, 1.0);
+    float g = (float)luaL_optnumber(Ls, 6, 1.0);
+    float b = (float)luaL_optnumber(Ls, 7, 1.0);
+    float a = (float)luaL_optnumber(Ls, 8, 1.0);
+    hooks_ui_fill_rect(x, y, w, h, r, g, b, a);
+    return 0;
+}
+
+static int lua_ui_stroke_rect(lua_State* Ls) {
+    float x = (float)luaL_checknumber(Ls, 1);
+    float y = (float)luaL_checknumber(Ls, 2);
+    float w = (float)luaL_checknumber(Ls, 3);
+    float h = (float)luaL_checknumber(Ls, 4);
+    float line_w = (float)luaL_optnumber(Ls, 5, 1.0);
+    float r = (float)luaL_optnumber(Ls, 6, 1.0);
+    float g = (float)luaL_optnumber(Ls, 7, 1.0);
+    float b = (float)luaL_optnumber(Ls, 8, 1.0);
+    float a = (float)luaL_optnumber(Ls, 9, 1.0);
+    hooks_ui_stroke_rect(x, y, w, h, line_w, r, g, b, a);
+    return 0;
 }
 
 static int lua_ui_sheet_base(lua_State* Ls) {
@@ -6457,6 +6491,38 @@ static int lua_ui_native_remove(lua_State* Ls) {
     return 1;
 }
 
+/* ---- custom state helpers (mod.ui) ------------------------------------ */
+
+static int lua_ui_create_state(lua_State *L) {
+    const char* name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, hooks_register_custom_state(name));
+    return 1;
+}
+
+static int lua_ui_enter_state(lua_State *L) {
+    const char* name = luaL_checkstring(L, 1);
+    lua_pushboolean(L, hooks_enter_custom_state(name));
+    return 1;
+}
+
+static int lua_ui_leave_state(lua_State *L) {
+    lua_pushboolean(L, hooks_leave_custom_state());
+    return 1;
+}
+
+/* Legacy online hub wrappers kept for older mods. */
+static int lua_ui_enter_online_hub(lua_State *L) {
+    (void)L;
+    hooks_enter_online_hub();
+    return 0;
+}
+
+static int lua_ui_leave_online_hub(lua_State *L) {
+    (void)L;
+    hooks_leave_online_hub();
+    return 0;
+}
+
 static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_state_name, 1); lua_setfield(Ls, -2, "state_name");
@@ -6464,6 +6530,8 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_is_state, 1);   lua_setfield(Ls, -2, "is_state");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_screen_size, 1);lua_setfield(Ls, -2, "screen_size");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_pos, 1);  lua_setfield(Ls, -2, "mouse_pos");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_fill_rect, 1);  lua_setfield(Ls, -2, "fill_rect");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_stroke_rect, 1);lua_setfield(Ls, -2, "stroke_rect");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_sheet_base, 1); lua_setfield(Ls, -2, "sheet_base");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_sprite_id, 1);  lua_setfield(Ls, -2, "sprite_id");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_draw_sprite, 1);lua_setfield(Ls, -2, "draw_sprite");
@@ -6492,6 +6560,32 @@ lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_activate_ptr,
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_resize_ptr, 1);    lua_setfield(Ls, -2, "button_resize_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_hide_ptr, 1);      lua_setfield(Ls, -2, "button_hide_ptr");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_remove_ptr, 1);    lua_setfield(Ls, -2, "button_remove_ptr");
+
+    /* Generic custom-state API. */
+    lua_pushcfunction(Ls, lua_ui_create_state); lua_setfield(Ls, -2, "create_state");
+    lua_pushcfunction(Ls, lua_ui_create_state); lua_setfield(Ls, -2, "register_state");
+    lua_pushcfunction(Ls, lua_ui_enter_state);  lua_setfield(Ls, -2, "enter_state");
+    lua_pushcfunction(Ls, lua_ui_leave_state);  lua_setfield(Ls, -2, "leave_state");
+
+    /* Legacy online hub state transitions. */
+    lua_pushcfunction(Ls, lua_ui_enter_online_hub); lua_setfield(Ls, -2, "enter_online_hub");
+    lua_pushcfunction(Ls, lua_ui_leave_online_hub); lua_setfield(Ls, -2, "leave_online_hub");
+}
+
+/* ---- mod.game map selector helpers -------------------------------- */
+
+static int lua_game_set_map_selector(lua_State *L) {
+    int n = (int)luaL_checkinteger(L, 1);
+    volatile int *sel = (volatile int *)(uintptr_t)ADDR_MAP_SELECTOR;
+    *sel = n;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_game_get_map_selector(lua_State *L) {
+    volatile int *sel = (volatile int *)(uintptr_t)ADDR_MAP_SELECTOR;
+    lua_pushinteger(L, *sel);
+    return 1;
 }
 
 static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -6506,6 +6600,9 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_clear, 1);    lua_setfield(Ls, -2, "input_clear");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_status, 1);   lua_setfield(Ls, -2, "input_status");
     lua_game_push_command_constants(Ls);
+    /* map selector (online mod) */
+    lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
+    lua_pushcfunction(Ls, lua_game_get_map_selector); lua_setfield(Ls, -2, "get_map_selector");
 }
 
 static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -6546,6 +6643,81 @@ static int lua_mod_on_layout(lua_State* Ls) {
     lua_pushvalue(Ls, 2);
     h->ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
     return 0;
+}
+
+/* ---- mod.net Lua bindings ----------------------------------------- */
+
+static int lua_net_connect(lua_State *L) {
+    const char *host = luaL_checkstring(L, 1);
+    int         port = (int)luaL_checkinteger(L, 2);
+    int slot = net_connect(host, port);
+    if (slot < 0) {
+        lua_pushnil(L);
+        lua_pushstring(L, "connect failed (no free slot or DNS error)");
+        return 2;
+    }
+    lua_pushinteger(L, slot);
+    return 1;
+}
+
+static int lua_net_check(lua_State *L) {
+    int slot = (int)luaL_checkinteger(L, 1);
+    int r    = net_check_connect(slot);
+    if      (r ==  1) lua_pushstring(L, "connected");
+    else if (r ==  0) lua_pushstring(L, "connecting");
+    else              lua_pushstring(L, "failed");
+    return 1;
+}
+
+static int lua_net_send(lua_State *L) {
+    int         slot = (int)luaL_checkinteger(L, 1);
+    size_t      len  = 0;
+    const char *data = luaL_checklstring(L, 2, &len);
+    int r = net_send(slot, data, (int)len);
+    if (r < 0) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "send error or disconnected");
+        return 2;
+    }
+    lua_pushboolean(L, 1);
+    lua_pushinteger(L, r);
+    return 2;
+}
+
+static int lua_net_recv(lua_State *L) {
+    int  slot = (int)luaL_checkinteger(L, 1);
+    char buf[4096];
+    int  r    = net_recv(slot, buf, sizeof(buf));
+    if (r < 0)  { lua_pushboolean(L, 0); return 1; }
+    if (r == 0) { lua_pushnil(L);        return 1; }
+    lua_pushlstring(L, buf, (size_t)r);
+    return 1;
+}
+
+static int lua_net_close(lua_State *L) {
+    net_close((int)luaL_checkinteger(L, 1));
+    return 0;
+}
+
+static int lua_net_connected(lua_State *L) {
+    lua_pushboolean(L, net_connected((int)luaL_checkinteger(L, 1)));
+    return 1;
+}
+
+static int lua_net_connecting(lua_State *L) {
+    lua_pushboolean(L, net_connecting((int)luaL_checkinteger(L, 1)));
+    return 1;
+}
+
+static void push_net_api_table(lua_State *Ls) {
+    lua_newtable(Ls);
+    lua_pushcfunction(Ls, lua_net_connect);    lua_setfield(Ls, -2, "connect");
+    lua_pushcfunction(Ls, lua_net_check);      lua_setfield(Ls, -2, "check");
+    lua_pushcfunction(Ls, lua_net_send);       lua_setfield(Ls, -2, "send");
+    lua_pushcfunction(Ls, lua_net_recv);       lua_setfield(Ls, -2, "recv");
+    lua_pushcfunction(Ls, lua_net_close);      lua_setfield(Ls, -2, "close");
+    lua_pushcfunction(Ls, lua_net_connected);  lua_setfield(Ls, -2, "connected");
+    lua_pushcfunction(Ls, lua_net_connecting); lua_setfield(Ls, -2, "connecting");
 }
 
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -6598,6 +6770,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     // Shared mod-to-mod service table registry.
     push_interop_api_table(Ls, mod);
     lua_setfield(Ls, -2, "interop");
+
+    // Non-blocking TCP networking (online mod).
+    push_net_api_table(Ls);
+    lua_setfield(Ls, -2, "net");
 
     // Fields (convenience)
     lua_pushstring(Ls, mod->id);      lua_setfield(Ls, -2, "id");
@@ -8225,10 +8401,10 @@ void lua_manager_on_frame() {
     // We only force-flush in menu-style states, where the vanilla pipeline already finalizes
     // rendering via menu draw code and doesn't rely on cross-frame batching the same way.
     const char* st_name = ui_state_name_from_ptr(state_ptr);
-    int allow_flush = ui_is_menu_state_name(st_name);
-    //if (allow_flush && p_main_sprite_batches_draw) {
-    //    p_main_sprite_batches_draw();
-    //}
+    int allow_flush = ui_is_menu_state_name(st_name) || (hooks_custom_state_active_name() != NULL);
+    if (allow_flush && p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
 
     ui_reset_render_state();
     g_ui_mouse_pressed_left = 0;

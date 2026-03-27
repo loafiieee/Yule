@@ -496,6 +496,14 @@ API summary:
 - `mod.ui.button(id, label [,w [,h]]) -> clicked`
 - `mod.ui.button_at(id, label, x, y [,w [,h]]) -> clicked`
 
+Custom state API:
+- `mod.ui.create_state(name) -> bool`
+- `mod.ui.register_state(name) -> bool` (alias of `create_state`)
+- `mod.ui.enter_state(name) -> bool`
+- `mod.ui.leave_state() -> bool`
+- Custom states are blank framework-managed states intended for fully custom Lua-driven screens.
+- While a custom state is active, `mod.ui.state_name()` returns the registered state name, `on_frame` continues to run, and `on_event` can fully consume input.
+
 ## Gameplay API (`mod.game`)
 
 `mod.game` exposes low-level gameplay telemetry and command-bit input overrides.

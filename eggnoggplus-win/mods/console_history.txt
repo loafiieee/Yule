@@ -16,3 +16,9 @@ input.override 1 1 999999 yes
 input.override 1 1 999999 1
 state.switch main_initial
 input.override 1 1 1 1
+state.switch main
+help
+state.switch hub
+state.switch return
+state.switch mods
+state.switch main

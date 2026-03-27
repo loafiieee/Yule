@@ -30,7 +30,24 @@ int hooks_mods_menu_active(void);
 void hooks_mods_menu_notify_reload(void);
 
 
-// Input override API (Lua)
+// Custom state API (Lua)
+int         hooks_register_custom_state(const char* name);
+int         hooks_enter_custom_state(const char* name);
+int         hooks_leave_custom_state(void);
+const char* hooks_custom_state_name_for_ptr(void* state_ptr);
+const char* hooks_custom_state_active_name(void);
+
+// Lightweight immediate-mode UI helpers for custom states.
+void hooks_ui_fill_rect(float x, float y, float w, float h,
+                        float r, float g, float b, float a);
+void hooks_ui_stroke_rect(float x, float y, float w, float h, float line_w,
+                          float r, float g, float b, float a);
+
+// Legacy online hub helpers (kept as thin wrappers).
+void hooks_enter_online_hub(void);
+void hooks_leave_online_hub(void);
+int  hooks_online_hub_active(void);
+
 void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace);
 void hooks_clear_input_override(int player_index);
 int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_frames, int* out_replace);

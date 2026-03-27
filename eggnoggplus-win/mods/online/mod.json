@@ -1,0 +1,11 @@
+{
+  "id":          "online",
+  "name":        "Eggnogg+ Online",
+  "version":     "0.1.0",
+  "author":      "you",
+  "description": "Online multiplayer: login, matchmaking queue, delay-based sync.",
+  "api_version": 1,
+  "entry":       "main.lua",
+  "config":      "config.cfg",
+  "priority":    50
+}

@@ -1,0 +1,408 @@
+-- lib/hub.lua  –  Online hub UI.
+--
+-- This is NOT an overlay anymore.  The game is in the "online_hub" state
+-- (a proper GameState registered in hooks.c) while this code is running.
+-- The main-menu scene renders underneath automatically via online_hub_render().
+--
+-- All interactive elements use mod.ui.native_button so the sword cursor and
+-- keyboard navigation work exactly like the rest of the game's menus.
+--
+-- Text fields (username / password) are native_button widgets whose label
+-- reflects the current typed value.  Keyboard capture is handled in on_event.
+--
+-- hub.open()  → calls mod.ui.enter_online_hub()
+-- hub.close() → calls mod.ui.leave_online_hub()
+-- hub.draw(dt)       → call from on_frame when state_name() == "online_hub"
+-- hub.on_event(e)    → call from on_event; returns true to consume
+
+hub = hub or {}
+
+-- ── Layout constants ─────────────────────────────────────────────────────────
+-- All positions are in the 1280×720 UI coordinate space.
+
+local CX   = 640      -- horizontal centre
+local CY   = 300      -- top of the button stack (a bit above true centre)
+local BW   = 300      -- standard button width
+local BH   = 38       -- standard button height
+local FW   = 340      -- text-field button width (wider to show typed text)
+local ROW  = BH + 12  -- vertical step between rows
+
+-- ── Hub sub-states ───────────────────────────────────────────────────────────
+
+local S_CONNECTING  = "connecting"
+local S_LOGIN       = "login"
+local S_LOGGING_IN  = "logging_in"
+local S_HUB         = "hub"
+local S_QUEUING     = "queuing"
+local S_MATCH_FOUND = "match_found"
+local S_IN_GAME     = "in_game"
+
+-- ── State variables ──────────────────────────────────────────────────────────
+
+local state       = S_CONNECTING
+local username    = ""
+local status_msg  = ""
+local queue_count = 0
+local cd_timer    = 0
+local my_role     = 0
+local my_map_sel  = 0
+local match_ready_sent = false
+
+-- Text-field capture
+local focus       = 1     -- 1 = username field, 2 = password field
+local field_user  = ""
+local field_pass  = ""
+
+-- ── Helpers ──────────────────────────────────────────────────────────────────
+
+local function set_state(s)
+    state      = s
+    status_msg = ""
+end
+
+local function status(msg)
+    status_msg = msg
+    mod.log("[hub] " .. msg)
+end
+
+-- Draw a title + optional status line above the button stack.
+local function draw_header(title, y)
+    -- Shadow then colour for legibility over the menu background.
+    mod.ui.text_at(title, CX - 1, y + 1, 1.3, 0, 0, 0)
+    mod.ui.text_at(title, CX,     y,     1.3, 1, 1, 0.4)
+    if status_msg ~= "" then
+        local sy = y + 36
+        mod.ui.text_at(status_msg, CX - 1, sy + 1, 0.85, 0, 0, 0)
+        mod.ui.text_at(status_msg, CX,     sy,     0.85, 1, 0.5, 0.5)
+    end
+end
+
+-- Place a native button at an absolute position.
+-- id, label: passed to native_button.  y: vertical centre in UI space.
+-- w, h: size (defaults to BW×BH).
+-- Returns true if clicked this frame.
+local function btn(id, label, y, w, h)
+    w = w or BW
+    h = h or BH
+    -- native_button must be called every frame; grid args are overridden below.
+    local clicked = mod.ui.native_button(id, label, 1.0, 1.0, 3.0, 6.0)
+    mod.ui.native_resize(id, w, h)
+    mod.ui.native_set_pos(id, CX, y)
+    return clicked
+end
+
+-- Draw a labelled text field as a native button.
+-- value: the text to display (may be masked).
+-- focused: bool – draws differently when this field has keyboard focus.
+-- Returns true if the button was clicked (caller should set focus).
+local function field_btn(id, label_prefix, value, y, focused)
+    -- Show cursor blinking at ~1Hz when focused.
+    local cursor = ""
+    if focused then
+        cursor = (math.floor(mod.game.tick_count() / 30) % 2 == 0) and "_" or " "
+    end
+    -- Clamp display width to ~22 chars so it fits inside FW.
+    local disp = value
+    if #disp > 22 then disp = "..." .. disp:sub(-19) end
+    local label = label_prefix .. ": [" .. disp .. cursor .. "]"
+
+    -- Draw the field label slightly above the button centre.
+    -- (The button itself acts as both label and edit box.)
+    local clicked = btn(id, label, y, FW, BH)
+    return clicked
+end
+
+-- ── Server message dispatch ──────────────────────────────────────────────────
+
+local function handle_msg(msg)
+    local t = msg.type
+    if t == "auth_ok" then
+        username = msg.username or username
+        set_state(S_HUB)
+        status("Logged in as " .. username)
+
+    elseif t == "auth_fail" then
+        set_state(S_LOGIN)
+        status("Login failed: " .. (msg.reason or "?"))
+
+    elseif t == "queue_update" then
+        queue_count = tonumber(msg.count) or queue_count
+
+    elseif t == "match_found" then
+        my_role    = tonumber(msg.role)    or 0
+        my_map_sel = tonumber(msg.map_sel) or 0
+        sync.prepare(my_role, my_map_sel)
+        cd_timer           = 3.0
+        match_ready_sent   = false
+        set_state(S_MATCH_FOUND)
+        status("Match found!  You are P" .. (my_role + 1))
+
+    elseif t == "match_start" then
+        if state == S_MATCH_FOUND then
+            sync.apply_map()
+            -- Invoke the vanilla START button to begin the game.
+            local START_ACTION = 0x432440
+            local ptr = mod.ui.find_button_by_action_ptr(START_ACTION)
+            if ptr then
+                local fn = mod.ui.button_invoke_ptr or mod.ui.button_activate_ptr
+                if fn then fn(ptr, 3) end
+            end
+            set_state(S_IN_GAME)
+            hub.close()   -- leave the online_hub state; game state takes over
+        end
+
+    elseif t == "match_end" then
+        sync.stop()
+        hub.open()   -- re-enter the hub state
+        set_state(S_HUB)
+        status("Match over.")
+
+    elseif t == "error" then
+        status("Server error: " .. (msg.message or "?"))
+    end
+end
+
+-- ── Screen draw functions ────────────────────────────────────────────────────
+
+local function draw_connecting()
+    draw_header("EGGNOGG+ ONLINE", CY)
+    mod.ui.text_at("Connecting...", CX - 1, CY + 55, 0.9, 0, 0, 0)
+    mod.ui.text_at("Connecting...", CX,     CY + 54, 0.9, 0.8, 0.8, 0.8)
+    if btn("hub_cancel", "CANCEL", CY + 110) then
+        proto.disconnect()
+        hub.close()
+    end
+end
+
+local function draw_login()
+    draw_header("EGGNOGG+ ONLINE", CY - 30)
+
+    local y0 = CY + 40
+    -- Username field
+    if field_btn("hub_f_user", "Username",
+                 field_user, y0, focus == 1) then
+        focus = 1
+    end
+    -- Password field (masked)
+    if field_btn("hub_f_pass", "Password",
+                 string.rep("*", #field_pass), y0 + ROW, focus == 2) then
+        focus = 2
+    end
+    -- Buttons
+    if btn("hub_login",    "LOG IN",    y0 + ROW * 2 + 10, BW * 0.55, BH) then
+        if field_user == "" or field_pass == "" then
+            status("Enter a username and password")
+        else
+            username = field_user
+            proto.send({ type = "login", username = field_user,
+                                         password = field_pass })
+            set_state(S_LOGGING_IN)
+            status("Logging in...")
+        end
+    end
+    if btn("hub_register", "REGISTER",  y0 + ROW * 3 + 10, BW * 0.55, BH) then
+        if field_user == "" or field_pass == "" then
+            status("Enter a username and password")
+        else
+            username = field_user
+            proto.send({ type = "register", username = field_user,
+                                            password = field_pass })
+            set_state(S_LOGGING_IN)
+            status("Registering...")
+        end
+    end
+    if btn("hub_back",     "BACK",      y0 + ROW * 4 + 10, BW * 0.4,  BH) then
+        proto.disconnect()
+        hub.close()
+    end
+end
+
+local function draw_logging_in()
+    draw_header("EGGNOGG+ ONLINE", CY)
+    local msg = status_msg ~= "" and status_msg or "Please wait..."
+    mod.ui.text_at(msg, CX - 1, CY + 55, 0.9, 0, 0, 0)
+    mod.ui.text_at(msg, CX,     CY + 54, 0.9, 0.8, 0.8, 0.8)
+end
+
+local function draw_hub()
+    draw_header("EGGNOGG+ ONLINE", CY - 20)
+
+    local info = "Logged in as: " .. username
+    mod.ui.text_at(info, CX - 1, CY + 36, 0.85, 0, 0, 0)
+    mod.ui.text_at(info, CX,     CY + 35, 0.85, 0.5, 1, 0.5)
+
+    local qinfo = "Players in queue: " .. tostring(queue_count)
+    mod.ui.text_at(qinfo, CX - 1, CY + 58, 0.85, 0, 0, 0)
+    mod.ui.text_at(qinfo, CX,     CY + 57, 0.85, 0.7, 0.7, 1)
+
+    local y0 = CY + 90
+    if btn("hub_queue",  "FIND MATCH",  y0)       then
+        proto.send({ type = "join_queue" })
+        set_state(S_QUEUING)
+        status("Searching for opponent...")
+    end
+    if btn("hub_logout", "DISCONNECT",  y0 + ROW, BW * 0.7, BH) then
+        proto.disconnect()
+        hub.close()
+    end
+end
+
+local function draw_queuing()
+    draw_header("EGGNOGG+ ONLINE", CY - 10)
+
+    local dots = string.rep(".", (math.floor(mod.game.tick_count() / 20) % 4))
+    local msg1 = "Searching" .. dots
+    mod.ui.text_at(msg1, CX - 1, CY + 40, 1.0, 0, 0, 0)
+    mod.ui.text_at(msg1, CX,     CY + 39, 1.0, 0.7, 0.7, 1)
+
+    local qinfo = "Players in queue: " .. tostring(queue_count)
+    mod.ui.text_at(qinfo, CX - 1, CY + 72, 0.85, 0, 0, 0)
+    mod.ui.text_at(qinfo, CX,     CY + 71, 0.85, 0.5, 0.5, 0.8)
+
+    if btn("hub_cancel_q", "CANCEL", CY + 120, BW * 0.6, BH) then
+        proto.send({ type = "leave_queue" })
+        set_state(S_HUB)
+        status("Left queue.")
+    end
+end
+
+local function draw_match_found(dt)
+    cd_timer = math.max(0, cd_timer - dt)
+    local cd = math.ceil(cd_timer)
+
+    draw_header("MATCH FOUND!", CY - 10)
+
+    local role_str = "You are Player " .. (my_role + 1)
+    mod.ui.text_at(role_str, CX - 1, CY + 44, 1.0, 0, 0, 0)
+    mod.ui.text_at(role_str, CX,     CY + 43, 1.0, 0.5, 1, 0.5)
+
+    local cd_str = cd > 0 and ("Starting in " .. cd .. "...") or "Get ready!"
+    mod.ui.text_at(cd_str, CX - 1, CY + 76, 1.0, 0, 0, 0)
+    mod.ui.text_at(cd_str, CX,     CY + 75, 1.0, 1, 0.7, 0.2)
+
+    -- Tell server we are ready (once).
+    if not match_ready_sent then
+        proto.send({ type = "ready" })
+        match_ready_sent = true
+    end
+end
+
+-- ── Public API ───────────────────────────────────────────────────────────────
+
+--- Open the hub: connect to server and enter the game state.
+function hub.open(host, port)
+    if host then -- initial open with server details
+        field_user = ""
+        field_pass = ""
+        focus      = 1
+        if proto.get_state() == "disconnected" then
+            set_state(S_CONNECTING)
+            status("Connecting...")
+            proto.connect(host, port)
+        else
+            set_state(S_LOGIN)
+        end
+    end
+    -- Enter the proper game state so this becomes the active engine state.
+    if mod.ui.state_name() ~= "online_hub" then
+        mod.ui.enter_online_hub()
+    end
+end
+
+--- Leave the hub state back to the main menu.
+function hub.close()
+    if mod.ui.state_name() == "online_hub" then
+        mod.ui.leave_online_hub()
+    end
+end
+
+--- Call from on_frame while state_name() == "online_hub".
+function hub.draw(dt)
+    -- Drain incoming server messages every frame.
+    proto.update()
+    local msg = proto.poll()
+    while msg do
+        handle_msg(msg)
+        msg = proto.poll()
+    end
+
+    -- Detect server drop.
+    if proto.get_state() == "disconnected" and
+       state ~= S_CONNECTING and state ~= S_IN_GAME then
+        set_state(S_LOGIN)
+        status("Disconnected.")
+    end
+
+    -- Draw the correct screen.
+    if     state == S_CONNECTING  then draw_connecting()
+    elseif state == S_LOGIN       then draw_login()
+    elseif state == S_LOGGING_IN  then draw_logging_in()
+    elseif state == S_HUB         then draw_hub()
+    elseif state == S_QUEUING     then draw_queuing()
+    elseif state == S_MATCH_FOUND then draw_match_found(dt)
+    end
+end
+
+--- Call from on_event while state_name() == "online_hub".
+--- Returns true to consume the event.
+function hub.on_event(e)
+    -- Keyboard capture for the two text fields on the login screen.
+    if state == S_LOGIN then
+        if e.type == "textinput" then
+            -- e.sym for textinput is the first byte; build char from it.
+            local ch = string.char(e.sym > 0 and e.sym or 63)
+            if focus == 1 and #field_user < 24 then
+                field_user = field_user .. ch
+            elseif focus == 2 and #field_pass < 64 then
+                field_pass = field_pass .. ch
+            end
+            return true
+        end
+        if e.type == "keydown" then
+            local sym = e.sym
+            if sym == 8 or sym == 127 then   -- backspace / delete
+                if focus == 1 and #field_user > 0 then
+                    field_user = field_user:sub(1, -2)
+                elseif focus == 2 and #field_pass > 0 then
+                    field_pass = field_pass:sub(1, -2)
+                end
+                return true
+            end
+            if sym == 9 then   -- tab: toggle focus
+                focus = (focus == 1) and 2 or 1
+                return true
+            end
+            if sym == 13 then  -- enter: submit
+                if field_user ~= "" and field_pass ~= "" then
+                    username = field_user
+                    proto.send({ type = "login", username = field_user,
+                                                 password = field_pass })
+                    set_state(S_LOGGING_IN)
+                    status("Logging in...")
+                end
+                return true
+            end
+            if sym == 27 then  -- escape: back to main menu
+                proto.disconnect()
+                hub.close()
+                return true
+            end
+        end
+    elseif e.type == "keydown" and e.sym == 27 then
+        -- Escape from any other hub screen.
+        if state == S_QUEUING then
+            proto.send({ type = "leave_queue" })
+            set_state(S_HUB)
+            status("Left queue.")
+        elseif state == S_HUB then
+            proto.disconnect()
+            hub.close()
+        end
+        return true
+    end
+
+    -- Consume all events while in the hub so the game doesn't misfire.
+    return true
+end
+
+function hub.get_state() return state end

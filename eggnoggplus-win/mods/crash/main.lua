@@ -1,13 +1,19 @@
 local ffi = require("ffi")
 local crash_ptr = ffi.cast("volatile int*", 0)
+local SDLK_F12 = 1073741893
 
 mod.on_load(function()
   mod.log("Loaded! id=" .. mod.id .. " name=" .. mod.name)
+  mod.log("enabled=" .. tostring(config.get("enabled", false)))
 end)
 
 mod.on_event(function(e)
+  if not config.get("enabled", false) then
+    return false
+  end
+
   if e.type == "keydown" then
-    if e.sym == 56 then
+    if e.sym == SDLK_F12 then
       mod.log("Crashing now!")
       crash_ptr[0] = 1
     end

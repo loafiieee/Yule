@@ -5,5 +5,6 @@
   "author": "loaf",
   "description": "When 8 is pressed, test crash handler by crashing the game.",
   "api_version": 1,
-  "entry": "main.lua"
+  "entry": "main.lua",
+  "config": "config.cfg"
 }

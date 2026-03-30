@@ -22,3 +22,5 @@ state.switch hub
 state.switch return
 state.switch mods
 state.switch main
+state.last
+state.switch main

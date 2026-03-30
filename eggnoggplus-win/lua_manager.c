@@ -117,9 +117,12 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_LEADER                0x541E0Cu
 #define ADDR_END_COUNTDOWN         0x542044u
 #define ADDR_START_COUNTDOWN       0x542048u
+#define ADDR_GAME_LEVEL            0x542054u
 #define ADDR_PLAYER_ARRAY          0x542058u
 #define ADDR_THINGS                0x542080u
 #define ADDR_THING_INFO            0x543640u
+#define ADDR_MRAND_SEED            0x496DA0u
+#define ADDR_GAME_TICKS            0x547BA0u
 #define ADDR_ROOM_W                0x55A3A4u
 
 typedef void* (__cdecl *fn_state_current_t)(void);
@@ -241,7 +244,10 @@ static volatile int* p_game_active_room = (volatile int*)(uintptr_t)ADDR_GAME_AC
 static volatile uintptr_t* p_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_LEADER;
 static volatile int* p_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
 static volatile int* p_start_countdown = (volatile int*)(uintptr_t)ADDR_START_COUNTDOWN;
+static volatile uint32_t* p_game_level = (volatile uint32_t*)(uintptr_t)ADDR_GAME_LEVEL;
 static volatile int* p_room_w = (volatile int*)(uintptr_t)ADDR_ROOM_W;
+static volatile uint32_t* p_mrand_seed = (volatile uint32_t*)(uintptr_t)ADDR_MRAND_SEED;
+static volatile uint32_t* p_native_game_ticks = (volatile uint32_t*)(uintptr_t)ADDR_GAME_TICKS;
 static volatile int* p_misc_id = (volatile int*)(uintptr_t)ADDR_MISC_ID;
 static volatile int* p_tiles_id = (volatile int*)(uintptr_t)ADDR_TILES_ID;
 static volatile int* p_sprites_id = (volatile int*)(uintptr_t)ADDR_SPRITES_ID;
@@ -3858,6 +3864,8 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_OFS_PREV_COLLISION   0xAC
 #define PLAYER_OFS_COLLISION_FLAGS  0xAD
 #define PLAYER_OFS_ROOM             0x9B
+#define PLAYER_OFS_STATE_BLOB       0x78
+#define PLAYER_STATE_BLOB_LEN       0x80
 
 #define PLAYER_COLLIDE_GROUNDED     0x01
 #define PLAYER_COLLIDE_CEILING      0x02
@@ -3881,6 +3889,10 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 
 static int ptr_readable(const void* p, SIZE_T len) {
     return (p && len > 0 && !IsBadReadPtr(p, len)) ? 1 : 0;
+}
+
+static int ptr_writable(void* p, SIZE_T len) {
+    return (p && len > 0 && !IsBadWritePtr(p, len)) ? 1 : 0;
 }
 
 static uintptr_t game_get_player_ptr(int player_index) {
@@ -5470,8 +5482,71 @@ static void lua_game_push_command_constants(lua_State* Ls) {
     lua_pushinteger(Ls, (lua_Integer)GAME_CMD_MENU);   lua_setfield(Ls, -2, "CMD_MENU");
 }
 
+static int lua_absindex_compat(lua_State* Ls, int idx);
+
+static int hex_nibble(int ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+static void lua_push_hex_field(lua_State* Ls, const char* key, const uint8_t* data, size_t len) {
+    static const char HEX[] = "0123456789abcdef";
+    char* out;
+    size_t i;
+
+    if (!key || !data || len == 0) return;
+    out = (char*)malloc(len * 2 + 1);
+    if (!out) return;
+
+    for (i = 0; i < len; i++) {
+        out[i * 2] = HEX[(data[i] >> 4) & 0x0f];
+        out[i * 2 + 1] = HEX[data[i] & 0x0f];
+    }
+    out[len * 2] = '\0';
+
+    lua_pushlstring(Ls, out, len * 2);
+    lua_setfield(Ls, -2, key);
+    free(out);
+}
+
+static int lua_table_copy_hex_field(lua_State* Ls, int idx, const char* key, uint8_t* out, size_t len) {
+    size_t hex_len = 0;
+    const char* hex = NULL;
+    size_t i;
+
+    if (!key || !out || len == 0) return 0;
+
+    idx = lua_absindex_compat(Ls, idx);
+    lua_getfield(Ls, idx, key);
+    if (!lua_isstring(Ls, -1)) {
+        lua_pop(Ls, 1);
+        return 0;
+    }
+
+    hex = lua_tolstring(Ls, -1, &hex_len);
+    if (!hex || hex_len != len * 2) {
+        lua_pop(Ls, 1);
+        return 0;
+    }
+
+    for (i = 0; i < len; i++) {
+        int hi = hex_nibble((unsigned char)hex[i * 2]);
+        int lo = hex_nibble((unsigned char)hex[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            lua_pop(Ls, 1);
+            return 0;
+        }
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+
+    lua_pop(Ls, 1);
+    return 1;
+}
+
 static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int player_index, double origin_x, double origin_y) {
-    if (!player_ptr || !ptr_readable((const void*)player_ptr, 0xB0)) {
+    if (!player_ptr || !ptr_readable((const void*)player_ptr, PLAYER_OFS_STATE_BLOB + PLAYER_STATE_BLOB_LEN)) {
         lua_pushnil(Ls);
         return;
     }
@@ -5516,6 +5591,7 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         lua_push_field_int(Ls, "attack_buffer", (int)attack_buffer);
         lua_push_field_int(Ls, "collision_flags", (int)collision_flags);
         lua_push_field_int(Ls, "prev_collision_flags", (int)prev_collision_flags);
+        lua_push_hex_field(Ls, "state_blob", (const uint8_t*)(player_ptr + PLAYER_OFS_STATE_BLOB), PLAYER_STATE_BLOB_LEN);
         lua_push_field_bool(Ls, "grounded", (collision_flags & PLAYER_COLLIDE_GROUNDED) != 0);
         lua_push_field_bool(Ls, "ceiling", (collision_flags & PLAYER_COLLIDE_CEILING) != 0);
         lua_push_field_bool(Ls, "wall_right", (collision_flags & PLAYER_COLLIDE_WALL_RIGHT) != 0);
@@ -5523,9 +5599,11 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
     }
 }
 
-static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, double origin_x, double origin_y) {
+static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, int slot_index, double origin_x, double origin_y) {
     float x = *(float*)(thing_ptr + THING_OFS_X);
     float y = *(float*)(thing_ptr + THING_OFS_Y);
+    float prev_x = *(float*)(thing_ptr + THING_OFS_PREV_X);
+    float prev_y = *(float*)(thing_ptr + THING_OFS_PREV_Y);
     float vx = *(float*)(thing_ptr + THING_OFS_VX);
     float vy = *(float*)(thing_ptr + THING_OFS_VY);
     int room_index = *(int*)(thing_ptr + THING_OFS_ROOM);
@@ -5533,9 +5611,12 @@ static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, d
     uint8_t flags = *(uint8_t*)(thing_ptr + THING_OFS_FLAGS);
 
     lua_newtable(Ls);
+    lua_push_field_int(Ls, "slot", slot_index);
     lua_push_field_int(Ls, "type", (int)thing_ptr[THING_OFS_TYPE]);
     lua_push_field_number(Ls, "x", x);
     lua_push_field_number(Ls, "y", y);
+    lua_push_field_number(Ls, "prev_x", prev_x);
+    lua_push_field_number(Ls, "prev_y", prev_y);
     lua_push_field_number(Ls, "vx", vx);
     lua_push_field_number(Ls, "vy", vy);
     lua_push_field_number(Ls, "dx", x - origin_x);
@@ -5548,6 +5629,83 @@ static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, d
 
 static int lua_game_tick_count(lua_State* Ls) {
     lua_pushnumber(Ls, (lua_Number)g_game_tick_count);
+    return 1;
+}
+
+static uint32_t lua_game_u32_arg(lua_State* Ls, int arg_index) {
+    double raw = luaL_checknumber(Ls, arg_index);
+    if (raw < 0.0) raw = 0.0;
+    if (raw > 4294967295.0) raw = 4294967295.0;
+    return (uint32_t)raw;
+}
+
+static int lua_game_native_tick(lua_State* Ls) {
+    if (ptr_readable((const void*)p_native_game_ticks, sizeof(uint32_t))) {
+        lua_pushnumber(Ls, (lua_Number)(double)(*p_native_game_ticks));
+    } else {
+        lua_pushnil(Ls);
+    }
+    return 1;
+}
+
+static int lua_game_set_native_tick(lua_State* Ls) {
+    uint32_t value = lua_game_u32_arg(Ls, 1);
+    if (!ptr_writable((void*)p_native_game_ticks, sizeof(uint32_t))) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+    *p_native_game_ticks = value;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_rng_seed(lua_State* Ls) {
+    if (ptr_readable((const void*)p_mrand_seed, sizeof(uint32_t))) {
+        lua_pushnumber(Ls, (lua_Number)(double)(*p_mrand_seed));
+    } else {
+        lua_pushnil(Ls);
+    }
+    return 1;
+}
+
+static int lua_game_set_rng_seed(lua_State* Ls) {
+    uint32_t value = lua_game_u32_arg(Ls, 1);
+    if (!ptr_writable((void*)p_mrand_seed, sizeof(uint32_t))) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+    *p_mrand_seed = value;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_native_state(lua_State* Ls) {
+    lua_newtable(Ls);
+    if (ptr_readable((const void*)p_native_game_ticks, sizeof(uint32_t))) {
+        lua_push_field_number(Ls, "game_ticks", (lua_Number)(double)(*p_native_game_ticks));
+    } else {
+        lua_pushnil(Ls);
+        lua_setfield(Ls, -2, "game_ticks");
+    }
+    if (ptr_readable((const void*)p_mrand_seed, sizeof(uint32_t))) {
+        lua_push_field_number(Ls, "rng_seed", (lua_Number)(double)(*p_mrand_seed));
+    } else {
+        lua_pushnil(Ls);
+        lua_setfield(Ls, -2, "rng_seed");
+    }
+    if (ptr_readable((const void*)p_game_level, sizeof(uint32_t))) {
+        lua_push_field_number(Ls, "game_level", (lua_Number)(double)(*p_game_level));
+    } else {
+        lua_pushnil(Ls);
+        lua_setfield(Ls, -2, "game_level");
+    }
+    return 1;
+}
+
+static int lua_game_block_next_tick(lua_State* Ls) {
+    int block = lua_isnoneornil(Ls, 1) ? 1 : (lua_toboolean(Ls, 1) ? 1 : 0);
+    hooks_block_next_game_tick(block);
+    lua_pushboolean(Ls, 1);
     return 1;
 }
 
@@ -5632,8 +5790,17 @@ static int lua_game_input_status(lua_State* Ls) {
     lua_push_field_int(Ls, "poll_mask", (int)poll_mask);
     lua_push_field_int(Ls, "poll_frames", poll_frames);
     lua_push_field_bool(Ls, "poll_replace", poll_replace);
+    lua_push_field_bool(Ls, "raw_blocked", hooks_get_raw_input_blocked(player_index));
     lua_push_field_int(Ls, "effective_now", (int)hooks_peek_player_cmds_effective(player_index, 1));
     lua_push_field_int(Ls, "raw_now", (int)hooks_peek_player_cmds_raw(player_index, 1));
+    return 1;
+}
+
+static int lua_game_block_raw_input(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1);
+    int blocked = lua_toboolean(Ls, 2) ? 1 : 0;
+    hooks_set_raw_input_blocked(player_index, blocked);
+    lua_pushboolean(Ls, 1);
     return 1;
 }
 
@@ -5662,7 +5829,7 @@ static int lua_game_entities(lua_State* Ls) {
                 int thing_room = *(int*)(t + THING_OFS_ROOM);
                 if (thing_room != room_index) continue;
             }
-            push_thing_snapshot_table(Ls, t, origin_x, origin_y);
+            push_thing_snapshot_table(Ls, t, i, origin_x, origin_y);
             lua_rawseti(Ls, -2, out_i++);
         }
     }
@@ -5688,6 +5855,15 @@ static int lua_game_snapshot(lua_State* Ls) {
     lua_push_field_int(Ls, "player_index", player_index);
     lua_push_field_int(Ls, "enemy_index", enemy_index);
     lua_push_field_number(Ls, "tick", (lua_Number)g_game_tick_count);
+    if (ptr_readable((const void*)p_native_game_ticks, sizeof(uint32_t))) {
+        lua_push_field_number(Ls, "native_tick", (lua_Number)(double)(*p_native_game_ticks));
+    }
+    if (ptr_readable((const void*)p_mrand_seed, sizeof(uint32_t))) {
+        lua_push_field_number(Ls, "rng_seed", (lua_Number)(double)(*p_mrand_seed));
+    }
+    if (ptr_readable((const void*)p_game_level, sizeof(uint32_t))) {
+        lua_push_field_number(Ls, "game_level", (lua_Number)(double)(*p_game_level));
+    }
     {
         int start_countdown = 0;
         int end_countdown = 0;
@@ -5779,7 +5955,7 @@ static int lua_game_snapshot(lua_State* Ls) {
                 if (t[THING_OFS_ACTIVE] == 0) continue;
                 if (t[THING_OFS_TYPE] == THING_TYPE_PLAYER) continue;
                 if (*(int*)(t + THING_OFS_ROOM) != room_index) continue;
-                push_thing_snapshot_table(Ls, t, player_x, player_y);
+                push_thing_snapshot_table(Ls, t, i, player_x, player_y);
                 lua_rawseti(Ls, -2, out_i++);
                 if (t[THING_OFS_TYPE] == THING_TYPE_SWORD) {
                     double dx = (double)(*(float*)(t + THING_OFS_X) - player_x);
@@ -5833,6 +6009,177 @@ static int lua_game_snapshot(lua_State* Ls) {
         }
     }
 
+    return 1;
+}
+
+static int lua_absindex_compat(lua_State* Ls, int idx) {
+    if (idx > 0 || idx <= LUA_REGISTRYINDEX) return idx;
+    return lua_gettop(Ls) + idx + 1;
+}
+
+static int lua_table_get_int_field(lua_State* Ls, int idx, const char* key, int def) {
+    int v = def;
+    idx = lua_absindex_compat(Ls, idx);
+    lua_getfield(Ls, idx, key);
+    if (lua_isnumber(Ls, -1)) v = (int)lua_tointeger(Ls, -1);
+    else if (lua_isboolean(Ls, -1)) v = lua_toboolean(Ls, -1) ? 1 : 0;
+    lua_pop(Ls, 1);
+    return v;
+}
+
+static float lua_table_get_float_field(lua_State* Ls, int idx, const char* key, float def) {
+    float v = def;
+    idx = lua_absindex_compat(Ls, idx);
+    lua_getfield(Ls, idx, key);
+    if (lua_isnumber(Ls, -1)) v = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    return v;
+}
+
+static uint32_t lua_table_get_u32_field(lua_State* Ls, int idx, const char* key, uint32_t def) {
+    lua_Number v = (lua_Number)(double)def;
+    idx = lua_absindex_compat(Ls, idx);
+    lua_getfield(Ls, idx, key);
+    if (lua_isnumber(Ls, -1)) v = lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    if (v < 0.0) v = 0.0;
+    if (v > 4294967295.0) v = 4294967295.0;
+    return (uint32_t)v;
+}
+
+static int game_apply_player_table(lua_State* Ls, int idx, int player_index) {
+    uintptr_t p = game_get_player_ptr(player_index);
+    if (!p || !ptr_writable((void*)p, PLAYER_OFS_STATE_BLOB + PLAYER_STATE_BLOB_LEN)) return 0;
+    idx = lua_absindex_compat(Ls, idx);
+
+    *(float*)(p + PLAYER_OFS_X) = lua_table_get_float_field(Ls, idx, "x", *(float*)(p + PLAYER_OFS_X));
+    *(float*)(p + PLAYER_OFS_Y) = lua_table_get_float_field(Ls, idx, "y", *(float*)(p + PLAYER_OFS_Y));
+    *(float*)(p + PLAYER_OFS_PREV_X) = lua_table_get_float_field(Ls, idx, "prev_x", *(float*)(p + PLAYER_OFS_PREV_X));
+    *(float*)(p + PLAYER_OFS_PREV_Y) = lua_table_get_float_field(Ls, idx, "prev_y", *(float*)(p + PLAYER_OFS_PREV_Y));
+    *(float*)(p + PLAYER_OFS_VX) = lua_table_get_float_field(Ls, idx, "vx", *(float*)(p + PLAYER_OFS_VX));
+    *(float*)(p + PLAYER_OFS_VY) = lua_table_get_float_field(Ls, idx, "vy", *(float*)(p + PLAYER_OFS_VY));
+    (void)lua_table_copy_hex_field(Ls, idx, "state_blob", (uint8_t*)(p + PLAYER_OFS_STATE_BLOB), PLAYER_STATE_BLOB_LEN);
+    *(uint8_t*)(p + PLAYER_OFS_STATE_ID) = (uint8_t)lua_table_get_int_field(Ls, idx, "state_id", *(uint8_t*)(p + PLAYER_OFS_STATE_ID));
+    *(uint32_t*)(p + PLAYER_OFS_STATE_TIMER) = (uint32_t)lua_table_get_int_field(Ls, idx, "state_timer", *(uint32_t*)(p + PLAYER_OFS_STATE_TIMER));
+    *(signed char*)(p + PLAYER_OFS_FACING_SIGN) = (signed char)lua_table_get_int_field(Ls, idx, "facing", *(signed char*)(p + PLAYER_OFS_FACING_SIGN));
+    *(signed char*)(p + PLAYER_OFS_ROOM) = (signed char)lua_table_get_int_field(Ls, idx, "room_index", *(signed char*)(p + PLAYER_OFS_ROOM));
+    // *(uint8_t*)(p + PLAYER_OFS_CMD_BITS) = (uint8_t)lua_table_get_int_field(Ls, idx, "cmd_bits", *(uint8_t*)(p + PLAYER_OFS_CMD_BITS));
+    // *(uint8_t*)(p + PLAYER_OFS_PREV_CMD_BITS) = (uint8_t)lua_table_get_int_field(Ls, idx, "prev_cmd_bits", *(uint8_t*)(p + PLAYER_OFS_PREV_CMD_BITS));
+    *(uint8_t*)(p + PLAYER_OFS_JUMP_BUFFER) = (uint8_t)lua_table_get_int_field(Ls, idx, "jump_buffer", *(uint8_t*)(p + PLAYER_OFS_JUMP_BUFFER));
+    *(uint8_t*)(p + PLAYER_OFS_ATTACK_BUFFER) = (uint8_t)lua_table_get_int_field(Ls, idx, "attack_buffer", *(uint8_t*)(p + PLAYER_OFS_ATTACK_BUFFER));
+    *(uint8_t*)(p + PLAYER_OFS_COLLISION_FLAGS) = (uint8_t)lua_table_get_int_field(Ls, idx, "collision_flags", *(uint8_t*)(p + PLAYER_OFS_COLLISION_FLAGS));
+    *(uint8_t*)(p + PLAYER_OFS_PREV_COLLISION) = (uint8_t)lua_table_get_int_field(Ls, idx, "prev_collision_flags", *(uint8_t*)(p + PLAYER_OFS_PREV_COLLISION));
+    *(uint8_t*)(p + PLAYER_OFS_HAS_SWORD) = lua_table_get_int_field(Ls, idx, "has_sword", (*(uint8_t*)(p + PLAYER_OFS_HAS_SWORD) == 0) ? 1 : 0) ? 0 : 1;
+    return 1;
+}
+
+static int game_apply_entity_table(lua_State* Ls, int idx) {
+    int slot;
+    uint8_t* t;
+    idx = lua_absindex_compat(Ls, idx);
+    slot = lua_table_get_int_field(Ls, idx, "slot", -1);
+    if (slot < 0 || slot >= game_get_thing_count()) return 0;
+    t = p_things + (slot * THING_SIZE);
+    if (!ptr_writable((void*)t, THING_SIZE)) return 0;
+    if (lua_table_get_int_field(Ls, idx, "type", (int)t[THING_OFS_TYPE]) != (int)t[THING_OFS_TYPE]) return 0;
+
+    t[THING_OFS_ACTIVE] = (uint8_t)(lua_table_get_int_field(Ls, idx, "active", t[THING_OFS_ACTIVE] ? 1 : 0) ? 1 : 0);
+    *(float*)(t + THING_OFS_X) = lua_table_get_float_field(Ls, idx, "x", *(float*)(t + THING_OFS_X));
+    *(float*)(t + THING_OFS_Y) = lua_table_get_float_field(Ls, idx, "y", *(float*)(t + THING_OFS_Y));
+    *(float*)(t + THING_OFS_PREV_X) = lua_table_get_float_field(Ls, idx, "prev_x", *(float*)(t + THING_OFS_PREV_X));
+    *(float*)(t + THING_OFS_PREV_Y) = lua_table_get_float_field(Ls, idx, "prev_y", *(float*)(t + THING_OFS_PREV_Y));
+    *(float*)(t + THING_OFS_VX) = lua_table_get_float_field(Ls, idx, "vx", *(float*)(t + THING_OFS_VX));
+    *(float*)(t + THING_OFS_VY) = lua_table_get_float_field(Ls, idx, "vy", *(float*)(t + THING_OFS_VY));
+    *(uint8_t*)(t + THING_OFS_STATE_ID) = (uint8_t)lua_table_get_int_field(Ls, idx, "state_id", *(uint8_t*)(t + THING_OFS_STATE_ID));
+    *(uint8_t*)(t + THING_OFS_FLAGS) = (uint8_t)lua_table_get_int_field(Ls, idx, "flags", *(uint8_t*)(t + THING_OFS_FLAGS));
+    *(int*)(t + THING_OFS_ROOM) = lua_table_get_int_field(Ls, idx, "room_index", *(int*)(t + THING_OFS_ROOM));
+    return 1;
+}
+
+static int lua_game_apply_snapshot(lua_State* Ls) {
+    int idx = 1;
+    int applied = 0;
+    int snapshot_player_index = 0;
+    int snapshot_enemy_index = 1;
+    int snapshot_room_index = 0;
+    if (!lua_istable(Ls, idx)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "expected snapshot table");
+        return 2;
+    }
+    idx = lua_absindex_compat(Ls, idx);
+    snapshot_player_index = lua_table_get_int_field(Ls, idx, "player_index", 0) & 1;
+    snapshot_enemy_index = lua_table_get_int_field(Ls, idx, "enemy_index", 1) & 1;
+    snapshot_room_index = lua_table_get_int_field(Ls, idx, "room_index", game_get_active_room_index());
+
+    if (ptr_writable((void*)p_game_active_room, sizeof(int))) {
+        *p_game_active_room = snapshot_room_index;
+    }
+    if (ptr_writable((void*)p_start_countdown, sizeof(int))) {
+        *p_start_countdown = lua_table_get_int_field(Ls, idx, "start_countdown", *p_start_countdown);
+    }
+    if (ptr_writable((void*)p_end_countdown, sizeof(int))) {
+        *p_end_countdown = lua_table_get_int_field(Ls, idx, "end_countdown", *p_end_countdown);
+    }
+    if (ptr_writable((void*)p_native_game_ticks, sizeof(uint32_t))) {
+        *p_native_game_ticks = lua_table_get_u32_field(Ls, idx, "native_tick", *p_native_game_ticks);
+    }
+    if (ptr_writable((void*)p_mrand_seed, sizeof(uint32_t))) {
+        *p_mrand_seed = lua_table_get_u32_field(Ls, idx, "rng_seed", *p_mrand_seed);
+    }
+    if (ptr_writable((void*)p_game_level, sizeof(uint32_t))) {
+        *p_game_level = lua_table_get_u32_field(Ls, idx, "game_level", *p_game_level);
+    }
+    if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
+        int leader_index = lua_table_get_int_field(Ls, idx, "leader_index", -1);
+        uintptr_t leader_ptr = (leader_index >= 0 && leader_index <= 1) ? game_get_player_ptr(leader_index) : 0;
+        *p_game_leader = leader_ptr;
+    }
+
+    lua_getfield(Ls, idx, "player");
+    if (lua_istable(Ls, -1)) applied |= game_apply_player_table(Ls, -1, snapshot_player_index);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, idx, "enemy");
+    if (lua_istable(Ls, -1)) applied |= game_apply_player_table(Ls, -1, snapshot_enemy_index);
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, idx, "entities");
+    if (lua_istable(Ls, -1)) {
+        int ent_idx = lua_absindex_compat(Ls, -1);
+        int n = (int)lua_objlen(Ls, ent_idx);
+        int thing_count = game_get_thing_count();
+        uint8_t* seen_sword_slots = NULL;
+        if (thing_count > 0) {
+            seen_sword_slots = (uint8_t*)calloc((size_t)thing_count, sizeof(uint8_t));
+        }
+        for (int i = 1; i <= n; i++) {
+            lua_rawgeti(Ls, ent_idx, i);
+            if (lua_istable(Ls, -1)) {
+                int slot = lua_table_get_int_field(Ls, -1, "slot", -1);
+                int type = lua_table_get_int_field(Ls, -1, "type", -1);
+                if (seen_sword_slots && type == THING_TYPE_SWORD && slot >= 0 && slot < thing_count) {
+                    seen_sword_slots[slot] = 1;
+                }
+                applied |= game_apply_entity_table(Ls, -1);
+            }
+            lua_pop(Ls, 1);
+        }
+        if (seen_sword_slots) {
+            for (int i = 0; i < thing_count; i++) {
+                uint8_t* t = p_things + (i * THING_SIZE);
+                if (!ptr_writable((void*)t, THING_SIZE)) continue;
+                if (t[THING_OFS_TYPE] != THING_TYPE_SWORD) continue;
+                if (*(int*)(t + THING_OFS_ROOM) != snapshot_room_index) continue;
+                if (seen_sword_slots[i]) continue;
+                t[THING_OFS_ACTIVE] = 0;
+            }
+            free(seen_sword_slots);
+        }
+    }
+    lua_pop(Ls, 1);
+
+    lua_pushboolean(Ls, applied ? 1 : 0);
     return 1;
 }
 
@@ -6523,6 +6870,17 @@ static int lua_ui_leave_online_hub(lua_State *L) {
     return 0;
 }
 
+static int lua_ui_goto_main_menu(lua_State *L) {
+    (void)L;
+    if (!p_state_switch) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    p_state_switch((void*)(uintptr_t)ADDR_MAIN_STATE);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_state_name, 1); lua_setfield(Ls, -2, "state_name");
@@ -6570,6 +6928,7 @@ lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_activate_ptr,
     /* Legacy online hub state transitions. */
     lua_pushcfunction(Ls, lua_ui_enter_online_hub); lua_setfield(Ls, -2, "enter_online_hub");
     lua_pushcfunction(Ls, lua_ui_leave_online_hub); lua_setfield(Ls, -2, "leave_online_hub");
+    lua_pushcfunction(Ls, lua_ui_goto_main_menu); lua_setfield(Ls, -2, "goto_main_menu");
 }
 
 /* ---- mod.game map selector helpers -------------------------------- */
@@ -6593,12 +6952,20 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_snapshot, 1);       lua_setfield(Ls, -2, "snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_entities, 1);       lua_setfield(Ls, -2, "entities");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_tick_count, 1);     lua_setfield(Ls, -2, "tick_count");
+    lua_pushcfunction(Ls, lua_game_native_tick);                                       lua_setfield(Ls, -2, "native_tick");
+    lua_pushcfunction(Ls, lua_game_set_native_tick);                                   lua_setfield(Ls, -2, "set_native_tick");
+    lua_pushcfunction(Ls, lua_game_rng_seed);                                          lua_setfield(Ls, -2, "rng_seed");
+    lua_pushcfunction(Ls, lua_game_set_rng_seed);                                      lua_setfield(Ls, -2, "set_rng_seed");
+    lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
+    lua_pushcfunction(Ls, lua_game_block_next_tick);                                   lua_setfield(Ls, -2, "block_next_tick");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds, 1);      lua_setfield(Ls, -2, "poll_cmds");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds_raw, 1);  lua_setfield(Ls, -2, "poll_cmds_raw");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_input, 1);      lua_setfield(Ls, -2, "set_input");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_override, 1); lua_setfield(Ls, -2, "input_override");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_clear, 1);    lua_setfield(Ls, -2, "input_clear");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_status, 1);   lua_setfield(Ls, -2, "input_status");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_block_raw_input, 1); lua_setfield(Ls, -2, "block_raw_input");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_snapshot, 1); lua_setfield(Ls, -2, "apply_snapshot");
     lua_game_push_command_constants(Ls);
     /* map selector (online mod) */
     lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");

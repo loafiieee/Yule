@@ -1,10 +1,12 @@
 {
-  "name":        "eggnogg-online-server",
-  "version":     "0.1.0",
+  "name": "eggnogg-online-server",
+  "version": "0.2.0",
   "description": "Eggnogg+ Online matchmaking and relay server",
-  "main":        "server.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "engines": { "node": ">=16" }
+  "engines": {
+    "node": ">=16"
+  }
 }

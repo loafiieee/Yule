@@ -4,11 +4,14 @@
 //
 // Flow:
 //   1. matchmake two peers and assign a shared map,
-//   2. assign shared deterministic launch parameters,
-//   3. wait for both peers to load and acknowledge the map/start state,
-//   4. signal sync_begin,
-//   5. authority simulates and streams snapshots,
-//   6. mirror applies snapshots while both peers keep exchanging inputs.
+//   2. randomly choose one peer as the hidden authority,
+//   3. wait for both peers to report the loaded map tiles,
+//   4. abort if the maps differ,
+//   5. authority simulates both players,
+//   6. non-authority sends local input to the server,
+//   7. server forwards that input to the authority,
+//   8. authority streams full snapshots back through the server,
+//   9. non-authority mirrors those snapshots.
 
 const net = require("net");
 const crypto = require("crypto");
@@ -20,7 +23,6 @@ const DB_FILE = process.env.DB || path.join(__dirname, "users.json");
 const VANILLA_MAPS = 5;
 const MAX_LINE_BYTES = 512 * 1024;
 const VERBOSE = (process.env.VERBOSE || "1") !== "0";
-const DEFAULT_INPUT_DELAY = parseInt(process.env.INPUT_DELAY || "6", 10);
 
 let nextMatchId = 1;
 
@@ -105,14 +107,6 @@ function sanitizeHash(value) {
   return typeof value === "string" ? value.trim().slice(0, 64) : "";
 }
 
-function parseU32(value, fallback = 0) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return (fallback >>> 0);
-  if (n <= 0) return 0;
-  if (n >= 0xFFFFFFFF) return 0xFFFFFFFF;
-  return (Math.floor(n) >>> 0);
-}
-
 function summarizeState(state) {
   if (!state || typeof state !== "object") return "state=nil";
   const p0 = state.player && typeof state.player === "object" ? state.player : {};
@@ -124,10 +118,10 @@ function summarizeState(state) {
 function summarize(obj) {
   if (!obj || typeof obj !== "object") return String(obj);
   const t = obj.type || "?";
-  if (t === "sync_ready") return `${t} tile=${obj.tile_hash} room=${obj.room_index} seed=${obj.seed} start_tick=${obj.start_tick}`;
-  if (t === "sync_begin") return `${t} authority=${obj.authority_role} seed=${obj.seed} start_tick=${obj.start_tick}`;
-  if (t === "input") return `${t} frame=${obj.frame ?? obj.seq} cmd=${obj.cmd}`;
-  if (t === "remote_input") return `${t} role=${obj.role} frame=${obj.frame ?? obj.seq} cmd=${obj.cmd}`;
+  if (t === "sync_ready") return `${t} tile=${obj.tile_hash} room=${obj.room_index} authority=${obj.authority_role}`;
+  if (t === "sync_begin") return `${t} authority=${obj.authority_role}`;
+  if (t === "input") return `${t} seq=${obj.seq} cmd=${obj.cmd}`;
+  if (t === "remote_input") return `${t} role=${obj.role} seq=${obj.seq} cmd=${obj.cmd}`;
   if (t === "snapshot") return `${t} seq=${obj.seq}`;
   if (t === "sync_error") return `${t} reason=${obj.reason}`;
   if (t === "ping" || t === "pong") return `${t} seq=${obj.seq}`;
@@ -179,11 +173,6 @@ class Match {
     this.active = false;
 
     this.authorityRole = Math.random() < 0.5 ? 0 : 1;
-    this.startSeed = 0;
-    this.startTick = 0;
-    this.inputDelay = DEFAULT_INPUT_DELAY;
-    this.beginSeed = 0;
-    this.beginTick = 0;
     this.syncReady = [null, null];
     this.syncStarted = false;
 
@@ -252,11 +241,6 @@ class Match {
       this.active = true;
       this.syncReady = [null, null];
       this.syncStarted = false;
-      this.startSeed = parseU32(crypto.randomBytes(4).readUInt32LE(0));
-      this.startTick = 0;
-      this.inputDelay = Math.max(1, DEFAULT_INPUT_DELAY | 0);
-      this.beginSeed = 0;
-      this.beginTick = 0;
       this.lastRemoteInputSeq = [-1, -1];
       this.lastRemoteInputAt = [0, 0];
       this.lastSnapshotSeq = -1;
@@ -264,15 +248,9 @@ class Match {
       this.inputRelayCount = 0;
       this.snapshotRelayCount = 0;
       for (const player of this.players) {
-        send(player, {
-          type: "match_start",
-          authority_role: this.authorityRole,
-          seed: this.startSeed,
-          start_tick: this.startTick,
-          input_delay: this.inputDelay,
-        });
+        send(player, { type: "match_start", authority_role: this.authorityRole });
       }
-      console.log(`${this.tag()} started authority_role=${this.authorityRole} seed=${this.startSeed} start_tick=${this.startTick} delay=${this.inputDelay}`);
+      console.log(`${this.tag()} started authority_role=${this.authorityRole}`);
     }
   }
 
@@ -296,22 +274,11 @@ class Match {
       tileHash: sanitizeHash(msg.tile_hash),
       roomIndex: Number.parseInt(msg.room_index, 10) || 0,
       authorityRole: Number.parseInt(msg.authority_role, 10) || this.authorityRole,
-      seed: parseU32(msg.seed),
-      startTick: Number.parseInt(msg.start_tick, 10) || 0,
-      inputDelay: Math.max(1, Number.parseInt(msg.input_delay, 10) || this.inputDelay),
     };
     this.syncReady[role] = ready;
-    console.log(`${this.tag()} sync_ready role=${role} user=${client.username} tile=${ready.tileHash} room=${ready.roomIndex} seed=${ready.seed} start_tick=${ready.startTick} delay=${ready.inputDelay}`);
+    console.log(`${this.tag()} sync_ready role=${role} user=${client.username} tile=${ready.tileHash} room=${ready.roomIndex}`);
 
     if (!this.syncReady[0] || !this.syncReady[1]) return;
-
-    for (const item of this.syncReady) {
-      if (item.inputDelay !== this.inputDelay) {
-        console.warn(`${this.tag()} delay_mismatch expected=${this.inputDelay} got=${item.inputDelay}`);
-        this.abort("Match input-delay mismatch between peers. Match aborted.");
-        return;
-      }
-    }
 
     if (this.syncReady[0].tileHash !== this.syncReady[1].tileHash) {
       console.warn(`${this.tag()} tile_mismatch p0=${this.syncReady[0].tileHash} p1=${this.syncReady[1].tileHash}`);
@@ -319,38 +286,14 @@ class Match {
       return;
     }
 
-    if (this.syncReady[0].roomIndex !== this.syncReady[1].roomIndex) {
-      console.warn(`${this.tag()} room_mismatch p0=${this.syncReady[0].roomIndex} p1=${this.syncReady[1].roomIndex}`);
-      this.abort("Room mismatch between peers. Match aborted.");
-      return;
-    }
-
-    if (this.syncReady[0].seed !== this.syncReady[1].seed ||
-        this.syncReady[0].startTick !== this.syncReady[1].startTick ||
-        this.syncReady[0].inputDelay !== this.syncReady[1].inputDelay) {
-      console.warn(`${this.tag()} peer_start_mismatch`);
-      this.abort("Peers did not agree on snapshot start state. Match aborted.");
-      return;
-    }
-
-    this.beginSeed = this.syncReady[0].seed;
-    this.beginTick = this.syncReady[0].startTick;
-
-    if (this.beginSeed !== this.startSeed || this.beginTick !== this.startTick) {
-      console.warn(`${this.tag()} launch_drift seed=${this.startSeed}->${this.beginSeed} tick=${this.startTick}->${this.beginTick}`);
-    }
-
     this.syncStarted = true;
     for (const player of this.players) {
       send(player, {
         type: "sync_begin",
         authority_role: this.authorityRole,
-        seed: this.beginSeed,
-        start_tick: this.beginTick,
-        input_delay: this.inputDelay,
       });
     }
-    console.log(`${this.tag()} sync_begin authority_role=${this.authorityRole} seed=${this.beginSeed} start_tick=${this.beginTick} delay=${this.inputDelay}`);
+    console.log(`${this.tag()} sync_begin authority_role=${this.authorityRole} tile=${this.syncReady[0].tileHash}`);
   }
 
   onInput(client, msg) {
@@ -359,12 +302,8 @@ class Match {
     const role = this.roleOf(client);
     if (role < 0) return;
 
-    const seq = Number.parseInt(msg.frame ?? msg.target ?? msg.seq, 10);
+    const seq = Number.parseInt(msg.seq, 10);
     const cmd = Number.parseInt(msg.cmd, 10);
-    if (!Number.isFinite(seq) || seq < 0) {
-      console.warn(`${this.tag()} invalid input frame from ${client.username}: ${msg.frame ?? msg.target ?? msg.seq}`);
-      return;
-    }
     if (!Number.isFinite(cmd) || cmd < 0 || cmd > 127) {
       console.warn(`${this.tag()} invalid input cmd from ${client.username}: ${msg.cmd}`);
       return;
@@ -380,7 +319,7 @@ class Match {
 
     // Relay to the OTHER player (both peers exchange inputs in P2P model).
     const other = this.players[1 - role];
-    send(other, { type: "remote_input", role, frame: seq, seq, cmd });
+    send(other, { type: "remote_input", role, seq, cmd });
     logv(`${this.tag()} relay_input role=${role} seq=${seq} cmd=${cmd}`);
   }
 
@@ -394,7 +333,7 @@ class Match {
     }
 
     const seq = Number.parseInt(msg.seq, 10);
-    const state = msg.state || msg.snap;
+    const state = msg.state;
     if (!Number.isFinite(seq) || seq < 0) {
       console.warn(`${this.tag()} invalid snapshot seq from ${client.username}: ${msg.seq}`);
       return;
@@ -593,11 +532,11 @@ function dispatchMessage(client, msg) {
     case "lock_begin":
     case "input_update":
     case "frame_step":
+    case "frame_hash":
     case "state_request":
     case "state_detail":
     case "state_resolve":
     case "resolve_ack":
-    case "frame_hash":
       console.warn(`[proto] deprecated/client-only message from ${client.username || "anon"}: ${msg.type}`);
       break;
     default:

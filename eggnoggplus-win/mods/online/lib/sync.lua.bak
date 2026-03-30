@@ -135,16 +135,12 @@ local function compute_ready_map_hash()
 end
 
 local function read_local_cmd()
-    local raw0 = mod.game.poll_cmds_raw(0, 1) or 0
-    local raw1 = mod.game.poll_cmds_raw(1, 1) or 0
+    local raw0 = mod.game.poll_cmds_raw(0, 2) or 0
+    local raw1 = mod.game.poll_cmds_raw(1, 2) or 0
     local picked = choose_local_source(raw0, raw1)
     if local_source ~= picked then
         local_source = picked
         vlog(string.format("local input source=%d for role=%d", local_source, local_idx))
-    end
-    if (send_seq % 30) == 0 then
-        mod.log(string.format("[sync][DIAG] read_local_cmd raw0=%d raw1=%d picked=%d role=%d",
-            raw0, raw1, picked, local_idx))
     end
     return bit.bor(raw0, raw1)
 end
@@ -261,29 +257,6 @@ local function pick_snapshot_to_apply()
     return best_seq, best_state
 end
 
-local INPUT_FIELDS = {
-    "cmd_bits", "prev_cmd_bits",
-    "jump_buffer", "attack_buffer",
-    "collision_flags", "prev_collision_flags",
-}
-
-local function strip_input_fields(tbl)
-    if type(tbl) ~= "table" then return end
-    local saved = {}
-    for _, key in ipairs(INPUT_FIELDS) do
-        saved[key] = tbl[key]
-        tbl[key] = nil
-    end
-    return saved
-end
-
-local function restore_input_fields(tbl, saved)
-    if type(tbl) ~= "table" or type(saved) ~= "table" then return end
-    for _, key in ipairs(INPUT_FIELDS) do
-        tbl[key] = saved[key]
-    end
-end
-
 local function apply_latest_snapshot_if_needed()
     if is_authority or not mod.game or not mod.game.apply_snapshot then
         return
@@ -292,30 +265,7 @@ local function apply_latest_snapshot_if_needed()
     if not apply_state or apply_seq <= applied_snapshot_seq then
         return
     end
-
-    -- Determine which snapshot sub-table ("player" or "enemy") corresponds
-    -- to our local character, then strip input-related fields so the
-    -- snapshot doesn't corrupt the game's edge detection for our inputs.
-    local snap_player_idx = tonumber(apply_state.player_index) or 0
-    local snap_enemy_idx  = tonumber(apply_state.enemy_index)  or 1
-    local saved_input = nil
-    local local_tbl_key = nil
-    if snap_player_idx == local_idx then
-        local_tbl_key = "player"
-    elseif snap_enemy_idx == local_idx then
-        local_tbl_key = "enemy"
-    end
-    if local_tbl_key and type(apply_state[local_tbl_key]) == "table" then
-        saved_input = strip_input_fields(apply_state[local_tbl_key])
-    end
-
     local ok = mod.game.apply_snapshot(apply_state)
-
-    -- Restore stripped fields so the snapshot_buffer isn't corrupted.
-    if local_tbl_key and saved_input and type(apply_state[local_tbl_key]) == "table" then
-        restore_input_fields(apply_state[local_tbl_key], saved_input)
-    end
-
     if ok then
         applied_snapshot_seq = apply_seq
         waiting_for_first_snapshot = false
@@ -325,7 +275,6 @@ local function apply_latest_snapshot_if_needed()
         clear_applied_snapshots()
     end
 end
-
 
 function sync.start(local_player_index, match_authority, opts)
     opts = opts or {}
@@ -465,10 +414,6 @@ function sync.tick()
 
     if is_authority then
         waiting_reason = "live"
-        if (send_seq % 30) == 0 then
-            mod.log(string.format("[sync][DIAG] AUTH tick send_seq=%d local=%d remote=%d raw=%d remote_cmd=%d recv_seq=%d",
-                send_seq, local_idx, remote_idx, raw, last_remote_cmd, recv_input_seq))
-        end
         apply_input(local_idx, raw)
         apply_input(remote_idx, last_remote_cmd)
     else

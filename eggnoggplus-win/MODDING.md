@@ -558,6 +558,11 @@ end
 `input_status(player_index) -> table`
 - Returns both tick and poll override state, plus `raw_now` and `effective_now`.
 
+`apply_snapshot(snapshot_table) -> bool`
+- Applies a snapshot previously returned by `snapshot(...)` back into live game memory.
+- Intended for authoritative multiplayer / rollback experiments.
+- Applies the active room, leader index, both player structs, and listed non-player entity states.
+
 `entities([current_room_only=true [,include_players=false]]) -> table`
 - Returns active thing/entity tables with fields such as `type`, `x`, `y`, `vx`, `vy`, `dx`, `dy`, `room_index`, `state_id`, `flags`.
 

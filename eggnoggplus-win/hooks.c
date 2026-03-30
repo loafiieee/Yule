@@ -81,6 +81,7 @@
 #define ADDR_MAD_H                    0x404320u
 #define ADDR_OPTIONS_STATE            0x448398u
 #define ADDR_OPTIONS_STATE_PAUSED     0x448388u
+#define ADDR_GAME_STATE               0x448220u
 #define ADDR_MAIN_STATE               0x448350u
 #define ADDR_MAIN_STATE_INITIAL       0x448340u
 #define ADDR_OPTIONS_ENTER            0x4381F0u
@@ -327,6 +328,8 @@ static volatile int g_input_override_replace[2] = { 0, 0 };
 
 static volatile uint32_t g_last_raw_cmd[2] = { 0, 0 };
 static volatile uint32_t g_last_effective_cmd[2] = { 0, 0 };
+static volatile int g_raw_input_blocked[2] = { 0, 0 };
+static volatile int g_block_game_tick_once = 0;
 
 // Forward decls for UI layout + state checks used by cursor hijack.
 typedef struct ModsLayout {
@@ -349,6 +352,12 @@ static int is_mods_state_active(void);
 static int is_console_state_active(void);
 static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override);
 static void hooks_finish_game_tick(void);
+
+static int hooks_consume_block_game_tick(void) {
+    int block = (g_block_game_tick_once != 0);
+    g_block_game_tick_once = 0;
+    return block;
+}
 
 static void mods_calc_layout(ModsLayout* L);
 static void console_draw_rect(float x, float y, float w, float h, float r, float g, float b, float a);
@@ -3789,6 +3798,16 @@ int hooks_get_tick_input(int player_index, uint32_t* out_mask, int* out_ticks, i
     return ticks != 0;
 }
 
+void hooks_set_raw_input_blocked(int player_index, int blocked) {
+    int pi = (player_index & 1);
+    g_raw_input_blocked[pi] = blocked ? 1 : 0;
+}
+
+int hooks_get_raw_input_blocked(int player_index) {
+    int pi = (player_index & 1);
+    return g_raw_input_blocked[pi] != 0;
+}
+
 void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace) {
     int pi = (player_index & 1);
     if (frames == 0) {
@@ -3880,6 +3899,10 @@ uint32_t hooks_peek_player_cmds_effective(int player_index, int mode) {
     uint32_t pi = (uint32_t)(player_index & 1);
     uint32_t raw = hooks_peek_player_cmds_raw(player_index, mode);
     return hooks_apply_effective_overrides(pi, raw, 0);
+}
+
+void hooks_block_next_game_tick(int block) {
+    g_block_game_tick_once = block ? 1 : 0;
 }
 
 static void render_rows(void) {
@@ -4734,8 +4757,14 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
     fn_main_update_with_buttons_t real_update = p_main_update_with_buttons_trampoline
         ? p_main_update_with_buttons_trampoline
         : p_main_update_with_buttons;
+    void* state_ptr = NULL;
 
     lua_manager_on_tick();
+    if (p_state_current) state_ptr = p_state_current();
+    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE && hooks_consume_block_game_tick()) {
+        lua_manager_on_tick_post();
+        return 0;
+    }
     {
         int result = real_update ? real_update(arg0) : 0;
         lua_manager_on_tick_post();
@@ -4745,7 +4774,9 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 }
 
 static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint32_t mode) {
-    uint32_t raw = hooks_peek_player_cmds_raw((int)player_index, (int)mode);
+    uint32_t raw = hooks_get_raw_input_blocked((int)player_index)
+        ? 0u
+        : hooks_peek_player_cmds_raw((int)player_index, (int)mode);
     return hooks_apply_effective_overrides(player_index, raw, 1);
 }
 

@@ -56,10 +56,13 @@ int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_fram
 void hooks_set_tick_input(int player_index, uint32_t cmd_mask, int ticks, int replace);
 void hooks_clear_tick_input(int player_index);
 int hooks_get_tick_input(int player_index, uint32_t* out_mask, int* out_ticks, int* out_replace);
+void hooks_set_raw_input_blocked(int player_index, int blocked);
+int hooks_get_raw_input_blocked(int player_index);
 
 // Command inspection helpers.
 uint32_t hooks_peek_player_cmds_raw(int player_index, int mode);
 uint32_t hooks_peek_player_cmds_effective(int player_index, int mode);
+void hooks_block_next_game_tick(int block);
 
 #ifdef __cplusplus
 }

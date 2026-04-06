@@ -13,7 +13,7 @@ local bit = bit or require("bit")
 
 local ALL_CMD_MASK = bit.bor(0x01, 0x02, 0x04, 0x08, 0x10, 0x20)
 
-local SNAPSHOT_INTERVAL = 2
+local SNAPSHOT_INTERVAL = 8   -- ticks between position corrections (~133ms at 60fps)
 local PING_EVERY        = 60
 local PING_HISTORY      = 8
 local TIMEOUT_TICKS     = 600
@@ -33,6 +33,7 @@ local send_seq          = 0
 local last_capture_tick = -1
 local last_sent_cmd     = 0
 local last_remote_cmd   = 0
+local remote_cmd_acc    = 0   -- OR of all cmds since last apply; catches short presses
 local last_remote_role  = nil
 local ticks_since_recv  = 0
 local tick_count        = 0
@@ -50,6 +51,12 @@ local current_ping = 0
 
 local stat_inputs_sent = 0
 local stat_inputs_recv = 0
+
+-- Cache the leader_index from our own snapshots so we can prevent stale
+-- incoming snapshots (with no leader) from clearing a just-set leader.
+-- The C apply_snapshot always writes leader_ptr; when leader_index is nil it
+-- defaults to -1, which zeroes leader_ptr and clears GO.
+local cached_leader_index = nil
 
 local verbose = config.get("verbose_logging", true)
 
@@ -103,7 +110,11 @@ end
 -- ── remote input injection ───────────────────────────────────────────────
 local function apply_remote_input()
     if not (mod.game and mod.game.set_input) then return false end
-    mod.game.set_input(remote_idx, last_remote_cmd, 2, true)
+    -- OR with accumulator so a press+release that both arrive in the same proto.update
+    -- call still registers for at least one tick instead of being silently dropped.
+    local cmd = bit.bor(last_remote_cmd, remote_cmd_acc)
+    remote_cmd_acc = 0
+    mod.game.set_input(remote_idx, cmd, 2, true)
     return true
 end
 
@@ -114,6 +125,10 @@ local function take_and_send_snapshot()
 
     local snap = mod.game.snapshot(local_idx, false)
     if not snap then return end
+
+    -- Keep our leader cache current so apply_snapshot_data can preserve it
+    -- when a stale incoming snapshot (with no leader) would otherwise clear it.
+    cached_leader_index = snap.leader_index
 
     if mod.game.rng_seed then
         snap.rng_seed = mod.game.rng_seed()
@@ -133,8 +148,11 @@ local function take_and_send_snapshot()
     snap.tick = nil; snap.in_game = nil
     snap.room_width = nil; snap.room_height = nil; snap.error = nil
 
-    -- Strip entities (apply_snapshot deactivates missing slots = destructive)
-    snap.entities = nil
+    -- Authority sends full entity state so the peer can correct sword positions/existence.
+    -- Non-auth doesn't own entities so strips them; authority is always source of truth.
+    if not is_authority then
+        snap.entities = nil
+    end
 
     -- Strip enemy (non-auth's player from auth's delayed view — stale)
     snap.enemy = nil
@@ -143,11 +161,13 @@ local function take_and_send_snapshot()
     snap.native_tick = nil
     snap.game_level = nil
 
-    -- Strip player convenience booleans
+    -- Keep only position/velocity in the player table. state_blob (128 bytes → 256
+    -- hex chars) and action_blob (36 bytes → 72 hex chars) are large Lua strings that
+    -- get JSON-encoded every snapshot but are immediately discarded on apply. Stripping
+    -- them here cuts snapshot size by ~60% and eliminates the serialization overhead.
     if snap.player then
-        snap.player.dx = nil; snap.player.dy = nil
-        snap.player.grounded = nil; snap.player.ceiling = nil
-        snap.player.wall_right = nil; snap.player.wall_left = nil
+        local p = snap.player
+        snap.player = { x = p.x, y = p.y, vx = p.vx, vy = p.vy }
     end
 
     snapshot_seq = snapshot_seq + 1
@@ -166,19 +186,25 @@ local function apply_snapshot_data(snap)
     if not snap or type(snap) ~= "table" then return false end
     if not (mod.game and mod.game.apply_snapshot) then return false end
 
+    -- Always unsafe: native_tick would jump the game clock, game_level would
+    -- change the level, enemy is always the sender's stale view of us.
     snap.native_tick = nil
-    snap.game_level = nil
-    snap.entities = nil
-    snap.enemy = nil
+    snap.game_level  = nil
+    snap.enemy       = nil
+
+    -- Position/velocity only. Applying state_id, anim_ptr, state_blob, state_timer,
+    -- has_sword etc. from a delayed snapshot corrupts the state machine.
+    if snap.player then
+        local p = snap.player
+        snap.player = { x = p.x, y = p.y, vx = p.vx, vy = p.vy }
+    end
 
     if snap.rng_seed and mod.game.set_rng_seed then
         mod.game.set_rng_seed(snap.rng_seed)
     end
 
     local ok = mod.game.apply_snapshot(snap)
-    if ok then
-        snapshots_applied = snapshots_applied + 1
-    end
+    if ok then snapshots_applied = snapshots_applied + 1 end
     return ok
 end
 
@@ -190,7 +216,7 @@ local function reset_state()
     last_error = nil; waiting_reason = "idle"; match_seed = 0
 
     send_seq = 0; last_capture_tick = -1
-    last_sent_cmd = 0; last_remote_cmd = 0; last_remote_role = nil
+    last_sent_cmd = 0; last_remote_cmd = 0; remote_cmd_acc = 0; last_remote_role = nil
     ticks_since_recv = 0; tick_count = 0
 
     snapshot_seq = 0; snapshot_recv_seq = -1
@@ -198,6 +224,7 @@ local function reset_state()
 
     ping_seq = 0; ping_sent_at = {}; ping_samples = {}; current_ping = 0
     stat_inputs_sent = 0; stat_inputs_recv = 0
+    cached_leader_index = nil
 end
 
 function sync.start(local_player_index, auth_role, seed)
@@ -261,10 +288,40 @@ function sync.get_error()  return last_error end
 
 -- ── per-tick ─────────────────────────────────────────────────────────────
 function sync.apply_pending()
-    if pending_snapshot and not is_authority then
-        apply_snapshot_data(pending_snapshot)
-        pending_snapshot = nil
+    if not pending_snapshot then return end
+
+    -- Refresh leader from live game state. apply_snapshot ALWAYS writes leader_ptr;
+    -- when leader_index is nil it defaults to -1 which zeroes the ptr and clears GO.
+    -- We need the current value so we can substitute it when appropriate.
+    -- This snapshot() call runs only when a pending snapshot exists (~every 8 ticks).
+    if mod.game and mod.game.snapshot then
+        local curr = mod.game.snapshot(local_idx, false)
+        if curr then cached_leader_index = curr.leader_index end
     end
+
+    if is_authority then
+        -- Received from non-auth. Authority owns all game state except the non-auth
+        -- player's position — only apply x/y/vx/vy (apply_snapshot_data handles this).
+        pending_snapshot.rng_seed        = nil   -- authority owns RNG
+        pending_snapshot.start_countdown = nil   -- authority owns countdowns
+        pending_snapshot.end_countdown   = nil
+        pending_snapshot.entities        = nil   -- authority owns entity pool
+        -- Substitute our live leader so C doesn't clear it (nil → -1 → clear GO).
+        pending_snapshot.leader_index    = cached_leader_index
+    else
+        -- Received from authority. Apply everything authority sends except:
+        -- - entities: applied as-is (authority is source of truth for swords)
+        -- - leader: trust authority's value if it's explicit (0 or 1); if it's nil
+        --   (nobody is leading right now per authority), keep our local value so a
+        --   delayed "no leader" snapshot doesn't flash GO off for a frame.
+        if pending_snapshot.leader_index == nil then
+            pending_snapshot.leader_index = cached_leader_index
+        end
+        -- Countdowns and RNG come from authority (they are canonical here).
+    end
+
+    apply_snapshot_data(pending_snapshot)
+    pending_snapshot = nil
 end
 
 function sync.tick()
@@ -291,7 +348,7 @@ function sync.tick()
         return "sync_error"
     end
 
-    if is_authority and (tick_count % SNAPSHOT_INTERVAL) == 0 then
+    if (tick_count % SNAPSHOT_INTERVAL) == 0 then
         take_and_send_snapshot()
     end
 
@@ -337,7 +394,9 @@ function sync.on_message(msg)
 
     if t == "remote_input" then
         ticks_since_recv = 0
-        last_remote_cmd  = bit.band(tonumber(msg.cmd) or 0, ALL_CMD_MASK)
+        local cmd        = bit.band(tonumber(msg.cmd) or 0, ALL_CMD_MASK)
+        last_remote_cmd  = cmd
+        remote_cmd_acc   = bit.bor(remote_cmd_acc, cmd)
         last_remote_role = tonumber(msg.role)
         stat_inputs_recv = stat_inputs_recv + 1
         return nil

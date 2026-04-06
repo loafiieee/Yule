@@ -5,8 +5,8 @@
 --   - each peer samples/sends local movement from the frame side,
 --   - each peer applies the latest local+remote movement on the gameplay tick.
 
-local SERVER_HOST = config.get("server_host", "127.0.0.1")
-local SERVER_PORT = config.get("server_port", 7878)
+-- Server host/port are now dynamic — resolved at connect time via servers.get_selected().
+-- config.server_host / server_port remain as a last-resort fallback for servers.lua.
 
 -- Address of the game's "Start" button (used to launch matches from the hub)
 local START_ACTION = 0x432440
@@ -55,6 +55,7 @@ end
 mod.dofile("lib/json.lua")
 mod.dofile("lib/proto.lua")
 mod.dofile("lib/map_manifest.lua")
+mod.dofile("lib/servers.lua")
 mod.dofile("lib/sync.lua")
 mod.dofile("lib/hub.lua")
 
@@ -116,12 +117,13 @@ local function end_match(reason)
     match_start_tick       = 0
     match_input_delay      = 1
 
-    if reason then
-        pending_reopen_hub     = true
-        pending_reopen_message = reason
-        if current_state == "game" and mod.ui.goto_main_menu then
-            mod.ui.goto_main_menu()
-        end
+    -- Always reopen the hub after a match. When reason is nil it's a clean game-over
+    -- (state already transitioned to main); when it's non-nil we need to force the
+    -- transition first.
+    pending_reopen_hub     = true
+    pending_reopen_message = reason or "Match over."
+    if reason and current_state == "game" and mod.ui.goto_main_menu then
+        mod.ui.goto_main_menu()
     end
     mod.log("[main] match ended: " .. tostring(reason or "clean"))
 end
@@ -234,7 +236,8 @@ mod.on_frame(function()
             mod.ui.native_set_pos("online_open_btn", base_x, base_y + base_h + GAP)
         end
         if clicked then
-            hub.open(SERVER_HOST, SERVER_PORT)
+            local sv = servers.get_selected()
+            hub.open(sv.host, sv.port)
         end
 
     else

@@ -29,6 +29,7 @@ local match_ready_sent = false
 local focus = 1
 local field_user = ""
 local field_pass = ""
+local remember_me = false
 local state_ready = false
 local pending_start = false
 local post_open_message = nil
@@ -36,6 +37,21 @@ local post_open_message = nil
 local click_pending = false
 local click_x = 0
 local click_y = 0
+
+-- Server picker overlay
+local S_SERVER_PICKER = "server_picker"
+local server_picker_open = false
+
+-- Load saved credentials on startup
+do
+    local saved_user = storage.get("saved_username")
+    local saved_pass = storage.get("saved_password")
+    if type(saved_user) == "string" and saved_user ~= "" then
+        field_user  = saved_user
+        field_pass  = type(saved_pass) == "string" and saved_pass or ""
+        remember_me = true
+    end
+end
 
 local function ui_create_state(name)
     local f = mod.ui.create_state or mod.ui.register_state
@@ -144,6 +160,13 @@ local function begin_login_request(kind)
         return
     end
     username = field_user
+    if remember_me then
+        storage.set("saved_username", field_user)
+        storage.set("saved_password", field_pass)
+    else
+        storage.set("saved_username", nil)
+        storage.set("saved_password", nil)
+    end
     proto.send({ type = kind, username = field_user, password = field_pass })
     set_state(S_LOGGING_IN)
     status(kind == "register" and "Registering..." or "Logging in...")
@@ -281,19 +304,36 @@ end
 local function draw_panel(title, subtitle, hint)
     local L = panel_layout()
     local x, y, w, h, s = L.x, L.y, L.w, L.h, L.s
+    local t = mod.game.tick_count()
+    local pulse = 0.5 + 0.5 * math.sin(t * 0.035)
 
+    -- Dim overlay + CRT scanlines
     fill_rect(0, 0, L.W, L.H, 0.01, 0.02, 0.03, 0.10)
+    local scan_step = math.max(3, math.floor(5 * s))
+    local scan_h    = math.max(1, math.floor(s))
+    for sy = 0, L.H, scan_step do
+        fill_rect(0, sy, L.W, scan_h, 0.0, 0.0, 0.0, 0.07)
+    end
+
     fill_rect(x, y, w, h, 0.03, 0.05, 0.08, 0.92)
     fill_rect(x + 3, y + 3, w - 6, h - 6, 0.06, 0.08, 0.12, 0.55)
     fill_rect(x, y, w, L.header_h, 0.10, 0.13, 0.20, 0.96)
     fill_rect(x, y + h - L.footer_h, w, L.footer_h, 0.03, 0.04, 0.06, 0.94)
     fill_rect(L.content_x, L.content_y, L.content_w, L.content_h, 0.04, 0.07, 0.11, 0.48)
-    stroke_rect(x, y, w, h, 2.0, 0.40, 0.50, 0.66, 1.0)
+
+    -- Pulsing outer border
+    stroke_rect(x, y, w, h, 2.0, 0.40 + pulse * 0.16, 0.50 + pulse * 0.10, 0.66 + pulse * 0.12, 1.0)
     stroke_rect(x + 4, y + 4, w - 8, h - 8, 1.0, 0.16, 0.22, 0.32, 0.92)
+
+    -- Accent line at the bottom edge of the header
+    local al_h = math.max(2, math.floor(2 * s))
+    fill_rect(x + 4, y + L.header_h - al_h, w - 8, al_h,
+        0.32 + pulse * 0.18, 0.44 + pulse * 0.14, 0.70 + pulse * 0.12, 0.88)
 
     draw_text_center(title, L.cx, y + math.floor(18 * s), 1.90 * s, 0.96, 0.97, 0.99)
     if subtitle and subtitle ~= "" then
-        draw_text_center(subtitle, L.cx, y + L.header_h + math.floor(4 * s), 1.10 * s, 0.95, 0.82, 0.46)
+        -- Inside the header (header_h = 78*s); title at 18*s, subtitle at 52*s
+        draw_text_center(subtitle, L.cx, y + math.floor(52 * s), 1.10 * s, 0.95, 0.82, 0.46)
     end
     if status_msg ~= "" then
         draw_text_center(status_msg, L.cx, y + L.header_h + math.floor(34 * s), 1.04 * s, 0.80, 0.87, 0.96)
@@ -406,6 +446,20 @@ local function draw_connecting()
     end
 end
 
+local function draw_checkbox(label, x, y, size, checked, s)
+    local clicked = consume_click(x, y, size + approx_text_w(label, 0.88 * s), size)
+    local hovered = mouse_in_rect(x, y, size + approx_text_w(label, 0.88 * s), size)
+    fill_rect(x, y, size, size, 0.06, 0.09, 0.14, 0.92)
+    stroke_rect(x, y, size, size, hovered and 2.0 or 1.0,
+        hovered and 0.70 or 0.36, hovered and 0.82 or 0.45, hovered and 0.95 or 0.60, 1.0)
+    if checked then
+        local p = math.floor(size * 0.22)
+        fill_rect(x + p, y + p, size - p * 2, size - p * 2, 0.95, 0.83, 0.32, 1.0)
+    end
+    draw_text(label, x + size + math.floor(8 * s), y + math.floor(size * 0.10), 0.88 * s, 0.74, 0.82, 0.94)
+    return clicked
+end
+
 local function draw_login()
     local L = draw_panel("EGGNOGG+ ONLINE", "Sign in to queue for matches")
     local fx = L.content_x + math.floor(18 * L.s)
@@ -417,6 +471,13 @@ local function draw_login()
 
     if select(1, field_box("Username", field_user, fx, y, fw, field_h, focus == 1, false)) then focus = 1 end
     if select(1, field_box("Password", field_pass, fx, y + field_h + math.floor(52 * L.s), fw, field_h, focus == 2, true)) then focus = 2 end
+
+    -- Remember me checkbox
+    local cb_size = math.floor(22 * L.s)
+    local cb_y = y + field_h + math.floor(52 * L.s) + field_h + math.floor(14 * L.s)
+    if draw_checkbox("Remember me", fx, cb_y, cb_size, remember_me, L.s) then
+        remember_me = not remember_me
+    end
 
     local by = L.y + L.h - L.footer_h - btn_h * 2 - gap - math.floor(28 * L.s)
     if button_box("LOG IN", fx, by, fw, btn_h, true) then
@@ -465,15 +526,17 @@ local function draw_queueing()
     local L = draw_panel("MATCHMAKING", nil, false)
     local t = mod.game.tick_count()
     local pulse = 0.60 + 0.30 * math.sin(t * 0.08)
-    local spinners = {"|", "/", "-", "\\"}
-    local spin = spinners[(math.floor(t / 10) % 4) + 1]
-    draw_text_center(spin .. " SEARCHING " .. spin, L.cx, L.content_y + math.floor(22 * L.s),
+    -- Animated ellipsis: 0 → 1 → 2 → 3 → 0 dots, held for 15 ticks each
+    local dot_n = math.floor(t / 15) % 4
+    local dots  = string.rep(".", dot_n) .. string.rep(" ", 3 - math.min(dot_n, 3))
+    draw_text_center("SEARCHING" .. dots, L.cx, L.content_y + math.floor(22 * L.s),
         1.26 * L.s, pulse * 0.68, pulse * 0.82, pulse)
     local qr = queue_count >= 2 and 0.68 or 0.52
     local qg = queue_count >= 2 and 0.96 or 0.64
     local qb = queue_count >= 2 and 0.48 or 0.78
+    local qpulse = queue_count >= 2 and (0.85 + 0.15 * math.sin(t * 0.12)) or 1.0
     draw_text_center(tostring(queue_count) .. " in queue", L.cx,
-        L.content_y + math.floor(78 * L.s), 1.08 * L.s, qr, qg, qb)
+        L.content_y + math.floor(78 * L.s), 1.08 * L.s, qr * qpulse, qg * qpulse, qb * qpulse)
     local bw = math.floor(280 * L.s)
     local bh = math.floor(56 * L.s)
     if button_box("CANCEL", L.cx - bw * 0.5, L.y + L.h - L.footer_h - bh - math.floor(20 * L.s), bw, bh, false) then
@@ -485,7 +548,15 @@ end
 
 local function draw_match_found(dt)
     local L = draw_panel("MATCH FOUND", "Get ready", false)
+    local t = mod.game.tick_count()
     cd_timer = math.max(0, cd_timer - dt)
+
+    -- Pulsing highlight bar behind the player label
+    local hl_pulse = 0.5 + 0.5 * math.sin(t * 0.09)
+    fill_rect(L.content_x, L.content_y + math.floor(4 * L.s),
+        L.content_w, math.floor(28 * L.s),
+        0.08, 0.22 + hl_pulse * 0.06, 0.10, hl_pulse * 0.40)
+
     draw_text_center("You are player " .. tostring(my_role + 1), L.cx, L.content_y + math.floor(12 * L.s), 1.14 * L.s, 0.66, 0.96, 0.70)
     draw_text_center(my_map_label ~= "" and my_map_label or ("Map " .. tostring((my_map_sel or 0) + 1)), L.cx, L.content_y + math.floor(66 * L.s), 1.08 * L.s, 0.70, 0.78, 0.94)
     if cd_timer > 0 then
@@ -507,9 +578,78 @@ local function draw_match_found(dt)
     stroke_rect(bar_x, bar_y, bar_w, bar_h, 1.0, 0.36, 0.45, 0.60, 0.84)
 end
 
+-- ── server picker overlay ─────────────────────────────────────────────────
+local function draw_server_picker()
+    local W, H = mod.ui.screen_size()
+    local s = ui_scale()
+    local pw = math.floor(480 * s)
+    local row_h = math.floor(52 * s)
+    local list = servers.get_list()
+    local ph = math.floor(64 * s) + #list * row_h + math.floor(24 * s)
+    ph = math.min(ph, H - math.floor(40 * s))
+    local px = math.floor((W - pw) * 0.5)
+    local py = math.floor((H - ph) * 0.5)
+
+    fill_rect(0, 0, W, H, 0.0, 0.0, 0.0, 0.55)
+    fill_rect(px, py, pw, ph, 0.04, 0.06, 0.10, 0.97)
+    stroke_rect(px, py, pw, ph, 2.0, 0.40, 0.50, 0.66, 1.0)
+
+    local title_y = py + math.floor(14 * s)
+    draw_text_center("SELECT SERVER", px + pw * 0.5, title_y, 1.30 * s, 0.96, 0.97, 0.99)
+
+    local ry = py + math.floor(54 * s)
+    local sel = servers.get_selected_idx()
+    for i, sv in ipairs(list) do
+        local ping_ms = servers.get_ping(i)
+        local is_sel  = (i == sel)
+        local hovered = mouse_in_rect(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s))
+        local clicked = consume_click(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s))
+
+        -- Row background
+        local bg_a = is_sel and 0.28 or (hovered and 0.16 or 0.0)
+        fill_rect(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s),
+            0.20, 0.34, 0.56, bg_a)
+        if is_sel then
+            stroke_rect(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s),
+                1.0, 0.40, 0.54, 0.80, 0.90)
+        end
+
+        -- Server name + host:port
+        local nr, ng, nb = is_sel and 0.98 or 0.84, is_sel and 0.90 or 0.84, is_sel and 0.48 or 0.84
+        draw_text(sv.name, px + math.floor(20*s), ry + math.floor(6*s), 1.10 * s, nr, ng, nb)
+        local addr = sv.host .. ":" .. tostring(sv.port)
+        draw_text(addr, px + math.floor(20*s), ry + math.floor(28*s), 0.80 * s, 0.54, 0.64, 0.76)
+
+        -- Ping indicator
+        local ping_str, pr, pg, pb
+        if ping_ms then
+            ping_str = tostring(ping_ms) .. " ms"
+            pr = ping_ms < 80 and 0.40 or (ping_ms < 150 and 0.80 or 0.90)
+            pg = ping_ms < 80 and 0.90 or (ping_ms < 150 and 0.80 or 0.40)
+            pb = 0.40
+        else
+            local t = mod.game.tick_count()
+            local dots = string.rep(".", (math.floor(t / 15) % 4))
+            ping_str = "pinging" .. dots
+            pr, pg, pb = 0.50, 0.58, 0.70
+        end
+        local ping_tw = approx_text_w(ping_str, 0.90 * s)
+        draw_text(ping_str, px + pw - math.floor(20*s) - ping_tw, ry + math.floor(14*s), 0.90 * s, pr, pg, pb)
+
+        if clicked then
+            servers.select(i)
+            server_picker_open = false
+        end
+        ry = ry + row_h
+    end
+end
+
 function hub.open(host, port)
     hub.ensure_state()
     click_pending = false
+    server_picker_open = false
+    -- Kick off server list fetch + pings every time the hub opens
+    servers.refresh()
     if host and port and proto.get_state() == "disconnected" then
         focus = 1
         if field_user == "" then field_user = username or "" end
@@ -541,8 +681,37 @@ function hub.consume_start_request()
     return want
 end
 
+local function draw_server_button()
+    -- Small "SERVERS" button in the bottom-right corner, outside the card.
+    -- Only shown while logged in so it doesn't clutter the login screen.
+    if state ~= S_HUB and state ~= S_QUEUING then return end
+    local W, H = mod.ui.screen_size()
+    local s = ui_scale()
+    local bw = math.floor(120 * s)
+    local bh = math.floor(32 * s)
+    local bx = W - bw - math.floor(16 * s)
+    local by = H - bh - math.floor(16 * s)
+
+    local sv = servers.get_selected()
+    local ping_ms = servers.get_ping(servers.get_selected_idx())
+    local ping_str = ping_ms and (" " .. tostring(ping_ms) .. "ms") or ""
+    local pr = ping_ms and (ping_ms < 80 and 0.40 or (ping_ms < 150 and 0.80 or 0.90)) or 0.55
+    local pg = ping_ms and (ping_ms < 80 and 0.90 or (ping_ms < 150 and 0.80 or 0.40)) or 0.65
+    local label = (sv.name or "SERVER") .. ping_str
+
+    local hovered = mouse_in_rect(bx, by, bw, bh)
+    local clicked = consume_click(bx, by, bw, bh)
+    fill_rect(bx, by, bw, bh, 0.06, 0.09, 0.14, hovered and 0.96 or 0.82)
+    stroke_rect(bx, by, bw, bh, hovered and 2.0 or 1.0, 0.30, 0.40, 0.58, 0.90)
+    draw_text_center(label, bx + bw * 0.5, by + math.floor(bh * 0.18), 0.72 * s, pr, pg, 0.80)
+    if clicked then
+        server_picker_open = not server_picker_open
+    end
+end
+
 function hub.draw(dt)
     pump_messages()
+    servers.update()   -- drive fetch + ping state machines every frame
     if state == S_CONNECTING then
         draw_connecting()
     elseif state == S_LOGIN then
@@ -555,6 +724,11 @@ function hub.draw(dt)
         draw_queueing()
     elseif state == S_MATCH_FOUND then
         draw_match_found(dt)
+    end
+    -- Server button + picker drawn after the card so they appear on top
+    draw_server_button()
+    if server_picker_open then
+        draw_server_picker()
     end
     if state ~= S_IN_GAME then
         draw_mouse_cursor()
@@ -602,6 +776,10 @@ function hub.on_event(e)
             end
         end
     elseif e.type == "keydown" then
+        if e.sym == 27 and server_picker_open then
+            server_picker_open = false
+            return true
+        end
         if e.sym == 13 then
             if state == S_HUB then
                 proto.send({ type = "join_queue" })

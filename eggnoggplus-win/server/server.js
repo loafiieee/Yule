@@ -245,11 +245,12 @@ function tryMatchmake() {
       continue;
     }
 
-    const sharedMap = chooseSharedMap(a, b);
+    let sharedMap = chooseSharedMap(a, b);
     if (!sharedMap) {
-      safeSend(a, { type: "error", message: "No shared maps with opponent." });
-      safeSend(b, { type: "error", message: "No shared maps with opponent." });
-      continue;
+      // Fall back to a random vanilla map — both clients always have vanilla:0-4.
+      const vi = Math.floor(Math.random() * 5);
+      sharedMap = { key: `vanilla:${vi}`, label: `Vanilla ${vi + 1}`, selectorA: vi, selectorB: vi };
+      log("no shared custom maps, falling back to", sharedMap.key, "for", a.username, "vs", b.username);
     }
 
     new Match(a, b, sharedMap);

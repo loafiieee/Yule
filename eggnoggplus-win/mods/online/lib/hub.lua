@@ -24,7 +24,7 @@ local my_map_label = ""
 local my_map_key = ""
 local my_match_seed = 0
 local my_start_tick = 0
-local my_input_delay = 6
+local my_input_delay = 1
 local match_ready_sent = false
 local focus = 1
 local field_user = ""
@@ -189,7 +189,17 @@ local function handle_msg(msg)
         set_state(S_MATCH_FOUND)
         status("Match found. You are player " .. tostring(my_role + 1))
     elseif t == "match_start" then
+        my_role = tonumber(msg.role) or my_role
         my_authority_role = tonumber(msg.authority_role) or my_authority_role
+        my_map_key = tostring(msg.map_key or my_map_key or "")
+        do
+            local resolved_sel = nil
+            if my_map_key ~= "" and map_manifest and map_manifest.selector_for_key then
+                resolved_sel = map_manifest.selector_for_key(my_map_key)
+            end
+            my_map_sel = (resolved_sel ~= nil) and resolved_sel or (tonumber(msg.map_sel) or my_map_sel)
+        end
+        my_map_label = tostring(msg.map_label or my_map_label or ("Map " .. tostring((my_map_sel or 0) + 1)))
         my_match_seed = tonumber(msg.seed) or my_match_seed
         my_start_tick = tonumber(msg.start_tick) or my_start_tick
         my_input_delay = tonumber(msg.input_delay) or my_input_delay

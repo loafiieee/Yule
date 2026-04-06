@@ -1,9 +1,9 @@
 -- mods/online/main.lua - Eggnogg+ Online
 --
--- Snapshot-authority sync:
---   - both peers launch with the same native seed/tick baseline,
---   - one peer simulates authoritatively,
---   - the other mirrors periodic snapshots from the authority.
+-- Minimal online relay:
+--   - both peers launch the same match,
+--   - each peer samples/sends local movement from the frame side,
+--   - each peer applies the latest local+remote movement on the gameplay tick.
 
 local SERVER_HOST = config.get("server_host", "127.0.0.1")
 local SERVER_PORT = config.get("server_port", 7878)
@@ -67,7 +67,7 @@ local pending_reopen_message = nil
 local map_selector           = nil
 local match_seed             = nil
 local match_start_tick       = 0
-local match_input_delay      = 6
+local match_input_delay      = 1
 
 -- HUD toggle (F3)
 local hud_visible = true
@@ -76,20 +76,27 @@ local SDLK_F3     = 1073741884
 local SDLK_F5     = 1073741886
 
 local function prime_match_start()
-    if match_seed == nil then
-        mod.warn("[main] missing match seed; refusing to launch online match")
-        return false
+    return true
+end
+
+local function ensure_match_map_selected()
+    if map_selector == nil then
+        return true
     end
-    if not (mod.game and mod.game.set_rng_seed and mod.game.set_native_tick) then
-        mod.warn("[main] native snapshot-sync game API unavailable")
-        return false
+    if not (mod.game and mod.game.set_map_selector) then
+        return true
     end
-    local ok_seed = mod.game.set_rng_seed(match_seed)
-    local ok_tick = mod.game.set_native_tick(match_start_tick or 0)
-    if not ok_seed or not ok_tick then
-        mod.warn("[main] failed to prime native RNG/tick state before launch")
-        return false
+
+    mod.game.set_map_selector(map_selector)
+
+    if mod.game.get_map_selector then
+        local want = tonumber(map_selector)
+        local got = tonumber(mod.game.get_map_selector())
+        if want ~= nil and got ~= nil and got ~= want then
+            return false
+        end
     end
+
     return true
 end
 
@@ -104,9 +111,10 @@ local function end_match(reason)
     match_active           = false
     pending_start_match    = false
     pending_start_cooldown = 0
+    map_selector           = nil
     match_seed             = nil
     match_start_tick       = 0
-    match_input_delay      = 6
+    match_input_delay      = 1
 
     if reason then
         pending_reopen_hub     = true
@@ -137,17 +145,11 @@ mod.on_tick(function()
 
     if sname == "game" and not match_active and pending_start_match and hub.get_state() == "in_game" then
         local role = hub.get_role()
-        local authority_role = hub.get_authority_role and hub.get_authority_role() or 0
         pending_start_match = false
-        if sync.start(role, authority_role, {
-            seed = match_seed,
-            start_tick = match_start_tick,
-            input_delay = match_input_delay,
-        }) then
+        if sync.start(role, hub.get_authority_role(), hub.get_match_seed()) then
             match_active = true
-            mod.log(string.format("[main] match started  role=%d  authority=%d  map=%s  seed=%u  start_tick=%d  delay=%d",
-                role, authority_role, tostring(hub.get_map_key()),
-                tonumber(match_seed) or 0, tonumber(match_start_tick) or 0, tonumber(match_input_delay) or 0))
+            mod.log(string.format("[main] relay match started  role=%d  map=%s",
+                role, tostring(hub.get_map_key())))
         else
             end_match("Failed to initialize online sync.")
             return
@@ -203,7 +205,7 @@ mod.on_frame(function()
         map_selector           = hub.get_map_sel()
         match_seed             = hub.get_match_seed and hub.get_match_seed() or match_seed
         match_start_tick       = hub.get_start_tick and hub.get_start_tick() or 0
-        match_input_delay      = hub.get_input_delay and hub.get_input_delay() or 6
+        match_input_delay      = hub.get_input_delay and hub.get_input_delay() or 1
     end
     if pending_start_cooldown > 0 then
         pending_start_cooldown = pending_start_cooldown - 1
@@ -220,10 +222,7 @@ mod.on_frame(function()
         local start_ptr = capture_baseline(sname)
 
         if pending_start_match and start_ptr and pending_start_cooldown <= 0 then
-            if map_selector ~= nil and mod.game.set_map_selector then
-                mod.game.set_map_selector(map_selector)
-            end
-            if prime_match_start() and dispatch_start(start_ptr) then
+            if ensure_match_map_selected() and prime_match_start() and dispatch_start(start_ptr) then
                 pending_start_cooldown = 6
                 return
             end
@@ -249,11 +248,8 @@ mod.on_frame(function()
 
     -- Pregame: apply map selector + dispatch start
     if pending_start_match and sname == "pregame" and pending_start_cooldown <= 0 then
-        if map_selector ~= nil and mod.game.set_map_selector then
-            mod.game.set_map_selector(map_selector)
-        end
         local pre_ptr = mod.ui.find_button_by_action_ptr(START_ACTION)
-        if pre_ptr and prime_match_start() and dispatch_start(pre_ptr) then
+        if pre_ptr and ensure_match_map_selected() and prime_match_start() and dispatch_start(pre_ptr) then
             pending_start_cooldown = 6
             return
         end
@@ -264,9 +260,13 @@ mod.on_frame(function()
         hub.draw(dt)
     end
 
-    -- In-match: HUD only (network I/O runs from on_tick)
+    -- In-match: sample/send local movement from the frame side, then draw HUD.
     if match_active then
-        sync.frame()
+        local status = sync.frame()
+        if status == "sync_error" then
+            end_match(sync.get_error() or "Match sync failed.")
+            return
+        end
         if hud_visible then
             draw_netgraph()
         end
@@ -331,7 +331,7 @@ function draw_netgraph()
     local st = sync.stats()
 
     local role_str = "P" .. tostring((tonumber(st.role) or 0) + 1)
-    local mode_str = (st.is_authority and "AUTH" or "MIRROR")
+    local mode_str = st.is_authority and "AUTH" or "SYNC"
     mod.ui.text_at("ONLINE  " .. role_str .. "  " .. mode_str, 12, 8, 0.9, 0.2, 1.0, 0.4)
 
     local ping_str = string.format("ping %3d ms", math.floor(st.ping_ms + 0.5))
@@ -348,7 +348,7 @@ function draw_netgraph()
     mod.ui.text_at(detail, 12, 38, 0.65, 0.9, 0.9, 0.9)
 
     local line2 = string.format(
-        "in %-4d  rin %-4d  snp %-4d/%-4d  seed %-10u",
+        "in %-4d  rin %-4d  snp out=%-4d in=%-4d  seed %-10u",
         tonumber(st.inputs_sent) or 0,
         tonumber(st.inputs_recv) or 0,
         tonumber(st.snapshots_sent) or 0,

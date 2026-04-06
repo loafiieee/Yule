@@ -1,14 +1,24 @@
 -- lib/sync.lua
--- Snapshot-based online sync with deterministic launch priming.
+-- Online multiplayer sync: authority-based snapshot correction.
+--
+-- Model:
+--   - Both players send ALL input bits every frame
+--   - Both players inject remote input into the other player slot
+--   - Authority (role 0) sends snapshots every 2 ticks to non-auth
+--   - Non-auth applies: authority's player position, RNG, countdowns, leader
+--   - Non-auth strips: snap.enemy (local player), entities, native_tick, game_level
 
 sync = sync or {}
 local bit = bit or require("bit")
 
-local PING_EVERY    = 60
-local PING_HISTORY  = 8
-local TIMEOUT_TICKS = 600
-local U32           = 4294967296
+local ALL_CMD_MASK = bit.bor(0x01, 0x02, 0x04, 0x08, 0x10, 0x20)
 
+local SNAPSHOT_INTERVAL = 2
+local PING_EVERY        = 60
+local PING_HISTORY      = 8
+local TIMEOUT_TICKS     = 600
+
+-- ── state ────────────────────────────────────────────────────────────────
 local active         = false
 local live           = false
 local local_idx      = 0
@@ -17,43 +27,33 @@ local authority_role = 0
 local is_authority   = false
 local last_error     = nil
 local waiting_reason = "idle"
+local match_seed     = 0
 
-local match_seed       = 0
-local match_start_tick = 0
-local input_delay      = 1
-local ready_seed       = 0
-local ready_tick       = 0
-local ready_tile_hash  = ""
-local ready_room_index = 0
+local send_seq          = 0
+local last_capture_tick = -1
+local last_sent_cmd     = 0
+local last_remote_cmd   = 0
+local last_remote_role  = nil
+local ticks_since_recv  = 0
+local tick_count        = 0
 
-local local_source    = nil
-local send_seq        = 0
-local recv_input_seq  = -1
-local last_local_cmd  = 0
-local last_remote_cmd = 0
+local snapshot_seq      = 0
+local snapshot_recv_seq = -1
+local snapshots_sent    = 0
+local snapshots_applied = 0
+local pending_snapshot  = nil
 
-local latest_snapshot     = nil
-local latest_snapshot_seq = -1
-local applied_snapshot_seq = -1
-local snapshot_buffer     = {}
-local waiting_for_first_snapshot = false
-local host_snapshot_seq   = -1
+local ping_seq     = 0
+local ping_sent_at = {}
+local ping_samples = {}
+local current_ping = 0
 
-local ticks_since_recv = 0
-local ping_seq         = 0
-local ping_sent_at     = {}
-local ping_samples     = {}
-local current_ping     = 0
-
-local stat_inputs_sent       = 0
-local stat_inputs_recv       = 0
-local stat_snapshots_sent    = 0
-local stat_snapshots_recv    = 0
-local stat_snapshots_applied = 0
-local stat_restores          = 0
+local stat_inputs_sent = 0
+local stat_inputs_recv = 0
 
 local verbose = config.get("verbose_logging", true)
 
+-- ── helpers ──────────────────────────────────────────────────────────────
 local function vlog(msg)
     if verbose then mod.log("[sync] " .. tostring(msg)) end
 end
@@ -62,283 +62,152 @@ local function gtick()
     return (mod.game and mod.game.tick_count and mod.game.tick_count()) or 0
 end
 
-local function avg_ping()
-    if #ping_samples == 0 then return 0 end
-    local s = 0
-    for _, v in ipairs(ping_samples) do s = s + v end
-    return s / #ping_samples
-end
-
-local function u32(v)
-    v = tonumber(v) or 0
-    v = v % U32
-    if v < 0 then v = v + U32 end
-    return v
-end
-
 local function qround(v)
     v = tonumber(v) or 0
-    if v >= 0 then
-        return math.floor(v + 0.5)
-    end
+    if v >= 0 then return math.floor(v + 0.5) end
     return math.ceil(v - 0.5)
 end
 
-local function mix(hash, value)
-    hash = u32(hash + u32(value) + 0x9e3779b9)
-    hash = u32(hash * 1664525 + 1013904223)
-    return hash
+local function avg_ping()
+    if #ping_samples == 0 then return 0 end
+    local total = 0
+    for _, v in ipairs(ping_samples) do total = total + v end
+    return total / #ping_samples
 end
 
-local function native_state()
-    if mod.game and mod.game.native_state then
-        return mod.game.native_state() or {}
+-- ── input reading ────────────────────────────────────────────────────────
+local function read_slot(player_index)
+    if mod.game and mod.game.poll_cmds then
+        local eff = bit.band(tonumber(mod.game.poll_cmds(player_index, 2)) or 0, ALL_CMD_MASK)
+        if eff ~= 0 then return eff end
     end
-    return {}
-end
-
-local function choose_local_source(raw0, raw1)
-    if raw0 ~= 0 and raw1 == 0 then
-        return 0
-    elseif raw1 ~= 0 and raw0 == 0 then
-        return 1
-    elseif local_source ~= nil then
-        return local_source
-    else
-        return local_idx
+    if mod.game and mod.game.poll_cmds_raw then
+        local raw = bit.band(tonumber(mod.game.poll_cmds_raw(player_index, 2)) or 0, ALL_CMD_MASK)
+        if raw ~= 0 then return raw end
     end
-end
-
-local function compute_ready_map_hash()
-    local snap = (mod.game and mod.game.snapshot and mod.game.snapshot(local_idx, true)) or {}
-    local tiles = snap.tiles_of_current_room
-    local hash = 2166136261
-    local room_index = qround(snap.room_index or 0)
-
-    hash = mix(hash, room_index)
-    hash = mix(hash, qround(snap.room_width or 0))
-    hash = mix(hash, qround(snap.room_height or 0))
-
-    if type(tiles) == "table" then
-        for y = 1, #tiles do
-            local row = tiles[y]
-            hash = mix(hash, y)
-            if type(row) == "table" then
-                for x = 1, #row do
-                    hash = mix(hash, row[x] or -1)
-                end
-            end
-        end
+    if mod.game and mod.game.poll_cmds then
+        local eff = bit.band(tonumber(mod.game.poll_cmds(player_index, 1)) or 0, ALL_CMD_MASK)
+        if eff ~= 0 then return eff end
     end
-
-    return string.format("%08x", u32(hash)), room_index
+    if mod.game and mod.game.poll_cmds_raw then
+        local raw = bit.band(tonumber(mod.game.poll_cmds_raw(player_index, 1)) or 0, ALL_CMD_MASK)
+        if raw ~= 0 then return raw end
+    end
+    return 0
 end
 
 local function read_local_cmd()
-    local raw0 = mod.game.poll_cmds_raw(0, 1) or 0
-    local raw1 = mod.game.poll_cmds_raw(1, 1) or 0
-    local picked = choose_local_source(raw0, raw1)
-    if local_source ~= picked then
-        local_source = picked
-        vlog(string.format("local input source=%d for role=%d", local_source, local_idx))
-    end
-    if (send_seq % 30) == 0 then
-        mod.log(string.format("[sync][DIAG] read_local_cmd raw0=%d raw1=%d picked=%d role=%d",
-            raw0, raw1, picked, local_idx))
-    end
-    return bit.bor(raw0, raw1)
+    return read_slot(local_idx)
 end
 
-local function apply_input(player_index, cmd)
-    return mod.game.set_input(player_index, cmd, 1, true)
-end
-
-local function set_raw_input_blocked(blocked)
-    if not (mod.game and mod.game.block_raw_input) then
-        return false
-    end
-    mod.game.block_raw_input(0, blocked)
-    mod.game.block_raw_input(1, blocked)
+-- ── remote input injection ───────────────────────────────────────────────
+local function apply_remote_input()
+    if not (mod.game and mod.game.set_input) then return false end
+    mod.game.set_input(remote_idx, last_remote_cmd, 2, true)
     return true
 end
 
-local function apply_raw_input_policy()
-    if not (mod.game and mod.game.block_raw_input) then
-        return false
+-- ── snapshot: outgoing (authority only) ──────────────────────────────────
+
+local function take_and_send_snapshot()
+    if not (mod.game and mod.game.snapshot) then return end
+
+    local snap = mod.game.snapshot(local_idx, false)
+    if not snap then return end
+
+    if mod.game.rng_seed then
+        snap.rng_seed = mod.game.rng_seed()
     end
-    mod.game.block_raw_input(local_idx, false)
-    mod.game.block_raw_input(remote_idx, true)
-    return true
+
+    -- Strip convenience duplicates
+    snap.player_x = nil;  snap.player_y = nil
+    snap.player_vx = nil; snap.player_vy = nil
+    snap.player_has_sword = nil; snap.player_facing = nil; snap.player_grounded = nil
+    snap.enemy_x = nil;  snap.enemy_y = nil
+    snap.enemy_dx = nil; snap.enemy_dy = nil
+    snap.enemy_vx = nil; snap.enemy_vy = nil
+    snap.enemy_has_sword = nil; snap.enemy_facing = nil; snap.enemy_grounded = nil
+    snap.nearest_sword_dx = nil; snap.nearest_sword_dy = nil
+    snap.nearest_sword_x = nil;  snap.nearest_sword_y = nil
+    snap.tiles_of_current_room = nil
+    snap.tick = nil; snap.in_game = nil
+    snap.room_width = nil; snap.room_height = nil; snap.error = nil
+
+    -- Strip entities (apply_snapshot deactivates missing slots = destructive)
+    snap.entities = nil
+
+    -- Strip enemy (non-auth's player from auth's delayed view — stale)
+    snap.enemy = nil
+
+    -- Never send these
+    snap.native_tick = nil
+    snap.game_level = nil
+
+    -- Strip player convenience booleans
+    if snap.player then
+        snap.player.dx = nil; snap.player.dy = nil
+        snap.player.grounded = nil; snap.player.ceiling = nil
+        snap.player.wall_right = nil; snap.player.wall_left = nil
+    end
+
+    snapshot_seq = snapshot_seq + 1
+    snapshots_sent = snapshots_sent + 1
+
+    proto.send({
+        type = "snapshot",
+        seq  = snapshot_seq,
+        data = snap,
+    })
 end
 
-local function block_tick(reason)
-    waiting_reason = reason or "waiting"
-    if mod.game and mod.game.block_next_tick then
-        mod.game.block_next_tick(true)
-    end
-end
+-- ── snapshot: apply (non-authority only) ─────────────────────────────────
 
-local function reset_state()
-    active = false
-    live = false
-    local_idx = 0
-    remote_idx = 1
-    authority_role = 0
-    is_authority = false
-    last_error = nil
-    waiting_reason = "idle"
+local function apply_snapshot_data(snap)
+    if not snap or type(snap) ~= "table" then return false end
+    if not (mod.game and mod.game.apply_snapshot) then return false end
 
-    match_seed = 0
-    match_start_tick = 0
-    input_delay = 1
-    ready_seed = 0
-    ready_tick = 0
-    ready_tile_hash = ""
-    ready_room_index = 0
+    snap.native_tick = nil
+    snap.game_level = nil
+    snap.entities = nil
+    snap.enemy = nil
 
-    local_source = nil
-    send_seq = 0
-    recv_input_seq = -1
-    last_local_cmd = 0
-    last_remote_cmd = 0
-
-    latest_snapshot = nil
-    latest_snapshot_seq = -1
-    applied_snapshot_seq = -1
-    snapshot_buffer = {}
-    waiting_for_first_snapshot = false
-    host_snapshot_seq = -1
-
-    ticks_since_recv = 0
-    ping_seq = 0
-    ping_sent_at = {}
-    ping_samples = {}
-    current_ping = 0
-
-    stat_inputs_sent = 0
-    stat_inputs_recv = 0
-    stat_snapshots_sent = 0
-    stat_snapshots_recv = 0
-    stat_snapshots_applied = 0
-    stat_restores = 0
-end
-
-local function clear_applied_snapshots()
-    for seq, _ in pairs(snapshot_buffer) do
-        if seq <= applied_snapshot_seq then
-            snapshot_buffer[seq] = nil
-        end
-    end
-end
-
-local function pick_snapshot_to_apply()
-    local best_seq = -1
-    local best_state = nil
-    local max_seq = latest_snapshot_seq
-
-    if waiting_for_first_snapshot then
-        for seq, state in pairs(snapshot_buffer) do
-            if seq > applied_snapshot_seq and (best_seq < 0 or seq < best_seq) then
-                best_seq = seq
-                best_state = state
-            end
-        end
-        return best_seq, best_state
+    if snap.rng_seed and mod.game.set_rng_seed then
+        mod.game.set_rng_seed(snap.rng_seed)
     end
 
-    local apply_limit = math.max(applied_snapshot_seq, send_seq - input_delay)
-    if max_seq < 0 or apply_limit <= applied_snapshot_seq then
-        return -1, nil
-    end
-
-    for seq, state in pairs(snapshot_buffer) do
-        if seq > applied_snapshot_seq and seq <= apply_limit and seq > best_seq then
-            best_seq = seq
-            best_state = state
-        end
-    end
-
-    return best_seq, best_state
-end
-
-local INPUT_FIELDS = {
-    "cmd_bits", "prev_cmd_bits",
-    "jump_buffer", "attack_buffer",
-    "collision_flags", "prev_collision_flags",
-}
-
-local function strip_input_fields(tbl)
-    if type(tbl) ~= "table" then return end
-    local saved = {}
-    for _, key in ipairs(INPUT_FIELDS) do
-        saved[key] = tbl[key]
-        tbl[key] = nil
-    end
-    return saved
-end
-
-local function restore_input_fields(tbl, saved)
-    if type(tbl) ~= "table" or type(saved) ~= "table" then return end
-    for _, key in ipairs(INPUT_FIELDS) do
-        tbl[key] = saved[key]
-    end
-end
-
-local function apply_latest_snapshot_if_needed()
-    if is_authority or not mod.game or not mod.game.apply_snapshot then
-        return
-    end
-    local apply_seq, apply_state = pick_snapshot_to_apply()
-    if not apply_state or apply_seq <= applied_snapshot_seq then
-        return
-    end
-
-    -- Determine which snapshot sub-table ("player" or "enemy") corresponds
-    -- to our local character, then strip input-related fields so the
-    -- snapshot doesn't corrupt the game's edge detection for our inputs.
-    local snap_player_idx = tonumber(apply_state.player_index) or 0
-    local snap_enemy_idx  = tonumber(apply_state.enemy_index)  or 1
-    local saved_input = nil
-    local local_tbl_key = nil
-    if snap_player_idx == local_idx then
-        local_tbl_key = "player"
-    elseif snap_enemy_idx == local_idx then
-        local_tbl_key = "enemy"
-    end
-    if local_tbl_key and type(apply_state[local_tbl_key]) == "table" then
-        saved_input = strip_input_fields(apply_state[local_tbl_key])
-    end
-
-    local ok = mod.game.apply_snapshot(apply_state)
-
-    -- Restore stripped fields so the snapshot_buffer isn't corrupted.
-    if local_tbl_key and saved_input and type(apply_state[local_tbl_key]) == "table" then
-        restore_input_fields(apply_state[local_tbl_key], saved_input)
-    end
-
+    local ok = mod.game.apply_snapshot(snap)
     if ok then
-        applied_snapshot_seq = apply_seq
-        waiting_for_first_snapshot = false
-        waiting_reason = "live"
-        stat_snapshots_applied = stat_snapshots_applied + 1
-        stat_restores = stat_restores + 1
-        clear_applied_snapshots()
+        snapshots_applied = snapshots_applied + 1
     end
+    return ok
 end
 
+-- ── lifecycle ────────────────────────────────────────────────────────────
+local function reset_state()
+    active = false; live = false
+    local_idx = 0; remote_idx = 1
+    authority_role = 0; is_authority = false
+    last_error = nil; waiting_reason = "idle"; match_seed = 0
 
-function sync.start(local_player_index, match_authority, opts)
-    opts = opts or {}
+    send_seq = 0; last_capture_tick = -1
+    last_sent_cmd = 0; last_remote_cmd = 0; last_remote_role = nil
+    ticks_since_recv = 0; tick_count = 0
 
+    snapshot_seq = 0; snapshot_recv_seq = -1
+    snapshots_sent = 0; snapshots_applied = 0; pending_snapshot = nil
+
+    ping_seq = 0; ping_sent_at = {}; ping_samples = {}; current_ping = 0
+    stat_inputs_sent = 0; stat_inputs_recv = 0
+end
+
+function sync.start(local_player_index, auth_role, seed)
     reset_state()
 
-    local_idx = math.max(0, math.min(1, tonumber(local_player_index) or 0))
-    remote_idx = 1 - local_idx
-    authority_role = math.max(0, math.min(1, tonumber(match_authority) or 0))
-    is_authority = (local_idx == authority_role)
-    match_seed = u32(opts.seed or 0)
-    match_start_tick = qround(opts.start_tick or 0)
-    input_delay = math.max(1, qround(opts.input_delay or 1))
+    local_idx      = math.max(0, math.min(1, tonumber(local_player_index) or 0))
+    remote_idx     = 1 - local_idx
+    authority_role = tonumber(auth_role) or 0
+    is_authority   = (local_idx == authority_role)
+    match_seed     = tonumber(seed) or 0
 
     if proto.get_state and proto.get_state() ~= "connected" then
         last_error = "Not connected."
@@ -346,96 +215,62 @@ function sync.start(local_player_index, match_authority, opts)
         return false
     end
 
-    if not (mod.game and mod.game.snapshot and mod.game.apply_snapshot and mod.game.poll_cmds_raw
-        and mod.game.set_input and mod.game.input_clear and mod.game.native_state
-        and mod.game.block_raw_input) then
-        last_error = "Required snapshot sync APIs are unavailable."
+    if not (mod.game and mod.game.set_input and mod.game.input_clear and mod.game.block_raw_input) then
+        last_error = "Required relay APIs are unavailable."
         mod.warn("[sync] " .. last_error)
         return false
-    end
-
-    local ready_native = native_state()
-    ready_seed = u32(ready_native.rng_seed or 0)
-    ready_tick = qround(ready_native.game_ticks or 0)
-    ready_tile_hash, ready_room_index = compute_ready_map_hash()
-
-    if ready_seed ~= match_seed then
-        vlog(string.format(
-            "native seed changed before sync_ready expected=%u actual=%u",
-            match_seed, ready_seed))
-    end
-    if ready_tick ~= match_start_tick then
-        vlog(string.format(
-            "native tick changed before sync_ready expected=%d actual=%d",
-            match_start_tick, ready_tick))
     end
 
     mod.game.input_clear(0)
     mod.game.input_clear(1)
-    apply_raw_input_policy()
+    mod.game.block_raw_input(local_idx, false)
+    mod.game.block_raw_input(remote_idx, true)
 
-    if not proto.send({
-        type = "sync_ready",
-        authority_role = authority_role,
-        tile_hash = ready_tile_hash,
-        room_index = ready_room_index,
-        seed = ready_seed,
-        start_tick = ready_tick,
-        input_delay = input_delay,
-    }) then
-        set_raw_input_blocked(false)
-        last_error = "Failed to send sync_ready."
-        mod.warn("[sync] " .. last_error)
-        return false
+    if match_seed ~= 0 and mod.game.set_rng_seed then
+        mod.game.set_rng_seed(match_seed)
+        vlog(string.format("set RNG seed to %u", match_seed))
     end
 
     active = true
-    live = false
-    waiting_for_first_snapshot = not is_authority
-    waiting_reason = "waiting_sync_begin"
+    live   = true
+    waiting_reason = "live"
     mod.log(string.format(
-        "[sync] started role=%d authority=%d seed=%u ready_tick=%d tile=%s room=%d",
-        local_idx, authority_role, ready_seed, ready_tick, ready_tile_hash, ready_room_index))
+        "[sync] started  role=%d  remote=%d  authority=%d  is_auth=%s  seed=%u",
+        local_idx, remote_idx, authority_role, tostring(is_authority), match_seed))
     return true
 end
 
 function sync.stop()
     if mod and mod.game and mod.game.input_clear then
-        mod.game.input_clear(0)
-        mod.game.input_clear(1)
+        mod.game.input_clear(0); mod.game.input_clear(1)
     end
     if mod and mod.game and mod.game.block_raw_input then
-        set_raw_input_blocked(false)
+        mod.game.block_raw_input(0, false); mod.game.block_raw_input(1, false)
     end
     if active then
         mod.log(string.format(
-            "[sync] stopped sent=%d recv=%d snaps=%d/%d applied=%d ping=%.0fms err=%s",
-            stat_inputs_sent, stat_inputs_recv, stat_snapshots_sent,
-            stat_snapshots_recv, stat_snapshots_applied, current_ping, tostring(last_error)))
+            "[sync] stopped  sent=%d recv=%d snap_out=%d snap_in=%d ping=%.0fms err=%s",
+            stat_inputs_sent, stat_inputs_recv, snapshots_sent, snapshots_applied,
+            current_ping, tostring(last_error)))
     end
     reset_state()
 end
 
-function sync.is_active()
-    return active
-end
+function sync.is_active() return active end
+function sync.get_error()  return last_error end
 
-function sync.get_error()
-    return last_error
+-- ── per-tick ─────────────────────────────────────────────────────────────
+function sync.apply_pending()
+    if pending_snapshot and not is_authority then
+        apply_snapshot_data(pending_snapshot)
+        pending_snapshot = nil
+    end
 end
 
 function sync.tick()
     if not active then return nil end
 
-    local now = gtick()
     ticks_since_recv = ticks_since_recv + 1
-
-    if (now % PING_EVERY) == 0 then
-        ping_seq = ping_seq + 1
-        ping_sent_at[ping_seq] = now
-        proto.send({ type = "ping", seq = ping_seq })
-    end
-
     if ticks_since_recv > TIMEOUT_TICKS then
         last_error = "Connection timed out."
         mod.warn("[sync] " .. last_error)
@@ -443,124 +278,87 @@ function sync.tick()
     end
 
     if not live then
-        block_tick("waiting_sync_begin")
+        waiting_reason = "waiting"
         return nil
     end
 
-    local raw = read_local_cmd()
-    send_seq = send_seq + 1
-    last_local_cmd = raw
+    waiting_reason = "live"
+    tick_count = tick_count + 1
 
-    if not proto.send({
-        type = "input",
-        seq = send_seq,
-        frame = send_seq,
-        cmd = raw,
-    }) then
-        last_error = "Failed to send input."
+    if not apply_remote_input() then
+        last_error = "Failed to inject remote input."
         mod.warn("[sync] " .. last_error)
         return "sync_error"
     end
-    stat_inputs_sent = stat_inputs_sent + 1
 
-    if is_authority then
-        waiting_reason = "live"
-        if (send_seq % 30) == 0 then
-            mod.log(string.format("[sync][DIAG] AUTH tick send_seq=%d local=%d remote=%d raw=%d remote_cmd=%d recv_seq=%d",
-                send_seq, local_idx, remote_idx, raw, last_remote_cmd, recv_input_seq))
-        end
-        apply_input(local_idx, raw)
-        apply_input(remote_idx, last_remote_cmd)
-    else
-        if waiting_for_first_snapshot then
-            waiting_reason = "waiting_first_snapshot"
-            apply_input(0, 0)
-            apply_input(1, 0)
-        else
-            waiting_reason = "live"
-            apply_input(local_idx, raw)
-            apply_input(remote_idx, last_remote_cmd)
-        end
+    if is_authority and (tick_count % SNAPSHOT_INTERVAL) == 0 then
+        take_and_send_snapshot()
     end
 
     return nil
 end
 
-function sync.apply_pending()
-    apply_latest_snapshot_if_needed()
-end
-
+-- ── per-frame ────────────────────────────────────────────────────────────
 function sync.frame()
-    if not active then return end
+    if not active or not live then return nil end
 
-    if not live or not is_authority then
-        return
+    local now = gtick()
+    if last_capture_tick == now then return nil end
+    last_capture_tick = now
+
+    if (now % PING_EVERY) == 0 then
+        ping_seq = ping_seq + 1
+        ping_sent_at[ping_seq] = now
+        proto.send({ type = "ping", seq = ping_seq })
     end
 
-    local snap = mod.game.snapshot(local_idx, false)
-    if snap and snap.in_game then
-        local seq = qround(snap.native_tick or snap.tick or (host_snapshot_seq + 1))
-        if seq < 0 then seq = host_snapshot_seq + 1 end
-        host_snapshot_seq = seq
-        if proto.send({
-            type = "snapshot",
-            seq = seq,
-            state = snap,
-        }) then
-            stat_snapshots_sent = stat_snapshots_sent + 1
-        end
+    last_sent_cmd = read_local_cmd()
+    send_seq = send_seq + 1
+
+    if not proto.send({
+        type  = "input",
+        seq   = send_seq,
+        frame = send_seq,
+        cmd   = last_sent_cmd,
+    }) then
+        last_error = "Failed to send input."
+        mod.warn("[sync] " .. last_error)
+        return "sync_error"
     end
+
+    stat_inputs_sent = stat_inputs_sent + 1
+    return nil
 end
 
+-- ── message handler ──────────────────────────────────────────────────────
 function sync.on_message(msg)
     if not active or not msg then return nil end
-
     local t = msg.type
 
-    if t == "sync_begin" then
+    if t == "remote_input" then
         ticks_since_recv = 0
-        authority_role = math.max(0, math.min(1, tonumber(msg.authority_role) or authority_role))
-        is_authority = (local_idx == authority_role)
-        waiting_reason = waiting_for_first_snapshot and "waiting_first_snapshot" or "live"
-        live = true
-        if tonumber(msg.seed) and u32(msg.seed) ~= ready_seed then
-            vlog(string.format("sync_begin seed differs local=%u server=%u", ready_seed, u32(msg.seed)))
-        end
-        if tonumber(msg.start_tick) and qround(msg.start_tick) ~= ready_tick then
-            vlog(string.format("sync_begin tick differs local=%d server=%d", ready_tick, qround(msg.start_tick)))
-        end
-
-    elseif t == "remote_input" then
-        ticks_since_recv = 0
-        local seq = qround(msg.seq or msg.frame or 0)
-        if seq >= recv_input_seq then
-            recv_input_seq = seq
-            last_remote_cmd = tonumber(msg.cmd) or 0
-        end
+        last_remote_cmd  = bit.band(tonumber(msg.cmd) or 0, ALL_CMD_MASK)
+        last_remote_role = tonumber(msg.role)
         stat_inputs_recv = stat_inputs_recv + 1
+        return nil
+    end
 
-    elseif t == "snapshot" then
+    if t == "remote_snapshot" then
         ticks_since_recv = 0
-        if not is_authority then
-            local seq = qround(msg.seq or 0)
-            local state = msg.state or msg.snap
-            if seq > latest_snapshot_seq and type(state) == "table" then
-                latest_snapshot_seq = seq
-                latest_snapshot = state
-                snapshot_buffer[seq] = state
-                stat_snapshots_recv = stat_snapshots_recv + 1
-                for old_seq, _ in pairs(snapshot_buffer) do
-                    if old_seq < (applied_snapshot_seq - 4) or old_seq < (latest_snapshot_seq - 120) then
-                        snapshot_buffer[old_seq] = nil
-                    end
-                end
-            end
+        local seq = qround(msg.seq or 0)
+        if seq > snapshot_recv_seq then
+            snapshot_recv_seq = seq
+            pending_snapshot  = msg.data
         end
+        return nil
+    end
 
-    elseif t == "ping" then
+    if t == "ping" then
         proto.send({ type = "pong", seq = msg.seq })
+        return nil
+    end
 
-    elseif t == "pong" then
+    if t == "pong" then
         local seq = tonumber(msg.seq)
         if seq and ping_sent_at[seq] then
             local rtt = (gtick() - ping_sent_at[seq]) * (1000.0 / 60.0)
@@ -571,11 +369,12 @@ function sync.on_message(msg)
             end
             current_ping = avg_ping()
         end
+        return nil
+    end
 
-    elseif t == "match_end" then
-        return "match_end"
+    if t == "match_end" then return "match_end" end
 
-    elseif t == "sync_error" then
+    if t == "sync_error" then
         last_error = tostring(msg.reason or "Sync failed.")
         mod.warn("[sync] " .. last_error)
         return "sync_error"
@@ -584,34 +383,35 @@ function sync.on_message(msg)
     return nil
 end
 
+-- ── stats for HUD ────────────────────────────────────────────────────────
 function sync.stats()
-    local native = native_state()
     return {
-        role                       = local_idx,
-        authority_role             = authority_role,
-        is_authority               = is_authority,
-        local_source               = (local_source ~= nil) and local_source or local_idx,
-        local_cmd                  = last_local_cmd,
-        remote_cmd                 = last_remote_cmd,
-        ping_ms                    = current_ping,
-        sync_started               = live,
-        waiting_for_first_snapshot = waiting_for_first_snapshot,
-        waiting_reason             = waiting_reason,
-        ticks_no_recv              = ticks_since_recv,
-        inputs_sent                = stat_inputs_sent,
-        inputs_recv                = stat_inputs_recv,
-        snapshots_sent             = stat_snapshots_sent,
-        snapshots_recv             = stat_snapshots_recv,
-        snapshots_applied          = stat_snapshots_applied,
-        restores                   = stat_restores,
-        latest_snapshot_seq        = latest_snapshot_seq,
-        applied_snapshot_seq       = applied_snapshot_seq,
-        current_state_seq          = is_authority and host_snapshot_seq or applied_snapshot_seq,
-        resend_every               = input_delay,
-        error                      = last_error,
-        input_delay                = input_delay,
-        native_tick                = native.game_ticks or 0,
-        rng_seed                   = native.rng_seed or 0,
-        hashes_sent                = 0,
+        role              = local_idx,
+        authority_role    = authority_role,
+        is_authority      = is_authority,
+        local_source      = local_idx,
+        local_cmd         = last_sent_cmd,
+        remote_cmd        = last_remote_cmd,
+        remote_role       = last_remote_role,
+        ping_ms           = current_ping,
+        sync_started      = live,
+        waiting_for_first_snapshot = false,
+        waiting_reason    = waiting_reason,
+        ticks_no_recv     = ticks_since_recv,
+        inputs_sent       = stat_inputs_sent,
+        inputs_recv       = stat_inputs_recv,
+        snapshots_sent    = snapshots_sent,
+        snapshots_recv    = snapshot_recv_seq >= 0 and (snapshot_recv_seq + 1) or 0,
+        snapshots_applied = snapshots_applied,
+        restores          = 0,
+        latest_snapshot_seq  = snapshot_recv_seq,
+        applied_snapshot_seq = snapshots_applied > 0 and snapshot_recv_seq or -1,
+        current_state_seq = send_seq,
+        resend_every      = SNAPSHOT_INTERVAL,
+        error             = last_error,
+        input_delay       = 0,
+        native_tick       = gtick(),
+        rng_seed          = match_seed,
+        hashes_sent       = 0,
     }
 end

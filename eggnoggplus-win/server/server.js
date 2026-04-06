@@ -1,706 +1,411 @@
-"use strict";
-
-// Eggnogg+ Online server - single-authority mirror relay.
-//
-// Flow:
-//   1. matchmake two peers and assign a shared map,
-//   2. assign shared deterministic launch parameters,
-//   3. wait for both peers to load and acknowledge the map/start state,
-//   4. signal sync_begin,
-//   5. authority simulates and streams snapshots,
-//   6. mirror applies snapshots while both peers keep exchanging inputs.
-
-const net = require("net");
-const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const net = require("net");
+const crypto = require("crypto");
 
-const PORT = parseInt(process.env.PORT || "7878", 10);
-const DB_FILE = process.env.DB || path.join(__dirname, "users.json");
-const VANILLA_MAPS = 5;
-const MAX_LINE_BYTES = 512 * 1024;
-const VERBOSE = (process.env.VERBOSE || "1") !== "0";
-const DEFAULT_INPUT_DELAY = parseInt(process.env.INPUT_DELAY || "6", 10);
+const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Number(process.env.PORT || 7878);
+const USERS_PATH = path.join(__dirname, "users.json");
 
-let nextMatchId = 1;
+function log(...args) {
+  console.log(new Date().toISOString(), ...args);
+}
 
-function loadDB() {
+function safeSend(sock, msg) {
+  if (!sock || sock.destroyed) {
+    return false;
+  }
   try {
-    if (fs.existsSync(DB_FILE)) return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  } catch (e) {
-    console.error("[db] load error:", e.message);
+    sock.write(JSON.stringify(msg) + "\n");
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function normalize(text) {
+  return String(text || "").trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  return crypto.createHash("sha256").update(String(password || "")).digest("hex");
+}
+
+function ensureUsersFile() {
+  if (!fs.existsSync(USERS_PATH)) {
+    fs.writeFileSync(USERS_PATH, "{}\n", "utf8");
+  }
+}
+
+function loadUsers() {
+  ensureUsersFile();
+  try {
+    const raw = fs.readFileSync(USERS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return parsed;
+    }
+  } catch (err) {
+    log("failed to load users.json, starting empty:", err.message);
   }
   return {};
 }
 
-function saveDB(db) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
-  } catch (e) {
-    console.error("[db] save error:", e.message);
-  }
-}
-
-function hashPassword(password, salt) {
-  return crypto.createHash("sha256").update(`${salt}:${password}`).digest("hex");
+function saveUsers() {
+  fs.writeFileSync(USERS_PATH, JSON.stringify(users, null, 2) + "\n", "utf8");
 }
 
 function defaultManifest() {
   const maps = [];
-  for (let i = 0; i < VANILLA_MAPS; i += 1) {
-    maps.push({ key: `vanilla:${i}`, selector: i, label: `Vanilla ${i + 1}`, kind: "vanilla" });
+  for (let i = 0; i < 5; i += 1) {
+    maps.push({
+      key: `vanilla:${i}`,
+      selector: i,
+      label: `Vanilla ${i + 1}`,
+    });
   }
   return maps;
 }
 
-function sanitizeManifest(rawMaps) {
-  const result = [];
-  const seen = new Set();
-  for (const item of (Array.isArray(rawMaps) ? rawMaps : [])) {
-    if (!item || typeof item !== "object") continue;
-    const key = typeof item.key === "string" ? item.key.trim().toLowerCase() : "";
-    const selector = Number.parseInt(item.selector, 10);
-    if (!key || !Number.isFinite(selector) || selector < 0 || selector > 4096) continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({
+function normalizeManifest(rawMaps) {
+  const input = Array.isArray(rawMaps) ? rawMaps : defaultManifest();
+  const byKey = new Map();
+  for (const item of input) {
+    const key = normalize(item && item.key);
+    if (!key) {
+      continue;
+    }
+    byKey.set(key, {
       key,
-      selector,
-      label: typeof item.label === "string" ? item.label : key,
-      kind: typeof item.kind === "string" ? item.kind : (key.startsWith("vanilla:") ? "vanilla" : "custom"),
+      selector: Number.isFinite(Number(item.selector)) ? Number(item.selector) : 0,
+      label: String(item.label || key),
     });
   }
-  return result.length > 0 ? result : defaultManifest();
+  if (byKey.size === 0) {
+    for (const item of defaultManifest()) {
+      byKey.set(item.key, item);
+    }
+  }
+  return [...byKey.values()];
 }
 
-function buildManifestIndex(maps) {
-  const idx = new Map();
-  for (const item of maps) idx.set(item.key, item);
-  return idx;
-}
-
-function chooseSharedMap(p1, p2) {
-  const leftMaps = p1.mapManifest || defaultManifest();
-  const rightIndex = p2.mapManifestIndex || buildManifestIndex(defaultManifest());
+function chooseSharedMap(a, b) {
+  const aMaps = normalizeManifest(a.manifest);
+  const bMaps = normalizeManifest(b.manifest);
+  const bByKey = new Map(bMaps.map((item) => [item.key, item]));
   const shared = [];
-  for (const left of leftMaps) {
-    const right = rightIndex.get(left.key);
-    if (!right) continue;
-    shared.push({
-      key: left.key,
-      label: left.label || right.label || left.key,
-      p1Selector: left.selector,
-      p2Selector: right.selector,
-    });
+
+  for (const item of aMaps) {
+    const other = bByKey.get(item.key);
+    if (other) {
+      shared.push({
+        key: item.key,
+        label: item.label || other.label || item.key,
+        selectorA: item.selector,
+        selectorB: other.selector,
+      });
+    }
   }
-  if (shared.length === 0) return null;
+
+  if (shared.length === 0) {
+    return null;
+  }
   return shared[Math.floor(Math.random() * shared.length)];
 }
 
-function logv(message) {
-  if (VERBOSE) console.log(message);
-}
-
-function sanitizeHash(value) {
-  return typeof value === "string" ? value.trim().slice(0, 64) : "";
-}
-
-function parseU32(value, fallback = 0) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return (fallback >>> 0);
-  if (n <= 0) return 0;
-  if (n >= 0xFFFFFFFF) return 0xFFFFFFFF;
-  return (Math.floor(n) >>> 0);
-}
-
-function summarizeState(state) {
-  if (!state || typeof state !== "object") return "state=nil";
-  const p0 = state.player && typeof state.player === "object" ? state.player : {};
-  const p1 = state.enemy && typeof state.enemy === "object" ? state.enemy : {};
-  const entities = Array.isArray(state.entities) ? state.entities.length : 0;
-  return `seq=${state.seq} room=${state.room_index} p0=(${Number(p0.x || 0).toFixed(2)},${Number(p0.y || 0).toFixed(2)}) p1=(${Number(p1.x || 0).toFixed(2)},${Number(p1.y || 0).toFixed(2)}) entities=${entities}`;
-}
-
-function summarize(obj) {
-  if (!obj || typeof obj !== "object") return String(obj);
-  const t = obj.type || "?";
-  if (t === "sync_ready") return `${t} tile=${obj.tile_hash} room=${obj.room_index} seed=${obj.seed} start_tick=${obj.start_tick}`;
-  if (t === "sync_begin") return `${t} authority=${obj.authority_role} seed=${obj.seed} start_tick=${obj.start_tick}`;
-  if (t === "input") return `${t} frame=${obj.frame ?? obj.seq} cmd=${obj.cmd}`;
-  if (t === "remote_input") return `${t} role=${obj.role} frame=${obj.frame ?? obj.seq} cmd=${obj.cmd}`;
-  if (t === "snapshot") return `${t} seq=${obj.seq}`;
-  if (t === "sync_error") return `${t} reason=${obj.reason}`;
-  if (t === "ping" || t === "pong") return `${t} seq=${obj.seq}`;
-  if (t === "match_found") return `${t} role=${obj.role} authority=${obj.authority_role} map=${obj.map_label}`;
-  if (t === "auth_ok" || t === "auth_fail" || t === "queue_update" || t === "match_start" || t === "ready") return t;
-  return t;
-}
-
-function send(client, obj) {
-  try {
-    const line = `${JSON.stringify(obj)}\n`;
-    client.socket.write(line);
-    client.txCount = (client.txCount || 0) + 1;
-    client.txBytes = (client.txBytes || 0) + line.length;
-    client.lastTxAt = Date.now();
-    logv(`[tx] to=${client.username || "anon"} #${client.txCount} bytes=${line.length} ${summarize(obj)}`);
-  } catch (_) {
-    // ignore socket write failures
-  }
+function queueCount() {
+  return queue.length;
 }
 
 function broadcastQueueCount() {
-  let count = 0;
-  for (const client of clients) {
-    if (client.inQueue) count += 1;
-  }
-  const line = `${JSON.stringify({ type: "queue_update", count })}\n`;
-  for (const client of clients) {
-    if (!client.username) continue;
-    try {
-      client.socket.write(line);
-    } catch (_) {
-      // ignore
+  const count = queueCount();
+  for (const sock of clients) {
+    if (sock.username) {
+      safeSend(sock, { type: "queue_update", count });
     }
   }
 }
 
-let userDB = loadDB();
-const clients = new Set();
-const queue = [];
-
-class Match {
-  constructor(p1, p2, sharedMap) {
-    this.id = nextMatchId;
-    nextMatchId += 1;
-    this.players = [p1, p2];
-    this.ready = [false, false];
-    this.map = sharedMap;
-    this.active = false;
-
-    this.authorityRole = Math.random() < 0.5 ? 0 : 1;
-    this.startSeed = 0;
-    this.startTick = 0;
-    this.inputDelay = DEFAULT_INPUT_DELAY;
-    this.beginSeed = 0;
-    this.beginTick = 0;
-    this.syncReady = [null, null];
-    this.syncStarted = false;
-
-    this.lastRemoteInputSeq = [-1, -1];
-    this.lastRemoteInputAt = [0, 0];
-    this.lastSnapshotSeq = -1;
-    this.lastSnapshotAt = 0;
-
-    this.inputRelayCount = 0;
-    this.snapshotRelayCount = 0;
-  }
-
-  tag() {
-    return `[match#${this.id}]`;
-  }
-
-  roleOf(client) {
-    return this.players.indexOf(client);
-  }
-
-  authorityClient() {
-    return this.players[this.authorityRole];
-  }
-
-  mirrorRole() {
-    return 1 - this.authorityRole;
-  }
-
-  mirrorClient() {
-    return this.players[this.mirrorRole()];
-  }
-
-  clearPlayers() {
-    for (const player of this.players) {
-      player.match = null;
-      player.inQueue = false;
-    }
-  }
-
-  notifyFound() {
-    const [p0, p1] = this.players;
-    send(p0, {
-      type: "match_found",
-      role: 0,
-      authority_role: this.authorityRole,
-      map_sel: this.map.p1Selector,
-      map_key: this.map.key,
-      map_label: this.map.label,
-    });
-    send(p1, {
-      type: "match_found",
-      role: 1,
-      authority_role: this.authorityRole,
-      map_sel: this.map.p2Selector,
-      map_key: this.map.key,
-      map_label: this.map.label,
-    });
-    console.log(`${this.tag()} found ${p0.username} vs ${p1.username} map=${this.map.label} authority_role=${this.authorityRole}`);
-  }
-
-  onReady(client) {
-    const role = this.roleOf(client);
-    if (role < 0) return;
-    this.ready[role] = true;
-    if (this.ready[0] && this.ready[1]) {
-      this.active = true;
-      this.syncReady = [null, null];
-      this.syncStarted = false;
-      this.startSeed = parseU32(crypto.randomBytes(4).readUInt32LE(0));
-      this.startTick = 0;
-      this.inputDelay = Math.max(1, DEFAULT_INPUT_DELAY | 0);
-      this.beginSeed = 0;
-      this.beginTick = 0;
-      this.lastRemoteInputSeq = [-1, -1];
-      this.lastRemoteInputAt = [0, 0];
-      this.lastSnapshotSeq = -1;
-      this.lastSnapshotAt = 0;
-      this.inputRelayCount = 0;
-      this.snapshotRelayCount = 0;
-      for (const player of this.players) {
-        send(player, {
-          type: "match_start",
-          authority_role: this.authorityRole,
-          seed: this.startSeed,
-          start_tick: this.startTick,
-          input_delay: this.inputDelay,
-        });
-      }
-      console.log(`${this.tag()} started authority_role=${this.authorityRole} seed=${this.startSeed} start_tick=${this.startTick} delay=${this.inputDelay}`);
-    }
-  }
-
-  abort(reason) {
-    console.warn(`${this.tag()} abort ${reason}`);
-    for (const player of this.players) {
-      send(player, { type: "sync_error", reason });
-      send(player, { type: "match_end" });
-    }
-    this.active = false;
-    this.clearPlayers();
-    broadcastQueueCount();
-  }
-
-  onSyncReady(client, msg) {
-    if (!this.active) return;
-    const role = this.roleOf(client);
-    if (role < 0) return;
-
-    const ready = {
-      tileHash: sanitizeHash(msg.tile_hash),
-      roomIndex: Number.parseInt(msg.room_index, 10) || 0,
-      authorityRole: Number.parseInt(msg.authority_role, 10) || this.authorityRole,
-      seed: parseU32(msg.seed),
-      startTick: Number.parseInt(msg.start_tick, 10) || 0,
-      inputDelay: Math.max(1, Number.parseInt(msg.input_delay, 10) || this.inputDelay),
-    };
-    this.syncReady[role] = ready;
-    console.log(`${this.tag()} sync_ready role=${role} user=${client.username} tile=${ready.tileHash} room=${ready.roomIndex} seed=${ready.seed} start_tick=${ready.startTick} delay=${ready.inputDelay}`);
-
-    if (!this.syncReady[0] || !this.syncReady[1]) return;
-
-    for (const item of this.syncReady) {
-      if (item.inputDelay !== this.inputDelay) {
-        console.warn(`${this.tag()} delay_mismatch expected=${this.inputDelay} got=${item.inputDelay}`);
-        this.abort("Match input-delay mismatch between peers. Match aborted.");
-        return;
-      }
-    }
-
-    if (this.syncReady[0].tileHash !== this.syncReady[1].tileHash) {
-      console.warn(`${this.tag()} tile_mismatch p0=${this.syncReady[0].tileHash} p1=${this.syncReady[1].tileHash}`);
-      this.abort("Map mismatch between peers. Match aborted.");
-      return;
-    }
-
-    if (this.syncReady[0].roomIndex !== this.syncReady[1].roomIndex) {
-      console.warn(`${this.tag()} room_mismatch p0=${this.syncReady[0].roomIndex} p1=${this.syncReady[1].roomIndex}`);
-      this.abort("Room mismatch between peers. Match aborted.");
-      return;
-    }
-
-    if (this.syncReady[0].seed !== this.syncReady[1].seed ||
-        this.syncReady[0].startTick !== this.syncReady[1].startTick ||
-        this.syncReady[0].inputDelay !== this.syncReady[1].inputDelay) {
-      console.warn(`${this.tag()} peer_start_mismatch`);
-      this.abort("Peers did not agree on snapshot start state. Match aborted.");
-      return;
-    }
-
-    this.beginSeed = this.syncReady[0].seed;
-    this.beginTick = this.syncReady[0].startTick;
-
-    if (this.beginSeed !== this.startSeed || this.beginTick !== this.startTick) {
-      console.warn(`${this.tag()} launch_drift seed=${this.startSeed}->${this.beginSeed} tick=${this.startTick}->${this.beginTick}`);
-    }
-
-    this.syncStarted = true;
-    for (const player of this.players) {
-      send(player, {
-        type: "sync_begin",
-        authority_role: this.authorityRole,
-        seed: this.beginSeed,
-        start_tick: this.beginTick,
-        input_delay: this.inputDelay,
-      });
-    }
-    console.log(`${this.tag()} sync_begin authority_role=${this.authorityRole} seed=${this.beginSeed} start_tick=${this.beginTick} delay=${this.inputDelay}`);
-  }
-
-  onInput(client, msg) {
-    if (!this.active || !this.syncStarted) return;
-
-    const role = this.roleOf(client);
-    if (role < 0) return;
-
-    const seq = Number.parseInt(msg.frame ?? msg.target ?? msg.seq, 10);
-    const cmd = Number.parseInt(msg.cmd, 10);
-    if (!Number.isFinite(seq) || seq < 0) {
-      console.warn(`${this.tag()} invalid input frame from ${client.username}: ${msg.frame ?? msg.target ?? msg.seq}`);
-      return;
-    }
-    if (!Number.isFinite(cmd) || cmd < 0 || cmd > 127) {
-      console.warn(`${this.tag()} invalid input cmd from ${client.username}: ${msg.cmd}`);
-      return;
-    }
-    if (Number.isFinite(seq) && seq > 0 && seq <= this.lastRemoteInputSeq[role]) {
-      logv(`${this.tag()} drop stale input role=${role} seq=${seq} last=${this.lastRemoteInputSeq[role]}`);
-      return;
-    }
-
-    if (Number.isFinite(seq) && seq > 0) this.lastRemoteInputSeq[role] = seq;
-    this.lastRemoteInputAt[role] = Date.now();
-    this.inputRelayCount += 1;
-
-    // Relay to the OTHER player (both peers exchange inputs in P2P model).
-    const other = this.players[1 - role];
-    send(other, { type: "remote_input", role, frame: seq, seq, cmd });
-    logv(`${this.tag()} relay_input role=${role} seq=${seq} cmd=${cmd}`);
-  }
-
-  onSnapshot(client, msg) {
-    if (!this.active || !this.syncStarted) return;
-
-    const role = this.roleOf(client);
-    if (role !== this.authorityRole) {
-      console.warn(`${this.tag()} snapshot rejected from non-authority ${client.username}`);
-      return;
-    }
-
-    const seq = Number.parseInt(msg.seq, 10);
-    const state = msg.state || msg.snap;
-    if (!Number.isFinite(seq) || seq < 0) {
-      console.warn(`${this.tag()} invalid snapshot seq from ${client.username}: ${msg.seq}`);
-      return;
-    }
-    if (!state || typeof state !== "object") {
-      console.warn(`${this.tag()} invalid snapshot state from ${client.username}`);
-      return;
-    }
-    if (seq <= this.lastSnapshotSeq) {
-      logv(`${this.tag()} drop stale snapshot seq=${seq} last=${this.lastSnapshotSeq}`);
-      return;
-    }
-
-    this.lastSnapshotSeq = seq;
-    this.lastSnapshotAt = Date.now();
-    this.snapshotRelayCount += 1;
-
-    send(this.mirrorClient(), {
-      type: "snapshot",
-      seq,
-      state,
-    });
-    logv(`${this.tag()} relay_snapshot seq=${seq} ${summarizeState(state)}`);
-  }
-
-  end(initiator) {
-    this.active = false;
-    for (const player of this.players) {
-      player.match = null;
-      player.inQueue = false;
-      if (player !== initiator) send(player, { type: "match_end" });
-    }
-    console.log(`${this.tag()} ended by ${initiator ? initiator.username : "?"} relayed_inputs=${this.inputRelayCount} relayed_snapshots=${this.snapshotRelayCount}`);
-    broadcastQueueCount();
-  }
-}
-
-function removeFromQueue(client) {
-  const idx = queue.indexOf(client);
+function removeFromQueue(sock) {
+  const idx = queue.indexOf(sock);
   if (idx >= 0) {
     queue.splice(idx, 1);
-    client.inQueue = false;
+    broadcastQueueCount();
+  }
+}
+
+class Match {
+  constructor(a, b, sharedMap) {
+    this.players = [a, b];
+    this.map = sharedMap;
+    this.ready = new Set();
+    this.active = false;
+    this.ended = false;
+
+    a.match = this;
+    b.match = this;
+    a.matchRole = 0;
+    b.matchRole = 1;
+
+    safeSend(a, {
+      type: "match_found",
+      role: 0,
+      map_key: sharedMap.key,
+      map_sel: sharedMap.selectorA,
+      map_label: sharedMap.label,
+    });
+    safeSend(b, {
+      type: "match_found",
+      role: 1,
+      map_key: sharedMap.key,
+      map_sel: sharedMap.selectorB,
+      map_label: sharedMap.label,
+    });
+  }
+
+  other(sock) {
+    return this.players[0] === sock ? this.players[1] : this.players[0];
+  }
+
+  onReady(sock) {
+    if (this.ended) {
+      return;
+    }
+    this.ready.add(sock);
+    if (this.ready.size < 2) {
+      return;
+    }
+    this.active = true;
+    const seed = crypto.randomBytes(4).readUInt32BE(0);
+    safeSend(this.players[0], {
+      type: "match_start",
+      role: 0,
+      authority_role: 0,
+      seed: seed,
+      map_key: this.map.key,
+      map_sel: this.map.selectorA,
+      map_label: this.map.label,
+    });
+    safeSend(this.players[1], {
+      type: "match_start",
+      role: 1,
+      authority_role: 0,
+      seed: seed,
+      map_key: this.map.key,
+      map_sel: this.map.selectorB,
+      map_label: this.map.label,
+    });
+    log("match started", this.players[0].username, "vs", this.players[1].username, "map", this.map.key);
+  }
+
+  relay(from, msg) {
+    if (this.ended || !this.active) {
+      return;
+    }
+    const other = this.other(from);
+    const type = String(msg.type || "");
+    if (type === "input") {
+      safeSend(other, {
+        type: "remote_input",
+        role: from.matchRole,
+        seq: Number(msg.seq || msg.frame || 0),
+        frame: Number(msg.frame || msg.seq || 0),
+        cmd: Number(msg.cmd || 0),
+      });
+    } else if (type === "snapshot") {
+      safeSend(other, {
+        type: "remote_snapshot",
+        seq: Number(msg.seq || 0),
+        data: msg.data,
+      });
+    }
+  }
+
+  end(leaver, reason) {
+    if (this.ended) {
+      return;
+    }
+    this.ended = true;
+    this.active = false;
+    for (const sock of this.players) {
+      sock.match = null;
+      sock.matchRole = null;
+      if (sock !== leaver) {
+        safeSend(sock, { type: "match_end", reason: reason || "Opponent disconnected." });
+      }
+    }
   }
 }
 
 function tryMatchmake() {
-  let matched = true;
-  while (matched) {
-    matched = false;
-    for (let i = 0; i < queue.length && !matched; i += 1) {
-      const p1 = queue[i];
-      for (let j = i + 1; j < queue.length; j += 1) {
-        const p2 = queue[j];
-        const shared = chooseSharedMap(p1, p2);
-        if (!shared) continue;
-        queue.splice(j, 1);
-        queue.splice(i, 1);
-        p1.inQueue = false;
-        p2.inQueue = false;
-        const match = new Match(p1, p2, shared);
-        p1.match = match;
-        p2.match = match;
-        match.notifyFound();
-        matched = true;
+  while (queue.length >= 2) {
+    const a = queue.shift();
+    const b = queue.shift();
+    if (!a || !b || a.destroyed || b.destroyed || !a.username || !b.username) {
+      continue;
+    }
+
+    const sharedMap = chooseSharedMap(a, b);
+    if (!sharedMap) {
+      safeSend(a, { type: "error", message: "No shared maps with opponent." });
+      safeSend(b, { type: "error", message: "No shared maps with opponent." });
+      continue;
+    }
+
+    new Match(a, b, sharedMap);
+    broadcastQueueCount();
+  }
+}
+
+function handleAuth(sock, msg, isRegister) {
+  const username = normalize(msg.username);
+  const password = String(msg.password || "");
+  if (!username || !password) {
+    safeSend(sock, { type: "auth_fail", reason: "Missing username or password." });
+    return;
+  }
+
+  const existing = users[username];
+  if (isRegister) {
+    if (existing) {
+      safeSend(sock, { type: "auth_fail", reason: "User already exists." });
+      return;
+    }
+    users[username] = { password_hash: hashPassword(password) };
+    saveUsers();
+  } else {
+    if (!existing || existing.password_hash !== hashPassword(password)) {
+      safeSend(sock, { type: "auth_fail", reason: "Bad username or password." });
+      return;
+    }
+  }
+
+  sock.username = username;
+  safeSend(sock, { type: "auth_ok", username });
+  safeSend(sock, { type: "queue_update", count: queueCount() });
+  log("auth ok", username);
+}
+
+function handleMessage(sock, msg) {
+  const type = String(msg && msg.type || "");
+
+  if (type === "register") {
+    handleAuth(sock, msg, true);
+    return;
+  }
+
+  if (type === "login") {
+    handleAuth(sock, msg, false);
+    return;
+  }
+
+  if (type === "ping") {
+    safeSend(sock, { type: "pong", seq: msg.seq });
+    return;
+  }
+
+  if (!sock.username) {
+    safeSend(sock, { type: "error", message: "Not authenticated." });
+    return;
+  }
+
+  if (type === "map_manifest") {
+    sock.manifest = normalizeManifest(msg.maps);
+    return;
+  }
+
+  if (type === "join_queue") {
+    if (sock.match) {
+      return;
+    }
+    removeFromQueue(sock);
+    queue.push(sock);
+    broadcastQueueCount();
+    tryMatchmake();
+    return;
+  }
+
+  if (type === "leave_queue") {
+    removeFromQueue(sock);
+    return;
+  }
+
+  if (type === "ready") {
+    if (sock.match) {
+      sock.match.onReady(sock);
+    }
+    return;
+  }
+
+  if (type === "input" || type === "snapshot") {
+    if (sock.match) {
+      sock.match.relay(sock, msg);
+    }
+    return;
+  }
+
+  if (type === "match_end") {
+    if (sock.match) {
+      sock.match.end(sock, "Opponent left the match.");
+    }
+    return;
+  }
+}
+
+const users = loadUsers();
+const clients = new Set();
+const queue = [];
+
+const server = net.createServer((sock) => {
+  sock.setEncoding("utf8");
+  sock.buffer = "";
+  sock.username = null;
+  sock.manifest = defaultManifest();
+  sock.match = null;
+  sock.matchRole = null;
+
+  clients.add(sock);
+  log("client connected");
+
+  sock.on("data", (chunk) => {
+    sock.buffer += chunk;
+    while (true) {
+      const nl = sock.buffer.indexOf("\n");
+      if (nl < 0) {
         break;
       }
-    }
-  }
-  broadcastQueueCount();
-}
-
-function handleRegister(client, msg) {
-  const username = (msg.username || "").trim().toLowerCase();
-  const password = msg.password || "";
-  if (!username || !password) return send(client, { type: "auth_fail", reason: "missing fields" });
-  if (username.length > 24) return send(client, { type: "auth_fail", reason: "username too long" });
-  if (!/^[a-z0-9_]+$/.test(username)) return send(client, { type: "auth_fail", reason: "username: a-z 0-9 _ only" });
-  if (userDB[username]) return send(client, { type: "auth_fail", reason: "username taken" });
-
-  const salt = crypto.randomBytes(16).toString("hex");
-  userDB[username] = { hash: hashPassword(password, salt), salt };
-  saveDB(userDB);
-  client.username = username;
-  send(client, { type: "auth_ok", username });
-  console.log(`[auth] registered ${username}`);
-  broadcastQueueCount();
-}
-
-function handleLogin(client, msg) {
-  const username = (msg.username || "").trim().toLowerCase();
-  const password = msg.password || "";
-  const rec = userDB[username];
-  if (!rec) return send(client, { type: "auth_fail", reason: "unknown user" });
-  if (hashPassword(password, rec.salt) !== rec.hash) {
-    return send(client, { type: "auth_fail", reason: "wrong password" });
-  }
-
-  for (const other of clients) {
-    if (other !== client && other.username === username) {
-      send(other, { type: "error", message: "Logged in from another location" });
-      destroyClient(other);
-    }
-  }
-
-  client.username = username;
-  send(client, { type: "auth_ok", username });
-  console.log(`[auth] login ${username}`);
-  broadcastQueueCount();
-}
-
-function handleMapManifest(client, msg) {
-  client.mapManifest = sanitizeManifest(msg.maps);
-  client.mapManifestIndex = buildManifestIndex(client.mapManifest);
-  client.mapManifestSerial = typeof msg.serial === "string" ? msg.serial : "";
-  console.log(`[maps] ${client.username || "anon"} manifest=${client.mapManifest.length}`);
-}
-
-function handleJoinQueue(client) {
-  if (!client.username) return send(client, { type: "error", message: "not logged in" });
-  if (client.match) return send(client, { type: "error", message: "already in a match" });
-  if (client.inQueue) return;
-  if (!client.mapManifest || client.mapManifest.length === 0) {
-    client.mapManifest = defaultManifest();
-    client.mapManifestIndex = buildManifestIndex(client.mapManifest);
-  }
-  client.inQueue = true;
-  queue.push(client);
-  console.log(`[queue] ${client.username} joined queue=${queue.length}`);
-  broadcastQueueCount();
-  tryMatchmake();
-}
-
-function handleLeaveQueue(client) {
-  removeFromQueue(client);
-  console.log(`[queue] ${client.username || "?"} left`);
-  broadcastQueueCount();
-}
-
-function handleReady(client) {
-  if (client.match) client.match.onReady(client);
-}
-
-function handleSyncReady(client, msg) {
-  if (!client.match || !client.match.active) {
-    console.warn(`[sync_ready] dropped from ${client.username || "anon"}: no active match`);
-    return;
-  }
-  client.match.onSyncReady(client, msg);
-}
-
-function handleInput(client, msg) {
-  if (!client.match || !client.match.active) {
-    console.warn(`[input] dropped from ${client.username || "anon"}: no active match`);
-    return;
-  }
-  client.match.onInput(client, msg);
-}
-
-function handleSnapshot(client, msg) {
-  if (!client.match || !client.match.active) {
-    console.warn(`[snapshot] dropped from ${client.username || "anon"}: no active match`);
-    return;
-  }
-  client.match.onSnapshot(client, msg);
-}
-
-function handlePing(client, msg) {
-  send(client, { type: "pong", seq: msg.seq });
-}
-
-function handlePong(_client, _msg) {
-  // no-op
-}
-
-function handleMatchEnd(client) {
-  if (client.match) client.match.end(client);
-}
-
-function dispatchMessage(client, msg) {
-  switch (msg.type) {
-    case "register": handleRegister(client, msg); break;
-    case "login": handleLogin(client, msg); break;
-    case "map_manifest": handleMapManifest(client, msg); break;
-    case "join_queue": handleJoinQueue(client); break;
-    case "leave_queue": handleLeaveQueue(client); break;
-    case "ready": handleReady(client); break;
-    case "sync_ready": handleSyncReady(client, msg); break;
-    case "input": handleInput(client, msg); break;
-    case "snapshot": handleSnapshot(client, msg); break;
-    case "ping": handlePing(client, msg); break;
-    case "pong": handlePong(client, msg); break;
-    case "match_end": handleMatchEnd(client); break;
-    case "sync_begin":
-    case "remote_input":
-    case "lock_ready":
-    case "lock_begin":
-    case "input_update":
-    case "frame_step":
-    case "state_request":
-    case "state_detail":
-    case "state_resolve":
-    case "resolve_ack":
-    case "frame_hash":
-      console.warn(`[proto] deprecated/client-only message from ${client.username || "anon"}: ${msg.type}`);
-      break;
-    default:
-      send(client, { type: "error", message: "unknown message type" });
-  }
-}
-
-function destroyClient(client) {
-  if (!clients.has(client)) return;
-  clients.delete(client);
-  removeFromQueue(client);
-  if (client.match) client.match.end(client);
-  try {
-    client.socket.destroy();
-  } catch (_) {
-    // ignore
-  }
-  if (client.username) {
-    console.log(`[conn] disconnected ${client.username} rx=${client.rxCount || 0} tx=${client.txCount || 0}`);
-  }
-  broadcastQueueCount();
-}
-
-setInterval(() => {
-  const now = Date.now();
-  for (const client of clients) {
-    if (!client.match || !client.match.active || !client.match.syncStarted) continue;
-    const match = client.match;
-    const role = match.roleOf(client);
-    const inputIdle = match.lastRemoteInputAt[role] ? (now - match.lastRemoteInputAt[role]) : -1;
-    if (inputIdle > 1500) {
-      console.warn(`${match.tag()} input_idle role=${role} user=${client.username} idle_ms=${inputIdle}`);
-    }
-  }
-}, 1000);
-
-const server = net.createServer((socket) => {
-  const client = {
-    socket,
-    buf: "",
-    username: null,
-    inQueue: false,
-    match: null,
-    mapManifest: defaultManifest(),
-    mapManifestIndex: buildManifestIndex(defaultManifest()),
-    mapManifestSerial: "",
-    rxCount: 0,
-    txCount: 0,
-    rxBytes: 0,
-    txBytes: 0,
-    lastRxAt: 0,
-    lastTxAt: 0,
-  };
-  clients.add(client);
-  console.log(`[conn] new connection from ${socket.remoteAddress}:${socket.remotePort}`);
-
-  socket.setEncoding("utf8");
-  socket.setNoDelay(true);
-  socket.setTimeout(120000);
-
-  socket.on("data", (chunk) => {
-    client.buf += chunk;
-    let nl;
-    while ((nl = client.buf.indexOf("\n")) !== -1) {
-      const raw = client.buf.slice(0, nl);
-      client.buf = client.buf.slice(nl + 1);
-      const line = raw.trim();
-      if (!line) continue;
-      if (line.length > MAX_LINE_BYTES) {
-        send(client, { type: "error", message: "message too long" });
-        destroyClient(client);
-        return;
-      }
-
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch (_) {
-        send(client, { type: "error", message: "invalid JSON" });
+      const line = sock.buffer.slice(0, nl).trim();
+      sock.buffer = sock.buffer.slice(nl + 1);
+      if (!line) {
         continue;
       }
-      if (!msg || typeof msg !== "object" || !msg.type) continue;
 
-      client.rxCount = (client.rxCount || 0) + 1;
-      client.rxBytes = (client.rxBytes || 0) + line.length;
-      client.lastRxAt = Date.now();
-      logv(`[rx] from=${client.username || "anon"} #${client.rxCount} bytes=${line.length} ${summarize(msg)}`);
-      dispatchMessage(client, msg);
+      let msg = null;
+      try {
+        msg = JSON.parse(line);
+      } catch (_err) {
+        safeSend(sock, { type: "error", message: "Bad JSON." });
+        continue;
+      }
+
+      handleMessage(sock, msg);
     }
   });
 
-  socket.on("close", () => destroyClient(client));
-  socket.on("error", () => destroyClient(client));
-  socket.on("timeout", () => destroyClient(client));
+  sock.on("close", () => {
+    clients.delete(sock);
+    removeFromQueue(sock);
+    if (sock.match) {
+      sock.match.end(sock, "Opponent disconnected.");
+    }
+    log("client disconnected", sock.username || "(anonymous)");
+  });
+
+  sock.on("error", () => {
+    sock.destroy();
+  });
 });
 
-server.listen(PORT, () => {
-  console.log(`Eggnogg+ Online server listening on port ${PORT}`);
-  console.log(`DB file: ${DB_FILE}`);
-  console.log("Press Ctrl+C to stop.\n");
-});
-
-server.on("error", (err) => {
-  console.error("Server error:", err.message);
-  process.exit(1);
+server.listen(PORT, HOST, () => {
+  log(`server listening on ${HOST}:${PORT}`);
 });

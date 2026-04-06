@@ -3847,6 +3847,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 }
 
 // Gameplay telemetry offsets (player + thing structs).
+#define PLAYER_SIZE                 0x15C
 #define PLAYER_OFS_HAS_SWORD        0x11
 #define PLAYER_OFS_X                0x24
 #define PLAYER_OFS_Y                0x28
@@ -3854,6 +3855,8 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_OFS_PREV_Y           0x30
 #define PLAYER_OFS_VX               0x34
 #define PLAYER_OFS_VY               0x38
+#define PLAYER_OFS_ACTION_BLOB      0x54
+#define PLAYER_ACTION_BLOB_LEN      0x24
 #define PLAYER_OFS_STATE_ID         0x78
 #define PLAYER_OFS_STATE_TIMER      0x8C
 #define PLAYER_OFS_FACING_SIGN      0x98
@@ -3866,6 +3869,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_OFS_ROOM             0x9B
 #define PLAYER_OFS_STATE_BLOB       0x78
 #define PLAYER_STATE_BLOB_LEN       0x80
+#define PLAYER_OFS_ANIM_PTR         0x158
 
 #define PLAYER_COLLIDE_GROUNDED     0x01
 #define PLAYER_COLLIDE_CEILING      0x02
@@ -3881,9 +3885,19 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define THING_OFS_PREV_Y            0x30
 #define THING_OFS_VX                0x34
 #define THING_OFS_VY                0x38
+#define THING_OFS_HEAD_BLOB         0x02
+#define THING_HEAD_BLOB_LEN         0x22
+#define THING_OFS_MOTION_BLOB       0x3C
+#define THING_MOTION_BLOB_LEN       0x18
+#define THING_OFS_ACTION_BLOB       0x54
+#define THING_ACTION_BLOB_LEN       0x24
 #define THING_OFS_STATE_ID          0x78
+#define THING_OFS_STATE_BLOB        0x78
+#define THING_STATE_BLOB_LEN        0x48
 #define THING_OFS_FLAGS             0x80
 #define THING_OFS_ROOM              0xC0
+#define THING_OFS_TAIL_BLOB         0xC4
+#define THING_TAIL_BLOB_LEN         0x08
 #define THING_TYPE_PLAYER           0x01
 #define THING_TYPE_SWORD            0x02
 
@@ -3900,7 +3914,7 @@ static uintptr_t game_get_player_ptr(int player_index) {
     if (!ptr_readable(p_player_slots + player_index, sizeof(uintptr_t))) return 0;
     uintptr_t p = p_player_slots[player_index];
     if (!p) return 0;
-    if (!ptr_readable((const void*)p, 0xB0)) return 0;
+    if (!ptr_readable((const void*)p, PLAYER_SIZE)) return 0;
     return p;
 }
 
@@ -5546,7 +5560,7 @@ static int lua_table_copy_hex_field(lua_State* Ls, int idx, const char* key, uin
 }
 
 static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int player_index, double origin_x, double origin_y) {
-    if (!player_ptr || !ptr_readable((const void*)player_ptr, PLAYER_OFS_STATE_BLOB + PLAYER_STATE_BLOB_LEN)) {
+    if (!player_ptr || !ptr_readable((const void*)player_ptr, PLAYER_SIZE)) {
         lua_pushnil(Ls);
         return;
     }
@@ -5591,7 +5605,9 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         lua_push_field_int(Ls, "attack_buffer", (int)attack_buffer);
         lua_push_field_int(Ls, "collision_flags", (int)collision_flags);
         lua_push_field_int(Ls, "prev_collision_flags", (int)prev_collision_flags);
+        lua_push_hex_field(Ls, "action_blob", (const uint8_t*)(player_ptr + PLAYER_OFS_ACTION_BLOB), PLAYER_ACTION_BLOB_LEN);
         lua_push_hex_field(Ls, "state_blob", (const uint8_t*)(player_ptr + PLAYER_OFS_STATE_BLOB), PLAYER_STATE_BLOB_LEN);
+        lua_push_field_number(Ls, "anim_ptr", (lua_Number)(double)(uint32_t)(uintptr_t)(*(void**)(player_ptr + PLAYER_OFS_ANIM_PTR)));
         lua_push_field_bool(Ls, "grounded", (collision_flags & PLAYER_COLLIDE_GROUNDED) != 0);
         lua_push_field_bool(Ls, "ceiling", (collision_flags & PLAYER_COLLIDE_CEILING) != 0);
         lua_push_field_bool(Ls, "wall_right", (collision_flags & PLAYER_COLLIDE_WALL_RIGHT) != 0);
@@ -5609,10 +5625,11 @@ static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, i
     int room_index = *(int*)(thing_ptr + THING_OFS_ROOM);
     uint8_t state_id = *(uint8_t*)(thing_ptr + THING_OFS_STATE_ID);
     uint8_t flags = *(uint8_t*)(thing_ptr + THING_OFS_FLAGS);
+    int type = (int)thing_ptr[THING_OFS_TYPE];
 
     lua_newtable(Ls);
     lua_push_field_int(Ls, "slot", slot_index);
-    lua_push_field_int(Ls, "type", (int)thing_ptr[THING_OFS_TYPE]);
+    lua_push_field_int(Ls, "type", type);
     lua_push_field_number(Ls, "x", x);
     lua_push_field_number(Ls, "y", y);
     lua_push_field_number(Ls, "prev_x", prev_x);
@@ -5624,6 +5641,13 @@ static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, i
     lua_push_field_int(Ls, "room_index", room_index);
     lua_push_field_int(Ls, "state_id", (int)state_id);
     lua_push_field_int(Ls, "flags", (int)flags);
+    if (type == THING_TYPE_SWORD) {
+        lua_push_hex_field(Ls, "head_blob", (const uint8_t*)(thing_ptr + THING_OFS_HEAD_BLOB), THING_HEAD_BLOB_LEN);
+        lua_push_hex_field(Ls, "motion_blob", (const uint8_t*)(thing_ptr + THING_OFS_MOTION_BLOB), THING_MOTION_BLOB_LEN);
+        lua_push_hex_field(Ls, "action_blob", (const uint8_t*)(thing_ptr + THING_OFS_ACTION_BLOB), THING_ACTION_BLOB_LEN);
+        lua_push_hex_field(Ls, "state_blob", (const uint8_t*)(thing_ptr + THING_OFS_STATE_BLOB), THING_STATE_BLOB_LEN);
+        lua_push_hex_field(Ls, "tail_blob", (const uint8_t*)(thing_ptr + THING_OFS_TAIL_BLOB), THING_TAIL_BLOB_LEN);
+    }
     lua_push_field_bool(Ls, "active", thing_ptr[THING_OFS_ACTIVE] != 0);
 }
 
@@ -6049,7 +6073,7 @@ static uint32_t lua_table_get_u32_field(lua_State* Ls, int idx, const char* key,
 
 static int game_apply_player_table(lua_State* Ls, int idx, int player_index) {
     uintptr_t p = game_get_player_ptr(player_index);
-    if (!p || !ptr_writable((void*)p, PLAYER_OFS_STATE_BLOB + PLAYER_STATE_BLOB_LEN)) return 0;
+    if (!p || !ptr_writable((void*)p, PLAYER_SIZE)) return 0;
     idx = lua_absindex_compat(Ls, idx);
 
     *(float*)(p + PLAYER_OFS_X) = lua_table_get_float_field(Ls, idx, "x", *(float*)(p + PLAYER_OFS_X));
@@ -6058,7 +6082,10 @@ static int game_apply_player_table(lua_State* Ls, int idx, int player_index) {
     *(float*)(p + PLAYER_OFS_PREV_Y) = lua_table_get_float_field(Ls, idx, "prev_y", *(float*)(p + PLAYER_OFS_PREV_Y));
     *(float*)(p + PLAYER_OFS_VX) = lua_table_get_float_field(Ls, idx, "vx", *(float*)(p + PLAYER_OFS_VX));
     *(float*)(p + PLAYER_OFS_VY) = lua_table_get_float_field(Ls, idx, "vy", *(float*)(p + PLAYER_OFS_VY));
+    (void)lua_table_copy_hex_field(Ls, idx, "action_blob", (uint8_t*)(p + PLAYER_OFS_ACTION_BLOB), PLAYER_ACTION_BLOB_LEN);
     (void)lua_table_copy_hex_field(Ls, idx, "state_blob", (uint8_t*)(p + PLAYER_OFS_STATE_BLOB), PLAYER_STATE_BLOB_LEN);
+    *(uintptr_t*)(p + PLAYER_OFS_ANIM_PTR) = (uintptr_t)lua_table_get_u32_field(
+        Ls, idx, "anim_ptr", (uint32_t)(uintptr_t)(*(void**)(p + PLAYER_OFS_ANIM_PTR)));
     *(uint8_t*)(p + PLAYER_OFS_STATE_ID) = (uint8_t)lua_table_get_int_field(Ls, idx, "state_id", *(uint8_t*)(p + PLAYER_OFS_STATE_ID));
     *(uint32_t*)(p + PLAYER_OFS_STATE_TIMER) = (uint32_t)lua_table_get_int_field(Ls, idx, "state_timer", *(uint32_t*)(p + PLAYER_OFS_STATE_TIMER));
     *(signed char*)(p + PLAYER_OFS_FACING_SIGN) = (signed char)lua_table_get_int_field(Ls, idx, "facing", *(signed char*)(p + PLAYER_OFS_FACING_SIGN));
@@ -6090,6 +6117,13 @@ static int game_apply_entity_table(lua_State* Ls, int idx) {
     *(float*)(t + THING_OFS_PREV_Y) = lua_table_get_float_field(Ls, idx, "prev_y", *(float*)(t + THING_OFS_PREV_Y));
     *(float*)(t + THING_OFS_VX) = lua_table_get_float_field(Ls, idx, "vx", *(float*)(t + THING_OFS_VX));
     *(float*)(t + THING_OFS_VY) = lua_table_get_float_field(Ls, idx, "vy", *(float*)(t + THING_OFS_VY));
+    if (t[THING_OFS_TYPE] == THING_TYPE_SWORD) {
+        (void)lua_table_copy_hex_field(Ls, idx, "head_blob", (uint8_t*)(t + THING_OFS_HEAD_BLOB), THING_HEAD_BLOB_LEN);
+        (void)lua_table_copy_hex_field(Ls, idx, "motion_blob", (uint8_t*)(t + THING_OFS_MOTION_BLOB), THING_MOTION_BLOB_LEN);
+        (void)lua_table_copy_hex_field(Ls, idx, "action_blob", (uint8_t*)(t + THING_OFS_ACTION_BLOB), THING_ACTION_BLOB_LEN);
+        (void)lua_table_copy_hex_field(Ls, idx, "state_blob", (uint8_t*)(t + THING_OFS_STATE_BLOB), THING_STATE_BLOB_LEN);
+        (void)lua_table_copy_hex_field(Ls, idx, "tail_blob", (uint8_t*)(t + THING_OFS_TAIL_BLOB), THING_TAIL_BLOB_LEN);
+    }
     *(uint8_t*)(t + THING_OFS_STATE_ID) = (uint8_t)lua_table_get_int_field(Ls, idx, "state_id", *(uint8_t*)(t + THING_OFS_STATE_ID));
     *(uint8_t*)(t + THING_OFS_FLAGS) = (uint8_t)lua_table_get_int_field(Ls, idx, "flags", *(uint8_t*)(t + THING_OFS_FLAGS));
     *(int*)(t + THING_OFS_ROOM) = lua_table_get_int_field(Ls, idx, "room_index", *(int*)(t + THING_OFS_ROOM));
@@ -6149,32 +6183,31 @@ static int lua_game_apply_snapshot(lua_State* Ls) {
         int ent_idx = lua_absindex_compat(Ls, -1);
         int n = (int)lua_objlen(Ls, ent_idx);
         int thing_count = game_get_thing_count();
-        uint8_t* seen_sword_slots = NULL;
+        uint8_t* seen_slots = NULL;
         if (thing_count > 0) {
-            seen_sword_slots = (uint8_t*)calloc((size_t)thing_count, sizeof(uint8_t));
+            seen_slots = (uint8_t*)calloc((size_t)thing_count, sizeof(uint8_t));
         }
         for (int i = 1; i <= n; i++) {
             lua_rawgeti(Ls, ent_idx, i);
             if (lua_istable(Ls, -1)) {
                 int slot = lua_table_get_int_field(Ls, -1, "slot", -1);
-                int type = lua_table_get_int_field(Ls, -1, "type", -1);
-                if (seen_sword_slots && type == THING_TYPE_SWORD && slot >= 0 && slot < thing_count) {
-                    seen_sword_slots[slot] = 1;
+                if (seen_slots && slot >= 0 && slot < thing_count) {
+                    seen_slots[slot] = 1;
                 }
                 applied |= game_apply_entity_table(Ls, -1);
             }
             lua_pop(Ls, 1);
         }
-        if (seen_sword_slots) {
+        if (seen_slots) {
             for (int i = 0; i < thing_count; i++) {
                 uint8_t* t = p_things + (i * THING_SIZE);
                 if (!ptr_writable((void*)t, THING_SIZE)) continue;
-                if (t[THING_OFS_TYPE] != THING_TYPE_SWORD) continue;
+                if (t[THING_OFS_TYPE] == THING_TYPE_PLAYER) continue;
                 if (*(int*)(t + THING_OFS_ROOM) != snapshot_room_index) continue;
-                if (seen_sword_slots[i]) continue;
+                if (seen_slots[i]) continue;
                 t[THING_OFS_ACTIVE] = 0;
             }
-            free(seen_sword_slots);
+            free(seen_slots);
         }
     }
     lua_pop(Ls, 1);

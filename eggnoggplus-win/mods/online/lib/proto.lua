@@ -53,13 +53,13 @@ local function summarize_message(t)
     elseif ty == "sync_error" then
         return string.format("sync_error reason=%s", tostring(t.reason))
     elseif ty == "match_found" then
-        return string.format("match_found role=%s authority=%s map_sel=%s map=%s",
-            tostring(t.role), tostring(t.authority_role), tostring(t.map_sel), tostring(t.map_label))
+        return string.format("match_found role=%s map_sel=%s map=%s key=%s",
+            tostring(t.role), tostring(t.map_sel), tostring(t.map_label), tostring(t.map_key))
     elseif ty == "ping" or ty == "pong" then
         return string.format("%s seq=%s", ty, tostring(t.seq))
     elseif ty == "match_start" then
-        return string.format("match_start authority=%s seed=%s tick=%s delay=%s",
-            tostring(t.authority_role), tostring(t.seed), tostring(t.start_tick), tostring(t.input_delay))
+        return string.format("match_start role=%s map_sel=%s map=%s key=%s",
+            tostring(t.role), tostring(t.map_sel), tostring(t.map_label), tostring(t.map_key))
     elseif ty == "auth_ok" or ty == "auth_fail" or ty == "queue_update" or ty == "ready" then
         return ty
     end

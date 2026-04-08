@@ -1,1 +1,1 @@
-gcc -m32 -shared -o SDL2.dll dllmain.c stubs.c hooks.c custom_maps.c lua_manager.c font_ext.c texture_ext.c log.c net_ext.c -lkernel32 -luser32 -lopengl32 -lluajit-5.1 -lws2_32 -I/mingw32/include
+gcc -m32 -shared -o SDL2.dll dllmain.c stubs.c hooks.c custom_maps.c lua_manager.c font_ext.c texture_ext.c log.c net_ext.c -lkernel32 -luser32 -lopengl32 -lluajit-5.1 -lws2_32 -lwinhttp -I/mingw32/include

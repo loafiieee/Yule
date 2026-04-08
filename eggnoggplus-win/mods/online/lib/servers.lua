@@ -7,27 +7,20 @@
 
 servers = servers or {}
 
-local UPDATE_URL  = config.get("server_list_url", "")   -- e.g. "mysite.com/servers.json"
-local UPDATE_PORT = config.get("server_list_port", 80)
-local UPDATE_PATH = config.get("server_list_path", "/servers.json")
+-- Full URL for the server list, e.g. "https://loafiieee.com/servers.json"
+local UPDATE_URL = config.get("server_list_url", "")
 
--- Built-in fallback — always usable even if the fetch fails
-local FALLBACK = {
-    { name = "Local",  host = config.get("server_host", "127.0.0.1"), port = config.get("server_port", 7878), region = "local" },
-}
 
 -- ── state ────────────────────────────────────────────────────────────────
-local list           = {}          -- current known server list
-local selected_idx   = 1           -- index into list
-local pings          = {}          -- ping_ms per index, nil = not measured
-local fetch_sock     = nil         -- TCP socket used for HTTP fetch
-local fetch_buf      = ""
-local fetch_state    = "idle"      -- idle | connecting | headers | body | done | error
-local fetch_headers_done = false
-local body_buf       = ""
+local list         = {}   -- current known server list
+local selected_idx = 1    -- index into list
+local pings        = {}   -- ping_ms per index, nil = not measured
+local http_handle  = nil  -- mod.http handle for the in-flight server list fetch
+local fetch_status = "idle"  -- "idle"|"fetching"|"ok"|"error"|"no_http"
+local fetch_error  = nil     -- last error string when fetch_status == "error"
 
-local ping_socks     = {}          -- { sock, idx, sent_tick } per in-flight ping
-local PING_TIMEOUT   = 180         -- ticks (~3 s)
+local ping_socks   = {}   -- { sock, idx, sent_tick } per in-flight ping
+local PING_TIMEOUT = 180  -- ticks (~3 s)
 
 -- ── helpers ──────────────────────────────────────────────────────────────
 local function gtick()
@@ -35,6 +28,9 @@ local function gtick()
 end
 
 local function parse_server_list(text)
+    if type(text) ~= "string" then return nil end
+    -- Strip UTF-8 BOM if present
+    if text:sub(1, 3) == "\xEF\xBB\xBF" then text = text:sub(4) end
     local ok, decoded = pcall(function() return json.decode(text) end)
     if not ok or type(decoded) ~= "table" then return nil end
     local out = {}
@@ -70,14 +66,10 @@ local function apply_list(new_list)
 end
 
 local function abort_fetch()
-    if fetch_sock then
-        mod.net.close(fetch_sock)
-        fetch_sock = nil
+    if http_handle ~= nil then
+        if mod.http then mod.http.cancel(http_handle) end
+        http_handle = nil
     end
-    fetch_state = "idle"
-    fetch_buf   = ""
-    body_buf    = ""
-    fetch_headers_done = false
 end
 
 local function start_ping(idx)
@@ -88,16 +80,27 @@ local function start_ping(idx)
 end
 
 -- ── public API ───────────────────────────────────────────────────────────
-function servers.get_list()  return list end
+function servers.get_list()         return list end
 function servers.get_selected_idx() return selected_idx end
-function servers.get_selected() return list[selected_idx] or FALLBACK[1] end
-function servers.get_ping(idx) return pings[idx] end
+function servers.get_selected()     return list[selected_idx] end
+function servers.get_ping(idx)      return pings[idx] end
+function servers.is_fetching()      return http_handle ~= nil end
+function servers.get_fetch_status() return fetch_status, fetch_error end
 
 function servers.select(idx)
     if list[idx] then
         selected_idx = idx
-        storage.set("selected_server_host", list[idx].host)
-        storage.set("selected_server_port", list[idx].port)
+    end
+end
+
+-- Call this when a connection to the selected server is successfully initiated,
+-- so it's restored as the default next session.
+function servers.mark_connected()
+    local sv = list[selected_idx]
+    if sv then
+        storage.set("last_server_host", sv.host)
+        storage.set("last_server_port", sv.port)
+        storage.set("last_server_name", sv.name)
     end
 end
 
@@ -108,97 +111,55 @@ function servers.refresh()
     for _, p in ipairs(ping_socks) do mod.net.close(p.sock) end
     ping_socks = {}
 
-    -- Start with fallback while we wait for the fetch
-    if #list == 0 then apply_list(FALLBACK) end
-
-    if UPDATE_URL == "" then
-        -- No fetch URL configured; just ping the fallback list
+    if UPDATE_URL == "" or not mod.http then
+        fetch_status = "no_http"
+        fetch_error  = UPDATE_URL == "" and "server_list_url not set in config" or "mod.http unavailable (rebuild DLL)"
+        mod.warn("[servers] " .. fetch_error)
         for i = 1, #list do start_ping(i) end
         return
     end
 
-    -- Open TCP connection for HTTP/1.0 GET
-    local s, err = mod.net.connect(UPDATE_URL, UPDATE_PORT)
-    if not s then
-        mod.warn("[servers] fetch connect failed: " .. tostring(err))
+    local handle, err = mod.http.get(UPDATE_URL)
+    if not handle then
+        fetch_status = "error"
+        fetch_error  = tostring(err)
+        mod.warn("[servers] http.get failed: " .. fetch_error)
         for i = 1, #list do start_ping(i) end
         return
     end
-    fetch_sock   = s
-    fetch_state  = "connecting"
-    fetch_buf    = ""
-    body_buf     = ""
-    fetch_headers_done = false
+    fetch_status = "fetching"
+    fetch_error  = nil
+    http_handle  = handle
 end
 
 -- Must be called every frame while the hub is open.
 function servers.update()
-    -- ── HTTP fetch state machine ─────────────────────────────────────────
-    if fetch_state == "connecting" then
-        local r = mod.net.check(fetch_sock)
-        if r == "connected" then
-            local req = "GET " .. UPDATE_PATH .. " HTTP/1.0\r\nHost: " .. UPDATE_URL .. "\r\nConnection: close\r\n\r\n"
-            mod.net.send(fetch_sock, req)
-            fetch_state = "headers"
-        elseif r == "failed" then
-            mod.warn("[servers] fetch TCP connect failed")
-            abort_fetch()
+    -- ── HTTP fetch poll ──────────────────────────────────────────────────
+    if http_handle ~= nil then
+        local status, body = mod.http.poll(http_handle)
+        if status == "done" then
+            http_handle = nil
+            mod.log(string.format("[servers] body len=%d first=%q", #(body or ""), (body or ""):sub(1, 60)))
+            local parsed = parse_server_list(body)
+            if parsed then
+                apply_list(parsed)
+                fetch_status = "ok"
+                fetch_error  = nil
+                mod.log(string.format("[servers] fetched %d servers", #list))
+            else
+                fetch_status = "error"
+                fetch_error  = "bad JSON: " .. (body or ""):sub(1, 40)
+                mod.warn("[servers] could not parse server list: " .. tostring(fetch_error))
+            end
+            for i = 1, #list do start_ping(i) end
+        elseif status == "error" then
+            fetch_status = "error"
+            fetch_error  = tostring(body)
+            mod.warn("[servers] fetch failed: " .. fetch_error)
+            http_handle = nil
             for i = 1, #list do start_ping(i) end
         end
-
-    elseif fetch_state == "headers" or fetch_state == "body" then
-        while true do
-            local chunk = mod.net.recv(fetch_sock)
-            if chunk == false then
-                -- Connection closed — if we have a body, try to parse it
-                if body_buf ~= "" then
-                    local parsed = parse_server_list(body_buf)
-                    if parsed then
-                        apply_list(parsed)
-                        mod.log(string.format("[servers] fetched %d servers", #list))
-                    else
-                        mod.warn("[servers] fetch: could not parse server list")
-                    end
-                end
-                abort_fetch()
-                fetch_state = "done"
-                for i = 1, #list do start_ping(i) end
-                break
-            end
-            if chunk == nil then break end
-            fetch_buf = fetch_buf .. chunk
-
-            if not fetch_headers_done then
-                -- Scan for end of headers
-                local hend = fetch_buf:find("\r\n\r\n", 1, true)
-                        or fetch_buf:find("\n\n", 1, true)
-                if hend then
-                    local header_block = fetch_buf:sub(1, hend)
-                    -- Check HTTP status line
-                    local code = header_block:match("HTTP/%S+ (%d+)")
-                    if code ~= "200" then
-                        mod.warn("[servers] fetch HTTP status: " .. tostring(code))
-                        abort_fetch()
-                        for i = 1, #list do start_ping(i) end
-                        break
-                    end
-                    -- Find where body starts (skip the blank line)
-                    local body_start = fetch_buf:find("\r\n\r\n", 1, true)
-                    if body_start then
-                        body_buf = fetch_buf:sub(body_start + 4)
-                    else
-                        body_start = fetch_buf:find("\n\n", 1, true)
-                        body_buf = fetch_buf:sub(body_start + 2)
-                    end
-                    fetch_buf = ""
-                    fetch_headers_done = true
-                    fetch_state = "body"
-                end
-            else
-                body_buf = body_buf .. fetch_buf
-                fetch_buf = ""
-            end
-        end
+        -- "pending" → do nothing, check again next frame
     end
 
     -- ── Ping state machine ───────────────────────────────────────────────
@@ -221,15 +182,13 @@ function servers.update()
     ping_socks = keep
 end
 
--- Restore previously selected server from storage on first load
+-- On first load, seed the list with the last-used server from storage so the
+-- picker and get_selected() work immediately before the fetch completes.
 do
-    local saved_host = storage.get("selected_server_host")
-    local saved_port = storage.get("selected_server_port")
-    apply_list(FALLBACK)
-    -- Override fallback host/port if storage has something
-    if type(saved_host) == "string" and saved_host ~= "" then
-        FALLBACK[1].host = saved_host
-        FALLBACK[1].port = type(saved_port) == "number" and saved_port or FALLBACK[1].port
-        apply_list(FALLBACK)
+    local h = storage.get("last_server_host")
+    local p = storage.get("last_server_port")
+    local n = storage.get("last_server_name")
+    if type(h) == "string" and h ~= "" then
+        apply_list({ { name = tostring(n or h), host = h, port = tonumber(p) or 7878, region = "" } })
     end
 end

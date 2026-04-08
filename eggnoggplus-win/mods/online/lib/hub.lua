@@ -4,13 +4,14 @@ hub = hub or {}
 
 local STATE_NAME = "online_hub"
 
-local S_CONNECTING  = "connecting"
-local S_LOGIN       = "login"
-local S_LOGGING_IN  = "logging_in"
-local S_HUB         = "hub"
-local S_QUEUING     = "queuing"
-local S_MATCH_FOUND = "match_found"
-local S_IN_GAME     = "in_game"
+local S_CONNECTING     = "connecting"
+local S_SERVER_SELECT  = "server_select"
+local S_LOGIN          = "login"
+local S_LOGGING_IN     = "logging_in"
+local S_HUB            = "hub"
+local S_QUEUING        = "queuing"
+local S_MATCH_FOUND    = "match_found"
+local S_IN_GAME        = "in_game"
 
 local state = S_LOGIN
 local username = ""
@@ -38,18 +39,47 @@ local click_pending = false
 local click_x = 0
 local click_y = 0
 
--- Server picker overlay
-local S_SERVER_PICKER = "server_picker"
-local server_picker_open = false
+-- Which state to return to when ESC is pressed from S_SERVER_SELECT
+local server_select_back = S_LOGIN
 
--- Load saved credentials on startup
-do
-    local saved_user = storage.get("saved_username")
-    local saved_pass = storage.get("saved_password")
-    if type(saved_user) == "string" and saved_user ~= "" then
-        field_user  = saved_user
-        field_pass  = type(saved_pass) == "string" and saved_pass or ""
+-- Pending auth: set when LOG IN/REGISTER is clicked while still connecting.
+-- Sent automatically once the TCP connection completes.
+local pending_auth = nil
+
+-- ── per-server credential helpers ─────────────────────────────────────────
+-- Credentials are stored per server host so switching servers loads the right
+-- account automatically. Key is sanitized host (dots → underscores).
+local function sv_storage_key(sv)
+    if not sv then return nil end
+    return sv.host:gsub("[^%w]", "_")
+end
+
+local function load_server_creds()
+    local sv  = servers and servers.get_selected and servers.get_selected()
+    local key = sv_storage_key(sv)
+    if not key then return end
+    local u = storage.get("cu_" .. key)
+    local p = storage.get("cp_" .. key)
+    if type(u) == "string" and u ~= "" then
+        field_user  = u
+        field_pass  = type(p) == "string" and p or ""
         remember_me = true
+    else
+        field_user  = ""
+        field_pass  = ""
+        remember_me = false
+    end
+end
+
+local function save_server_creds(sv, user, pass)
+    local key = sv_storage_key(sv)
+    if not key then return end
+    if remember_me then
+        storage.set("cu_" .. key, user)
+        storage.set("cp_" .. key, pass)
+    else
+        storage.set("cu_" .. key, nil)
+        storage.set("cp_" .. key, nil)
     end
 end
 
@@ -159,17 +189,30 @@ local function begin_login_request(kind)
         status("Enter a username and password")
         return
     end
-    username = field_user
-    if remember_me then
-        storage.set("saved_username", field_user)
-        storage.set("saved_password", field_pass)
-    else
-        storage.set("saved_username", nil)
-        storage.set("saved_password", nil)
+    local sv = servers and servers.get_selected and servers.get_selected()
+    if not sv then
+        server_select_back = S_LOGIN
+        set_state(S_SERVER_SELECT)
+        return
     end
-    proto.send({ type = kind, username = field_user, password = field_pass })
-    set_state(S_LOGGING_IN)
-    status(kind == "register" and "Registering..." or "Logging in...")
+    username = field_user
+    save_server_creds(sv, field_user, field_pass)
+
+    local ps = proto.get_state()
+    if ps == "connected" then
+        proto.send({ type = kind, username = field_user, password = field_pass })
+        set_state(S_LOGGING_IN)
+        status(kind == "register" and "Registering..." or "Logging in...")
+    elseif ps == "disconnected" then
+        pending_auth = { kind = kind, user = field_user, pass = field_pass }
+        set_state(S_CONNECTING)
+        status("Connecting to " .. sv.name .. "...")
+        proto.connect(sv.host, sv.port)
+        servers.mark_connected()
+    elseif ps == "connecting" then
+        -- Already connecting (e.g. user clicked twice); just update the pending auth.
+        pending_auth = { kind = kind, user = field_user, pass = field_pass }
+    end
 end
 
 local function start_match()
@@ -183,6 +226,7 @@ local function handle_msg(msg)
     local t = msg and msg.type or nil
     if t == "auth_ok" then
         username = msg.username or username
+        map_manifest.invalidate()  -- rebuild manifest fresh in case maps changed since last session
         map_manifest.send()
         set_state(S_HUB)
         status("")
@@ -207,6 +251,13 @@ local function handle_msg(msg)
             end
         end
         my_map_label = tostring(msg.map_label or ("Map " .. tostring(my_map_sel + 1)))
+        -- Force map selector immediately so game_init uses the right map.
+        if mod.game and mod.game.set_map_selector then
+            mod.game.set_map_selector(my_map_sel)
+            local got = mod.game.get_map_selector and mod.game.get_map_selector()
+            mod.log(string.format("[hub] match_found: set map selector=%d  got=%s  key=%s",
+                my_map_sel, tostring(got), my_map_key))
+        end
         cd_timer = 3.0
         match_ready_sent = false
         set_state(S_MATCH_FOUND)
@@ -226,6 +277,18 @@ local function handle_msg(msg)
         my_match_seed = tonumber(msg.seed) or my_match_seed
         my_start_tick = tonumber(msg.start_tick) or my_start_tick
         my_input_delay = tonumber(msg.input_delay) or my_input_delay
+        -- Force map selector and RNG seed immediately — before hub.close() / game launch —
+        -- so both clients have the same map when game_init() picks the starting room.
+        if mod.game and mod.game.set_map_selector then
+            mod.game.set_map_selector(my_map_sel)
+            local got = mod.game.get_map_selector and mod.game.get_map_selector()
+            mod.log(string.format("[hub] match_start: set map selector=%d  got=%s  key=%s",
+                my_map_sel, tostring(got), my_map_key))
+        end
+        if mod.game and mod.game.set_rng_seed and my_match_seed and my_match_seed ~= 0 then
+            mod.game.set_rng_seed(my_match_seed)
+            mod.log(string.format("[hub] match_start: primed RNG seed=%u", my_match_seed))
+        end
         if state == S_MATCH_FOUND then
             start_match()
         end
@@ -251,15 +314,22 @@ local function pump_messages()
     end
 
     if state == S_CONNECTING and proto.get_state() == "connected" then
-        set_state(S_LOGIN)
-        status("Connected. Please log in.")
+        if pending_auth then
+            proto.send({ type = pending_auth.kind, username = pending_auth.user, password = pending_auth.pass })
+            set_state(S_LOGGING_IN)
+            status(pending_auth.kind == "register" and "Registering..." or "Logging in...")
+            pending_auth = nil
+        else
+            set_state(S_LOGIN)
+            status("Connected. Please log in.")
+        end
     end
 
-    if proto.get_state() == "disconnected" and state ~= S_CONNECTING and state ~= S_IN_GAME then
-        if state ~= S_LOGIN then
-            set_state(S_LOGIN)
-            status("Disconnected.")
-        end
+    if proto.get_state() == "disconnected" and state ~= S_CONNECTING and state ~= S_IN_GAME
+       and state ~= S_SERVER_SELECT and state ~= S_LOGIN then
+        pending_auth = nil
+        set_state(S_LOGIN)
+        status("Disconnected.")
     end
 end
 
@@ -272,8 +342,12 @@ local function panel_layout()
 
     if state == S_CONNECTING or state == S_LOGGING_IN then
         panel_h = clamp(math.floor(320 * s), math.floor(H * 0.40), H - pad * 2)
+    elseif state == S_SERVER_SELECT then
+        panel_h = clamp(math.floor(480 * s), math.floor(H * 0.58), H - pad * 2)
+    elseif state == S_LOGIN then
+        panel_h = clamp(math.floor(640 * s), math.floor(H * 0.72), H - pad * 2)
     elseif state == S_HUB then
-        panel_h = clamp(math.floor(448 * s), math.floor(H * 0.56), H - pad * 2)
+        panel_h = clamp(math.floor(520 * s), math.floor(H * 0.60), H - pad * 2)
     elseif state == S_QUEUING then
         panel_h = clamp(math.floor(360 * s), math.floor(H * 0.46), H - pad * 2)
     elseif state == S_MATCH_FOUND then
@@ -435,14 +509,17 @@ local function draw_mouse_cursor()
 end
 
 local function draw_connecting()
+    local sv = servers and servers.get_selected and servers.get_selected()
+    local addr = sv and (sv.name .. "  " .. sv.host .. ":" .. tostring(sv.port)) or "..."
     local L = draw_panel("EGGNOGG+ ONLINE", "Connecting to server")
-    draw_text_center("Opening socket to " .. tostring(config.get("server_host", "127.0.0.1")) .. ":" .. tostring(config.get("server_port", 7878)),
-        L.cx, L.content_y + math.floor(22 * L.s), 1.04 * L.s, 0.76, 0.82, 0.94)
+    draw_text_center(addr, L.cx, L.content_y + math.floor(22 * L.s), 1.04 * L.s, 0.76, 0.82, 0.94)
     local bw = math.floor(280 * L.s)
     local bh = math.floor(56 * L.s)
     if button_box("BACK", L.cx - bw * 0.5, L.y + L.h - L.footer_h - bh - math.floor(20 * L.s), bw, bh, false) then
+        pending_auth = nil
         proto.disconnect()
-        hub.close()
+        set_state(S_LOGIN)
+        status("")
     end
 end
 
@@ -456,7 +533,7 @@ local function draw_checkbox(label, x, y, size, checked, s)
         local p = math.floor(size * 0.22)
         fill_rect(x + p, y + p, size - p * 2, size - p * 2, 0.95, 0.83, 0.32, 1.0)
     end
-    draw_text(label, x + size + math.floor(8 * s), y + math.floor(size * 0.10), 0.88 * s, 0.74, 0.82, 0.94)
+    draw_text(label, x + size + math.floor(8 * s), y + math.floor(size * 0.35), 0.88 * s, 0.74, 0.82, 0.94)
     return clicked
 end
 
@@ -465,21 +542,23 @@ local function draw_login()
     local fx = L.content_x + math.floor(18 * L.s)
     local fw = L.content_w - math.floor(36 * L.s)
     local field_h = math.floor(64 * L.s)
-    local btn_h = math.floor(58 * L.s)
-    local gap = math.floor(24 * L.s)
-    local y = L.content_y + math.floor(32 * L.s)
+    local btn_h   = math.floor(58 * L.s)
+    local gap     = math.floor(24 * L.s)
+    -- Tight top gap so fields + checkbox fit even on small panels
+    local y = L.content_y + math.floor(16 * L.s)
 
+    local pass_y = y + field_h + math.floor(32 * L.s) + math.floor(16 * L.s)
     if select(1, field_box("Username", field_user, fx, y, fw, field_h, focus == 1, false)) then focus = 1 end
-    if select(1, field_box("Password", field_pass, fx, y + field_h + math.floor(52 * L.s), fw, field_h, focus == 2, true)) then focus = 2 end
+    if select(1, field_box("Password", field_pass, fx, pass_y, fw, field_h, focus == 2, true)) then focus = 2 end
 
-    -- Remember me checkbox
+    -- Buttons anchored to panel bottom; checkbox snug above LOG IN
+    local by = L.y + L.h - L.footer_h - btn_h * 2 - gap - math.floor(20 * L.s)
     local cb_size = math.floor(22 * L.s)
-    local cb_y = y + field_h + math.floor(52 * L.s) + field_h + math.floor(14 * L.s)
+    local cb_y    = by - cb_size - math.floor(8 * L.s)
     if draw_checkbox("Remember me", fx, cb_y, cb_size, remember_me, L.s) then
         remember_me = not remember_me
     end
 
-    local by = L.y + L.h - L.footer_h - btn_h * 2 - gap - math.floor(28 * L.s)
     if button_box("LOG IN", fx, by, fw, btn_h, true) then
         begin_login_request("login")
     end
@@ -501,14 +580,22 @@ local function draw_logging_in()
 end
 
 local function draw_hub_screen()
-    local L = draw_panel("ONLINE HUB", username ~= "" and ("Logged in as " .. username) or "Connected")
+    local sv = servers.get_selected()
+    local subtitle = username ~= "" and ("Logged in as " .. username) or "Connected"
+    local L = draw_panel("ONLINE HUB", subtitle)
     local fx = L.content_x + math.floor(18 * L.s)
     local fw = L.content_w - math.floor(36 * L.s)
-    local btn_h = math.floor(62 * L.s)
-    local gap = math.floor(28 * L.s)
+    local btn_h = math.floor(56 * L.s)
+    local gap   = math.floor(20 * L.s)
     local info_y = L.content_y + math.floor(40 * L.s)
     draw_text("Players in queue", fx, info_y, 1.10 * L.s, 0.72, 0.80, 0.92)
     draw_text(tostring(queue_count), fx + fw - math.floor(34 * L.s), info_y - math.floor(4 * L.s), 1.44 * L.s, 0.96, 0.88, 0.42)
+    -- Current region indicator
+    if sv then
+        local ping_ms  = servers.get_ping(servers.get_selected_idx())
+        local ping_str = ping_ms and ("  " .. tostring(ping_ms) .. " ms") or ""
+        draw_text("Region: " .. sv.name .. ping_str, fx, info_y + math.floor(36 * L.s), 0.90 * L.s, 0.55, 0.68, 0.84)
+    end
     local by = L.y + L.h - L.footer_h - btn_h * 2 - gap - math.floor(28 * L.s)
     if button_box("FIND MATCH", fx, by, fw, btn_h, true) then
         map_manifest.send()
@@ -519,6 +606,22 @@ local function draw_hub_screen()
     if button_box("DISCONNECT", fx, by + btn_h + gap, fw, btn_h, false) then
         proto.disconnect()
         hub.close()
+    end
+
+    -- Small REGION button in the top-right corner of the header
+    local rbw = math.floor(100 * L.s)
+    local rbh = math.floor(30 * L.s)
+    local rbx = L.x + L.w - rbw - math.floor(14 * L.s)
+    local rby = L.y + math.floor((L.header_h - rbh) * 0.5)
+    local rhov = mouse_in_rect(rbx, rby, rbw, rbh)
+    local rclk = consume_click(rbx, rby, rbw, rbh)
+    fill_rect(rbx, rby, rbw, rbh, 0.08, 0.12, 0.20, rhov and 0.96 or 0.80)
+    stroke_rect(rbx, rby, rbw, rbh, rhov and 2.0 or 1.0, 0.30, 0.40, 0.58, 0.90)
+    draw_text_center("REGION", rbx + rbw * 0.5, rby + rbh * 0.5 - math.floor(10 * L.s), 0.80 * L.s, 0.75, 0.83, 0.95)
+    if rclk then
+        server_select_back = S_HUB
+        set_state(S_SERVER_SELECT)
+        if servers and servers.refresh then servers.refresh() end
     end
 end
 
@@ -578,94 +681,127 @@ local function draw_match_found(dt)
     stroke_rect(bar_x, bar_y, bar_w, bar_h, 1.0, 0.36, 0.45, 0.60, 0.84)
 end
 
--- ── server picker overlay ─────────────────────────────────────────────────
-local function draw_server_picker()
-    local W, H = mod.ui.screen_size()
-    local s = ui_scale()
-    local pw = math.floor(480 * s)
-    local row_h = math.floor(52 * s)
+-- ── server select screen ──────────────────────────────────────────────────
+local function draw_server_select()
+    local L = draw_panel("SELECT SERVER", "Choose a region to connect to", "ESC")
+    local s  = L.s
     local list = servers.get_list()
-    local ph = math.floor(64 * s) + #list * row_h + math.floor(24 * s)
-    ph = math.min(ph, H - math.floor(40 * s))
-    local px = math.floor((W - pw) * 0.5)
-    local py = math.floor((H - ph) * 0.5)
+    local sel  = servers.get_selected_idx()
 
-    fill_rect(0, 0, W, H, 0.0, 0.0, 0.0, 0.55)
-    fill_rect(px, py, pw, ph, 0.04, 0.06, 0.10, 0.97)
-    stroke_rect(px, py, pw, ph, 2.0, 0.40, 0.50, 0.66, 1.0)
+    local row_h = math.floor(58 * s)
+    local fx    = L.content_x + math.floor(10 * s)
+    local fw    = L.content_w - math.floor(20 * s)
 
-    local title_y = py + math.floor(14 * s)
-    draw_text_center("SELECT SERVER", px + pw * 0.5, title_y, 1.30 * s, 0.96, 0.97, 0.99)
+    -- BEST PING button at top of content area
+    local bbw = math.floor(200 * s)
+    local bbh = math.floor(40 * s)
+    local bbx = L.cx - bbw * 0.5
+    local bby = L.content_y + math.floor(6 * s)
+    if button_box("BEST PING", bbx, bby, bbw, bbh, false) then
+        -- Pick server with lowest measured ping; fall back to first
+        local best_i, best_ms = 1, math.huge
+        for i = 1, #list do
+            local ms = servers.get_ping(i)
+            if ms and ms < best_ms then best_ms = ms; best_i = i end
+        end
+        servers.select(best_i)
+        load_server_creds()
+        set_state(S_LOGIN)
+    end
 
-    local ry = py + math.floor(54 * s)
-    local sel = servers.get_selected_idx()
+    -- Server rows below the BEST PING button
+    local ry = bby + bbh + math.floor(12 * s)
     for i, sv in ipairs(list) do
         local ping_ms = servers.get_ping(i)
         local is_sel  = (i == sel)
-        local hovered = mouse_in_rect(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s))
-        local clicked = consume_click(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s))
+        local row_w   = fw
+        local row_x   = fx
+        local hov = mouse_in_rect(row_x, ry, row_w, row_h - math.floor(4*s))
+        local clk = consume_click(row_x, ry, row_w, row_h - math.floor(4*s))
 
-        -- Row background
-        local bg_a = is_sel and 0.28 or (hovered and 0.16 or 0.0)
-        fill_rect(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s),
-            0.20, 0.34, 0.56, bg_a)
-        if is_sel then
-            stroke_rect(px + math.floor(8*s), ry, pw - math.floor(16*s), row_h - math.floor(4*s),
-                1.0, 0.40, 0.54, 0.80, 0.90)
-        end
+        local bg_a = is_sel and 0.30 or (hov and 0.18 or 0.08)
+        fill_rect(row_x, ry, row_w, row_h - math.floor(4*s), 0.14, 0.24, 0.40, bg_a)
+        stroke_rect(row_x, ry, row_w, row_h - math.floor(4*s),
+            (is_sel or hov) and 2.0 or 1.0,
+            is_sel and 0.60 or 0.30, is_sel and 0.78 or 0.42, is_sel and 0.98 or 0.60,
+            is_sel and 1.0 or 0.70)
 
-        -- Server name + host:port
-        local nr, ng, nb = is_sel and 0.98 or 0.84, is_sel and 0.90 or 0.84, is_sel and 0.48 or 0.84
-        draw_text(sv.name, px + math.floor(20*s), ry + math.floor(6*s), 1.10 * s, nr, ng, nb)
-        local addr = sv.host .. ":" .. tostring(sv.port)
-        draw_text(addr, px + math.floor(20*s), ry + math.floor(28*s), 0.80 * s, 0.54, 0.64, 0.76)
+        local nr = is_sel and 0.98 or (hov and 0.92 or 0.80)
+        local ng = is_sel and 0.90 or (hov and 0.88 or 0.80)
+        local nb = is_sel and 0.46 or (hov and 0.82 or 0.80)
+        draw_text(sv.name, row_x + math.floor(16*s), ry + math.floor(6*s), 1.08 * s, nr, ng, nb)
+        draw_text(sv.host .. ":" .. tostring(sv.port), row_x + math.floor(16*s), ry + math.floor(30*s), 0.78 * s, 0.50, 0.60, 0.74)
 
-        -- Ping indicator
+        -- Ping
         local ping_str, pr, pg, pb
         if ping_ms then
             ping_str = tostring(ping_ms) .. " ms"
-            pr = ping_ms < 80 and 0.40 or (ping_ms < 150 and 0.80 or 0.90)
-            pg = ping_ms < 80 and 0.90 or (ping_ms < 150 and 0.80 or 0.40)
+            pr = ping_ms < 80 and 0.38 or (ping_ms < 150 and 0.82 or 0.92)
+            pg = ping_ms < 80 and 0.92 or (ping_ms < 150 and 0.82 or 0.38)
             pb = 0.40
         else
-            local t = mod.game.tick_count()
-            local dots = string.rep(".", (math.floor(t / 15) % 4))
+            local dots = string.rep(".", math.floor(mod.game.tick_count() / 15) % 4)
             ping_str = "pinging" .. dots
-            pr, pg, pb = 0.50, 0.58, 0.70
+            pr, pg, pb = 0.48, 0.56, 0.70
         end
-        local ping_tw = approx_text_w(ping_str, 0.90 * s)
-        draw_text(ping_str, px + pw - math.floor(20*s) - ping_tw, ry + math.floor(14*s), 0.90 * s, pr, pg, pb)
+        local ptw = approx_text_w(ping_str, 0.90 * s)
+        draw_text(ping_str, row_x + row_w - math.floor(14*s) - ptw, ry + math.floor(18*s), 0.90 * s, pr, pg, pb)
 
-        if clicked then
+        if clk then
             servers.select(i)
-            server_picker_open = false
+            load_server_creds()
+            set_state(S_LOGIN)
         end
         ry = ry + row_h
     end
+
+    if #list == 0 then
+        local fs, fe = servers.get_fetch_status()
+        local msg, mr, mg, mb
+        if fs == "fetching" then
+            local dots = string.rep(".", math.floor(mod.game.tick_count() / 15) % 4)
+            msg = "Fetching server list" .. dots
+            mr, mg, mb = 0.60, 0.70, 0.85
+        elseif fs == "no_http" then
+            msg = "HTTP unavailable — rebuild the mod DLL"
+            mr, mg, mb = 0.90, 0.50, 0.30
+        elseif fs == "error" then
+            msg = "Error: " .. tostring(fe or "unknown")
+            mr, mg, mb = 0.92, 0.40, 0.40
+        else
+            msg = "No servers found — check server_list_url in config"
+            mr, mg, mb = 0.75, 0.70, 0.55
+        end
+        draw_text_center(msg, L.cx, L.content_y + math.floor(80 * s), 0.96 * s, mr, mg, mb)
+    end
 end
 
-function hub.open(host, port)
+function hub.open()
     hub.ensure_state()
     click_pending = false
-    server_picker_open = false
-    -- Kick off server list fetch + pings every time the hub opens
-    servers.refresh()
-    if host and port and proto.get_state() == "disconnected" then
-        focus = 1
-        if field_user == "" then field_user = username or "" end
-        set_state(S_CONNECTING)
-        status("Connecting...")
-        proto.connect(host, port)
-    elseif proto.get_state() == "connected" then
+    pending_auth  = nil
+    -- Fetch fresh server list + re-ping every time the hub opens
+    if servers and servers.refresh then servers.refresh() end
+
+    local ps = proto.get_state()
+    if ps == "connected" then
         if username ~= "" then set_state(S_HUB) else set_state(S_LOGIN) end
         if post_open_message and post_open_message ~= "" then
             status(post_open_message)
             post_open_message = nil
         end
-    elseif proto.get_state() == "connecting" then
+    elseif ps == "connecting" then
         set_state(S_CONNECTING)
     else
-        set_state(S_LOGIN)
+        -- Disconnected — if no server selected yet, show server picker first
+        if not servers.get_selected() then
+            server_select_back = S_LOGIN
+            set_state(S_SERVER_SELECT)
+        else
+            load_server_creds()
+            set_state(S_LOGIN)
+            status("")
+        end
     end
     ui_enter_state(STATE_NAME)
 end
@@ -681,38 +817,12 @@ function hub.consume_start_request()
     return want
 end
 
-local function draw_server_button()
-    -- Small "SERVERS" button in the bottom-right corner, outside the card.
-    -- Only shown while logged in so it doesn't clutter the login screen.
-    if state ~= S_HUB and state ~= S_QUEUING then return end
-    local W, H = mod.ui.screen_size()
-    local s = ui_scale()
-    local bw = math.floor(120 * s)
-    local bh = math.floor(32 * s)
-    local bx = W - bw - math.floor(16 * s)
-    local by = H - bh - math.floor(16 * s)
-
-    local sv = servers.get_selected()
-    local ping_ms = servers.get_ping(servers.get_selected_idx())
-    local ping_str = ping_ms and (" " .. tostring(ping_ms) .. "ms") or ""
-    local pr = ping_ms and (ping_ms < 80 and 0.40 or (ping_ms < 150 and 0.80 or 0.90)) or 0.55
-    local pg = ping_ms and (ping_ms < 80 and 0.90 or (ping_ms < 150 and 0.80 or 0.40)) or 0.65
-    local label = (sv.name or "SERVER") .. ping_str
-
-    local hovered = mouse_in_rect(bx, by, bw, bh)
-    local clicked = consume_click(bx, by, bw, bh)
-    fill_rect(bx, by, bw, bh, 0.06, 0.09, 0.14, hovered and 0.96 or 0.82)
-    stroke_rect(bx, by, bw, bh, hovered and 2.0 or 1.0, 0.30, 0.40, 0.58, 0.90)
-    draw_text_center(label, bx + bw * 0.5, by + math.floor(bh * 0.18), 0.72 * s, pr, pg, 0.80)
-    if clicked then
-        server_picker_open = not server_picker_open
-    end
-end
-
 function hub.draw(dt)
     pump_messages()
     servers.update()   -- drive fetch + ping state machines every frame
-    if state == S_CONNECTING then
+    if state == S_SERVER_SELECT then
+        draw_server_select()
+    elseif state == S_CONNECTING then
         draw_connecting()
     elseif state == S_LOGIN then
         draw_login()
@@ -724,11 +834,6 @@ function hub.draw(dt)
         draw_queueing()
     elseif state == S_MATCH_FOUND then
         draw_match_found(dt)
-    end
-    -- Server button + picker drawn after the card so they appear on top
-    draw_server_button()
-    if server_picker_open then
-        draw_server_picker()
     end
     if state ~= S_IN_GAME then
         draw_mouse_cursor()
@@ -776,8 +881,15 @@ function hub.on_event(e)
             end
         end
     elseif e.type == "keydown" then
-        if e.sym == 27 and server_picker_open then
-            server_picker_open = false
+        if e.sym == 27 and state == S_SERVER_SELECT then
+            set_state(server_select_back)
+            return true
+        end
+        if e.sym == 27 and state == S_CONNECTING then
+            pending_auth = nil
+            proto.disconnect()
+            set_state(S_LOGIN)
+            status("")
             return true
         end
         if e.sym == 13 then

@@ -131,7 +131,7 @@ end
 -- ── lifecycle ─────────────────────────────────────────────────────────────
 mod.on_load(function()
     if hub.ensure_state then hub.ensure_state() end
-    mod.log(string.format("Eggnogg+ Online loaded  server=%s:%d", SERVER_HOST, SERVER_PORT))
+    mod.log("Eggnogg+ Online loaded")
 end)
 
 mod.on_unload(function()
@@ -224,9 +224,17 @@ mod.on_frame(function()
         local start_ptr = capture_baseline(sname)
 
         if pending_start_match and start_ptr and pending_start_cooldown <= 0 then
-            if ensure_match_map_selected() and prime_match_start() and dispatch_start(start_ptr) then
-                pending_start_cooldown = 6
-                return
+            if ensure_match_map_selected() and prime_match_start() then
+                -- Pre-seed RNG before the game state starts so game_init()'s mrand() calls
+                -- (_game_level map selection, __seed) produce the same values on both clients.
+                local seed = match_seed or (hub.get_match_seed and hub.get_match_seed())
+                if seed and seed ~= 0 and mod.game.set_rng_seed then
+                    mod.game.set_rng_seed(seed)
+                end
+                if dispatch_start(start_ptr) then
+                    pending_start_cooldown = 6
+                    return
+                end
             end
         end
 
@@ -236,8 +244,7 @@ mod.on_frame(function()
             mod.ui.native_set_pos("online_open_btn", base_x, base_y + base_h + GAP)
         end
         if clicked then
-            local sv = servers.get_selected()
-            hub.open(sv.host, sv.port)
+            hub.open()
         end
 
     else
@@ -252,9 +259,16 @@ mod.on_frame(function()
     -- Pregame: apply map selector + dispatch start
     if pending_start_match and sname == "pregame" and pending_start_cooldown <= 0 then
         local pre_ptr = mod.ui.find_button_by_action_ptr(START_ACTION)
-        if pre_ptr and ensure_match_map_selected() and prime_match_start() and dispatch_start(pre_ptr) then
-            pending_start_cooldown = 6
-            return
+        if pre_ptr and ensure_match_map_selected() and prime_match_start() then
+            -- Pre-seed again here (pregame → game transition is when game_init() runs).
+            local seed = match_seed or (hub.get_match_seed and hub.get_match_seed())
+            if seed and seed ~= 0 and mod.game.set_rng_seed then
+                mod.game.set_rng_seed(seed)
+            end
+            if dispatch_start(pre_ptr) then
+                pending_start_cooldown = 6
+                return
+            end
         end
     end
 
@@ -277,6 +291,16 @@ mod.on_frame(function()
 
     -- State-change transitions
     if sname ~= prev_state then
+
+        -- Leaving game state while match is active: clear any queued tick input overrides.
+        -- hooks_finish_game_tick (which decrements the tick override countdown) only runs
+        -- during game state, so a stale remote-input override on the remote player slot
+        -- persists into the pause menu and causes main_player_poll_cmds to fire a button
+        -- click, which opens the mods menu immediately via mods_entry_player_filter_proxy.
+        if prev_state == "game" and match_active and mod.game and mod.game.input_clear then
+            mod.game.input_clear(0)
+            mod.game.input_clear(1)
+        end
 
         -- Returned to main menu from an active match
         if sname == "main" and match_active then
@@ -309,7 +333,7 @@ mod.on_event(function(e)
 
     local sym = tonumber(e.sym)
 
-    -- Block F5 (local restart) during a match — would break sync
+    -- Block F2/F5 (local restart) during a match — would break sync.
     if match_active and (sym == SDLK_F2 or sym == SDLK_F5) then
         if e.type == "keydown" then
             mod.warn(string.format("[main] key blocked during online match sym=%s", tostring(sym)))
@@ -335,14 +359,21 @@ function draw_netgraph()
 
     local role_str = "P" .. tostring((tonumber(st.role) or 0) + 1)
     local mode_str = st.is_authority and "AUTH" or "SYNC"
-    mod.ui.text_at("ONLINE  " .. role_str .. "  " .. mode_str, 12, 8, 0.9, 0.2, 1.0, 0.4)
+    local hi_str   = st.high_ping_mode and "  HI-PING" or ""
+    mod.ui.text_at("ONLINE  " .. role_str .. "  " .. mode_str .. hi_str, 12, 8, 0.9,
+        st.high_ping_mode and 1.0 or 0.2,
+        st.high_ping_mode and 0.6 or 1.0,
+        0.4)
 
-    local ping_str = string.format("ping %3d ms", math.floor(st.ping_ms + 0.5))
-    mod.ui.text_at(ping_str, 12, 24, 0.7, 0.8, 0.9, 1.0)
+    local ping_pr = math.floor(st.ping_ms + 0.5)
+    local ping_r  = ping_pr >= 100 and 1.0 or (ping_pr >= 60 and 0.85 or 0.55)
+    local ping_g  = ping_pr >= 100 and 0.55 or (ping_pr >= 60 and 0.80 or 0.90)
+    local ping_str = string.format("ping %3d ms", ping_pr)
+    mod.ui.text_at(ping_str, 12, 24, 0.7, ping_r, ping_g, 0.40)
 
     local source_str = (st.local_source == nil) and "src ?" or ("src p" .. tostring(st.local_source + 1))
     local detail = string.format(
-        "%-6s  rem %-3d  frm %-5d  tick %-5d  dly %-2d",
+        "%-6s  rem %-3d  frm %-5d  tick %-5d  snp %-2d",
         source_str,
         tonumber(st.remote_cmd) or 0,
         tonumber(st.current_state_seq) or 0,

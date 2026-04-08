@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <winhttp.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -119,6 +120,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_START_COUNTDOWN       0x542048u
 #define ADDR_GAME_LEVEL            0x542054u
 #define ADDR_PLAYER_ARRAY          0x542058u
+#define ADDR_THING_LATEST          0x54204cu
 #define ADDR_THINGS                0x542080u
 #define ADDR_THING_INFO            0x543640u
 #define ADDR_MRAND_SEED            0x496DA0u
@@ -253,6 +255,7 @@ static volatile int* p_tiles_id = (volatile int*)(uintptr_t)ADDR_TILES_ID;
 static volatile int* p_sprites_id = (volatile int*)(uintptr_t)ADDR_SPRITES_ID;
 static volatile int* p_glyphs_id = (volatile int*)(uintptr_t)ADDR_GLYPHS_ID;
 static uintptr_t* p_player_slots = (uintptr_t*)(uintptr_t)ADDR_PLAYER_ARRAY;
+static volatile int* p_thing_latest = (volatile int*)(uintptr_t)ADDR_THING_LATEST;
 static uint8_t* p_things = (uint8_t*)(uintptr_t)ADDR_THINGS;
 static uint8_t* p_thing_info = (uint8_t*)(uintptr_t)ADDR_THING_INFO;
 
@@ -5651,6 +5654,25 @@ static void push_thing_snapshot_table(lua_State* Ls, const uint8_t* thing_ptr, i
     lua_push_field_bool(Ls, "active", thing_ptr[THING_OFS_ACTIVE] != 0);
 }
 
+static void push_sword_state_table(lua_State* Ls, const uint8_t* thing_ptr, int slot_index) {
+    lua_newtable(Ls);
+    lua_push_field_int(Ls, "slot", slot_index);
+    lua_push_field_number(Ls, "x", *(float*)(thing_ptr + THING_OFS_X));
+    lua_push_field_number(Ls, "y", *(float*)(thing_ptr + THING_OFS_Y));
+    lua_push_field_number(Ls, "prev_x", *(float*)(thing_ptr + THING_OFS_PREV_X));
+    lua_push_field_number(Ls, "prev_y", *(float*)(thing_ptr + THING_OFS_PREV_Y));
+    lua_push_field_number(Ls, "vx", *(float*)(thing_ptr + THING_OFS_VX));
+    lua_push_field_number(Ls, "vy", *(float*)(thing_ptr + THING_OFS_VY));
+    lua_push_field_int(Ls, "room_index", *(int*)(thing_ptr + THING_OFS_ROOM));
+    lua_push_field_int(Ls, "state_id", (int)*(uint8_t*)(thing_ptr + THING_OFS_STATE_ID));
+    lua_push_field_int(Ls, "flags", (int)*(uint8_t*)(thing_ptr + THING_OFS_FLAGS));
+    lua_push_hex_field(Ls, "head_blob", (const uint8_t*)(thing_ptr + THING_OFS_HEAD_BLOB), THING_HEAD_BLOB_LEN);
+    lua_push_hex_field(Ls, "motion_blob", (const uint8_t*)(thing_ptr + THING_OFS_MOTION_BLOB), THING_MOTION_BLOB_LEN);
+    lua_push_hex_field(Ls, "action_blob", (const uint8_t*)(thing_ptr + THING_OFS_ACTION_BLOB), THING_ACTION_BLOB_LEN);
+    lua_push_hex_field(Ls, "state_blob", (const uint8_t*)(thing_ptr + THING_OFS_STATE_BLOB), THING_STATE_BLOB_LEN);
+    lua_push_hex_field(Ls, "tail_blob", (const uint8_t*)(thing_ptr + THING_OFS_TAIL_BLOB), THING_TAIL_BLOB_LEN);
+}
+
 static int lua_game_tick_count(lua_State* Ls) {
     lua_pushnumber(Ls, (lua_Number)g_game_tick_count);
     return 1;
@@ -5857,6 +5879,39 @@ static int lua_game_entities(lua_State* Ls) {
             lua_rawseti(Ls, -2, out_i++);
         }
     }
+    return 1;
+}
+
+static int lua_game_sword_snapshot(lua_State* Ls) {
+    lua_newtable(Ls);
+
+    for (int player_index = 0; player_index < 2; player_index++) {
+        uintptr_t player_ptr = game_get_player_ptr(player_index);
+        char key[24];
+        snprintf(key, sizeof(key), "p%d_has_sword", player_index);
+        if (player_ptr && ptr_readable((const void*)player_ptr, PLAYER_SIZE)) {
+            lua_push_field_bool(Ls, key, (*(uint8_t*)(player_ptr + PLAYER_OFS_HAS_SWORD) == 0) ? 1 : 0);
+        } else {
+            lua_pushnil(Ls);
+            lua_setfield(Ls, -2, key);
+        }
+    }
+
+    lua_newtable(Ls);
+    {
+        int out_i = 1;
+        int thing_count = game_get_thing_count();
+        for (int i = 0; i < thing_count; i++) {
+            const uint8_t* t = p_things + (i * THING_SIZE);
+            if (!ptr_readable((const void*)t, THING_SIZE)) continue;
+            if (t[THING_OFS_ACTIVE] == 0) continue;
+            if (t[THING_OFS_TYPE] != THING_TYPE_SWORD) continue;
+            push_sword_state_table(Ls, t, i);
+            lua_rawseti(Ls, -2, out_i++);
+        }
+    }
+    lua_setfield(Ls, -2, "swords");
+
     return 1;
 }
 
@@ -6130,6 +6185,41 @@ static int game_apply_entity_table(lua_State* Ls, int idx) {
     return 1;
 }
 
+static int game_apply_sword_table(lua_State* Ls, int idx) {
+    int slot;
+    uint8_t* t;
+
+    idx = lua_absindex_compat(Ls, idx);
+    slot = lua_table_get_int_field(Ls, idx, "slot", -1);
+    if (slot <= 0 || slot >= game_get_thing_count()) return 0;
+
+    t = p_things + (slot * THING_SIZE);
+    if (!ptr_writable((void*)t, THING_SIZE)) return 0;
+    if (t[THING_OFS_TYPE] == THING_TYPE_PLAYER) return 0;
+
+    if (t[THING_OFS_TYPE] != THING_TYPE_SWORD || t[THING_OFS_ACTIVE] == 0) {
+        memset(t, 0, THING_SIZE);
+        t[THING_OFS_TYPE] = THING_TYPE_SWORD;
+    }
+
+    t[THING_OFS_ACTIVE] = (uint8_t)slot;
+    *(float*)(t + THING_OFS_X) = lua_table_get_float_field(Ls, idx, "x", *(float*)(t + THING_OFS_X));
+    *(float*)(t + THING_OFS_Y) = lua_table_get_float_field(Ls, idx, "y", *(float*)(t + THING_OFS_Y));
+    *(float*)(t + THING_OFS_PREV_X) = lua_table_get_float_field(Ls, idx, "prev_x", *(float*)(t + THING_OFS_PREV_X));
+    *(float*)(t + THING_OFS_PREV_Y) = lua_table_get_float_field(Ls, idx, "prev_y", *(float*)(t + THING_OFS_PREV_Y));
+    *(float*)(t + THING_OFS_VX) = lua_table_get_float_field(Ls, idx, "vx", *(float*)(t + THING_OFS_VX));
+    *(float*)(t + THING_OFS_VY) = lua_table_get_float_field(Ls, idx, "vy", *(float*)(t + THING_OFS_VY));
+    *(int*)(t + THING_OFS_ROOM) = lua_table_get_int_field(Ls, idx, "room_index", *(int*)(t + THING_OFS_ROOM));
+    *(uint8_t*)(t + THING_OFS_STATE_ID) = (uint8_t)lua_table_get_int_field(Ls, idx, "state_id", *(uint8_t*)(t + THING_OFS_STATE_ID));
+    *(uint8_t*)(t + THING_OFS_FLAGS) = (uint8_t)lua_table_get_int_field(Ls, idx, "flags", *(uint8_t*)(t + THING_OFS_FLAGS));
+    (void)lua_table_copy_hex_field(Ls, idx, "head_blob", (uint8_t*)(t + THING_OFS_HEAD_BLOB), THING_HEAD_BLOB_LEN);
+    (void)lua_table_copy_hex_field(Ls, idx, "motion_blob", (uint8_t*)(t + THING_OFS_MOTION_BLOB), THING_MOTION_BLOB_LEN);
+    (void)lua_table_copy_hex_field(Ls, idx, "action_blob", (uint8_t*)(t + THING_OFS_ACTION_BLOB), THING_ACTION_BLOB_LEN);
+    (void)lua_table_copy_hex_field(Ls, idx, "state_blob", (uint8_t*)(t + THING_OFS_STATE_BLOB), THING_STATE_BLOB_LEN);
+    (void)lua_table_copy_hex_field(Ls, idx, "tail_blob", (uint8_t*)(t + THING_OFS_TAIL_BLOB), THING_TAIL_BLOB_LEN);
+    return 1;
+}
+
 static int lua_game_apply_snapshot(lua_State* Ls) {
     int idx = 1;
     int applied = 0;
@@ -6211,6 +6301,68 @@ static int lua_game_apply_snapshot(lua_State* Ls) {
         }
     }
     lua_pop(Ls, 1);
+
+    lua_pushboolean(Ls, applied ? 1 : 0);
+    return 1;
+}
+
+static int lua_game_apply_sword_snapshot(lua_State* Ls) {
+    int idx = 1;
+    int applied = 0;
+    int thing_count = game_get_thing_count();
+    uint8_t* seen_slots = NULL;
+
+    if (!lua_istable(Ls, idx)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "expected sword snapshot table");
+        return 2;
+    }
+    idx = lua_absindex_compat(Ls, idx);
+
+    for (int player_index = 0; player_index < 2; player_index++) {
+        uintptr_t p = game_get_player_ptr(player_index);
+        if (p && ptr_writable((void*)p, PLAYER_SIZE)) {
+            char key[24];
+            int def = (*(uint8_t*)(p + PLAYER_OFS_HAS_SWORD) == 0) ? 1 : 0;
+            snprintf(key, sizeof(key), "p%d_has_sword", player_index);
+            *(uint8_t*)(p + PLAYER_OFS_HAS_SWORD) = lua_table_get_int_field(Ls, idx, key, def) ? 0 : 1;
+            applied = 1;
+        }
+    }
+
+    if (thing_count > 0) {
+        seen_slots = (uint8_t*)calloc((size_t)thing_count, sizeof(uint8_t));
+    }
+
+    lua_getfield(Ls, idx, "swords");
+    if (lua_istable(Ls, -1)) {
+        int swords_idx = lua_absindex_compat(Ls, -1);
+        int n = (int)lua_objlen(Ls, swords_idx);
+        for (int i = 1; i <= n; i++) {
+            lua_rawgeti(Ls, swords_idx, i);
+            if (lua_istable(Ls, -1)) {
+                int slot = lua_table_get_int_field(Ls, -1, "slot", -1);
+                if (seen_slots && slot > 0 && slot < thing_count) {
+                    seen_slots[slot] = 1;
+                }
+                applied |= game_apply_sword_table(Ls, -1);
+            }
+            lua_pop(Ls, 1);
+        }
+    }
+    lua_pop(Ls, 1);
+
+    if (seen_slots) {
+        for (int i = 1; i < thing_count; i++) {
+            uint8_t* t = p_things + (i * THING_SIZE);
+            if (!ptr_writable((void*)t, THING_SIZE)) continue;
+            if (t[THING_OFS_TYPE] != THING_TYPE_SWORD) continue;
+            if (seen_slots[i]) continue;
+            t[THING_OFS_ACTIVE] = 0;
+            applied = 1;
+        }
+        free(seen_slots);
+    }
 
     lua_pushboolean(Ls, applied ? 1 : 0);
     return 1;
@@ -6983,6 +7135,7 @@ static int lua_game_get_map_selector(lua_State *L) {
 static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_snapshot, 1);       lua_setfield(Ls, -2, "snapshot");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_sword_snapshot, 1); lua_setfield(Ls, -2, "sword_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_entities, 1);       lua_setfield(Ls, -2, "entities");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_tick_count, 1);     lua_setfield(Ls, -2, "tick_count");
     lua_pushcfunction(Ls, lua_game_native_tick);                                       lua_setfield(Ls, -2, "native_tick");
@@ -6999,6 +7152,7 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_input_status, 1);   lua_setfield(Ls, -2, "input_status");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_block_raw_input, 1); lua_setfield(Ls, -2, "block_raw_input");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_snapshot, 1); lua_setfield(Ls, -2, "apply_snapshot");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
     lua_game_push_command_constants(Ls);
     /* map selector (online mod) */
     lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
@@ -7120,6 +7274,247 @@ static void push_net_api_table(lua_State *Ls) {
     lua_pushcfunction(Ls, lua_net_connecting); lua_setfield(Ls, -2, "connecting");
 }
 
+/* ---- mod.http: async HTTPS-capable GET via WinHTTP + worker thread ------- */
+
+#define HTTP_MAX_SLOTS 8
+
+typedef struct {
+    int            in_use;
+    HANDLE         thread;
+    volatile LONG  done;      /* 0=pending, 1=ok, -1=error — written by thread */
+    char          *body;
+    size_t         body_len;
+    char           error_msg[256];
+    wchar_t        url[2048];
+} HttpSlot;
+
+static HttpSlot g_http_slots[HTTP_MAX_SLOTS];
+
+static DWORD WINAPI http_worker_thread(LPVOID param) {
+    HttpSlot *slot = (HttpSlot *)param;
+
+    URL_COMPONENTS uc;
+    wchar_t host[512] = {0};
+    wchar_t path[1024] = {0};
+    memset(&uc, 0, sizeof(uc));
+    uc.dwStructSize      = sizeof(uc);
+    uc.lpszHostName      = host;
+    uc.dwHostNameLength  = (DWORD)(sizeof(host) / sizeof(host[0]));
+    uc.lpszUrlPath       = path;
+    uc.dwUrlPathLength   = (DWORD)(sizeof(path) / sizeof(path[0]));
+
+    if (!WinHttpCrackUrl(slot->url, 0, 0, &uc)) {
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "bad URL (WinHttpCrackUrl err %lu)", GetLastError());
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    HINTERNET session = WinHttpOpen(
+        L"EggnoggPlus/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0);
+    if (!session) {
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "WinHttpOpen failed %lu", GetLastError());
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    /* 10-second resolve+connect timeout */
+    DWORD timeout_ms = 10000;
+    WinHttpSetOption(session, WINHTTP_OPTION_CONNECT_TIMEOUT,    &timeout_ms, sizeof(timeout_ms));
+    WinHttpSetOption(session, WINHTTP_OPTION_RECEIVE_TIMEOUT,    &timeout_ms, sizeof(timeout_ms));
+    WinHttpSetOption(session, WINHTTP_OPTION_SEND_TIMEOUT,       &timeout_ms, sizeof(timeout_ms));
+    WinHttpSetOption(session, WINHTTP_OPTION_RESOLVE_TIMEOUT,    &timeout_ms, sizeof(timeout_ms));
+
+    INTERNET_PORT port = uc.nPort
+        ? uc.nPort
+        : (uc.nScheme == INTERNET_SCHEME_HTTPS
+            ? INTERNET_DEFAULT_HTTPS_PORT
+            : INTERNET_DEFAULT_HTTP_PORT);
+
+    HINTERNET conn = WinHttpConnect(session, host, port, 0);
+    if (!conn) {
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "WinHttpConnect failed %lu", GetLastError());
+        WinHttpCloseHandle(session);
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    DWORD req_flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET req = WinHttpOpenRequest(conn, L"GET",
+        path[0] ? path : L"/",
+        NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, req_flags);
+    if (!req) {
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "WinHttpOpenRequest failed %lu", GetLastError());
+        WinHttpCloseHandle(conn);
+        WinHttpCloseHandle(session);
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    if (!WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(req, NULL)) {
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "request failed %lu", GetLastError());
+        WinHttpCloseHandle(req);
+        WinHttpCloseHandle(conn);
+        WinHttpCloseHandle(session);
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    /* Verify HTTP status code */
+    DWORD status_code = 0;
+    DWORD status_size = sizeof(status_code);
+    WinHttpQueryHeaders(req,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &status_code, &status_size, WINHTTP_NO_HEADER_INDEX);
+    if (status_code != 200) {
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "HTTP %lu", status_code);
+        WinHttpCloseHandle(req);
+        WinHttpCloseHandle(conn);
+        WinHttpCloseHandle(session);
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    /* Read body incrementally */
+    size_t cap = 8192, len = 0;
+    char  *buf = (char *)malloc(cap);
+    int    ok  = (buf != NULL);
+
+    while (ok) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(req, &avail)) break;
+        if (avail == 0) break;
+        if (len + avail + 1 > cap) {
+            size_t newcap = (len + avail + 1) * 2;
+            char *tmp = (char *)realloc(buf, newcap);
+            if (!tmp) { ok = 0; break; }
+            buf = tmp;
+            cap = newcap;
+        }
+        DWORD nread = 0;
+        if (!WinHttpReadData(req, buf + len, avail, &nread)) { ok = 0; break; }
+        len += nread;
+    }
+
+    WinHttpCloseHandle(req);
+    WinHttpCloseHandle(conn);
+    WinHttpCloseHandle(session);
+
+    if (ok && buf) {
+        buf[len]      = '\0';
+        slot->body     = buf;
+        slot->body_len = len;
+        InterlockedExchange(&slot->done, 1);
+    } else {
+        free(buf);
+        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+            "failed reading response body");
+        InterlockedExchange(&slot->done, -1);
+    }
+    return 0;
+}
+
+/* mod.http.get(url_string) → handle_int  or  nil, errmsg */
+static int lua_http_get(lua_State *L) {
+    const char *url_utf8 = luaL_checkstring(L, 1);
+
+    int idx = -1;
+    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
+        if (!g_http_slots[i].in_use) { idx = i; break; }
+    }
+    if (idx < 0) {
+        lua_pushnil(L);
+        lua_pushstring(L, "too many concurrent HTTP requests");
+        return 2;
+    }
+
+    HttpSlot *slot = &g_http_slots[idx];
+    memset(slot, 0, sizeof(*slot));
+
+    if (!MultiByteToWideChar(CP_UTF8, 0, url_utf8, -1,
+                             slot->url,
+                             (int)(sizeof(slot->url) / sizeof(slot->url[0])))) {
+        lua_pushnil(L);
+        lua_pushstring(L, "URL too long or invalid UTF-8");
+        return 2;
+    }
+
+    slot->in_use = 1;
+    slot->done   = 0;
+    slot->thread = CreateThread(NULL, 0, http_worker_thread, slot, 0, NULL);
+    if (!slot->thread) {
+        slot->in_use = 0;
+        lua_pushnil(L);
+        lua_pushstring(L, "CreateThread failed");
+        return 2;
+    }
+
+    lua_pushinteger(L, idx);
+    return 1;
+}
+
+/* mod.http.poll(handle) → "pending"  |  "done", body  |  "error", msg */
+static int lua_http_poll(lua_State *L) {
+    int idx = (int)luaL_checkinteger(L, 1);
+    if (idx < 0 || idx >= HTTP_MAX_SLOTS || !g_http_slots[idx].in_use) {
+        lua_pushstring(L, "error");
+        lua_pushstring(L, "invalid handle");
+        return 2;
+    }
+    HttpSlot *slot = &g_http_slots[idx];
+    LONG d = InterlockedCompareExchange(&slot->done, 0, 0);  /* atomic read */
+    if (d == 0) {
+        lua_pushstring(L, "pending");
+        return 1;
+    }
+    if (slot->thread) { CloseHandle(slot->thread); slot->thread = NULL; }
+    if (d == 1) {
+        lua_pushstring(L, "done");
+        lua_pushlstring(L, slot->body ? slot->body : "", slot->body_len);
+        free(slot->body);
+        slot->body   = NULL;
+        slot->in_use = 0;
+        return 2;
+    }
+    lua_pushstring(L, "error");
+    lua_pushstring(L, slot->error_msg);
+    slot->in_use = 0;
+    return 2;
+}
+
+/* mod.http.cancel(handle) */
+static int lua_http_cancel(lua_State *L) {
+    int idx = (int)luaL_checkinteger(L, 1);
+    if (idx >= 0 && idx < HTTP_MAX_SLOTS && g_http_slots[idx].in_use) {
+        HttpSlot *slot = &g_http_slots[idx];
+        /* Thread may still be running — detach it; it will clean up its own
+           WinHTTP handles. We just abandon the result buffer. */
+        if (slot->thread) { CloseHandle(slot->thread); slot->thread = NULL; }
+        if (slot->body)   { free(slot->body); slot->body = NULL; }
+        slot->in_use = 0;
+    }
+    return 0;
+}
+
+static void push_http_api_table(lua_State *Ls) {
+    lua_newtable(Ls);
+    lua_pushcfunction(Ls, lua_http_get);    lua_setfield(Ls, -2, "get");
+    lua_pushcfunction(Ls, lua_http_poll);   lua_setfield(Ls, -2, "poll");
+    lua_pushcfunction(Ls, lua_http_cancel); lua_setfield(Ls, -2, "cancel");
+}
+
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
 
@@ -7174,6 +7569,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     // Non-blocking TCP networking (online mod).
     push_net_api_table(Ls);
     lua_setfield(Ls, -2, "net");
+
+    // HTTPS-capable async HTTP GET (WinHTTP).
+    push_http_api_table(Ls);
+    lua_setfield(Ls, -2, "http");
 
     // Fields (convenience)
     lua_pushstring(Ls, mod->id);      lua_setfield(Ls, -2, "id");

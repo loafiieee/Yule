@@ -14,6 +14,7 @@ local bit = bit or require("bit")
 local ALL_CMD_MASK = bit.bor(0x01, 0x02, 0x04, 0x08, 0x10, 0x20)
 
 local SNAPSHOT_INTERVAL = 8   -- ticks between position corrections (~133ms at 60fps)
+local SWORD_SNAPSHOT_INTERVAL = 1
 local PING_EVERY        = 60
 local PING_HISTORY      = 8
 local TIMEOUT_TICKS     = 600
@@ -33,7 +34,9 @@ local send_seq          = 0
 local last_capture_tick = -1
 local last_sent_cmd     = 0
 local last_remote_cmd   = 0
-local remote_cmd_acc    = 0   -- OR of all cmds since last apply; catches short presses
+local remote_cmd_queue  = {}
+local remote_cmd_head   = 1
+local remote_cmd_tail   = 0
 local last_remote_role  = nil
 local ticks_since_recv  = 0
 local tick_count        = 0
@@ -43,6 +46,12 @@ local snapshot_recv_seq = -1
 local snapshots_sent    = 0
 local snapshots_applied = 0
 local pending_snapshot  = nil
+
+local sword_snapshot_seq      = 0
+local sword_snapshot_recv_seq = -1
+local sword_snapshots_sent    = 0
+local sword_snapshots_applied = 0
+local pending_sword_snapshot  = nil
 
 local ping_seq     = 0
 local ping_sent_at = {}
@@ -107,13 +116,35 @@ local function read_local_cmd()
     return read_slot(local_idx)
 end
 
+local function queue_remote_cmd(cmd)
+    remote_cmd_tail = remote_cmd_tail + 1
+    remote_cmd_queue[remote_cmd_tail] = cmd
+end
+
+local function pop_remote_cmd()
+    if remote_cmd_head > remote_cmd_tail then
+        return nil
+    end
+    local cmd = remote_cmd_queue[remote_cmd_head]
+    remote_cmd_queue[remote_cmd_head] = nil
+    remote_cmd_head = remote_cmd_head + 1
+    if remote_cmd_head > remote_cmd_tail then
+        remote_cmd_head = 1
+        remote_cmd_tail = 0
+    end
+    return cmd
+end
+
 -- ── remote input injection ───────────────────────────────────────────────
 local function apply_remote_input()
     if not (mod.game and mod.game.set_input) then return false end
-    -- OR with accumulator so a press+release that both arrive in the same proto.update
-    -- call still registers for at least one tick instead of being silently dropped.
-    local cmd = bit.bor(last_remote_cmd, remote_cmd_acc)
-    remote_cmd_acc = 0
+    -- Preserve command edges in arrival order. Sword throw/disarm depends on exact
+    -- button transitions, so collapsing multiple remote inputs into one mask is not safe.
+    local queued = pop_remote_cmd()
+    if queued ~= nil then
+        last_remote_cmd = queued
+    end
+    local cmd = last_remote_cmd
     mod.game.set_input(remote_idx, cmd, 2, true)
     return true
 end
@@ -180,6 +211,23 @@ local function take_and_send_snapshot()
     })
 end
 
+local function take_and_send_sword_snapshot()
+    if not is_authority then return end
+    if not (mod.game and mod.game.sword_snapshot) then return end
+
+    local snap = mod.game.sword_snapshot()
+    if not snap then return end
+
+    sword_snapshot_seq = sword_snapshot_seq + 1
+    sword_snapshots_sent = sword_snapshots_sent + 1
+
+    proto.send({
+        type = "sword_snapshot",
+        seq  = sword_snapshot_seq,
+        data = snap,
+    })
+end
+
 -- ── snapshot: apply (non-authority only) ─────────────────────────────────
 
 local function apply_snapshot_data(snap)
@@ -208,6 +256,14 @@ local function apply_snapshot_data(snap)
     return ok
 end
 
+local function apply_sword_snapshot_data(snap)
+    if not snap or type(snap) ~= "table" then return false end
+    if not (mod.game and mod.game.apply_sword_snapshot) then return false end
+    local ok = mod.game.apply_sword_snapshot(snap)
+    if ok then sword_snapshots_applied = sword_snapshots_applied + 1 end
+    return ok
+end
+
 -- ── lifecycle ────────────────────────────────────────────────────────────
 local function reset_state()
     active = false; live = false
@@ -216,11 +272,15 @@ local function reset_state()
     last_error = nil; waiting_reason = "idle"; match_seed = 0
 
     send_seq = 0; last_capture_tick = -1
-    last_sent_cmd = 0; last_remote_cmd = 0; remote_cmd_acc = 0; last_remote_role = nil
+    last_sent_cmd = 0; last_remote_cmd = 0
+    remote_cmd_queue = {}; remote_cmd_head = 1; remote_cmd_tail = 0
+    last_remote_role = nil
     ticks_since_recv = 0; tick_count = 0
 
     snapshot_seq = 0; snapshot_recv_seq = -1
     snapshots_sent = 0; snapshots_applied = 0; pending_snapshot = nil
+    sword_snapshot_seq = 0; sword_snapshot_recv_seq = -1
+    sword_snapshots_sent = 0; sword_snapshots_applied = 0; pending_sword_snapshot = nil
 
     ping_seq = 0; ping_sent_at = {}; ping_samples = {}; current_ping = 0
     stat_inputs_sent = 0; stat_inputs_recv = 0
@@ -242,7 +302,8 @@ function sync.start(local_player_index, auth_role, seed)
         return false
     end
 
-    if not (mod.game and mod.game.set_input and mod.game.input_clear and mod.game.block_raw_input) then
+    if not (mod.game and mod.game.set_input and mod.game.input_clear and mod.game.block_raw_input
+        and mod.game.sword_snapshot and mod.game.apply_sword_snapshot) then
         last_error = "Required relay APIs are unavailable."
         mod.warn("[sync] " .. last_error)
         return false
@@ -288,40 +349,49 @@ function sync.get_error()  return last_error end
 
 -- ── per-tick ─────────────────────────────────────────────────────────────
 function sync.apply_pending()
-    if not pending_snapshot then return end
+    if not pending_snapshot and not pending_sword_snapshot then return end
 
     -- Refresh leader from live game state. apply_snapshot ALWAYS writes leader_ptr;
     -- when leader_index is nil it defaults to -1 which zeroes the ptr and clears GO.
     -- We need the current value so we can substitute it when appropriate.
     -- This snapshot() call runs only when a pending snapshot exists (~every 8 ticks).
-    if mod.game and mod.game.snapshot then
+    if pending_snapshot and mod.game and mod.game.snapshot then
         local curr = mod.game.snapshot(local_idx, false)
         if curr then cached_leader_index = curr.leader_index end
     end
 
-    if is_authority then
-        -- Received from non-auth. Authority owns all game state except the non-auth
-        -- player's position — only apply x/y/vx/vy (apply_snapshot_data handles this).
-        pending_snapshot.rng_seed        = nil   -- authority owns RNG
-        pending_snapshot.start_countdown = nil   -- authority owns countdowns
-        pending_snapshot.end_countdown   = nil
-        pending_snapshot.entities        = nil   -- authority owns entity pool
-        -- Substitute our live leader so C doesn't clear it (nil → -1 → clear GO).
-        pending_snapshot.leader_index    = cached_leader_index
-    else
-        -- Received from authority. Apply everything authority sends except:
-        -- - entities: applied as-is (authority is source of truth for swords)
-        -- - leader: trust authority's value if it's explicit (0 or 1); if it's nil
-        --   (nobody is leading right now per authority), keep our local value so a
-        --   delayed "no leader" snapshot doesn't flash GO off for a frame.
-        if pending_snapshot.leader_index == nil then
-            pending_snapshot.leader_index = cached_leader_index
+    if pending_snapshot then
+        if is_authority then
+            -- Received from non-auth. Authority owns all game state except the non-auth
+            -- player's position — only apply x/y/vx/vy (apply_snapshot_data handles this).
+            pending_snapshot.rng_seed        = nil   -- authority owns RNG
+            pending_snapshot.start_countdown = nil   -- authority owns countdowns
+            pending_snapshot.end_countdown   = nil
+            pending_snapshot.room_index      = nil   -- authority owns active room
+            pending_snapshot.entities        = nil   -- authority owns entity pool
+            -- Substitute our live leader so C doesn't clear it (nil → -1 → clear GO).
+            pending_snapshot.leader_index    = cached_leader_index
+        else
+            -- Received from authority. Apply everything authority sends except:
+            -- - entities: applied as-is (authority is source of truth for swords)
+            -- - leader: trust authority's value if it's explicit (0 or 1); if it's nil
+            --   (nobody is leading right now per authority), keep our local value so a
+            --   delayed "no leader" snapshot doesn't flash GO off for a frame.
+            if pending_snapshot.leader_index == nil then
+                pending_snapshot.leader_index = cached_leader_index
+            end
+            -- Countdowns and RNG come from authority (they are canonical here).
         end
-        -- Countdowns and RNG come from authority (they are canonical here).
+        apply_snapshot_data(pending_snapshot)
+        pending_snapshot = nil
     end
 
-    apply_snapshot_data(pending_snapshot)
-    pending_snapshot = nil
+    if pending_sword_snapshot then
+        if not is_authority then
+            apply_sword_snapshot_data(pending_sword_snapshot)
+        end
+        pending_sword_snapshot = nil
+    end
 end
 
 function sync.tick()
@@ -350,6 +420,9 @@ function sync.tick()
 
     if (tick_count % SNAPSHOT_INTERVAL) == 0 then
         take_and_send_snapshot()
+    end
+    if (tick_count % SWORD_SNAPSHOT_INTERVAL) == 0 then
+        take_and_send_sword_snapshot()
     end
 
     return nil
@@ -395,8 +468,7 @@ function sync.on_message(msg)
     if t == "remote_input" then
         ticks_since_recv = 0
         local cmd        = bit.band(tonumber(msg.cmd) or 0, ALL_CMD_MASK)
-        last_remote_cmd  = cmd
-        remote_cmd_acc   = bit.bor(remote_cmd_acc, cmd)
+        queue_remote_cmd(cmd)
         last_remote_role = tonumber(msg.role)
         stat_inputs_recv = stat_inputs_recv + 1
         return nil
@@ -408,6 +480,16 @@ function sync.on_message(msg)
         if seq > snapshot_recv_seq then
             snapshot_recv_seq = seq
             pending_snapshot  = msg.data
+        end
+        return nil
+    end
+
+    if t == "remote_sword_snapshot" then
+        ticks_since_recv = 0
+        local seq = qround(msg.seq or 0)
+        if seq > sword_snapshot_recv_seq then
+            sword_snapshot_recv_seq = seq
+            pending_sword_snapshot  = msg.data
         end
         return nil
     end
@@ -462,6 +544,9 @@ function sync.stats()
         snapshots_sent    = snapshots_sent,
         snapshots_recv    = snapshot_recv_seq >= 0 and (snapshot_recv_seq + 1) or 0,
         snapshots_applied = snapshots_applied,
+        sword_snapshots_sent    = sword_snapshots_sent,
+        sword_snapshots_recv    = sword_snapshot_recv_seq >= 0 and (sword_snapshot_recv_seq + 1) or 0,
+        sword_snapshots_applied = sword_snapshots_applied,
         restores          = 0,
         latest_snapshot_seq  = snapshot_recv_seq,
         applied_snapshot_seq = snapshots_applied > 0 and snapshot_recv_seq or -1,

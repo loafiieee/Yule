@@ -48,6 +48,8 @@ local function summarize_message(t)
         return string.format("remote_input role=%s frame=%s cmd=%s", tostring(t.role), tostring(t.frame or t.seq), tostring(t.cmd))
     elseif ty == "snapshot" then
         return string.format("snapshot seq=%s", tostring(t.seq))
+    elseif ty == "sword_snapshot" or ty == "remote_sword_snapshot" then
+        return string.format("%s seq=%s", ty, tostring(t.seq))
     elseif ty == "frame_hash" then
         return string.format("frame_hash frame=%s hash=%s", tostring(t.frame), tostring(t.hash))
     elseif ty == "sync_error" then

@@ -218,6 +218,14 @@ class Match {
         seq: Number(msg.seq || 0),
         data: msg.data,
       });
+    } else if (type === "sword_snapshot") {
+      safeSend(other, {
+        type: "remote_sword_snapshot",
+        seq: Number(msg.seq || 0),
+        data: msg.data,
+      });
+    } else if (type === "spawn_sync") {
+      safeSend(other, msg);
     }
   }
 
@@ -312,6 +320,8 @@ function handleMessage(sock, msg) {
 
   if (type === "map_manifest") {
     sock.manifest = normalizeManifest(msg.maps);
+    log("map_manifest from", sock.username || "(anon)",
+        "maps:", sock.manifest.map(m => m.key).join(", ") || "(none)");
     return;
   }
 
@@ -338,7 +348,7 @@ function handleMessage(sock, msg) {
     return;
   }
 
-  if (type === "input" || type === "snapshot") {
+  if (type === "input" || type === "snapshot" || type === "sword_snapshot" || type === "spawn_sync") {
     if (sock.match) {
       sock.match.relay(sock, msg);
     }

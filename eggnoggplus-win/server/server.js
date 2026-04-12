@@ -150,6 +150,7 @@ class Match {
     safeSend(a, {
       type: "match_found",
       role: 0,
+      opponent: b.username || "",
       map_key: sharedMap.key,
       map_sel: sharedMap.selectorA,
       map_label: sharedMap.label,
@@ -157,6 +158,7 @@ class Match {
     safeSend(b, {
       type: "match_found",
       role: 1,
+      opponent: a.username || "",
       map_key: sharedMap.key,
       map_sel: sharedMap.selectorB,
       map_label: sharedMap.label,
@@ -205,9 +207,12 @@ class Match {
     const other = this.other(from);
     const type = String(msg.type || "");
     if (type === "input") {
+      const senderRole = Number(from.matchRole);
+      const recipientRole = Number(other && other.matchRole);
+      log("relay input", `sender=${from.username || "?"}`, `sender_role=${senderRole}`, `recipient=${other && other.username || "?"}`, `recipient_role=${recipientRole}`, `frame=${Number(msg.frame || msg.seq || 0)}`, `cmd=${Number(msg.cmd || 0)}`);
       safeSend(other, {
         type: "remote_input",
-        role: from.matchRole,
+        role: senderRole,
         seq: Number(msg.seq || msg.frame || 0),
         frame: Number(msg.frame || msg.seq || 0),
         cmd: Number(msg.cmd || 0),
@@ -226,6 +231,13 @@ class Match {
       });
     } else if (type === "spawn_sync") {
       safeSend(other, msg);
+    } else if (type === "sync_ready" || type === "sync_begin" || type === "frame_hash") {
+      safeSend(other, msg);
+    } else if (type === "sync_error") {
+      safeSend(other, {
+        type: "sync_error",
+        reason: String(msg.reason || "Peer sync failed."),
+      });
     }
   }
 
@@ -348,7 +360,16 @@ function handleMessage(sock, msg) {
     return;
   }
 
-  if (type === "input" || type === "snapshot" || type === "sword_snapshot" || type === "spawn_sync") {
+  if (
+    type === "input" ||
+    type === "snapshot" ||
+    type === "sword_snapshot" ||
+    type === "spawn_sync" ||
+    type === "sync_ready" ||
+    type === "sync_begin" ||
+    type === "frame_hash" ||
+    type === "sync_error"
+  ) {
     if (sock.match) {
       sock.match.relay(sock, msg);
     }

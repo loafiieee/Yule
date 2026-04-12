@@ -69,6 +69,7 @@ local map_selector           = nil
 local match_seed             = nil
 local match_start_tick       = 0
 local match_input_delay      = 1
+local pending_sync_start_retries = 0
 
 -- HUD toggle (F3)
 local hud_visible = true
@@ -116,6 +117,7 @@ local function end_match(reason)
     match_seed             = nil
     match_start_tick       = 0
     match_input_delay      = 1
+    pending_sync_start_retries = 0
 
     -- Always reopen the hub after a match. When reason is nil it's a clean game-over
     -- (state already transitioned to main); when it's non-nil we need to force the
@@ -147,13 +149,25 @@ mod.on_tick(function()
 
     if sname == "game" and not match_active and pending_start_match and hub.get_state() == "in_game" then
         local role = hub.get_role()
-        pending_start_match = false
-        if sync.start(role, hub.get_authority_role(), hub.get_match_seed()) then
+        local ok, started = pcall(sync.start, role, hub.get_authority_role(), hub.get_match_seed())
+        if ok and started then
+            pending_start_match = false
+            pending_sync_start_retries = 0
             match_active = true
-            mod.log(string.format("[main] relay match started  role=%d  map=%s",
-                role, tostring(hub.get_map_key())))
+            mod.log(string.format("[main] online match started  mode=%s  role=%d  map=%s",
+                tostring(sync.mode and sync.mode() or "unknown"), role, tostring(hub.get_map_key())))
         else
-            end_match("Failed to initialize online sync.")
+            local err = ok and (sync.get_error and sync.get_error()) or tostring(started)
+            err = tostring(err or "Failed to initialize online sync.")
+            local transient = err:find("snapshot", 1, true) ~= nil or err:find("pre-frame") ~= nil
+            if transient and pending_sync_start_retries > 0 then
+                pending_sync_start_retries = pending_sync_start_retries - 1
+                mod.log(string.format("[main] delaying online sync init; retries_left=%d reason=%s",
+                    pending_sync_start_retries, err))
+                return
+            end
+            pending_start_match = false
+            end_match(err)
             return
         end
     end
@@ -181,7 +195,11 @@ mod.on_tick(function()
         return
     end
 
-    sync.apply_pending()
+    if sync.apply_pending() == false then
+        end_match(sync.get_error() or "Match sync failed.")
+        return
+    end
+
     local status = sync.tick()
     if status == "timeout" then
         end_match("Connection timed out.")
@@ -204,6 +222,7 @@ mod.on_frame(function()
     if hub.consume_start_request and hub.consume_start_request() then
         pending_start_match    = true
         pending_start_cooldown = 0
+        pending_sync_start_retries = 20
         map_selector           = hub.get_map_sel()
         match_seed             = hub.get_match_seed and hub.get_match_seed() or match_seed
         match_start_tick       = hub.get_start_tick and hub.get_start_tick() or 0
@@ -284,7 +303,14 @@ mod.on_frame(function()
             end_match(sync.get_error() or "Match sync failed.")
             return
         end
-        if hud_visible then
+        if sname == "game" then
+            mod.ui.begin_overlay()
+            draw_nametags()
+            if hud_visible then
+                draw_netgraph()
+            end
+            mod.ui.end_overlay()
+        elseif hud_visible then
             draw_netgraph()
         end
     end
@@ -350,6 +376,138 @@ mod.on_event(function(e)
     return false
 end)
 
+-- ── player name tags ──────────────────────────────────────────────────────
+function draw_nametags()
+    if not (mod.game and mod.game.snapshot and mod.game.camera) then return end
+
+    local cam = mod.game.camera()
+    if not cam then return end
+
+    local W, H = mod.ui.screen_size()
+    W = W or 640
+    H = H or 480
+
+    local role = hub.get_role and hub.get_role() or 0
+    role = math.max(0, math.min(1, tonumber(role) or 0))
+
+    local snap = mod.game.snapshot(role, false)
+    if not snap then return end
+
+    local cx = tonumber(cam.x) or 0
+    local cy = tonumber(cam.y) or 0
+    local view_w = tonumber(cam.w) or W
+    local view_h = tonumber(cam.h) or H
+    if view_w <= 0 then view_w = W end
+    if view_h <= 0 then view_h = H end
+    local scale_x = W / view_w
+    local scale_y = H / view_h
+
+    local opp_name = hub.get_opponent and hub.get_opponent() or ""
+
+    local player = snap.player or {}
+    local enemy = snap.enemy or {}
+    local px = player.x or snap.player_x
+    local py = player.y or snap.player_y
+    local ex = enemy.x or snap.enemy_x
+    local ey = enemy.y or snap.enemy_y
+
+    local TAG_SCALE = 0.65
+    local LOCAL_TAG_OFFSET_Y = 50
+    local OPP_TAG_OFFSET_Y = 34
+    local PLAYER_THING_TYPE = 0x01
+
+    local function world_to_screen(world_x, world_y)
+        if world_x == nil or world_y == nil then return nil, nil end
+        local sx = ((tonumber(world_x) or 0) - cx + view_w * 0.5) * scale_x
+        local sy = ((tonumber(world_y) or 0) - cy + view_h * 0.5) * scale_y
+        return sx, sy
+    end
+
+    local function dist2(ax, ay, bx, by)
+        if ax == nil or ay == nil or bx == nil or by == nil then return math.huge end
+        local dx = (tonumber(ax) or 0) - (tonumber(bx) or 0)
+        local dy = (tonumber(ay) or 0) - (tonumber(by) or 0)
+        return dx * dx + dy * dy
+    end
+
+    local function resolve_player_world_positions()
+        local player_x, player_y = px, py
+        local enemy_x, enemy_y = ex, ey
+        if not (mod.game and mod.game.entities) then
+            return player_x, player_y, enemy_x, enemy_y
+        end
+
+        local things = mod.game.entities(true, true) or {}
+        local players = {}
+        for i = 1, #things do
+            local thing = things[i]
+            if thing and tonumber(thing.type) == PLAYER_THING_TYPE and thing.x ~= nil and thing.y ~= nil then
+                players[#players + 1] = thing
+            end
+        end
+
+        if #players == 0 then
+            return player_x, player_y, enemy_x, enemy_y
+        end
+
+        local local_i = nil
+        local local_best = math.huge
+        for i = 1, #players do
+            local d = dist2(players[i].x, players[i].y, px, py)
+            if d < local_best then
+                local_best = d
+                local_i = i
+            end
+        end
+
+        if local_i ~= nil then
+            player_x = players[local_i].x
+            player_y = players[local_i].y
+            table.remove(players, local_i)
+        end
+
+        if #players == 0 then
+            return player_x, player_y, enemy_x, enemy_y
+        end
+
+        local enemy_i = 1
+        local enemy_best = dist2(players[1].x, players[1].y, ex, ey)
+        for i = 2, #players do
+            local d = dist2(players[i].x, players[i].y, ex, ey)
+            if d < enemy_best then
+                enemy_best = d
+                enemy_i = i
+            end
+        end
+
+        enemy_x = players[enemy_i].x
+        enemy_y = players[enemy_i].y
+        return player_x, player_y, enemy_x, enemy_y
+    end
+
+    local player_world_x, player_world_y, enemy_world_x, enemy_world_y = resolve_player_world_positions()
+    local player_sx, player_sy = world_to_screen(player_world_x, player_world_y)
+    local enemy_sx, enemy_sy = world_to_screen(enemy_world_x, enemy_world_y)
+
+    local function draw_tag_at_screen(sx, sy, text, offset_y, r, g, b)
+        if sx == nil or sy == nil or not text or text == "" then return end
+        local tw = #text * 9 * TAG_SCALE
+        sy = sy - offset_y
+        if sx < -tw or sx > W + tw or sy < -20 or sy > H + 20 then
+            return
+        end
+        mod.ui.text_at(text, sx - tw * 0.5 + 1, sy + 1, TAG_SCALE, 0.0, 0.0, 0.0)
+        mod.ui.text_at(text, sx - tw * 0.5, sy, TAG_SCALE, r, g, b)
+    end
+
+    if player_world_x and player_world_y then
+        draw_tag_at_screen(player_sx, player_sy, "V", LOCAL_TAG_OFFSET_Y, 0.3, 1.0, 0.3)
+    end
+    if enemy_world_x and enemy_world_y and opp_name ~= "" then
+        draw_tag_at_screen(enemy_sx, enemy_sy, opp_name, OPP_TAG_OFFSET_Y, 1.0, 0.85, 0.3)
+    end
+end
+
 -- ── netgraph HUD ──────────────────────────────────────────────────────────
 function draw_netgraph()
     local W, H = mod.ui.screen_size()
@@ -382,13 +540,21 @@ function draw_netgraph()
     mod.ui.text_at(detail, 12, 38, 0.65, 0.9, 0.9, 0.9)
 
     local line2 = string.format(
-        "in %-4d  rin %-4d  snp out=%-4d in=%-4d  seed %-10u",
+        "in %-4d  rin %-4d  rb %-3d miss %-3d  seed %-10u",
         tonumber(st.inputs_sent) or 0,
         tonumber(st.inputs_recv) or 0,
-        tonumber(st.snapshots_sent) or 0,
-        tonumber(st.snapshots_applied) or 0,
+        tonumber(st.rollbacks) or tonumber(st.restores) or 0,
+        tonumber(st.prediction_misses) or 0,
         tonumber(st.rng_seed) or 0)
     mod.ui.text_at(line2, 12, 52, 0.6, 0.8, 0.8, 0.8)
+
+    local line3 = string.format(
+        "corr s=%-3d r=%-3d a=%-3d  rsim %-4d",
+        tonumber(st.corrections_sent) or tonumber(st.snapshots_sent) or 0,
+        tonumber(st.corrections_recv) or tonumber(st.snapshots_recv) or 0,
+        tonumber(st.corrections_applied) or tonumber(st.snapshots_applied) or 0,
+        tonumber(st.resimulated_frames) or 0)
+    mod.ui.text_at(line3, 12, 66, 0.58, 0.75, 0.75, 0.75)
 
     mod.ui.text_at(string.format("wait %-18s", tostring(st.waiting_reason or "?")), W - 8, 8, 0.65, 1.0, 1.0, 0.0)
     if st.error then

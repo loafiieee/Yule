@@ -47,7 +47,17 @@ local function summarize_message(t)
     elseif ty == "remote_input" then
         return string.format("remote_input role=%s frame=%s cmd=%s", tostring(t.role), tostring(t.frame or t.seq), tostring(t.cmd))
     elseif ty == "snapshot" then
+        local d = t.data
+        if type(d) == "table" and d._kind == "correction" then
+            return string.format("snapshot/correction frame=%s hash=%s", tostring(d._history_frame or t.seq), tostring(d._hash))
+        end
         return string.format("snapshot seq=%s", tostring(t.seq))
+    elseif ty == "remote_snapshot" then
+        local d = t.data
+        if type(d) == "table" and d._kind == "correction" then
+            return string.format("remote_snapshot/correction frame=%s hash=%s", tostring(d._history_frame or t.seq), tostring(d._hash))
+        end
+        return string.format("remote_snapshot seq=%s", tostring(t.seq))
     elseif ty == "sword_snapshot" or ty == "remote_sword_snapshot" then
         return string.format("%s seq=%s", ty, tostring(t.seq))
     elseif ty == "frame_hash" then

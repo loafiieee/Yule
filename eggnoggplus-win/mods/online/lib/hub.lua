@@ -23,6 +23,7 @@ local my_authority_role = 0
 local my_map_sel = 0
 local my_map_label = ""
 local my_map_key = ""
+local my_opponent = ""
 local my_match_seed = 0
 local my_start_tick = 0
 local my_input_delay = 1
@@ -238,6 +239,7 @@ local function handle_msg(msg)
     elseif t == "match_found" then
         my_role = tonumber(msg.role) or 0
         my_authority_role = tonumber(msg.authority_role) or 0
+        my_opponent = tostring(msg.opponent or "")
         my_map_key = tostring(msg.map_key or "")
         do
             local resolved_sel = nil
@@ -947,4 +949,12 @@ end
 
 function hub.get_input_delay()
     return my_input_delay
+end
+
+function hub.get_username()
+    return username
+end
+
+function hub.get_opponent()
+    return my_opponent
 end

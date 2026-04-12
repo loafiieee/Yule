@@ -3905,6 +3905,28 @@ void hooks_block_next_game_tick(int block) {
     g_block_game_tick_once = block ? 1 : 0;
 }
 
+int hooks_simulate_game_ticks(int count, int arg0) {
+    fn_main_update_with_buttons_t real_update = p_main_update_with_buttons_trampoline
+        ? p_main_update_with_buttons_trampoline
+        : p_main_update_with_buttons;
+    int ran = 0;
+
+    if (count <= 0) return 0;
+    if (!real_update) return -1;
+
+    for (int i = 0; i < count; i++) {
+        void* state_ptr = p_state_current ? p_state_current() : NULL;
+        if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
+            return (ran > 0) ? ran : -1;
+        }
+        (void)real_update(arg0);
+        hooks_finish_game_tick();
+        ran++;
+    }
+
+    return ran;
+}
+
 static void render_rows(void) {
     rebuild_rows();
 

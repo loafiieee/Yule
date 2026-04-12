@@ -531,6 +531,20 @@ end
 `tick_count() -> number`
 - Returns the current gameplay tick counter.
 
+`native_tick() -> number | nil`
+- Returns the game's native tick counter directly from memory.
+
+`set_native_tick(value) -> bool`
+- Overwrites the native game tick counter. Mostly useful for low-level sync tools.
+
+`native_state() -> table`
+- Returns a small table with `game_ticks`, `rng_seed`, and `game_level`.
+
+`simulate_ticks([count=1 [,arg0=0]]) -> ok, ran`
+- Runs the native gameplay update loop immediately without re-entering Lua `on_tick(...)`.
+- Intended for rollback/resimulation workflows after `apply_snapshot(...)`.
+- `count` is clamped internally; `ok` is false if the game is not currently in gameplay state.
+
 `poll_cmds(player_index [,mode=1]) -> int`
 - Returns the **effective** command bitmask for the player (real input plus any active framework overrides).
 

@@ -126,6 +126,10 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_MRAND_SEED            0x496DA0u
 #define ADDR_GAME_TICKS            0x547BA0u
 #define ADDR_ROOM_W                0x55A3A4u
+#define ADDR_CAMERA_X              0x55A360u
+#define ADDR_CAMERA_Y              0x55A364u
+#define ADDR_GAME_W                0x55A394u
+#define ADDR_GAME_H                0x55A324u
 
 typedef void* (__cdecl *fn_state_current_t)(void);
 typedef void* (__cdecl *fn_state_switch_t)(void*);
@@ -4721,6 +4725,67 @@ static int lua_ui_stroke_rect(lua_State* Ls) {
     return 0;
 }
 
+/* ── UI draw layering ────────────────────────────────────────────────────
+ *
+ * The engine's sprite batch system queues sprites/text and flushes them at
+ * specific points during the render pipeline.  Mod on_frame callbacks fire
+ * from SDL_GL_SwapWindow — AFTER the game has already flushed its batches.
+ * Anything mods plot into the batch carries over to the NEXT frame and
+ * gets flushed BEFORE tiles, making mod UI appear below the game world.
+ *
+ * The layering API fixes this by giving mods explicit control:
+ *
+ *   ui.flush()            Force-flush the sprite batch NOW.  Everything
+ *                         queued up to this point is drawn immediately.
+ *
+ *   ui.begin_overlay()    Flush pending game sprites, then enter overlay
+ *                         mode.  All subsequent text_at / draw_sprite calls
+ *                         will be drawn ON TOP of the game world.
+ *
+ *   ui.end_overlay()      Flush overlay sprites and restore state.
+ *
+ * Usage from Lua:
+ *   mod.on_frame(function()
+ *       mod.ui.begin_overlay()
+ *       mod.ui.text_at("HUD TEXT", 10, 10, 1.0, 1, 1, 1)
+ *       mod.ui.draw_sprite(spr, 100, 100)
+ *       mod.ui.end_overlay()
+ *   end)
+ */
+
+static int g_overlay_active = 0;
+
+static int lua_ui_flush(lua_State* Ls) {
+    (void)Ls;
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    ui_reset_render_state();
+    return 0;
+}
+
+static int lua_ui_begin_overlay(lua_State* Ls) {
+    (void)Ls;
+    /* Flush any pending game sprites so they render BELOW the overlay. */
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    ui_reset_render_state();
+    g_overlay_active = 1;
+    return 0;
+}
+
+static int lua_ui_end_overlay(lua_State* Ls) {
+    (void)Ls;
+    /* Flush overlay sprites so they render NOW, on top of everything. */
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    ui_reset_render_state();
+    g_overlay_active = 0;
+    return 0;
+}
+
 static int lua_ui_sheet_base(lua_State* Ls) {
     const char* sheet = luaL_checkstring(Ls, 1);
     int base = -1;
@@ -5755,6 +5820,32 @@ static int lua_game_block_next_tick(lua_State* Ls) {
     return 1;
 }
 
+static int lua_game_simulate_ticks(lua_State* Ls) {
+    int count = (int)luaL_optinteger(Ls, 1, 1);
+    int arg0 = (int)luaL_optinteger(Ls, 2, 0);
+    int ran = 0;
+
+    if (count < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "count must be >= 0");
+        return 2;
+    }
+    if (count > 600) {
+        count = 600;
+    }
+
+    ran = hooks_simulate_game_ticks(count, arg0);
+    if (ran < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "game tick simulation unavailable");
+        return 2;
+    }
+
+    lua_pushboolean(Ls, (ran == count) ? 1 : 0);
+    lua_pushinteger(Ls, (lua_Integer)ran);
+    return 2;
+}
+
 static int lua_game_poll_cmds(lua_State* Ls) {
     int player_index = (int)luaL_optinteger(Ls, 1, 0);
     int mode = (int)luaL_optinteger(Ls, 2, 1);
@@ -6158,12 +6249,21 @@ static int game_apply_player_table(lua_State* Ls, int idx, int player_index) {
 static int game_apply_entity_table(lua_State* Ls, int idx) {
     int slot;
     uint8_t* t;
+    int snap_type;
     idx = lua_absindex_compat(Ls, idx);
     slot = lua_table_get_int_field(Ls, idx, "slot", -1);
     if (slot < 0 || slot >= game_get_thing_count()) return 0;
     t = p_things + (slot * THING_SIZE);
     if (!ptr_writable((void*)t, THING_SIZE)) return 0;
-    if (lua_table_get_int_field(Ls, idx, "type", (int)t[THING_OFS_TYPE]) != (int)t[THING_OFS_TYPE]) return 0;
+
+    snap_type = lua_table_get_int_field(Ls, idx, "type", (int)t[THING_OFS_TYPE]);
+    if (snap_type != (int)t[THING_OFS_TYPE]) {
+        /* Entity type changed at this slot (e.g. mine replaced by sword).
+         * Clear the slot and overwrite with the snapshot's type so corrections
+         * can actually repair diverged entity state instead of silently skipping. */
+        memset(t, 0, THING_SIZE);
+        t[THING_OFS_TYPE] = (uint8_t)snap_type;
+    }
 
     t[THING_OFS_ACTIVE] = (uint8_t)(lua_table_get_int_field(Ls, idx, "active", t[THING_OFS_ACTIVE] ? 1 : 0) ? 1 : 0);
     *(float*)(t + THING_OFS_X) = lua_table_get_float_field(Ls, idx, "x", *(float*)(t + THING_OFS_X));
@@ -6281,10 +6381,15 @@ static int lua_game_apply_snapshot(lua_State* Ls) {
             lua_rawgeti(Ls, ent_idx, i);
             if (lua_istable(Ls, -1)) {
                 int slot = lua_table_get_int_field(Ls, -1, "slot", -1);
-                if (seen_slots && slot >= 0 && slot < thing_count) {
+                int ent_applied = game_apply_entity_table(Ls, -1);
+                applied |= ent_applied;
+                /* Only mark the slot as seen if the entity was actually applied.
+                 * Previously this was marked BEFORE the apply, so a type-guard
+                 * skip would mark the slot seen without correcting it, causing
+                 * permanently diverged entity state. */
+                if (ent_applied && seen_slots && slot >= 0 && slot < thing_count) {
                     seen_slots[slot] = 1;
                 }
-                applied |= game_apply_entity_table(Ls, -1);
             }
             lua_pop(Ls, 1);
         }
@@ -7075,6 +7180,9 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_pos, 1);  lua_setfield(Ls, -2, "mouse_pos");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_fill_rect, 1);  lua_setfield(Ls, -2, "fill_rect");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_stroke_rect, 1);lua_setfield(Ls, -2, "stroke_rect");
+    lua_pushcfunction(Ls, lua_ui_flush);         lua_setfield(Ls, -2, "flush");
+    lua_pushcfunction(Ls, lua_ui_begin_overlay); lua_setfield(Ls, -2, "begin_overlay");
+    lua_pushcfunction(Ls, lua_ui_end_overlay);   lua_setfield(Ls, -2, "end_overlay");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_sheet_base, 1); lua_setfield(Ls, -2, "sheet_base");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_sprite_id, 1);  lua_setfield(Ls, -2, "sprite_id");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_draw_sprite, 1);lua_setfield(Ls, -2, "draw_sprite");
@@ -7132,6 +7240,19 @@ static int lua_game_get_map_selector(lua_State *L) {
     return 1;
 }
 
+static int lua_game_camera(lua_State* Ls) {
+    volatile float* cam_x = (volatile float*)(uintptr_t)ADDR_CAMERA_X;
+    volatile float* cam_y = (volatile float*)(uintptr_t)ADDR_CAMERA_Y;
+    volatile float* gw    = (volatile float*)(uintptr_t)ADDR_GAME_W;
+    volatile float* gh    = (volatile float*)(uintptr_t)ADDR_GAME_H;
+    lua_newtable(Ls);
+    lua_push_field_number(Ls, "x", (double)*cam_x);
+    lua_push_field_number(Ls, "y", (double)*cam_y);
+    lua_push_field_number(Ls, "w", (double)*gw);
+    lua_push_field_number(Ls, "h", (double)*gh);
+    return 1;
+}
+
 static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_snapshot, 1);       lua_setfield(Ls, -2, "snapshot");
@@ -7144,6 +7265,7 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_set_rng_seed);                                      lua_setfield(Ls, -2, "set_rng_seed");
     lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
     lua_pushcfunction(Ls, lua_game_block_next_tick);                                   lua_setfield(Ls, -2, "block_next_tick");
+    lua_pushcfunction(Ls, lua_game_simulate_ticks);                                    lua_setfield(Ls, -2, "simulate_ticks");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds, 1);      lua_setfield(Ls, -2, "poll_cmds");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds_raw, 1);  lua_setfield(Ls, -2, "poll_cmds_raw");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_input, 1);      lua_setfield(Ls, -2, "set_input");
@@ -7154,6 +7276,7 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_snapshot, 1); lua_setfield(Ls, -2, "apply_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
     lua_game_push_command_constants(Ls);
+    lua_pushcfunction(Ls, lua_game_camera);                                              lua_setfield(Ls, -2, "camera");
     /* map selector (online mod) */
     lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
     lua_pushcfunction(Ls, lua_game_get_map_selector); lua_setfield(Ls, -2, "get_map_selector");
@@ -9194,14 +9317,13 @@ void lua_manager_on_frame() {
     // Reset turtle state after mod callbacks to avoid leaking transforms/tints into the next frame.
     ui_reset_render_state();
 
-    // sprites) carry over to the next frame, where they're flushed at specific points in the
-    // render pipeline. Forcing a flush here (we're hooked from SDL_GL_SwapWindow) clears
-    //
-    // We only force-flush in menu-style states, where the vanilla pipeline already finalizes
-    // rendering via menu draw code and doesn't rely on cross-frame batching the same way.
-    const char* st_name = ui_state_name_from_ptr(state_ptr);
-    int allow_flush = ui_is_menu_state_name(st_name) || (hooks_custom_state_active_name() != NULL);
-    if (allow_flush && p_main_sprite_batches_draw) {
+    // Always flush sprite batches after mod on_frame callbacks.  We fire from
+    // SDL_GL_SwapWindow which is AFTER the game's entire render pass, so any
+    // sprites still in the batch are either stale game leftovers or mod draws.
+    // Without this flush, mod text/sprites carry over to the NEXT frame and
+    // get rendered below tiles (the old "everything we draw is under the
+    // tiles" bug).  Flushing here draws them on top, right before SwapWindow.
+    if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
 

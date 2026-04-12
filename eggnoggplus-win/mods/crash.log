@@ -1,0 +1,2 @@
+[2026-04-12 10:01:37] Vectored exception 0xC0000005 (ACCESS_VIOLATION) at 0043CEBF
+Wrote minidump if available: mods/crash_YYYYMMDD_HHMMSS.dmp

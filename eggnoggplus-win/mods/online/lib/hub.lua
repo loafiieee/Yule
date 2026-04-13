@@ -227,6 +227,12 @@ local function handle_msg(msg)
     local t = msg and msg.type or nil
     if t == "auth_ok" then
         username = msg.username or username
+        do
+            local sv = servers and servers.get_selected and servers.get_selected()
+            if sv then
+                save_server_creds(sv, field_user, field_pass)
+            end
+        end
         map_manifest.invalidate()  -- rebuild manifest fresh in case maps changed since last session
         map_manifest.send()
         set_state(S_HUB)
@@ -782,6 +788,9 @@ function hub.open()
     hub.ensure_state()
     click_pending = false
     pending_auth  = nil
+    if servers and servers.get_selected and servers.get_selected() then
+        load_server_creds()
+    end
     -- Fetch fresh server list + re-ping every time the hub opens
     if servers and servers.refresh then servers.refresh() end
 
@@ -800,7 +809,6 @@ function hub.open()
             server_select_back = S_LOGIN
             set_state(S_SERVER_SELECT)
         else
-            load_server_creds()
             set_state(S_LOGIN)
             status("")
         end

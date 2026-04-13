@@ -72,7 +72,7 @@ local match_input_delay      = 1
 local pending_sync_start_retries = 0
 
 -- HUD toggle (F3)
-local hud_visible = true
+local hud_visible = false
 local SDLK_F2     = 1073741883
 local SDLK_F3     = 1073741884
 local SDLK_F5     = 1073741886
@@ -384,127 +384,62 @@ function draw_nametags()
     if not cam then return end
 
     local W, H = mod.ui.screen_size()
-    W = W or 640
-    H = H or 480
+    W = tonumber(W) or 640
+    H = tonumber(H) or 480
 
     local role = hub.get_role and hub.get_role() or 0
     role = math.max(0, math.min(1, tonumber(role) or 0))
 
-    local snap = mod.game.snapshot(role, false)
-    if not snap then return end
+    local local_snap = mod.game.snapshot(role, false)
+    if not local_snap or not local_snap.player then return end
 
-    local cx = tonumber(cam.x) or 0
-    local cy = tonumber(cam.y) or 0
-    local view_w = tonumber(cam.w) or W
-    local view_h = tonumber(cam.h) or H
+    local function num(v)
+        v = tonumber(v)
+        if not v or v ~= v or v == math.huge or v == -math.huge then return nil end
+        return v
+    end
+
+    local cx = num(cam.x) or 0
+    local cy = num(cam.y) or 0
+    local view_w = num(cam.w) or W
+    local view_h = num(cam.h) or H
     if view_w <= 0 then view_w = W end
     if view_h <= 0 then view_h = H end
     local scale_x = W / view_w
     local scale_y = H / view_h
 
-    local opp_name = hub.get_opponent and hub.get_opponent() or ""
+    local local_x = num(local_snap.player.x)
+    local local_y = num(local_snap.player.y)
 
-    local player = snap.player or {}
-    local enemy = snap.enemy or {}
-    local px = player.x or snap.player_x
-    local py = player.y or snap.player_y
-    local ex = enemy.x or snap.enemy_x
-    local ey = enemy.y or snap.enemy_y
+    -- Scale UI elements relative to a 640x480 reference resolution
+    local ui_scale = H / 480
 
-    local TAG_SCALE = 0.65
-    local LOCAL_TAG_OFFSET_Y = 50
-    local OPP_TAG_OFFSET_Y = 34
-    local PLAYER_THING_TYPE = 0x01
+    local TAG_SCALE = 0.65 * ui_scale
+    local LOCAL_TAG_OFFSET_Y = 50 * ui_scale
 
     local function world_to_screen(world_x, world_y)
-        if world_x == nil or world_y == nil then return nil, nil end
-        local sx = ((tonumber(world_x) or 0) - cx + view_w * 0.5) * scale_x
-        local sy = ((tonumber(world_y) or 0) - cy + view_h * 0.5) * scale_y
+        if not world_x or not world_y then return nil, nil end
+        local sx = (world_x - cx + view_w * 0.5) * scale_x
+        local sy = (world_y - cy + view_h * 0.5) * scale_y
+        if sx ~= sx or sy ~= sy then return nil, nil end
         return sx, sy
     end
 
-    local function dist2(ax, ay, bx, by)
-        if ax == nil or ay == nil or bx == nil or by == nil then return math.huge end
-        local dx = (tonumber(ax) or 0) - (tonumber(bx) or 0)
-        local dy = (tonumber(ay) or 0) - (tonumber(by) or 0)
-        return dx * dx + dy * dy
-    end
-
-    local function resolve_player_world_positions()
-        local player_x, player_y = px, py
-        local enemy_x, enemy_y = ex, ey
-        if not (mod.game and mod.game.entities) then
-            return player_x, player_y, enemy_x, enemy_y
-        end
-
-        local things = mod.game.entities(true, true) or {}
-        local players = {}
-        for i = 1, #things do
-            local thing = things[i]
-            if thing and tonumber(thing.type) == PLAYER_THING_TYPE and thing.x ~= nil and thing.y ~= nil then
-                players[#players + 1] = thing
-            end
-        end
-
-        if #players == 0 then
-            return player_x, player_y, enemy_x, enemy_y
-        end
-
-        local local_i = nil
-        local local_best = math.huge
-        for i = 1, #players do
-            local d = dist2(players[i].x, players[i].y, px, py)
-            if d < local_best then
-                local_best = d
-                local_i = i
-            end
-        end
-
-        if local_i ~= nil then
-            player_x = players[local_i].x
-            player_y = players[local_i].y
-            table.remove(players, local_i)
-        end
-
-        if #players == 0 then
-            return player_x, player_y, enemy_x, enemy_y
-        end
-
-        local enemy_i = 1
-        local enemy_best = dist2(players[1].x, players[1].y, ex, ey)
-        for i = 2, #players do
-            local d = dist2(players[i].x, players[i].y, ex, ey)
-            if d < enemy_best then
-                enemy_best = d
-                enemy_i = i
-            end
-        end
-
-        enemy_x = players[enemy_i].x
-        enemy_y = players[enemy_i].y
-        return player_x, player_y, enemy_x, enemy_y
-    end
-
-    local player_world_x, player_world_y, enemy_world_x, enemy_world_y = resolve_player_world_positions()
-    local player_sx, player_sy = world_to_screen(player_world_x, player_world_y)
-    local enemy_sx, enemy_sy = world_to_screen(enemy_world_x, enemy_world_y)
-
     local function draw_tag_at_screen(sx, sy, text, offset_y, r, g, b)
-        if sx == nil or sy == nil or not text or text == "" then return end
+        if not sx or not sy or not text or text == "" then return end
         local tw = #text * 9 * TAG_SCALE
+        local shadow_off = math.max(1, math.floor(ui_scale + 0.5))
         sy = sy - offset_y
         if sx < -tw or sx > W + tw or sy < -20 or sy > H + 20 then
             return
         end
-        mod.ui.text_at(text, sx - tw * 0.5 + 1, sy + 1, TAG_SCALE, 0.0, 0.0, 0.0)
+        mod.ui.text_at(text, sx - tw * 0.5 + shadow_off, sy + shadow_off, TAG_SCALE, 0.0, 0.0, 0.0)
         mod.ui.text_at(text, sx - tw * 0.5, sy, TAG_SCALE, r, g, b)
     end
 
-    if player_world_x and player_world_y then
-        draw_tag_at_screen(player_sx, player_sy, "V", LOCAL_TAG_OFFSET_Y, 0.3, 1.0, 0.3)
-    end
-    if enemy_world_x and enemy_world_y and opp_name ~= "" then
-        draw_tag_at_screen(enemy_sx, enemy_sy, opp_name, OPP_TAG_OFFSET_Y, 1.0, 0.85, 0.3)
+    local sx, sy = world_to_screen(local_x, local_y)
+    if sx and sy then
+        draw_tag_at_screen(sx, sy, "V", LOCAL_TAG_OFFSET_Y, 0.3, 1.0, 0.3)
     end
 end
 
@@ -515,10 +450,15 @@ function draw_netgraph()
     H = H or 480
     local st = sync.stats()
 
+    -- Scale all positions and text sizes relative to 640x480 reference
+    local s = H / 480
+    local lx = 12 * s   -- left margin
+    local rx = W - 8 * s -- right margin
+
     local role_str = "P" .. tostring((tonumber(st.role) or 0) + 1)
     local mode_str = st.is_authority and "AUTH" or "SYNC"
     local hi_str   = st.high_ping_mode and "  HI-PING" or ""
-    mod.ui.text_at("ONLINE  " .. role_str .. "  " .. mode_str .. hi_str, 12, 8, 0.9,
+    mod.ui.text_at("ONLINE  " .. role_str .. "  " .. mode_str .. hi_str, lx, 8 * s, 0.9 * s,
         st.high_ping_mode and 1.0 or 0.2,
         st.high_ping_mode and 0.6 or 1.0,
         0.4)
@@ -527,7 +467,7 @@ function draw_netgraph()
     local ping_r  = ping_pr >= 100 and 1.0 or (ping_pr >= 60 and 0.85 or 0.55)
     local ping_g  = ping_pr >= 100 and 0.55 or (ping_pr >= 60 and 0.80 or 0.90)
     local ping_str = string.format("ping %3d ms", ping_pr)
-    mod.ui.text_at(ping_str, 12, 24, 0.7, ping_r, ping_g, 0.40)
+    mod.ui.text_at(ping_str, lx, 24 * s, 0.7 * s, ping_r, ping_g, 0.40)
 
     local source_str = (st.local_source == nil) and "src ?" or ("src p" .. tostring(st.local_source + 1))
     local detail = string.format(
@@ -537,7 +477,7 @@ function draw_netgraph()
         tonumber(st.current_state_seq) or 0,
         tonumber(st.native_tick) or 0,
         tonumber(st.resend_every) or 0)
-    mod.ui.text_at(detail, 12, 38, 0.65, 0.9, 0.9, 0.9)
+    mod.ui.text_at(detail, lx, 38 * s, 0.65 * s, 0.9, 0.9, 0.9)
 
     local line2 = string.format(
         "in %-4d  rin %-4d  rb %-3d miss %-3d  seed %-10u",
@@ -546,7 +486,7 @@ function draw_netgraph()
         tonumber(st.rollbacks) or tonumber(st.restores) or 0,
         tonumber(st.prediction_misses) or 0,
         tonumber(st.rng_seed) or 0)
-    mod.ui.text_at(line2, 12, 52, 0.6, 0.8, 0.8, 0.8)
+    mod.ui.text_at(line2, lx, 52 * s, 0.6 * s, 0.8, 0.8, 0.8)
 
     local line3 = string.format(
         "corr s=%-3d r=%-3d a=%-3d  rsim %-4d",
@@ -554,11 +494,11 @@ function draw_netgraph()
         tonumber(st.corrections_recv) or tonumber(st.snapshots_recv) or 0,
         tonumber(st.corrections_applied) or tonumber(st.snapshots_applied) or 0,
         tonumber(st.resimulated_frames) or 0)
-    mod.ui.text_at(line3, 12, 66, 0.58, 0.75, 0.75, 0.75)
+    mod.ui.text_at(line3, lx, 66 * s, 0.58 * s, 0.75, 0.75, 0.75)
 
-    mod.ui.text_at(string.format("wait %-18s", tostring(st.waiting_reason or "?")), W - 8, 8, 0.65, 1.0, 1.0, 0.0)
+    mod.ui.text_at(string.format("wait %-18s", tostring(st.waiting_reason or "?")), rx, 8 * s, 0.65 * s, 1.0, 1.0, 0.0)
     if st.error then
-        mod.ui.text_at(string.format("err %s", tostring(st.error)), W - 8, 22, 0.6, 1.0, 0.4, 0.4)
+        mod.ui.text_at(string.format("err %s", tostring(st.error)), rx, 22 * s, 0.6 * s, 1.0, 0.4, 0.4)
     end
-    mod.ui.text_at("F3 hud", 12, H - 12, 0.5, 0.5, 0.5, 0.5)
+    mod.ui.text_at("F3 hud", lx, H - 12 * s, 0.5 * s, 0.5, 0.5, 0.5)
 end

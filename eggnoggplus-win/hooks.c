@@ -45,7 +45,19 @@
 #define GL_PREVIOUS 0x8578
 #endif
 
+#ifndef SDLK_F9
+#define SDLK_F9 1073741880
+#endif
+#ifndef SDLK_F2
+#define SDLK_F2 1073741883
+#endif
+#ifndef SDLK_F3
+#define SDLK_F3 1073741884
+#endif
+
 #include "hooks.h"
+#include "ggpo_ext.h"
+#include "ggpo_loopback.h"
 #include "lua_manager.h"
 #include "font_ext.h"
 #include "texture_ext.h"
@@ -57,6 +69,10 @@
 #define ADDR_STATE_LAST               0x405DB8u
 #define ADDR_STATE_SWITCH             0x405DC0u
 #define ADDR_MAIN_UPDATE_WITH_BUTTONS 0x4340E0u
+#define ADDR_GAME_UPDATE              0x42C590u
+#define ADDR_MAD_TICKS                0x45F160u
+#define ADDR_DEBUG                    0x541E04u
+#define ADDR_DEBUG_SLOWMO             0x547BA4u
 #define ADDR_MAIN_DRAW              0x4331A0u
 #define ADDR_MENU_COMMON_RENDER       0x4334E0u
 #define ADDR_MAIN_BUTTONS_START       0x432FD0u
@@ -141,6 +157,7 @@
 #define PROFILE_PATH_MAX        MAX_PATH
 #define MAX_CUSTOM_STATES         16
 #define CUSTOM_STATE_NAME_MAX     64
+#define GGPO_SELFTEST_FRAMES_PER_TICK 8
 
 typedef struct GameState {
     void (__cdecl *enter)(void);
@@ -205,6 +222,7 @@ typedef struct Detour {
 typedef void* (__cdecl *fn_state_current_t)(void);
 typedef void* (__cdecl *fn_state_switch_t)(void*);
 typedef int   (__cdecl *fn_main_update_with_buttons_t)(int);
+typedef void  (__cdecl *fn_game_update_t)(int);
 typedef void  (__cdecl *fn_void_void_t)(void);
 typedef void  (__cdecl *fn_main_cursors_reset_t)(float, float);
 typedef void  (__cdecl *fn_main_cursor_spin_t)(int);
@@ -232,6 +250,7 @@ static fn_state_current_t            p_state_current = (fn_state_current_t)(uint
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
 static fn_state_switch_t             p_state_switch = (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
 static fn_main_update_with_buttons_t p_main_update_with_buttons = (fn_main_update_with_buttons_t)(uintptr_t)ADDR_MAIN_UPDATE_WITH_BUTTONS;
+static fn_game_update_t              p_game_update = (fn_game_update_t)(uintptr_t)ADDR_GAME_UPDATE;
 static fn_void_void_t                p_main_draw = (fn_void_void_t)(uintptr_t)ADDR_MAIN_DRAW;
 static fn_void_void_t                p_menu_common_render = (fn_void_void_t)(uintptr_t)ADDR_MENU_COMMON_RENDER;
 static fn_void_void_t                p_main_buttons_start = (fn_void_void_t)(uintptr_t)ADDR_MAIN_BUTTONS_START;
@@ -260,12 +279,16 @@ static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
 static fn_void_void_t                p_mapgen_init_trampoline = NULL;
 static fn_state_switch_t             p_state_switch_trampoline = NULL;
 static fn_main_update_with_buttons_t p_main_update_with_buttons_trampoline = NULL;
+static fn_game_update_t              p_game_update_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
 static fn_tile_action_t              p_high_water_action_trampoline = NULL;
 static fn_colour_query_t             p_game_water_hi_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_HI_COLOUR;
 static fn_colour_query_t             p_game_water_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_COLOUR;
 static volatile int* g_layer = (volatile int*)(uintptr_t)ADDR_LAYER;
+static volatile uint32_t* g_mad_ticks = (volatile uint32_t*)(uintptr_t)ADDR_MAD_TICKS;
+static volatile int* g_debug = (volatile int*)(uintptr_t)ADDR_DEBUG;
+static volatile int* g_debug_slowmo = (volatile int*)(uintptr_t)ADDR_DEBUG_SLOWMO;
 
 static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)ADDR_RGBA_LOAD;
 static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
@@ -274,6 +297,7 @@ static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
 static Detour g_state_switch_detour;
 static Detour g_main_update_with_buttons_detour;
+static Detour g_game_update_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
@@ -330,6 +354,38 @@ static volatile uint32_t g_last_raw_cmd[2] = { 0, 0 };
 static volatile uint32_t g_last_effective_cmd[2] = { 0, 0 };
 static volatile int g_raw_input_blocked[2] = { 0, 0 };
 static volatile int g_block_game_tick_once = 0;
+static volatile int g_ggpo_selftest_pending = 0;
+static volatile int g_ggpo_selftest_frames = 0;
+
+static const uint32_t k_ggpo_selftest_masks[] = {
+    0u,
+    0x08u,
+    0x04u,
+    0x01u,
+    0x02u,
+    0x09u,
+    0x06u,
+    0x0Au
+};
+
+typedef struct GgpoSelftestSession {
+    int active;
+    int frames;
+    int pass;
+    int frame_index;
+    size_t state_size;
+    size_t initial_len;
+    size_t work_len;
+    uint8_t* initial_blob;
+    uint8_t* work_blob;
+    uint8_t* live_blob;
+    uint32_t* frame_checksums;
+    uint32_t base_checksum;
+    uint32_t replay1_checksum;
+    uint32_t replay2_checksum;
+} GgpoSelftestSession;
+
+static GgpoSelftestSession g_ggpo_selftest;
 
 // Forward decls for UI layout + state checks used by cursor hijack.
 typedef struct ModsLayout {
@@ -493,6 +549,9 @@ static int console_try_parse_long(const char* s, long* out_value);
 static int console_try_parse_double(const char* s, double* out_value);
 static int console_try_parse_bool(const char* s, int* out_value);
 static void console_strip_crlf(char* s);
+static void console_run_ggpo_selftest(const char* arg);
+static void queue_ggpo_selftest(int frames, const char* source);
+static void toggle_ggpo_loopback(const char* source);
 
 static GameState g_mods_state = {
     mods_enter,
@@ -1892,6 +1951,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  reload.mods", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
@@ -1954,6 +2014,10 @@ static void console_show_help(const char* topic) {
     }
     if (_stricmp(t, "reload.assets") == 0) {
         console_push_line_rgb("reload.assets: reload tracked texture/font overlays and rebuild atlases.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "ggpo.selftest") == 0) {
+        console_push_line_rgb("ggpo.selftest [frames]: run native rollback self-test through ggpo_ext save/load/advance.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "reload.mods") == 0) {
@@ -2718,6 +2782,94 @@ static void console_run_reload_assets(void) {
     }
 }
 
+static void queue_ggpo_selftest(int frames, const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    if (ggpo_loopback_active()) {
+        snprintf(out, sizeof(out), "ggpo.selftest: skipped from %s (loopback active; press F3 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (g_ggpo_selftest.active || g_ggpo_selftest_pending) {
+        snprintf(out, sizeof(out), "ggpo.selftest: skipped from %s (selftest already running)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (frames <= 0) frames = 120;
+    g_ggpo_selftest_frames = frames;
+    g_ggpo_selftest_pending = 1;
+    snprintf(out, sizeof(out), "ggpo.selftest: queued from %s (frames=%d)",
+             (source && source[0]) ? source : "unknown", frames);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+}
+
+static void toggle_ggpo_loopback(const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    char err[256];
+
+    if (ggpo_loopback_active()) {
+        uint32_t frames = ggpo_loopback_frame_count();
+        uint32_t checksum = ggpo_loopback_last_checksum();
+        uint32_t verify_count = ggpo_loopback_verify_count();
+        uint32_t verify_failures = ggpo_loopback_verify_failure_count();
+        ggpo_loopback_stop();
+        snprintf(out, sizeof(out), "ggpo.loopback: disabled from %s after %u frame(s), last_checksum=%u verifies=%u verify_failures=%u",
+                 (source && source[0]) ? source : "unknown",
+                 (unsigned int)frames,
+                 (unsigned int)checksum,
+                 (unsigned int)verify_count,
+                 (unsigned int)verify_failures);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+
+    if (g_ggpo_selftest_pending || g_ggpo_selftest.active) {
+        snprintf(out, sizeof(out), "ggpo.loopback: skipped from %s (selftest pending)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+
+    err[0] = '\0';
+    if (!ggpo_loopback_start(err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.loopback: failed to enable from %s (%s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        return;
+    }
+
+    snprintf(out, sizeof(out), "ggpo.loopback: enabled from %s state_size=%u history=%d verify_interval=%d verify_distance=%d",
+             (source && source[0]) ? source : "unknown",
+             (unsigned int)ggpo_loopback_state_size(),
+             ggpo_loopback_history_capacity(),
+             ggpo_loopback_verify_interval(),
+             ggpo_loopback_verify_distance());
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+}
+
+static void console_run_ggpo_selftest(const char* arg) {
+    long frames = 120;
+
+    if (arg && arg[0]) {
+        if (!console_try_parse_long(arg, &frames) || frames <= 0) {
+            console_push_line_rgb("Usage: ggpo.selftest [positive_frames]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+    }
+
+    queue_ggpo_selftest((int)frames, "console");
+    console_close();
+}
+
 static void console_set_log_level(const char* level_arg) {
     char out[CONSOLE_LINE_TEXT];
     if (!level_arg || !level_arg[0]) {
@@ -3366,6 +3518,8 @@ static void console_execute_input(void) {
         console_run_reload_mods();
     } else if (_stricmp(cmd, "reload.assets") == 0) {
         console_run_reload_assets();
+    } else if (_stricmp(cmd, "ggpo.selftest") == 0) {
+        console_run_ggpo_selftest(arg);
     } else if (_stricmp(cmd, "log.level") == 0) {
         console_set_log_level(arg);
     } else if (_stricmp(cmd, "log.tail") == 0) {
@@ -3501,6 +3655,21 @@ int hooks_console_mousewheel(int y) {
 
 int hooks_console_keydown(int sym, int scancode, int mod) {
     (void)scancode;
+
+    if (!is_console_state_active() && sym == SDLK_F2) {
+        void* cur = p_state_current ? p_state_current() : NULL;
+        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
+            queue_ggpo_selftest(600, "F2");
+            return 1;
+        }
+    }
+    if (!is_console_state_active() && sym == SDLK_F3) {
+        void* cur = p_state_current ? p_state_current() : NULL;
+        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
+            toggle_ggpo_loopback("F3");
+            return 1;
+        }
+    }
 
     if (sym == '`') {
         g_console_suppress_next_textinput = 1;
@@ -3885,6 +4054,19 @@ static void hooks_finish_game_tick(void) {
     }
 }
 
+static void hooks_prepare_deterministic_game_update(void) {
+    uint32_t native_ticks = 0;
+    if (g_debug) {
+        *g_debug = 0;
+    }
+    if (g_debug_slowmo) {
+        *g_debug_slowmo = 0;
+    }
+    if (g_mad_ticks && lua_manager_game_native_ticks(&native_ticks)) {
+        *g_mad_ticks = native_ticks;
+    }
+}
+
 uint32_t hooks_peek_player_cmds_raw(int player_index, int mode) {
     fn_main_player_poll_cmds_t real_poll = p_main_player_poll_cmds_trampoline
         ? p_main_player_poll_cmds_trampoline
@@ -3906,9 +4088,9 @@ void hooks_block_next_game_tick(int block) {
 }
 
 int hooks_simulate_game_ticks(int count, int arg0) {
-    fn_main_update_with_buttons_t real_update = p_main_update_with_buttons_trampoline
-        ? p_main_update_with_buttons_trampoline
-        : p_main_update_with_buttons;
+    fn_game_update_t real_update = p_game_update_trampoline
+        ? p_game_update_trampoline
+        : p_game_update;
     int ran = 0;
 
     if (count <= 0) return 0;
@@ -3919,12 +4101,43 @@ int hooks_simulate_game_ticks(int count, int arg0) {
         if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
             return (ran > 0) ? ran : -1;
         }
-        (void)real_update(arg0);
+        hooks_prepare_deterministic_game_update();
+        real_update(arg0);
         hooks_finish_game_tick();
         ran++;
     }
 
     return ran;
+}
+
+int hooks_advance_game_tick(int arg0, int run_framework_tick) {
+    fn_game_update_t real_update = p_game_update_trampoline
+        ? p_game_update_trampoline
+        : p_game_update;
+    void* state_ptr = p_state_current ? p_state_current() : NULL;
+
+    if (!real_update) return -1;
+    if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) return -1;
+
+    if (run_framework_tick) {
+        lua_manager_on_tick();
+        state_ptr = p_state_current ? p_state_current() : NULL;
+        if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
+            lua_manager_on_tick_post();
+            return -1;
+        }
+    }
+
+    if (hooks_consume_block_game_tick()) {
+        if (run_framework_tick) lua_manager_on_tick_post();
+        return 0;
+    }
+
+    hooks_prepare_deterministic_game_update();
+    real_update(arg0);
+    if (run_framework_tick) lua_manager_on_tick_post();
+    hooks_finish_game_tick();
+    return 1;
 }
 
 static void render_rows(void) {
@@ -4780,19 +4993,319 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
         ? p_main_update_with_buttons_trampoline
         : p_main_update_with_buttons;
     void* state_ptr = NULL;
+    int is_game_state = 0;
 
-    lua_manager_on_tick();
     if (p_state_current) state_ptr = p_state_current();
-    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE && hooks_consume_block_game_tick()) {
-        lua_manager_on_tick_post();
-        return 0;
+    is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
+    if (!is_game_state) {
+        lua_manager_on_tick();
     }
     {
         int result = real_update ? real_update(arg0) : 0;
-        lua_manager_on_tick_post();
-        hooks_finish_game_tick();
+        if (!is_game_state) {
+            lua_manager_on_tick_post();
+            hooks_finish_game_tick();
+        }
         return result;
     }
+}
+
+static void ggpo_selftest_cleanup(void) {
+    free(g_ggpo_selftest.initial_blob);
+    free(g_ggpo_selftest.work_blob);
+    free(g_ggpo_selftest.live_blob);
+    free(g_ggpo_selftest.frame_checksums);
+    memset(&g_ggpo_selftest, 0, sizeof(g_ggpo_selftest));
+}
+
+static int ggpo_selftest_start(char* err, size_t err_cap) {
+    int frames = g_ggpo_selftest_frames > 0 ? g_ggpo_selftest_frames : 120;
+    size_t state_size = ggpo_ext_game_state_size();
+
+    if (frames <= 0) frames = 120;
+    if (frames > 3600) frames = 3600;
+    if (state_size == 0) {
+        snprintf(err, err_cap, "game state unavailable");
+        return 0;
+    }
+
+    ggpo_selftest_cleanup();
+    g_ggpo_selftest.frames = frames;
+    g_ggpo_selftest.state_size = state_size;
+    g_ggpo_selftest.initial_blob = (uint8_t*)malloc(state_size);
+    g_ggpo_selftest.work_blob = (uint8_t*)malloc(state_size);
+    g_ggpo_selftest.live_blob = (uint8_t*)malloc(state_size);
+    g_ggpo_selftest.frame_checksums = (uint32_t*)calloc((size_t)frames, sizeof(uint32_t));
+    if (!g_ggpo_selftest.initial_blob || !g_ggpo_selftest.work_blob || !g_ggpo_selftest.live_blob || !g_ggpo_selftest.frame_checksums) {
+        ggpo_selftest_cleanup();
+        snprintf(err, err_cap, "out of memory");
+        return 0;
+    }
+
+    if (!ggpo_ext_save_game_state(g_ggpo_selftest.initial_blob,
+                                  state_size,
+                                  &g_ggpo_selftest.initial_len,
+                                  &g_ggpo_selftest.base_checksum,
+                                  err,
+                                  err_cap)) {
+        ggpo_selftest_cleanup();
+        return 0;
+    }
+    memcpy(g_ggpo_selftest.work_blob, g_ggpo_selftest.initial_blob, g_ggpo_selftest.initial_len);
+    g_ggpo_selftest.work_len = g_ggpo_selftest.initial_len;
+    g_ggpo_selftest.active = 1;
+    g_ggpo_selftest.pass = 0;
+    g_ggpo_selftest.frame_index = 0;
+    return 1;
+}
+
+static void run_pending_ggpo_selftest(void) {
+    char err[256];
+    char out[CONSOLE_LINE_TEXT];
+    size_t live_len = 0;
+    int completed = 0;
+    int failed = 0;
+    int started = 0;
+
+    if (g_ggpo_selftest_pending && !g_ggpo_selftest.active) {
+        g_ggpo_selftest_pending = 0;
+        if (ggpo_loopback_active()) {
+            snprintf(out, sizeof(out), "ggpo.selftest: skipped (loopback active)");
+            console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+            LOG_WARN("%s", out);
+            return;
+        }
+        err[0] = '\0';
+        if (!ggpo_selftest_start(err, sizeof(err))) {
+            snprintf(out, sizeof(out), "ggpo.selftest: failed (%s)", err[0] ? err : "unknown error");
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            LOG_ERROR("%s", out);
+            return;
+        }
+        started = 1;
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.selftest: started frames=%d state_size=%u budget=%d",
+                 g_ggpo_selftest.frames,
+                 (unsigned int)g_ggpo_selftest.state_size,
+                 GGPO_SELFTEST_FRAMES_PER_TICK);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+    }
+
+    if (!g_ggpo_selftest.active) return;
+    if (started) return;
+
+    err[0] = '\0';
+    if (ggpo_loopback_active()) {
+        snprintf(err, sizeof(err), "loopback became active");
+        failed = 1;
+        goto finish_without_live_restore;
+    }
+
+    if (!ggpo_ext_save_game_state(g_ggpo_selftest.live_blob,
+                                  g_ggpo_selftest.state_size,
+                                  &live_len,
+                                  NULL,
+                                  err,
+                                  sizeof(err))) {
+        failed = 1;
+        goto finish_without_live_restore;
+    }
+    if (!ggpo_ext_load_game_state(g_ggpo_selftest.work_blob, g_ggpo_selftest.work_len, err, sizeof(err))) {
+        failed = 1;
+        goto finish_with_live_restore;
+    }
+
+    for (int step = 0; step < GGPO_SELFTEST_FRAMES_PER_TICK && g_ggpo_selftest.active; step++) {
+        int i = g_ggpo_selftest.frame_index;
+        int mask_count = (int)(sizeof(k_ggpo_selftest_masks) / sizeof(k_ggpo_selftest_masks[0]));
+        uint32_t frame_checksum = 0;
+        GgpoFrameInputs inputs;
+        inputs.player_cmd[0] = k_ggpo_selftest_masks[i % mask_count];
+        inputs.player_cmd[1] = k_ggpo_selftest_masks[((i * 3) + 2) % mask_count];
+
+        if (!ggpo_ext_advance_frame(&inputs, 0, &frame_checksum, err, sizeof(err))) {
+            failed = 1;
+            goto finish_with_live_restore;
+        }
+
+        if (g_ggpo_selftest.pass == 0) {
+            g_ggpo_selftest.frame_checksums[i] = frame_checksum;
+        } else if (frame_checksum != g_ggpo_selftest.frame_checksums[i]) {
+            snprintf(err,
+                     sizeof(err),
+                     "replay checksum mismatch frame=%d expected=%u got=%u",
+                     i + 1,
+                     g_ggpo_selftest.frame_checksums[i],
+                     frame_checksum);
+            failed = 1;
+            goto finish_with_live_restore;
+        }
+
+        g_ggpo_selftest.frame_index++;
+        if (g_ggpo_selftest.frame_index >= g_ggpo_selftest.frames) {
+            uint32_t replay_checksum = 0;
+            uint32_t restored_checksum = 0;
+            if (!lua_manager_game_state_rollback_checksum(&replay_checksum, err, sizeof(err))) {
+                failed = 1;
+                goto finish_with_live_restore;
+            }
+
+            if (g_ggpo_selftest.pass == 0) {
+                g_ggpo_selftest.replay1_checksum = replay_checksum;
+                if (!ggpo_ext_load_game_state(g_ggpo_selftest.initial_blob, g_ggpo_selftest.initial_len, err, sizeof(err))) {
+                    failed = 1;
+                    goto finish_with_live_restore;
+                }
+                if (!lua_manager_game_state_rollback_checksum(&restored_checksum, err, sizeof(err))) {
+                    failed = 1;
+                    goto finish_with_live_restore;
+                }
+                if (restored_checksum != g_ggpo_selftest.base_checksum) {
+                    snprintf(err,
+                             sizeof(err),
+                             "restore checksum mismatch expected=%u got=%u",
+                             g_ggpo_selftest.base_checksum,
+                             restored_checksum);
+                    failed = 1;
+                    goto finish_with_live_restore;
+                }
+                if (!ggpo_ext_save_game_state(g_ggpo_selftest.work_blob,
+                                              g_ggpo_selftest.state_size,
+                                              &g_ggpo_selftest.work_len,
+                                              NULL,
+                                              err,
+                                              sizeof(err))) {
+                    failed = 1;
+                    goto finish_with_live_restore;
+                }
+                g_ggpo_selftest.pass = 1;
+                g_ggpo_selftest.frame_index = 0;
+                break;
+            }
+
+            g_ggpo_selftest.replay2_checksum = replay_checksum;
+            if (g_ggpo_selftest.replay1_checksum != g_ggpo_selftest.replay2_checksum) {
+                snprintf(err,
+                         sizeof(err),
+                         "replay checksum mismatch expected=%u got=%u",
+                         g_ggpo_selftest.replay1_checksum,
+                         g_ggpo_selftest.replay2_checksum);
+                failed = 1;
+                goto finish_with_live_restore;
+            }
+            if (!ggpo_ext_load_game_state(g_ggpo_selftest.initial_blob, g_ggpo_selftest.initial_len, err, sizeof(err))) {
+                failed = 1;
+                goto finish_with_live_restore;
+            }
+            if (!lua_manager_game_state_rollback_checksum(&restored_checksum, err, sizeof(err))) {
+                failed = 1;
+                goto finish_with_live_restore;
+            }
+            if (restored_checksum != g_ggpo_selftest.base_checksum) {
+                snprintf(err,
+                         sizeof(err),
+                         "restore checksum mismatch expected=%u got=%u",
+                         g_ggpo_selftest.base_checksum,
+                         restored_checksum);
+                failed = 1;
+                goto finish_with_live_restore;
+            }
+            completed = 1;
+            break;
+        }
+    }
+
+    if (!completed && !failed) {
+        if (!ggpo_ext_save_game_state(g_ggpo_selftest.work_blob,
+                                      g_ggpo_selftest.state_size,
+                                      &g_ggpo_selftest.work_len,
+                                      NULL,
+                                      err,
+                                      sizeof(err))) {
+            failed = 1;
+        }
+    }
+
+finish_with_live_restore:
+    if (live_len > 0) {
+        char restore_err[128];
+        restore_err[0] = '\0';
+        if (!ggpo_ext_load_game_state(g_ggpo_selftest.live_blob, live_len, restore_err, sizeof(restore_err)) && !failed) {
+            snprintf(err, sizeof(err), "live restore failed (%s)", restore_err[0] ? restore_err : "unknown error");
+            failed = 1;
+        }
+    }
+
+finish_without_live_restore:
+    if (failed) {
+        snprintf(out, sizeof(out), "ggpo.selftest: failed (%s)", err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        ggpo_selftest_cleanup();
+    } else if (completed) {
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.selftest: ok frames=%d initial=%u replay_final=%u",
+                 g_ggpo_selftest.frames,
+                 (unsigned int)g_ggpo_selftest.base_checksum,
+                 (unsigned int)g_ggpo_selftest.replay1_checksum);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        ggpo_selftest_cleanup();
+    }
+}
+
+static void __cdecl hooked_game_update(int arg0) {
+    fn_game_update_t real_update = p_game_update_trampoline
+        ? p_game_update_trampoline
+        : p_game_update;
+    void* state_ptr = p_state_current ? p_state_current() : NULL;
+
+    if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
+        if (real_update) real_update(arg0);
+        return;
+    }
+
+    lua_manager_on_tick();
+    state_ptr = p_state_current ? p_state_current() : NULL;
+    if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
+        lua_manager_on_tick_post();
+        hooks_finish_game_tick();
+        return;
+    }
+
+    if (hooks_consume_block_game_tick()) {
+        lua_manager_on_tick_post();
+        hooks_finish_game_tick();
+        run_pending_ggpo_selftest();
+        return;
+    }
+
+    if (ggpo_loopback_active()) {
+        uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
+        uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
+        uint32_t checksum = 0;
+        char err[256];
+        char out[CONSOLE_LINE_TEXT];
+        if (!ggpo_loopback_advance(raw0, raw1, arg0, &checksum, err, sizeof(err))) {
+            snprintf(out, sizeof(out), "ggpo.loopback: failed (%s)", err[0] ? err : "unknown error");
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            LOG_ERROR("%s", out);
+            ggpo_loopback_stop();
+            lua_manager_on_tick_post();
+            hooks_finish_game_tick();
+            return;
+        }
+        lua_manager_on_tick_post();
+        return;
+    }
+
+    if (real_update) real_update(arg0);
+    lua_manager_on_tick_post();
+    hooks_finish_game_tick();
+    run_pending_ggpo_selftest();
 }
 
 static uint32_t __cdecl hooked_main_player_poll_cmds(uint32_t player_index, uint32_t mode) {
@@ -4891,6 +5404,12 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour main_player_poll_cmds (input override API disabled)");
     } else {
         p_main_player_poll_cmds_trampoline = (fn_main_player_poll_cmds_t)g_main_player_poll_cmds_detour.trampoline;
+    }
+
+    if (!install_detour(&g_game_update_detour, (void*)(uintptr_t)ADDR_GAME_UPDATE, (void*)&hooked_game_update, 5)) {
+        LOG_WARN("hooks_init: failed to detour game_update (GGPO/gameplay tick API disabled)");
+    } else {
+        p_game_update_trampoline = (fn_game_update_t)g_game_update_detour.trampoline;
     }
 
     // Detour rgba_load so we can patch data/font8x8.png pixels before it is

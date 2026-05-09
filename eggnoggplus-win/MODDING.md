@@ -122,7 +122,7 @@ Called once per rendered frame (hooked from `SDL_GL_SwapWindow`). Good for UI, o
 mod.on_tick(function() end)
 ```
 
-Called once per gameplay update (hooked from `main_update_with_buttons`) **before** the game consumes player commands for that tick. Use this for bots, deterministic control logic, and data capture.
+Called once per gameplay update (hooked from the native `game_update`) **before** the game consumes player commands for that tick. Use this for bots, deterministic control logic, and data capture.
 
 ### Event callback
 
@@ -594,6 +594,26 @@ Command bit constants are available on `mod.game`:
 - `CMD_UP = 0x10`
 - `CMD_DOWN = 0x20`
 - `CMD_MENU = 0x40`
+
+### State Serialization (GGPO Rollback)
+
+These functions provide fast binary state save/load for rollback netcode. Unlike `snapshot()` / `apply_snapshot()` (which use Lua tables), these operate on raw memory blobs suitable for GGPO's per-frame save/load callbacks.
+
+`state_checksum() -> number`
+- Returns a CRC32 checksum of all mutable gameplay state (globals, both players, all entities).
+- Use this to detect desyncs: both peers compute checksums and compare.
+
+`full_state_blob() -> string | nil, err`
+- Captures the entire mutable game state as a binary Lua string.
+- Includes: game globals (room, countdowns, RNG seed, tick counter, level), both player structs (full raw memory), and all entity/thing slots.
+- Typical size: ~45KB. Suitable for GGPO save_game_state.
+
+`apply_full_state_blob(blob) -> bool [, err]`
+- Restores game state from a blob previously returned by `full_state_blob()`.
+- Suitable for GGPO load_game_state.
+
+`full_state_size() -> number`
+- Returns the byte size that `full_state_blob()` would produce for the current game configuration.
 
 ## Audio API (`mod.audio`)
 

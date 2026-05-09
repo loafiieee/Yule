@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <limits.h>
 #include <luajit-2.1/lua.h>
 #include <luajit-2.1/lauxlib.h>
@@ -114,22 +115,64 @@ void luna_force_crash_report(unsigned int exit_code);
 
 // Gameplay globals (from bundled ghidra symbols).
 #define ADDR_MAP_SELECTOR          0x55A2F4u
+#define ADDR_MAP_MODE              0x55A2F8u
+#define ADDR_ROUND_END_ANY         0x55A304u
+#define ADDR_SCORE_TARGET          0x55A30Cu
+#define ADDR_ARMED_RESPAWN_LIMIT   0x55A310u
+#define ADDR_SCORE_P0              0x55A314u
+#define ADDR_SCORE_P1              0x55A318u
 #define ADDR_GAME_ACTIVE_ROOM      0x541E08u
 #define ADDR_LEADER                0x541E0Cu
+#define ADDR_CROWD_SOUND_LAST_TICK 0x541E40u
+#define ADDR_WATERFALL_FX          0x541E44u
+#define ADDR_CHANT_STEP            0x541F60u
+#define ADDR_CHANT_TIMER           0x541F64u
+#define ADDR_CROWD_TIMER           0x541F68u
+#define ADDR_THING_COUNT           0x54202Cu
+#define ADDR_THINGS_ALLOCATED      0x542034u
+#define ADDR_WATERFALL_COUNT       0x542038u
+#define ADDR_GAME_STARTED          0x54203Cu
+#define ADDR_LERP_TIME             0x542040u
 #define ADDR_END_COUNTDOWN         0x542044u
 #define ADDR_START_COUNTDOWN       0x542048u
 #define ADDR_GAME_LEVEL            0x542054u
 #define ADDR_PLAYER_ARRAY          0x542058u
+#define ADDR_LOSER                 0x542064u
+#define ADDR_SCORE_SHUDDER         0x542068u
+#define ADDR_SEED                  0x542074u
 #define ADDR_THING_LATEST          0x54204cu
+#define ADDR_GAME_DO_LERP_COLOURS  0x542050u
 #define ADDR_THINGS                0x542080u
 #define ADDR_THING_INFO            0x543640u
+#define ADDR_ROOM_INFO             0x543700u
+#define ADDR_PARTICLE_STATE        0x526420u
 #define ADDR_MRAND_SEED            0x496DA0u
 #define ADDR_GAME_TICKS            0x547BA0u
 #define ADDR_ROOM_W                0x55A3A4u
+#define ADDR_TILEMAP_DATA_PTR      0x54A1E4u
+#define ADDR_TILEMAP_W             0x54A1E8u
+#define ADDR_TILEMAP_H             0x54A1ECu
+#define ADDR_TILE_W                0x54A1F0u
+#define ADDR_TILE_H                0x54A1F4u
+#define ADDR_TILEMAP_PIXELS_W      0x54A200u
+#define ADDR_TILEMAP_PIXELS_H      0x54A204u
+#define ADDR_ROOMDEF_COUNT         0x54A360u
+#define ADDR_ROOM_PIXEL_W          0x55AB34u
 #define ADDR_CAMERA_X              0x55A360u
 #define ADDR_CAMERA_Y              0x55A364u
+#define ADDR_CAMERA_SHAKE          0x55A37Cu
+#define ADDR_CAMERA_SHAKE_DECAY    0x55A380u
 #define ADDR_GAME_W                0x55A394u
 #define ADDR_GAME_H                0x55A324u
+#define ADDR_MAP_H                 0x55A3A0u
+#define ADDR_MAP_W                 0x55A3A8u
+#define ADDR_GAME_OLD_ACTIVE_ROOM  0x448330u
+#define ADDR_RESUMED               0x448334u
+#define ADDR_FREEZE                0x542070u
+#define ADDR_PLAYER_MODE0          0x55A180u
+#define ADDR_PLAYER_MODE1          0x55A184u
+#define ADDR_TRANSIENT_GAME_STATE  0x541E00u
+#define TRANSIENT_GAME_STATE_SIZE  0x480u
 
 typedef void* (__cdecl *fn_state_current_t)(void);
 typedef void* (__cdecl *fn_state_switch_t)(void*);
@@ -246,22 +289,68 @@ static fn_mix_get_error_t         p_mix_get_error = NULL;
 static fn_play_sound_a_t          p_play_sound_a = NULL;
 
 static volatile int* p_btn_reset_counter = (volatile int*)(uintptr_t)ADDR_BTN_RESET_COUNTER;
+static volatile int* p_map_selector = (volatile int*)(uintptr_t)ADDR_MAP_SELECTOR;
+static volatile int* p_map_mode = (volatile int*)(uintptr_t)ADDR_MAP_MODE;
+static volatile int* p_round_end_any = (volatile int*)(uintptr_t)ADDR_ROUND_END_ANY;
+static volatile int* p_score_target = (volatile int*)(uintptr_t)ADDR_SCORE_TARGET;
+static volatile int* p_armed_respawn_limit = (volatile int*)(uintptr_t)ADDR_ARMED_RESPAWN_LIMIT;
+static volatile int* p_score_p0 = (volatile int*)(uintptr_t)ADDR_SCORE_P0;
+static volatile int* p_score_p1 = (volatile int*)(uintptr_t)ADDR_SCORE_P1;
 static volatile int* p_game_active_room = (volatile int*)(uintptr_t)ADDR_GAME_ACTIVE_ROOM;
 static volatile uintptr_t* p_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_LEADER;
+static volatile uint32_t* p_crowd_sound_last_tick = (volatile uint32_t*)(uintptr_t)ADDR_CROWD_SOUND_LAST_TICK;
+static volatile uintptr_t* p_waterfall_fx = (volatile uintptr_t*)(uintptr_t)ADDR_WATERFALL_FX;
+static volatile int* p_chant_step = (volatile int*)(uintptr_t)ADDR_CHANT_STEP;
+static volatile int* p_chant_timer = (volatile int*)(uintptr_t)ADDR_CHANT_TIMER;
+static volatile int* p_crowd_timer = (volatile int*)(uintptr_t)ADDR_CROWD_TIMER;
+static volatile int* p_native_thing_count = (volatile int*)(uintptr_t)ADDR_THING_COUNT;
+static volatile int* p_things_allocated = (volatile int*)(uintptr_t)ADDR_THINGS_ALLOCATED;
+static volatile int* p_waterfall_count = (volatile int*)(uintptr_t)ADDR_WATERFALL_COUNT;
+static volatile int* p_game_started = (volatile int*)(uintptr_t)ADDR_GAME_STARTED;
+static volatile int* p_lerp_time = (volatile int*)(uintptr_t)ADDR_LERP_TIME;
 static volatile int* p_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
 static volatile int* p_start_countdown = (volatile int*)(uintptr_t)ADDR_START_COUNTDOWN;
 static volatile uint32_t* p_game_level = (volatile uint32_t*)(uintptr_t)ADDR_GAME_LEVEL;
+static volatile uintptr_t* p_loser = (volatile uintptr_t*)(uintptr_t)ADDR_LOSER;
+static volatile int* p_score_shudder = (volatile int*)(uintptr_t)ADDR_SCORE_SHUDDER;
+static volatile uint32_t* p_seed = (volatile uint32_t*)(uintptr_t)ADDR_SEED;
 static volatile int* p_room_w = (volatile int*)(uintptr_t)ADDR_ROOM_W;
+static volatile uintptr_t* p_tilemap_data_ptr = (volatile uintptr_t*)(uintptr_t)ADDR_TILEMAP_DATA_PTR;
+static volatile int* p_tilemap_w = (volatile int*)(uintptr_t)ADDR_TILEMAP_W;
+static volatile int* p_tilemap_h = (volatile int*)(uintptr_t)ADDR_TILEMAP_H;
+static volatile int* p_tile_w_native = (volatile int*)(uintptr_t)ADDR_TILE_W;
+static volatile int* p_tile_h_native = (volatile int*)(uintptr_t)ADDR_TILE_H;
+static volatile int* p_tilemap_pixels_w = (volatile int*)(uintptr_t)ADDR_TILEMAP_PIXELS_W;
+static volatile int* p_tilemap_pixels_h = (volatile int*)(uintptr_t)ADDR_TILEMAP_PIXELS_H;
+static volatile int* p_roomdef_count = (volatile int*)(uintptr_t)ADDR_ROOMDEF_COUNT;
+static volatile int* p_room_pixel_w = (volatile int*)(uintptr_t)ADDR_ROOM_PIXEL_W;
 static volatile uint32_t* p_mrand_seed = (volatile uint32_t*)(uintptr_t)ADDR_MRAND_SEED;
 static volatile uint32_t* p_native_game_ticks = (volatile uint32_t*)(uintptr_t)ADDR_GAME_TICKS;
 static volatile int* p_misc_id = (volatile int*)(uintptr_t)ADDR_MISC_ID;
 static volatile int* p_tiles_id = (volatile int*)(uintptr_t)ADDR_TILES_ID;
 static volatile int* p_sprites_id = (volatile int*)(uintptr_t)ADDR_SPRITES_ID;
 static volatile int* p_glyphs_id = (volatile int*)(uintptr_t)ADDR_GLYPHS_ID;
+static volatile float* p_camera_x = (volatile float*)(uintptr_t)ADDR_CAMERA_X;
+static volatile float* p_camera_y = (volatile float*)(uintptr_t)ADDR_CAMERA_Y;
+static volatile float* p_camera_shake = (volatile float*)(uintptr_t)ADDR_CAMERA_SHAKE;
+static volatile float* p_camera_shake_decay = (volatile float*)(uintptr_t)ADDR_CAMERA_SHAKE_DECAY;
+static volatile float* p_game_w = (volatile float*)(uintptr_t)ADDR_GAME_W;
+static volatile float* p_game_h = (volatile float*)(uintptr_t)ADDR_GAME_H;
+static volatile int* p_map_h = (volatile int*)(uintptr_t)ADDR_MAP_H;
+static volatile int* p_map_w = (volatile int*)(uintptr_t)ADDR_MAP_W;
+static volatile int* p_game_old_active_room = (volatile int*)(uintptr_t)ADDR_GAME_OLD_ACTIVE_ROOM;
+static volatile int* p_resumed = (volatile int*)(uintptr_t)ADDR_RESUMED;
+static volatile int* p_freeze = (volatile int*)(uintptr_t)ADDR_FREEZE;
+static volatile int* p_player_mode0 = (volatile int*)(uintptr_t)ADDR_PLAYER_MODE0;
+static volatile int* p_player_mode1 = (volatile int*)(uintptr_t)ADDR_PLAYER_MODE1;
+static uint8_t* p_transient_game_state = (uint8_t*)(uintptr_t)ADDR_TRANSIENT_GAME_STATE;
 static uintptr_t* p_player_slots = (uintptr_t*)(uintptr_t)ADDR_PLAYER_ARRAY;
 static volatile int* p_thing_latest = (volatile int*)(uintptr_t)ADDR_THING_LATEST;
+static volatile int* p_game_do_lerp_colours = (volatile int*)(uintptr_t)ADDR_GAME_DO_LERP_COLOURS;
 static uint8_t* p_things = (uint8_t*)(uintptr_t)ADDR_THINGS;
 static uint8_t* p_thing_info = (uint8_t*)(uintptr_t)ADDR_THING_INFO;
+static uint8_t* p_room_info_state = (uint8_t*)(uintptr_t)ADDR_ROOM_INFO;
+static uint8_t* p_particle_state = (uint8_t*)(uintptr_t)ADDR_PARTICLE_STATE;
 
 typedef struct UiHitBox {
     float x;
@@ -3908,6 +3997,171 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define THING_TYPE_PLAYER           0x01
 #define THING_TYPE_SWORD            0x02
 
+#define THING_INFO_STATE_SIZE       0xC0u
+#define ROOM_INFO_STATE_SIZE        0x4444u
+#define PARTICLE_STATE_SIZE         0x19900u
+#define TILEMAP_MAX_BYTES           (4u * 1024u * 1024u)
+
+#define FULL_STATE_BLOB_MAGIC       0x30474745u /* "EGG0" */
+#define FULL_STATE_BLOB_VERSION     4u
+
+typedef struct FullStateBlobHeader {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t thing_count;
+    uint32_t player_size;
+    uint32_t thing_size;
+    int32_t active_room;
+    int32_t start_countdown;
+    int32_t end_countdown;
+    uint32_t game_level;
+    uint32_t rng_seed;
+    uint32_t native_game_ticks;
+    uint32_t leader_mode;
+    uint32_t crowd_sound_last_tick;
+    uint32_t waterfall_fx_present;
+    uint64_t framework_tick_count;
+    uintptr_t leader_raw;
+    uintptr_t waterfall_fx_raw;
+    int32_t map_selector;
+    int32_t map_mode;
+    int32_t round_end_any;
+    int32_t score_target;
+    int32_t armed_respawn_limit;
+    int32_t score_p0;
+    int32_t score_p1;
+    int32_t chant_step;
+    int32_t chant_timer;
+    int32_t crowd_timer;
+    int32_t native_thing_count;
+    int32_t things_allocated;
+    int32_t thing_latest;
+    int32_t game_do_lerp_colours;
+    int32_t waterfall_count;
+    int32_t game_started;
+    int32_t lerp_time;
+    int32_t game_old_active_room;
+    int32_t resumed;
+    int32_t freeze;
+    int32_t player_mode0;
+    int32_t player_mode1;
+    uint32_t seed;
+    uint32_t loser_mode;
+    uintptr_t loser_raw;
+    int32_t score_shudder0;
+    int32_t score_shudder1;
+    int32_t roomdef_count;
+    int32_t room_w;
+    int32_t room_pixel_w;
+    int32_t map_w;
+    int32_t map_h;
+    int32_t tilemap_w;
+    int32_t tilemap_h;
+    int32_t tile_w;
+    int32_t tile_h;
+    int32_t tilemap_pixels_w;
+    int32_t tilemap_pixels_h;
+    uint32_t tilemap_bytes;
+    float camera_x;
+    float camera_y;
+    float camera_shake;
+    float camera_shake_decay;
+    float game_w;
+    float game_h;
+    uint8_t transient_game_state[TRANSIENT_GAME_STATE_SIZE];
+    uint8_t thing_info_state[THING_INFO_STATE_SIZE];
+    uint8_t room_info_state[ROOM_INFO_STATE_SIZE];
+    uint8_t particle_state[PARTICLE_STATE_SIZE];
+} FullStateBlobHeader;
+
+enum {
+    FULL_STATE_LEADER_NONE = 0,
+    FULL_STATE_LEADER_P0   = 1,
+    FULL_STATE_LEADER_P1   = 2,
+    FULL_STATE_LEADER_RAW  = 3
+};
+
+const char* lua_manager_game_state_offset_name(size_t offset) {
+#define FULL_STATE_FIELD_RANGE(field) \
+    if (offset >= offsetof(FullStateBlobHeader, field) && offset < offsetof(FullStateBlobHeader, field) + sizeof(((FullStateBlobHeader*)0)->field)) return #field
+
+    FULL_STATE_FIELD_RANGE(magic);
+    FULL_STATE_FIELD_RANGE(version);
+    FULL_STATE_FIELD_RANGE(thing_count);
+    FULL_STATE_FIELD_RANGE(player_size);
+    FULL_STATE_FIELD_RANGE(thing_size);
+    FULL_STATE_FIELD_RANGE(active_room);
+    FULL_STATE_FIELD_RANGE(start_countdown);
+    FULL_STATE_FIELD_RANGE(end_countdown);
+    FULL_STATE_FIELD_RANGE(game_level);
+    FULL_STATE_FIELD_RANGE(rng_seed);
+    FULL_STATE_FIELD_RANGE(native_game_ticks);
+    FULL_STATE_FIELD_RANGE(leader_mode);
+    FULL_STATE_FIELD_RANGE(crowd_sound_last_tick);
+    FULL_STATE_FIELD_RANGE(waterfall_fx_present);
+    FULL_STATE_FIELD_RANGE(framework_tick_count);
+    FULL_STATE_FIELD_RANGE(leader_raw);
+    FULL_STATE_FIELD_RANGE(waterfall_fx_raw);
+    FULL_STATE_FIELD_RANGE(map_selector);
+    FULL_STATE_FIELD_RANGE(map_mode);
+    FULL_STATE_FIELD_RANGE(round_end_any);
+    FULL_STATE_FIELD_RANGE(score_target);
+    FULL_STATE_FIELD_RANGE(armed_respawn_limit);
+    FULL_STATE_FIELD_RANGE(score_p0);
+    FULL_STATE_FIELD_RANGE(score_p1);
+    FULL_STATE_FIELD_RANGE(chant_step);
+    FULL_STATE_FIELD_RANGE(chant_timer);
+    FULL_STATE_FIELD_RANGE(crowd_timer);
+    FULL_STATE_FIELD_RANGE(native_thing_count);
+    FULL_STATE_FIELD_RANGE(things_allocated);
+    FULL_STATE_FIELD_RANGE(thing_latest);
+    FULL_STATE_FIELD_RANGE(game_do_lerp_colours);
+    FULL_STATE_FIELD_RANGE(waterfall_count);
+    FULL_STATE_FIELD_RANGE(game_started);
+    FULL_STATE_FIELD_RANGE(lerp_time);
+    FULL_STATE_FIELD_RANGE(game_old_active_room);
+    FULL_STATE_FIELD_RANGE(resumed);
+    FULL_STATE_FIELD_RANGE(freeze);
+    FULL_STATE_FIELD_RANGE(player_mode0);
+    FULL_STATE_FIELD_RANGE(player_mode1);
+    FULL_STATE_FIELD_RANGE(seed);
+    FULL_STATE_FIELD_RANGE(loser_mode);
+    FULL_STATE_FIELD_RANGE(loser_raw);
+    FULL_STATE_FIELD_RANGE(score_shudder0);
+    FULL_STATE_FIELD_RANGE(score_shudder1);
+    FULL_STATE_FIELD_RANGE(roomdef_count);
+    FULL_STATE_FIELD_RANGE(room_w);
+    FULL_STATE_FIELD_RANGE(room_pixel_w);
+    FULL_STATE_FIELD_RANGE(map_w);
+    FULL_STATE_FIELD_RANGE(map_h);
+    FULL_STATE_FIELD_RANGE(tilemap_w);
+    FULL_STATE_FIELD_RANGE(tilemap_h);
+    FULL_STATE_FIELD_RANGE(tile_w);
+    FULL_STATE_FIELD_RANGE(tile_h);
+    FULL_STATE_FIELD_RANGE(tilemap_pixels_w);
+    FULL_STATE_FIELD_RANGE(tilemap_pixels_h);
+    FULL_STATE_FIELD_RANGE(tilemap_bytes);
+    FULL_STATE_FIELD_RANGE(camera_x);
+    FULL_STATE_FIELD_RANGE(camera_y);
+    FULL_STATE_FIELD_RANGE(camera_shake);
+    FULL_STATE_FIELD_RANGE(camera_shake_decay);
+    FULL_STATE_FIELD_RANGE(game_w);
+    FULL_STATE_FIELD_RANGE(game_h);
+    FULL_STATE_FIELD_RANGE(transient_game_state);
+    FULL_STATE_FIELD_RANGE(thing_info_state);
+    FULL_STATE_FIELD_RANGE(room_info_state);
+    FULL_STATE_FIELD_RANGE(particle_state);
+
+#undef FULL_STATE_FIELD_RANGE
+
+    if (offset < sizeof(FullStateBlobHeader)) return "state_header_padding";
+    offset -= sizeof(FullStateBlobHeader);
+    if (offset < PLAYER_SIZE) return "player0";
+    offset -= PLAYER_SIZE;
+    if (offset < PLAYER_SIZE) return "player1";
+    return "things";
+}
+
 static int ptr_readable(const void* p, SIZE_T len) {
     return (p && len > 0 && !IsBadReadPtr(p, len)) ? 1 : 0;
 }
@@ -3934,6 +4188,644 @@ static int game_get_thing_count(void) {
     if (n < 0) n = 0;
     if (n > 128) n = 128;
     return n;
+}
+
+static void* game_get_tilemap_data_ptr(void) {
+    uintptr_t ptr = 0;
+    if (!ptr_readable((const void*)p_tilemap_data_ptr, sizeof(uintptr_t))) return NULL;
+    ptr = *p_tilemap_data_ptr;
+    return ptr ? (void*)ptr : NULL;
+}
+
+static size_t game_get_tilemap_bytes(int* out_w, int* out_h) {
+    int w = 0;
+    int h = 0;
+    size_t cells = 0;
+    size_t bytes = 0;
+
+    if (ptr_readable((const void*)p_tilemap_w, sizeof(int))) {
+        w = *p_tilemap_w;
+    }
+    if (ptr_readable((const void*)p_tilemap_h, sizeof(int))) {
+        h = *p_tilemap_h;
+    }
+    if (w < 0 || h < 0 || w > 4096 || h > 4096) {
+        w = 0;
+        h = 0;
+    }
+
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    if (w <= 0 || h <= 0 || !game_get_tilemap_data_ptr()) {
+        return 0;
+    }
+
+    cells = (size_t)w * (size_t)h;
+    if (cells > ((size_t)TILEMAP_MAX_BYTES / sizeof(uint32_t))) {
+        return 0;
+    }
+    bytes = cells * sizeof(uint32_t);
+    return bytes;
+}
+
+static size_t full_state_blob_size_for_counts(int thing_count, size_t tilemap_bytes) {
+    if (thing_count < 0) return 0;
+    if (tilemap_bytes > (size_t)TILEMAP_MAX_BYTES) return 0;
+    return sizeof(FullStateBlobHeader)
+        + ((size_t)PLAYER_SIZE * 2u)
+        + ((size_t)THING_SIZE * (size_t)thing_count)
+        + tilemap_bytes;
+}
+
+static size_t full_state_blob_size_for_thing_count(int thing_count) {
+    return full_state_blob_size_for_counts(thing_count, game_get_tilemap_bytes(NULL, NULL));
+}
+
+static void full_state_set_err(char* err, size_t err_cap, const char* msg) {
+    if (!err || err_cap == 0) return;
+    if (!msg) msg = "unknown error";
+    snprintf(err, err_cap, "%s", msg);
+}
+
+static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap) {
+    int thing_count = game_get_thing_count();
+    int tilemap_w = 0;
+    int tilemap_h = 0;
+    size_t tilemap_bytes = game_get_tilemap_bytes(&tilemap_w, &tilemap_h);
+    void* tilemap_ptr = game_get_tilemap_data_ptr();
+    uintptr_t p0 = game_get_player_ptr(0);
+    uintptr_t p1 = game_get_player_ptr(1);
+    size_t total_size = full_state_blob_size_for_counts(thing_count, tilemap_bytes);
+    uint8_t* out = (uint8_t*)dst;
+    FullStateBlobHeader* hdr = NULL;
+    uint8_t* payload = NULL;
+    uintptr_t leader_raw = 0;
+    uintptr_t loser_raw = 0;
+
+    if (!dst || dst_len == 0) {
+        full_state_set_err(err, err_cap, "destination buffer unavailable");
+        return 0;
+    }
+    if (!p0 || !p1) {
+        full_state_set_err(err, err_cap, "player state unavailable");
+        return 0;
+    }
+    if (thing_count < 0) {
+        full_state_set_err(err, err_cap, "thing count unavailable");
+        return 0;
+    }
+    if (thing_count > 0 && (!p_things || !ptr_readable((const void*)p_things, (SIZE_T)((size_t)thing_count * THING_SIZE)))) {
+        full_state_set_err(err, err_cap, "thing state unavailable");
+        return 0;
+    }
+    if (!p_thing_info || !ptr_readable((const void*)p_thing_info, THING_INFO_STATE_SIZE)) {
+        full_state_set_err(err, err_cap, "thing metadata state unavailable");
+        return 0;
+    }
+    if (!p_room_info_state || !ptr_readable((const void*)p_room_info_state, ROOM_INFO_STATE_SIZE)) {
+        full_state_set_err(err, err_cap, "room info state unavailable");
+        return 0;
+    }
+    if (!p_particle_state || !ptr_readable((const void*)p_particle_state, PARTICLE_STATE_SIZE)) {
+        full_state_set_err(err, err_cap, "particle state unavailable");
+        return 0;
+    }
+    if (tilemap_bytes > 0 && (!tilemap_ptr || !ptr_readable((const void*)tilemap_ptr, (SIZE_T)tilemap_bytes))) {
+        full_state_set_err(err, err_cap, "tilemap state unavailable");
+        return 0;
+    }
+    if (total_size == 0) {
+        full_state_set_err(err, err_cap, "state blob size unavailable");
+        return 0;
+    }
+    if (dst_len < total_size) {
+        full_state_set_err(err, err_cap, "destination buffer too small");
+        return 0;
+    }
+
+    hdr = (FullStateBlobHeader*)out;
+    memset(hdr, 0, sizeof(*hdr));
+    hdr->magic = FULL_STATE_BLOB_MAGIC;
+    hdr->version = FULL_STATE_BLOB_VERSION;
+    hdr->thing_count = (uint32_t)thing_count;
+    hdr->player_size = (uint32_t)PLAYER_SIZE;
+    hdr->thing_size = (uint32_t)THING_SIZE;
+    hdr->tilemap_w = tilemap_w;
+    hdr->tilemap_h = tilemap_h;
+    hdr->tilemap_bytes = (uint32_t)tilemap_bytes;
+    hdr->framework_tick_count = (uint64_t)g_game_tick_count;
+
+    if (ptr_readable((const void*)p_map_selector, sizeof(int))) {
+        hdr->map_selector = *p_map_selector;
+    }
+    if (ptr_readable((const void*)p_map_mode, sizeof(int))) {
+        hdr->map_mode = *p_map_mode;
+    }
+    if (ptr_readable((const void*)p_round_end_any, sizeof(int))) {
+        hdr->round_end_any = *p_round_end_any;
+    }
+    if (ptr_readable((const void*)p_score_target, sizeof(int))) {
+        hdr->score_target = *p_score_target;
+    }
+    if (ptr_readable((const void*)p_armed_respawn_limit, sizeof(int))) {
+        hdr->armed_respawn_limit = *p_armed_respawn_limit;
+    }
+    if (ptr_readable((const void*)p_score_p0, sizeof(int))) {
+        hdr->score_p0 = *p_score_p0;
+    }
+    if (ptr_readable((const void*)p_score_p1, sizeof(int))) {
+        hdr->score_p1 = *p_score_p1;
+    }
+    if (ptr_readable((const void*)p_game_active_room, sizeof(int))) {
+        hdr->active_room = *p_game_active_room;
+    }
+    if (ptr_readable((const void*)p_chant_step, sizeof(int))) {
+        hdr->chant_step = *p_chant_step;
+    }
+    if (ptr_readable((const void*)p_chant_timer, sizeof(int))) {
+        hdr->chant_timer = *p_chant_timer;
+    }
+    if (ptr_readable((const void*)p_crowd_timer, sizeof(int))) {
+        hdr->crowd_timer = *p_crowd_timer;
+    }
+    if (ptr_readable((const void*)p_native_thing_count, sizeof(int))) {
+        hdr->native_thing_count = *p_native_thing_count;
+    }
+    if (ptr_readable((const void*)p_things_allocated, sizeof(int))) {
+        hdr->things_allocated = *p_things_allocated;
+    }
+    if (ptr_readable((const void*)p_thing_latest, sizeof(int))) {
+        hdr->thing_latest = *p_thing_latest;
+    }
+    if (ptr_readable((const void*)p_game_do_lerp_colours, sizeof(int))) {
+        hdr->game_do_lerp_colours = *p_game_do_lerp_colours;
+    }
+    if (ptr_readable((const void*)p_waterfall_count, sizeof(int))) {
+        hdr->waterfall_count = *p_waterfall_count;
+    }
+    if (ptr_readable((const void*)p_game_started, sizeof(int))) {
+        hdr->game_started = *p_game_started;
+    }
+    if (ptr_readable((const void*)p_lerp_time, sizeof(int))) {
+        hdr->lerp_time = *p_lerp_time;
+    }
+    if (ptr_readable((const void*)p_start_countdown, sizeof(int))) {
+        hdr->start_countdown = *p_start_countdown;
+    }
+    if (ptr_readable((const void*)p_end_countdown, sizeof(int))) {
+        hdr->end_countdown = *p_end_countdown;
+    }
+    if (ptr_readable((const void*)p_game_level, sizeof(uint32_t))) {
+        hdr->game_level = *p_game_level;
+    }
+    if (ptr_readable((const void*)p_game_old_active_room, sizeof(int))) {
+        hdr->game_old_active_room = *p_game_old_active_room;
+    }
+    if (ptr_readable((const void*)p_resumed, sizeof(int))) {
+        hdr->resumed = *p_resumed;
+    }
+    if (ptr_readable((const void*)p_freeze, sizeof(int))) {
+        hdr->freeze = *p_freeze;
+    }
+    if (ptr_readable((const void*)p_player_mode0, sizeof(int))) {
+        hdr->player_mode0 = *p_player_mode0;
+    }
+    if (ptr_readable((const void*)p_player_mode1, sizeof(int))) {
+        hdr->player_mode1 = *p_player_mode1;
+    }
+    if (ptr_readable((const void*)p_seed, sizeof(uint32_t))) {
+        hdr->seed = *p_seed;
+    }
+    if (ptr_readable((const void*)p_mrand_seed, sizeof(uint32_t))) {
+        hdr->rng_seed = *p_mrand_seed;
+    }
+    if (ptr_readable((const void*)p_native_game_ticks, sizeof(uint32_t))) {
+        hdr->native_game_ticks = *p_native_game_ticks;
+    }
+    if (ptr_readable((const void*)p_crowd_sound_last_tick, sizeof(uint32_t))) {
+        hdr->crowd_sound_last_tick = *p_crowd_sound_last_tick;
+    }
+    if (ptr_readable((const void*)p_waterfall_fx, sizeof(uintptr_t))) {
+        hdr->waterfall_fx_raw = *p_waterfall_fx;
+        hdr->waterfall_fx_present = (hdr->waterfall_fx_raw != 0u) ? 1u : 0u;
+    }
+    if (ptr_readable((const void*)p_game_leader, sizeof(uintptr_t))) {
+        leader_raw = *p_game_leader;
+        hdr->leader_raw = leader_raw;
+        if (leader_raw == 0) hdr->leader_mode = FULL_STATE_LEADER_NONE;
+        else if (leader_raw == p0) hdr->leader_mode = FULL_STATE_LEADER_P0;
+        else if (leader_raw == p1) hdr->leader_mode = FULL_STATE_LEADER_P1;
+        else hdr->leader_mode = FULL_STATE_LEADER_RAW;
+    }
+    if (ptr_readable((const void*)p_loser, sizeof(uintptr_t))) {
+        loser_raw = *p_loser;
+        hdr->loser_raw = loser_raw;
+        if (loser_raw == 0) hdr->loser_mode = FULL_STATE_LEADER_NONE;
+        else if (loser_raw == p0) hdr->loser_mode = FULL_STATE_LEADER_P0;
+        else if (loser_raw == p1) hdr->loser_mode = FULL_STATE_LEADER_P1;
+        else hdr->loser_mode = FULL_STATE_LEADER_RAW;
+    }
+    if (ptr_readable((const void*)p_score_shudder, sizeof(int) * 2u)) {
+        hdr->score_shudder0 = p_score_shudder[0];
+        hdr->score_shudder1 = p_score_shudder[1];
+    }
+    if (ptr_readable((const void*)p_roomdef_count, sizeof(int))) {
+        hdr->roomdef_count = *p_roomdef_count;
+    }
+    if (ptr_readable((const void*)p_room_w, sizeof(int))) {
+        hdr->room_w = *p_room_w;
+    }
+    if (ptr_readable((const void*)p_room_pixel_w, sizeof(int))) {
+        hdr->room_pixel_w = *p_room_pixel_w;
+    }
+    if (ptr_readable((const void*)p_tile_w_native, sizeof(int))) {
+        hdr->tile_w = *p_tile_w_native;
+    }
+    if (ptr_readable((const void*)p_tile_h_native, sizeof(int))) {
+        hdr->tile_h = *p_tile_h_native;
+    }
+    if (ptr_readable((const void*)p_tilemap_pixels_w, sizeof(int))) {
+        hdr->tilemap_pixels_w = *p_tilemap_pixels_w;
+    }
+    if (ptr_readable((const void*)p_tilemap_pixels_h, sizeof(int))) {
+        hdr->tilemap_pixels_h = *p_tilemap_pixels_h;
+    }
+    if (ptr_readable((const void*)p_map_w, sizeof(int))) {
+        hdr->map_w = *p_map_w;
+    }
+    if (ptr_readable((const void*)p_map_h, sizeof(int))) {
+        hdr->map_h = *p_map_h;
+    }
+    if (ptr_readable((const void*)p_camera_x, sizeof(float))) {
+        hdr->camera_x = *p_camera_x;
+    }
+    if (ptr_readable((const void*)p_camera_y, sizeof(float))) {
+        hdr->camera_y = *p_camera_y;
+    }
+    if (ptr_readable((const void*)p_camera_shake, sizeof(float))) {
+        hdr->camera_shake = *p_camera_shake;
+    }
+    if (ptr_readable((const void*)p_camera_shake_decay, sizeof(float))) {
+        hdr->camera_shake_decay = *p_camera_shake_decay;
+    }
+    if (ptr_readable((const void*)p_game_w, sizeof(float))) {
+        hdr->game_w = *p_game_w;
+    }
+    if (ptr_readable((const void*)p_game_h, sizeof(float))) {
+        hdr->game_h = *p_game_h;
+    }
+    if (ptr_readable((const void*)p_transient_game_state, TRANSIENT_GAME_STATE_SIZE)) {
+        memcpy(hdr->transient_game_state, (const void*)p_transient_game_state, TRANSIENT_GAME_STATE_SIZE);
+    }
+    memcpy(hdr->thing_info_state, (const void*)p_thing_info, THING_INFO_STATE_SIZE);
+    memcpy(hdr->room_info_state, (const void*)p_room_info_state, ROOM_INFO_STATE_SIZE);
+    memcpy(hdr->particle_state, (const void*)p_particle_state, PARTICLE_STATE_SIZE);
+
+    payload = out + sizeof(*hdr);
+    memcpy(payload, (const void*)p0, PLAYER_SIZE);
+    payload += PLAYER_SIZE;
+    memcpy(payload, (const void*)p1, PLAYER_SIZE);
+    payload += PLAYER_SIZE;
+    if (thing_count > 0) {
+        memcpy(payload, (const void*)p_things, (size_t)thing_count * THING_SIZE);
+        payload += (size_t)thing_count * THING_SIZE;
+    }
+    if (tilemap_bytes > 0) {
+        memcpy(payload, (const void*)tilemap_ptr, tilemap_bytes);
+    }
+
+    if (out_len) *out_len = total_size;
+    return 1;
+}
+
+static int full_state_apply_blob(const void* src, size_t src_len, char* err, size_t err_cap) {
+    const FullStateBlobHeader* hdr = (const FullStateBlobHeader*)src;
+    int current_thing_count = game_get_thing_count();
+    int current_tilemap_w = 0;
+    int current_tilemap_h = 0;
+    size_t current_tilemap_bytes = game_get_tilemap_bytes(&current_tilemap_w, &current_tilemap_h);
+    void* tilemap_ptr = game_get_tilemap_data_ptr();
+    uintptr_t p0 = game_get_player_ptr(0);
+    uintptr_t p1 = game_get_player_ptr(1);
+    size_t expected_size;
+    const uint8_t* payload;
+
+    if (!src || src_len < sizeof(FullStateBlobHeader)) {
+        full_state_set_err(err, err_cap, "state blob too small");
+        return 0;
+    }
+    if (hdr->magic != FULL_STATE_BLOB_MAGIC) {
+        full_state_set_err(err, err_cap, "invalid state blob magic");
+        return 0;
+    }
+    if (hdr->version != FULL_STATE_BLOB_VERSION) {
+        full_state_set_err(err, err_cap, "unsupported state blob version");
+        return 0;
+    }
+    if (hdr->player_size != (uint32_t)PLAYER_SIZE || hdr->thing_size != (uint32_t)THING_SIZE) {
+        full_state_set_err(err, err_cap, "state blob layout mismatch");
+        return 0;
+    }
+    if (hdr->thing_count > 128u) {
+        full_state_set_err(err, err_cap, "state blob thing count out of range");
+        return 0;
+    }
+    if (hdr->tilemap_bytes > TILEMAP_MAX_BYTES) {
+        full_state_set_err(err, err_cap, "state blob tilemap too large");
+        return 0;
+    }
+
+    expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
+    if (src_len != expected_size) {
+        full_state_set_err(err, err_cap, "state blob size mismatch");
+        return 0;
+    }
+    if (!p0 || !p1) {
+        full_state_set_err(err, err_cap, "player state unavailable");
+        return 0;
+    }
+    if (current_thing_count != (int)hdr->thing_count) {
+        full_state_set_err(err, err_cap, "thing count mismatch");
+        return 0;
+    }
+    if (current_thing_count > 0 && (!p_things || !ptr_writable((void*)p_things, (SIZE_T)((size_t)current_thing_count * THING_SIZE)))) {
+        full_state_set_err(err, err_cap, "thing state unavailable");
+        return 0;
+    }
+    if (!p_thing_info || !ptr_writable((void*)p_thing_info, THING_INFO_STATE_SIZE)) {
+        full_state_set_err(err, err_cap, "thing metadata state unavailable");
+        return 0;
+    }
+    if (!p_room_info_state || !ptr_writable((void*)p_room_info_state, ROOM_INFO_STATE_SIZE)) {
+        full_state_set_err(err, err_cap, "room info state unavailable");
+        return 0;
+    }
+    if (!p_particle_state || !ptr_writable((void*)p_particle_state, PARTICLE_STATE_SIZE)) {
+        full_state_set_err(err, err_cap, "particle state unavailable");
+        return 0;
+    }
+    if (current_tilemap_w != hdr->tilemap_w || current_tilemap_h != hdr->tilemap_h || current_tilemap_bytes != (size_t)hdr->tilemap_bytes) {
+        full_state_set_err(err, err_cap, "tilemap layout mismatch");
+        return 0;
+    }
+    if (hdr->tilemap_bytes > 0 && (!tilemap_ptr || !ptr_writable(tilemap_ptr, (SIZE_T)hdr->tilemap_bytes))) {
+        full_state_set_err(err, err_cap, "tilemap state unavailable");
+        return 0;
+    }
+
+    if (ptr_writable((void*)p_game_active_room, sizeof(int))) {
+        *p_game_active_room = hdr->active_room;
+    }
+    if (ptr_writable((void*)p_map_selector, sizeof(int))) {
+        *p_map_selector = hdr->map_selector;
+    }
+    if (ptr_writable((void*)p_map_mode, sizeof(int))) {
+        *p_map_mode = hdr->map_mode;
+    }
+    if (ptr_writable((void*)p_round_end_any, sizeof(int))) {
+        *p_round_end_any = hdr->round_end_any;
+    }
+    if (ptr_writable((void*)p_score_target, sizeof(int))) {
+        *p_score_target = hdr->score_target;
+    }
+    if (ptr_writable((void*)p_armed_respawn_limit, sizeof(int))) {
+        *p_armed_respawn_limit = hdr->armed_respawn_limit;
+    }
+    if (ptr_writable((void*)p_score_p0, sizeof(int))) {
+        *p_score_p0 = hdr->score_p0;
+    }
+    if (ptr_writable((void*)p_score_p1, sizeof(int))) {
+        *p_score_p1 = hdr->score_p1;
+    }
+    if (ptr_writable((void*)p_chant_step, sizeof(int))) {
+        *p_chant_step = hdr->chant_step;
+    }
+    if (ptr_writable((void*)p_chant_timer, sizeof(int))) {
+        *p_chant_timer = hdr->chant_timer;
+    }
+    if (ptr_writable((void*)p_crowd_timer, sizeof(int))) {
+        *p_crowd_timer = hdr->crowd_timer;
+    }
+    if (ptr_writable((void*)p_native_thing_count, sizeof(int))) {
+        *p_native_thing_count = hdr->native_thing_count;
+    }
+    if (ptr_writable((void*)p_things_allocated, sizeof(int))) {
+        *p_things_allocated = hdr->things_allocated;
+    }
+    if (ptr_writable((void*)p_thing_latest, sizeof(int))) {
+        *p_thing_latest = hdr->thing_latest;
+    }
+    if (ptr_writable((void*)p_game_do_lerp_colours, sizeof(int))) {
+        *p_game_do_lerp_colours = hdr->game_do_lerp_colours;
+    }
+    if (ptr_writable((void*)p_waterfall_count, sizeof(int))) {
+        *p_waterfall_count = hdr->waterfall_count;
+    }
+    if (ptr_writable((void*)p_game_started, sizeof(int))) {
+        *p_game_started = hdr->game_started;
+    }
+    if (ptr_writable((void*)p_lerp_time, sizeof(int))) {
+        *p_lerp_time = hdr->lerp_time;
+    }
+    if (ptr_writable((void*)p_start_countdown, sizeof(int))) {
+        *p_start_countdown = hdr->start_countdown;
+    }
+    if (ptr_writable((void*)p_end_countdown, sizeof(int))) {
+        *p_end_countdown = hdr->end_countdown;
+    }
+    if (ptr_writable((void*)p_game_level, sizeof(uint32_t))) {
+        *p_game_level = hdr->game_level;
+    }
+    if (ptr_writable((void*)p_game_old_active_room, sizeof(int))) {
+        *p_game_old_active_room = hdr->game_old_active_room;
+    }
+    if (ptr_writable((void*)p_resumed, sizeof(int))) {
+        *p_resumed = hdr->resumed;
+    }
+    if (ptr_writable((void*)p_freeze, sizeof(int))) {
+        *p_freeze = hdr->freeze;
+    }
+    if (ptr_writable((void*)p_player_mode0, sizeof(int))) {
+        *p_player_mode0 = hdr->player_mode0;
+    }
+    if (ptr_writable((void*)p_player_mode1, sizeof(int))) {
+        *p_player_mode1 = hdr->player_mode1;
+    }
+    if (ptr_writable((void*)p_seed, sizeof(uint32_t))) {
+        *p_seed = hdr->seed;
+    }
+    if (ptr_writable((void*)p_mrand_seed, sizeof(uint32_t))) {
+        *p_mrand_seed = hdr->rng_seed;
+    }
+    if (ptr_writable((void*)p_native_game_ticks, sizeof(uint32_t))) {
+        *p_native_game_ticks = hdr->native_game_ticks;
+    }
+    if (ptr_writable((void*)p_crowd_sound_last_tick, sizeof(uint32_t))) {
+        *p_crowd_sound_last_tick = hdr->crowd_sound_last_tick;
+    }
+    if (ptr_writable((void*)p_waterfall_fx, sizeof(uintptr_t))) {
+        *p_waterfall_fx = hdr->waterfall_fx_present ? hdr->waterfall_fx_raw : 0u;
+    }
+    if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
+        uintptr_t leader_ptr = 0;
+        if (hdr->leader_mode == FULL_STATE_LEADER_P0) leader_ptr = p0;
+        else if (hdr->leader_mode == FULL_STATE_LEADER_P1) leader_ptr = p1;
+        else if (hdr->leader_mode == FULL_STATE_LEADER_RAW) leader_ptr = hdr->leader_raw;
+        *p_game_leader = leader_ptr;
+    }
+    if (ptr_writable((void*)p_loser, sizeof(uintptr_t))) {
+        uintptr_t loser_ptr = 0;
+        if (hdr->loser_mode == FULL_STATE_LEADER_P0) loser_ptr = p0;
+        else if (hdr->loser_mode == FULL_STATE_LEADER_P1) loser_ptr = p1;
+        else if (hdr->loser_mode == FULL_STATE_LEADER_RAW) loser_ptr = hdr->loser_raw;
+        *p_loser = loser_ptr;
+    }
+    if (ptr_writable((void*)p_score_shudder, sizeof(int) * 2u)) {
+        p_score_shudder[0] = hdr->score_shudder0;
+        p_score_shudder[1] = hdr->score_shudder1;
+    }
+    if (ptr_writable((void*)p_roomdef_count, sizeof(int))) {
+        *p_roomdef_count = hdr->roomdef_count;
+    }
+    if (ptr_writable((void*)p_room_w, sizeof(int))) {
+        *p_room_w = hdr->room_w;
+    }
+    if (ptr_writable((void*)p_room_pixel_w, sizeof(int))) {
+        *p_room_pixel_w = hdr->room_pixel_w;
+    }
+    if (ptr_writable((void*)p_tilemap_w, sizeof(int))) {
+        *p_tilemap_w = hdr->tilemap_w;
+    }
+    if (ptr_writable((void*)p_tilemap_h, sizeof(int))) {
+        *p_tilemap_h = hdr->tilemap_h;
+    }
+    if (ptr_writable((void*)p_tile_w_native, sizeof(int))) {
+        *p_tile_w_native = hdr->tile_w;
+    }
+    if (ptr_writable((void*)p_tile_h_native, sizeof(int))) {
+        *p_tile_h_native = hdr->tile_h;
+    }
+    if (ptr_writable((void*)p_tilemap_pixels_w, sizeof(int))) {
+        *p_tilemap_pixels_w = hdr->tilemap_pixels_w;
+    }
+    if (ptr_writable((void*)p_tilemap_pixels_h, sizeof(int))) {
+        *p_tilemap_pixels_h = hdr->tilemap_pixels_h;
+    }
+    if (ptr_writable((void*)p_map_w, sizeof(int))) {
+        *p_map_w = hdr->map_w;
+    }
+    if (ptr_writable((void*)p_map_h, sizeof(int))) {
+        *p_map_h = hdr->map_h;
+    }
+    if (ptr_writable((void*)p_camera_x, sizeof(float))) {
+        *p_camera_x = hdr->camera_x;
+    }
+    if (ptr_writable((void*)p_camera_y, sizeof(float))) {
+        *p_camera_y = hdr->camera_y;
+    }
+    if (ptr_writable((void*)p_camera_shake, sizeof(float))) {
+        *p_camera_shake = hdr->camera_shake;
+    }
+    if (ptr_writable((void*)p_camera_shake_decay, sizeof(float))) {
+        *p_camera_shake_decay = hdr->camera_shake_decay;
+    }
+    if (ptr_writable((void*)p_game_w, sizeof(float))) {
+        *p_game_w = hdr->game_w;
+    }
+    if (ptr_writable((void*)p_game_h, sizeof(float))) {
+        *p_game_h = hdr->game_h;
+    }
+    if (ptr_writable((void*)p_transient_game_state, TRANSIENT_GAME_STATE_SIZE)) {
+        memcpy((void*)p_transient_game_state, hdr->transient_game_state, TRANSIENT_GAME_STATE_SIZE);
+    }
+    memcpy((void*)p_thing_info, hdr->thing_info_state, THING_INFO_STATE_SIZE);
+    memcpy((void*)p_room_info_state, hdr->room_info_state, ROOM_INFO_STATE_SIZE);
+    memcpy((void*)p_particle_state, hdr->particle_state, PARTICLE_STATE_SIZE);
+    g_game_tick_count = (unsigned long long)hdr->framework_tick_count;
+
+    payload = ((const uint8_t*)src) + sizeof(*hdr);
+    memcpy((void*)p0, payload, PLAYER_SIZE);
+    payload += PLAYER_SIZE;
+    memcpy((void*)p1, payload, PLAYER_SIZE);
+    payload += PLAYER_SIZE;
+    if (current_thing_count > 0) {
+        memcpy((void*)p_things, payload, (size_t)current_thing_count * THING_SIZE);
+        payload += (size_t)current_thing_count * THING_SIZE;
+    }
+    if (hdr->tilemap_bytes > 0) {
+        memcpy(tilemap_ptr, payload, hdr->tilemap_bytes);
+    }
+
+    return 1;
+}
+
+static uint32_t full_state_crc32(const void* data, size_t len) {
+    const uint8_t* p = (const uint8_t*)data;
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint32_t)p[i];
+        for (int bit = 0; bit < 8; bit++) {
+            uint32_t mask = (uint32_t)-(int)(crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return ~crc;
+}
+
+static int full_state_validate_blob_header(const void* src, size_t src_len, const FullStateBlobHeader** out_hdr, char* err, size_t err_cap) {
+    const FullStateBlobHeader* hdr = (const FullStateBlobHeader*)src;
+    size_t expected_size;
+
+    if (!src || src_len < sizeof(FullStateBlobHeader)) {
+        full_state_set_err(err, err_cap, "state blob too small");
+        return 0;
+    }
+    if (hdr->magic != FULL_STATE_BLOB_MAGIC) {
+        full_state_set_err(err, err_cap, "invalid state blob magic");
+        return 0;
+    }
+    if (hdr->version != FULL_STATE_BLOB_VERSION) {
+        full_state_set_err(err, err_cap, "unsupported state blob version");
+        return 0;
+    }
+    if (hdr->player_size != (uint32_t)PLAYER_SIZE || hdr->thing_size != (uint32_t)THING_SIZE) {
+        full_state_set_err(err, err_cap, "state blob layout mismatch");
+        return 0;
+    }
+    if (hdr->thing_count > 128u) {
+        full_state_set_err(err, err_cap, "state blob thing count out of range");
+        return 0;
+    }
+    if (hdr->tilemap_bytes > TILEMAP_MAX_BYTES) {
+        full_state_set_err(err, err_cap, "state blob tilemap too large");
+        return 0;
+    }
+    expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
+    if (src_len != expected_size) {
+        full_state_set_err(err, err_cap, "state blob size mismatch");
+        return 0;
+    }
+
+    if (out_hdr) *out_hdr = hdr;
+    return 1;
+}
+
+static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, char* err, size_t err_cap) {
+    FullStateBlobHeader* hdr = (FullStateBlobHeader*)blob;
+
+    if (!full_state_validate_blob_header(blob, blob_len, NULL, err, err_cap)) {
+        return 0;
+    }
+
+    /*
+     * Keep the native gameplay state strict. The framework tick counter is a
+     * Lua scheduling clock, not a game-simulation field, and rollback replays
+     * intentionally do not re-enter Lua on_tick handlers.
+     */
+    hdr->framework_tick_count = 0;
+    hdr->waterfall_fx_raw = 0;
+
+    return 1;
 }
 
 static int game_get_room_dims(int* out_room_w, int* out_room_h) {
@@ -5813,6 +6705,69 @@ static int lua_game_native_state(lua_State* Ls) {
     return 1;
 }
 
+static int lua_game_state_checksum(lua_State* Ls) {
+    uint32_t crc = 0;
+    char err[128];
+
+    if (!lua_manager_game_state_checksum(&crc, err, sizeof(err))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+    lua_pushnumber(Ls, (lua_Number)(double)crc);
+    return 1;
+}
+
+static int lua_game_full_state_size(lua_State* Ls) {
+    size_t blob_len = lua_manager_game_state_size();
+    lua_pushnumber(Ls, (lua_Number)(double)blob_len);
+    return 1;
+}
+
+static int lua_game_full_state_blob(lua_State* Ls) {
+    size_t blob_len = lua_manager_game_state_size();
+    uint8_t* blob = NULL;
+    char err[128];
+
+    if (blob_len == 0) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "game state unavailable");
+        return 2;
+    }
+
+    blob = (uint8_t*)malloc(blob_len);
+    if (!blob) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "out of memory");
+        return 2;
+    }
+    if (!lua_manager_game_state_save(blob, blob_len, &blob_len, err, sizeof(err))) {
+        free(blob);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    lua_pushlstring(Ls, (const char*)blob, blob_len);
+    free(blob);
+    return 1;
+}
+
+static int lua_game_apply_full_state_blob(lua_State* Ls) {
+    size_t blob_len = 0;
+    const char* blob = luaL_checklstring(Ls, 1, &blob_len);
+    char err[128];
+
+    if (!lua_manager_game_state_load(blob, blob_len, err, sizeof(err))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
 static int lua_game_block_next_tick(lua_State* Ls) {
     int block = lua_isnoneornil(Ls, 1) ? 1 : (lua_toboolean(Ls, 1) ? 1 : 0);
     hooks_block_next_game_tick(block);
@@ -7264,6 +8219,10 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_rng_seed);                                          lua_setfield(Ls, -2, "rng_seed");
     lua_pushcfunction(Ls, lua_game_set_rng_seed);                                      lua_setfield(Ls, -2, "set_rng_seed");
     lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
+    lua_pushcfunction(Ls, lua_game_state_checksum);                                    lua_setfield(Ls, -2, "state_checksum");
+    lua_pushcfunction(Ls, lua_game_full_state_blob);                                   lua_setfield(Ls, -2, "full_state_blob");
+    lua_pushcfunction(Ls, lua_game_apply_full_state_blob);                             lua_setfield(Ls, -2, "apply_full_state_blob");
+    lua_pushcfunction(Ls, lua_game_full_state_size);                                   lua_setfield(Ls, -2, "full_state_size");
     lua_pushcfunction(Ls, lua_game_block_next_tick);                                   lua_setfield(Ls, -2, "block_next_tick");
     lua_pushcfunction(Ls, lua_game_simulate_ticks);                                    lua_setfield(Ls, -2, "simulate_ticks");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds, 1);      lua_setfield(Ls, -2, "poll_cmds");
@@ -9810,6 +10769,124 @@ int lua_manager_mod_dependency_satisfied(int mod_index, int dep_index) {
 int lua_manager_get_mod_conflict_count(int mod_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     return m ? m->conflicts.count : 0;
+}
+
+size_t lua_manager_game_state_size(void) {
+    return full_state_blob_size_for_thing_count(game_get_thing_count());
+}
+
+int lua_manager_game_state_save(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap) {
+    size_t required = lua_manager_game_state_size();
+    if (required == 0) {
+        full_state_set_err(err, err_cap, "game state unavailable");
+        return 0;
+    }
+    return full_state_capture_into(dst, dst_len, out_len, err, err_cap);
+}
+
+int lua_manager_game_state_load(const void* src, size_t src_len, char* err, size_t err_cap) {
+    return full_state_apply_blob(src, src_len, err, err_cap);
+}
+
+int lua_manager_game_state_load_rollback(const void* src, size_t src_len, char* err, size_t err_cap) {
+    unsigned long long framework_tick_count = g_game_tick_count;
+    int ok = full_state_apply_blob(src, src_len, err, err_cap);
+    g_game_tick_count = framework_tick_count;
+    return ok;
+}
+
+int lua_manager_game_state_checksum(uint32_t* out_crc, char* err, size_t err_cap) {
+    size_t blob_len = lua_manager_game_state_size();
+    uint8_t* blob = NULL;
+    uint32_t crc = 0;
+
+    if (!out_crc) {
+        full_state_set_err(err, err_cap, "checksum output pointer unavailable");
+        return 0;
+    }
+    if (blob_len == 0) {
+        full_state_set_err(err, err_cap, "game state unavailable");
+        return 0;
+    }
+
+    blob = (uint8_t*)malloc(blob_len);
+    if (!blob) {
+        full_state_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
+    if (!lua_manager_game_state_save(blob, blob_len, &blob_len, err, err_cap)) {
+        free(blob);
+        return 0;
+    }
+
+    crc = full_state_crc32(blob, blob_len);
+    free(blob);
+    *out_crc = crc;
+    return 1;
+}
+
+int lua_manager_game_state_canonicalize_rollback(void* blob, size_t blob_len, char* err, size_t err_cap) {
+    return full_state_canonicalize_rollback_blob(blob, blob_len, err, err_cap);
+}
+
+int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_t err_cap) {
+    size_t blob_len = lua_manager_game_state_size();
+    uint8_t* blob = NULL;
+    uint32_t crc = 0;
+
+    if (!out_crc) {
+        full_state_set_err(err, err_cap, "checksum output pointer unavailable");
+        return 0;
+    }
+    if (blob_len == 0) {
+        full_state_set_err(err, err_cap, "game state unavailable");
+        return 0;
+    }
+
+    blob = (uint8_t*)malloc(blob_len);
+    if (!blob) {
+        full_state_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
+    if (!lua_manager_game_state_save(blob, blob_len, &blob_len, err, err_cap)) {
+        free(blob);
+        return 0;
+    }
+    if (!full_state_canonicalize_rollback_blob(blob, blob_len, err, err_cap)) {
+        free(blob);
+        return 0;
+    }
+
+    crc = full_state_crc32(blob, blob_len);
+    free(blob);
+    *out_crc = crc;
+    return 1;
+}
+
+int lua_manager_game_rng_seed(uint32_t* out_seed) {
+    if (!out_seed) return 0;
+    if (!ptr_readable((const void*)p_mrand_seed, sizeof(uint32_t))) return 0;
+    *out_seed = *p_mrand_seed;
+    return 1;
+}
+
+int lua_manager_game_set_rng_seed(uint32_t seed) {
+    if (!ptr_writable((void*)p_mrand_seed, sizeof(uint32_t))) return 0;
+    *p_mrand_seed = seed;
+    return 1;
+}
+
+int lua_manager_game_native_ticks(uint32_t* out_ticks) {
+    if (!out_ticks) return 0;
+    if (!ptr_readable((const void*)p_native_game_ticks, sizeof(uint32_t))) return 0;
+    *out_ticks = *p_native_game_ticks;
+    return 1;
+}
+
+int lua_manager_game_set_native_ticks(uint32_t ticks) {
+    if (!ptr_writable((void*)p_native_game_ticks, sizeof(uint32_t))) return 0;
+    *p_native_game_ticks = ticks;
+    return 1;
 }
 
 const char* lua_manager_get_mod_conflict_id(int mod_index, int conflict_index) {

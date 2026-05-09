@@ -25,3 +25,6 @@ state.switch main
 state.last
 state.switch main
 help
+ggpo.selftest 600
+ggpo.selftest 48
+ggpo.selftest 600

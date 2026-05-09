@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -105,7 +108,7 @@ double lua_manager_on_delta_time(double dt_seconds);
 // when it detects a state transition. Mods register handlers via mod.on_layout().
 // (No external callers needed - no new hooks required.)
 
-// Deterministic gameplay update hook, fired from main_update_with_buttons.
+// Deterministic gameplay update hook, fired from native game_update.
 void lua_manager_on_tick(void);
 void lua_manager_on_tick_post(void);
 unsigned long long lua_manager_get_tick_count(void);
@@ -131,6 +134,20 @@ int lua_manager_reload_assets(
 int lua_manager_console_eval(const char* code, char* out, int out_sz);
 int lua_manager_console_eval_mod(const char* mod_id, const char* code, char* out, int out_sz);
 int lua_manager_console_run_file(const char* path, char* out, int out_sz);
+
+// Native gameplay-state serialization API used by rollback/network code.
+size_t lua_manager_game_state_size(void);
+int lua_manager_game_state_save(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap);
+int lua_manager_game_state_load(const void* src, size_t src_len, char* err, size_t err_cap);
+int lua_manager_game_state_load_rollback(const void* src, size_t src_len, char* err, size_t err_cap);
+int lua_manager_game_state_checksum(uint32_t* out_crc, char* err, size_t err_cap);
+int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_t err_cap);
+int lua_manager_game_state_canonicalize_rollback(void* blob, size_t blob_len, char* err, size_t err_cap);
+const char* lua_manager_game_state_offset_name(size_t offset);
+int lua_manager_game_rng_seed(uint32_t* out_seed);
+int lua_manager_game_set_rng_seed(uint32_t seed);
+int lua_manager_game_native_ticks(uint32_t* out_ticks);
+int lua_manager_game_set_native_ticks(uint32_t ticks);
 
 #ifdef __cplusplus
 }

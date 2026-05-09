@@ -64,6 +64,7 @@ uint32_t hooks_peek_player_cmds_raw(int player_index, int mode);
 uint32_t hooks_peek_player_cmds_effective(int player_index, int mode);
 void hooks_block_next_game_tick(int block);
 int hooks_simulate_game_ticks(int count, int arg0);
+int hooks_advance_game_tick(int arg0, int run_framework_tick);
 
 #ifdef __cplusplus
 }

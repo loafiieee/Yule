@@ -1,50 +1,80 @@
-[16:42:46] [INFO] Mod framework initializing...
-[16:42:46] [INFO] Mod framework API version: 1
-[16:42:46] [INFO] Scanning mods/ folder...
-[16:42:46] [WARN] Skipping mod folder sync_test: could not open mods\sync_test\mod.json
-[16:42:46] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[16:42:46] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[16:42:46] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[16:42:46] [INFO] [mod:crash] enabled=false
-[16:42:46] [INFO] Loaded mod: crash
-[16:42:46] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[16:42:46] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[16:42:46] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[16:42:46] [INFO] [mod:poc_speedhack] enabled=false
-[16:42:46] [INFO] [mod:poc_speedhack] speed=1
-[16:42:46] [INFO] Loaded mod: poc_speedhack
-[16:42:46] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[16:42:46] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[16:42:46] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[16:42:46] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[16:42:46] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[16:42:46] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[16:42:46] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[16:42:46] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[16:42:46] [INFO] Loaded mod: texture_pack_test
-[16:42:46] [INFO] Done. 4 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
-[16:42:46] [INFO] [maps] scanning maps/ for custom maps
-[16:42:46] [INFO] [maps][example_map] scanning folder: maps\example_map
-[16:42:46] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[16:42:46] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[16:42:46] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[16:42:46] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[16:42:46] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[16:42:46] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
-[16:42:46] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[16:42:46] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
-[16:42:46] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[16:42:46] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[16:42:46] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[16:42:46] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[16:42:46] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[16:42:46] [INFO] hooks_init: custom MODS menu ready
-[16:42:49] [INFO] ggpo.selftest: queued from F2 (frames=600)
-[16:42:49] [INFO] ggpo.selftest: started frames=600 state_size=144296 budget=8
-[16:42:52] [INFO] ggpo.selftest: ok frames=600 initial=3172425198 replay_final=3153922789
-[16:42:59] [INFO] ggpo.loopback: enabled from F3 state_size=144296 history=128 verify_interval=90 verify_distance=8
-[16:43:16] [ERROR] ggpo.loopback: failed (rollback replay checksum mismatch frame=983 expected=2688523234 got=3181420329 diff_offset=36 diff=rng_seed p0=0x00000008 p1=0x00000000 range=982..989)
-[16:43:25] [INFO] ggpo.loopback: enabled from F3 state_size=144296 history=128 verify_interval=90 verify_distance=8
-[16:44:00] [INFO] [mod:crash] Unloaded
-[16:44:00] [INFO] [mod:poc_speedhack] Unloaded
-[16:44:00] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[13:48:57] [INFO] Mod framework initializing...
+[13:48:57] [INFO] Mod framework API version: 1
+[13:48:57] [INFO] Scanning mods/ folder...
+[13:48:57] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[13:48:57] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[13:48:57] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[13:48:57] [INFO] [mod:crash] enabled=false
+[13:48:57] [INFO] Loaded mod: crash
+[13:48:57] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[13:48:57] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[13:48:57] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[13:48:57] [INFO] [mod:poc_speedhack] enabled=false
+[13:48:57] [INFO] [mod:poc_speedhack] speed=1
+[13:48:57] [INFO] Loaded mod: poc_speedhack
+[13:48:57] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[13:48:57] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[13:48:57] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[13:48:57] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[13:48:57] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[13:48:57] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[13:48:57] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[13:48:57] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[13:48:57] [INFO] Loaded mod: texture_pack_test
+[13:48:57] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
+[13:48:57] [INFO] [maps] scanning maps/ for custom maps
+[13:48:57] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:48:57] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:48:57] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:48:57] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:48:57] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:48:57] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:48:57] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
+[13:48:57] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:48:57] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[13:48:57] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:48:57] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:48:57] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:48:57] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:48:57] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[13:48:57] [INFO] hooks_init: custom MODS menu ready
+[13:49:07] [INFO] ggpo.net: joining 127.0.0.1:47777 local_port=0 state_size=144296 checksum=2219335831
+[13:49:07] [INFO] ggpo.net: joining from F7 127.0.0.1:47777 local_ud[13:49:07] [INFO] ggpo.net: conn[13:49:07] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=47777
+[13:49:07] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=2219335831 remote_checksum=1111036536
+[13:49:07] [INFO] ggpo.net: receiving host state size=14[13:49:07] [INFO] ggpo.net: remote state sync ack received
+[13:49:07] [INFO] ggpo.net: start state loaded checksum=1111036536
+[13:49:07] [INFO] ggpo.net: waiting for remote frame 0 input
+[13:49:07] [ERROR] ggpo.net: desync frame=29 local=1977546079 remote=1668892195 reason=confirmed frame checksum mismatch local_cmd=0x00000008 remote_cmd=0x00000000 remote_predicted=0 local_frame=30 remote_frame=30
+[13:49:07] [ERROR] ggpo.net: failed (desync frame=29 local=1977546079 remote=1668892195)
+[13:49:09] [INFO] ggpo.net: hosting udp port=47777 state_size=144296 checksum=1075759622
+[13:49:09] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 state_size=144296
+[13:49:09] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=54300
+[13:49:09] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=1075759622 remote_checksum=2534379589
+[13:49:09] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=[13[13:49:10] [INFO] ggpo.net: remote state sync ack received
+[13:49:10] [INFO] ggpo.net: start state loaded checksum=1075759622
+[13:49:10] [INFO] ggpo.net: waiting for remote frame 0 input
+[13:49:10] [ERROR] ggpo.net: desync frame=0 local=195575183 remote=2792583158 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1 remote_frame=1
+[13:49:10] [ERROR] ggpo.net: failed (desync frame=0 local=195575183 remote=2792583158)
+[13:49:13] [INFO] ggpo.net: hosting udp port=47777 state_size=144296 checksum=1570583327
+[13:49:13] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 state_size=144296
+[13:49:13] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=57144
+[13:49:13] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=1570583327 remote_checksum=1116580808
+[13:49:13] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[13:49:14] [INFO] ggpo.net: remote state sync ack received
+[13:49:14] [INFO] ggpo.net: start state loaded checksum=1570583327
+[13:49:14] [INFO] ggpo.net: waiting for remote frame 0 input
+[13:49:15] [ERROR] ggpo.net: desync frame=69 local=3213376698 remote=3206862541 reason=confirmed frame checksum mismatch local_cmd=0x00000004 remote_cmd=0x00000000 remote_predicted=0 local_frame=70 remote_frame=70
+[13:49:15] [ERROR] ggpo.net: failed (desync frame=69 local=3213376698 remote=3206862541)
+[13:49:17] [INFO] [mod:crash] Unloaded
+[13:49:17] [INFO] [mod:poc_speedhack] Unloaded
+[13:49:17] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+:14] [INFO] ggpo.net: host state synced size=144296 checksum=1570583327 chunks=161
+[13:49:14] [INFO] ggpo.net: receiving host state size=144296 checksum=1570583327
+[13:49:14] [INFO] ggpo.net: start state loaded checksum=1570583327
+[13:49:14] [INFO] ggpo.net: waiting for remote frame 0 input
+[13:49:15] [INFO] ggpo.net: rollback start=68 end=68 checksum=2802044494 total=1
+[13:49:15] [ERROR] ggpo.net: desync frame=69 local=3206862541 remote=3213376698 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=71 remote_frame=70
+[13:49:15] [ERROR] ggpo.net: failed (desync frame=69 local=3206862541 remote=3213376698)
+[13:49:18] [INFO] [mod:crash] Unloaded
+[13:49:18] [INFO] [mod:poc_speedhack] Unloaded
+[13:49:18] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

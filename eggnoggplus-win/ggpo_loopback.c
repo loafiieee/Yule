@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "ggpo_ext.h"
+#include "hooks.h"
 #include "lua_manager.h"
 
 #define GGPO_LOOPBACK_HISTORY_FRAMES 128
@@ -19,6 +20,7 @@ typedef struct GgpoLoopbackHistoryEntry {
     size_t state_len;
     size_t post_state_len;
     GgpoFrameInputs inputs;
+    HooksRngTrace rng_trace;
 } GgpoLoopbackHistoryEntry;
 
 typedef struct GgpoLoopbackSession {
@@ -190,7 +192,15 @@ static int ggpo_loopback_verify_recent(int arg0, char* err, size_t err_cap) {
             (void)ggpo_loopback_restore_scratch(NULL, 0);
             return 0;
         }
-        if (!ggpo_ext_advance_frame(&entry->inputs, arg0, &replay_checksum, err, err_cap)) {
+        HooksRngTrace replay_rng_trace;
+        int replay_ok = 0;
+        int old_synth_enabled = hooks_set_native_synth_enabled(0);
+        hooks_rng_trace_begin(f, 2u);
+        replay_ok = ggpo_ext_advance_frame(&entry->inputs, arg0, &replay_checksum, err, err_cap);
+        hooks_rng_trace_copy(&replay_rng_trace);
+        hooks_rng_trace_end();
+        hooks_set_native_synth_enabled(old_synth_enabled);
+        if (!replay_ok) {
             (void)ggpo_loopback_restore_scratch(NULL, 0);
             return 0;
         }
@@ -200,7 +210,8 @@ static int ggpo_loopback_verify_recent(int arg0, char* err, size_t err_cap) {
             const char* diff_name = "unknown";
             size_t replay_state_len = 0;
             uint32_t saved_replay_checksum = 0;
-            char detail[256];
+            char rng_detail[256];
+            char detail[768];
             if (post_blob && ggpo_ext_save_game_state(g_loopback.verify_state,
                                                        g_loopback.state_size,
                                                        &replay_state_len,
@@ -213,9 +224,10 @@ static int ggpo_loopback_verify_recent(int arg0, char* err, size_t err_cap) {
                 diff = ggpo_loopback_first_diff_offset(g_loopback.diff_state, entry->post_state_len, g_loopback.verify_state, replay_state_len);
                 diff_name = lua_manager_game_state_offset_name(diff);
             }
+            hooks_rng_trace_describe_diff(&entry->rng_trace, &replay_rng_trace, rng_detail, sizeof(rng_detail));
             snprintf(detail,
                      sizeof(detail),
-                     "rollback replay checksum mismatch frame=%u expected=%u got=%u diff_offset=%u diff=%s p0=0x%08X p1=0x%08X range=%u..%u",
+                     "rollback replay checksum mismatch frame=%u expected=%u got=%u diff_offset=%u diff=%s p0=0x%08X p1=0x%08X range=%u..%u %s",
                      f,
                      entry->post_checksum,
                      replay_checksum,
@@ -224,7 +236,8 @@ static int ggpo_loopback_verify_recent(int arg0, char* err, size_t err_cap) {
                      entry->inputs.player_cmd[0],
                      entry->inputs.player_cmd[1],
                      start_frame,
-                     end_frame);
+                     end_frame,
+                     rng_detail);
             ggpo_loopback_set_err(err, err_cap, detail);
             (void)ggpo_loopback_restore_scratch(NULL, 0);
             return 0;
@@ -370,8 +383,15 @@ int ggpo_loopback_advance(uint32_t raw_p0, uint32_t raw_p1, int arg0, uint32_t* 
     }
     slot->state_len = state_len;
 
-    if (!ggpo_ext_advance_frame(&inputs, arg0, &checksum, err, err_cap)) {
-        return 0;
+    {
+        int advance_ok = 0;
+        hooks_rng_trace_begin(g_loopback.frame, 1u);
+        advance_ok = ggpo_ext_advance_frame(&inputs, arg0, &checksum, err, err_cap);
+        hooks_rng_trace_copy(&slot->rng_trace);
+        hooks_rng_trace_end();
+        if (!advance_ok) {
+            return 0;
+        }
     }
     if (!ggpo_ext_save_game_state(post_blob, g_loopback.state_size, &post_state_len, &checksum, err, err_cap)) {
         return 0;

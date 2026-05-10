@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -58,6 +59,7 @@ void hooks_clear_tick_input(int player_index);
 int hooks_get_tick_input(int player_index, uint32_t* out_mask, int* out_ticks, int* out_replace);
 void hooks_set_raw_input_blocked(int player_index, int blocked);
 int hooks_get_raw_input_blocked(int player_index);
+void hooks_sync_mad_ticks_to_game_clock(void);
 
 // Command inspection helpers.
 uint32_t hooks_peek_player_cmds_raw(int player_index, int mode);
@@ -65,6 +67,29 @@ uint32_t hooks_peek_player_cmds_effective(int player_index, int mode);
 void hooks_block_next_game_tick(int block);
 int hooks_simulate_game_ticks(int count, int arg0);
 int hooks_advance_game_tick(int arg0, int run_framework_tick);
+
+#define HOOKS_RNG_TRACE_CAPACITY 512u
+
+typedef struct HooksRngTraceEvent {
+    uint32_t kind;
+    uintptr_t caller;
+} HooksRngTraceEvent;
+
+typedef struct HooksRngTrace {
+    uint32_t frame;
+    uint32_t phase;
+    uint32_t count;
+    uint32_t overflow;
+    HooksRngTraceEvent events[HOOKS_RNG_TRACE_CAPACITY];
+} HooksRngTrace;
+
+void hooks_rng_trace_begin(uint32_t frame, uint32_t phase);
+void hooks_rng_trace_end(void);
+void hooks_rng_trace_copy(HooksRngTrace* out_trace);
+void hooks_rng_trace_describe_diff(const HooksRngTrace* expected, const HooksRngTrace* got, char* out, size_t out_cap);
+
+int hooks_get_native_synth_enabled(void);
+int hooks_set_native_synth_enabled(int enabled);
 
 #ifdef __cplusplus
 }

@@ -137,6 +137,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_START_COUNTDOWN       0x542048u
 #define ADDR_GAME_LEVEL            0x542054u
 #define ADDR_PLAYER_ARRAY          0x542058u
+#define ADDR_CONTROLLER            0x542060u
 #define ADDR_LOSER                 0x542064u
 #define ADDR_SCORE_SHUDDER         0x542068u
 #define ADDR_SEED                  0x542074u
@@ -311,6 +312,7 @@ static volatile int* p_lerp_time = (volatile int*)(uintptr_t)ADDR_LERP_TIME;
 static volatile int* p_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
 static volatile int* p_start_countdown = (volatile int*)(uintptr_t)ADDR_START_COUNTDOWN;
 static volatile uint32_t* p_game_level = (volatile uint32_t*)(uintptr_t)ADDR_GAME_LEVEL;
+static volatile uintptr_t* p_controller = (volatile uintptr_t*)(uintptr_t)ADDR_CONTROLLER;
 static volatile uintptr_t* p_loser = (volatile uintptr_t*)(uintptr_t)ADDR_LOSER;
 static volatile int* p_score_shudder = (volatile int*)(uintptr_t)ADDR_SCORE_SHUDDER;
 static volatile uint32_t* p_seed = (volatile uint32_t*)(uintptr_t)ADDR_SEED;
@@ -4241,6 +4243,37 @@ static size_t full_state_blob_size_for_thing_count(int thing_count) {
     return full_state_blob_size_for_counts(thing_count, game_get_tilemap_bytes(NULL, NULL));
 }
 
+static int full_state_transient_range(uintptr_t addr, size_t len, size_t* out_off) {
+    uintptr_t start = (uintptr_t)ADDR_TRANSIENT_GAME_STATE;
+    uintptr_t end = start + (uintptr_t)TRANSIENT_GAME_STATE_SIZE;
+    if (addr < start || len > (size_t)(end - addr)) return 0;
+    if (out_off) *out_off = (size_t)(addr - start);
+    return 1;
+}
+
+static uintptr_t full_state_read_transient_ptr(const FullStateBlobHeader* hdr, uintptr_t addr) {
+    size_t off = 0;
+    uintptr_t value = 0;
+    if (!hdr || !full_state_transient_range(addr, sizeof(value), &off)) return 0;
+    memcpy(&value, hdr->transient_game_state + off, sizeof(value));
+    return value;
+}
+
+static void full_state_zero_transient_range(FullStateBlobHeader* hdr, uintptr_t addr, size_t len) {
+    size_t off = 0;
+    if (!hdr || !full_state_transient_range(addr, len, &off)) return;
+    memset(hdr->transient_game_state + off, 0, len);
+}
+
+static uintptr_t full_state_remap_player_ptr(const FullStateBlobHeader* hdr, uintptr_t raw, uintptr_t p0, uintptr_t p1) {
+    uintptr_t raw_p0 = full_state_read_transient_ptr(hdr, ADDR_PLAYER_ARRAY);
+    uintptr_t raw_p1 = full_state_read_transient_ptr(hdr, ADDR_PLAYER_ARRAY + sizeof(uintptr_t));
+    if (raw == 0) return 0;
+    if (raw == raw_p0) return p0;
+    if (raw == raw_p1) return p1;
+    return 0;
+}
+
 static void full_state_set_err(char* err, size_t err_cap, const char* msg) {
     if (!err || err_cap == 0) return;
     if (!msg) msg = "unknown error";
@@ -4738,6 +4771,29 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
     if (ptr_writable((void*)p_transient_game_state, TRANSIENT_GAME_STATE_SIZE)) {
         memcpy((void*)p_transient_game_state, hdr->transient_game_state, TRANSIENT_GAME_STATE_SIZE);
     }
+    if (ptr_writable((void*)p_player_slots, sizeof(uintptr_t) * 2u)) {
+        p_player_slots[0] = p0;
+        p_player_slots[1] = p1;
+    }
+    if (ptr_writable((void*)p_controller, sizeof(uintptr_t))) {
+        uintptr_t raw_controller = full_state_read_transient_ptr(hdr, ADDR_CONTROLLER);
+        uintptr_t controller_ptr = full_state_remap_player_ptr(hdr, raw_controller, p0, p1);
+        if (controller_ptr) {
+            *p_controller = controller_ptr;
+        }
+    }
+    if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
+        uintptr_t leader_ptr = 0;
+        if (hdr->leader_mode == FULL_STATE_LEADER_P0) leader_ptr = p0;
+        else if (hdr->leader_mode == FULL_STATE_LEADER_P1) leader_ptr = p1;
+        *p_game_leader = leader_ptr;
+    }
+    if (ptr_writable((void*)p_loser, sizeof(uintptr_t))) {
+        uintptr_t loser_ptr = 0;
+        if (hdr->loser_mode == FULL_STATE_LEADER_P0) loser_ptr = p0;
+        else if (hdr->loser_mode == FULL_STATE_LEADER_P1) loser_ptr = p1;
+        *p_loser = loser_ptr;
+    }
     memcpy((void*)p_thing_info, hdr->thing_info_state, THING_INFO_STATE_SIZE);
     memcpy((void*)p_room_info_state, hdr->room_info_state, ROOM_INFO_STATE_SIZE);
     memcpy((void*)p_particle_state, hdr->particle_state, PARTICLE_STATE_SIZE);
@@ -4823,7 +4879,15 @@ static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, ch
      * intentionally do not re-enter Lua on_tick handlers.
      */
     hdr->framework_tick_count = 0;
+    hdr->leader_raw = 0;
+    hdr->loser_raw = 0;
+    hdr->waterfall_fx_present = 0;
     hdr->waterfall_fx_raw = 0;
+    full_state_zero_transient_range(hdr, ADDR_LEADER, sizeof(uintptr_t));
+    full_state_zero_transient_range(hdr, ADDR_WATERFALL_FX, sizeof(uintptr_t));
+    full_state_zero_transient_range(hdr, ADDR_PLAYER_ARRAY, sizeof(uintptr_t) * 2u);
+    full_state_zero_transient_range(hdr, ADDR_CONTROLLER, sizeof(uintptr_t));
+    full_state_zero_transient_range(hdr, ADDR_LOSER, sizeof(uintptr_t));
 
     return 1;
 }

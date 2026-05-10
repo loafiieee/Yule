@@ -84,7 +84,11 @@ int ggpo_ext_save_game_state(void* dst, size_t dst_len, size_t* out_len, uint32_
 
 int ggpo_ext_load_game_state(const void* src, size_t src_len, char* err, size_t err_cap) {
     ggpo_ext_clear_tick_inputs();
-    return lua_manager_game_state_load_rollback(src, src_len, err, err_cap);
+    if (!lua_manager_game_state_load_rollback(src, src_len, err, err_cap)) {
+        return 0;
+    }
+    hooks_sync_mad_ticks_to_game_clock();
+    return 1;
 }
 
 int ggpo_ext_advance_frame(const GgpoFrameInputs* inputs, int arg0, uint32_t* out_checksum, char* err, size_t err_cap) {

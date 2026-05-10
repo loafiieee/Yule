@@ -54,10 +54,21 @@
 #ifndef SDLK_F3
 #define SDLK_F3 1073741884
 #endif
+#ifndef SDLK_F4
+#define SDLK_F4 1073741885
+#endif
+#ifndef SDLK_F6
+#define SDLK_F6 1073741887
+#endif
+#ifndef SDLK_F7
+#define SDLK_F7 1073741888
+#endif
 
 #include "hooks.h"
 #include "ggpo_ext.h"
 #include "ggpo_loopback.h"
+#include "ggpo_local.h"
+#include "ggpo_net.h"
 #include "lua_manager.h"
 #include "font_ext.h"
 #include "texture_ext.h"
@@ -112,6 +123,15 @@
 #define ADDR_TURTLE_G                 0x448114u
 #define ADDR_TURTLE_B                 0x448118u
 #define ADDR_TURTLE_A                 0x44811Cu
+#define ADDR_NATIVE_SYNTH_ENABLED     0x54C0CAu
+#define ADDR_MRAND_SEED               0x496DA0u
+#define ADDR_MRAND                    0x405080u
+#define ADDR_RND                      0x4050B0u
+#define ADDR_FRND                     0x405170u
+#define ADDR_RND5050                  0x405210u
+#define ADDR_RNDSIGN                  0x4052C0u
+#define ADDR_RESPAWN_WARBLE           0x41BB70u
+#define ADDR_SYNTH_EFFECT_WHISTLING   0x41BBD0u
 
 // Asset load hook used for moddable font glyph overlays.
 #define ADDR_RGBA_LOAD                0x4022A0u
@@ -157,7 +177,7 @@
 #define PROFILE_PATH_MAX        MAX_PATH
 #define MAX_CUSTOM_STATES         16
 #define CUSTOM_STATE_NAME_MAX     64
-#define GGPO_SELFTEST_FRAMES_PER_TICK 8
+#define GGPO_SELFTEST_FRAMES_PER_TICK 2
 
 typedef struct GameState {
     void (__cdecl *enter)(void);
@@ -245,6 +265,7 @@ typedef RgbaImage* (__cdecl *fn_rgba_load_t)(const char*);
 typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 typedef int (__cdecl *fn_tile_action_t)(void*, int, int, int, int);
 typedef void (__cdecl *fn_colour_query_t)(float*);
+typedef int (__cdecl *fn_synth_callback_t)(void*);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -289,9 +310,19 @@ static volatile int* g_layer = (volatile int*)(uintptr_t)ADDR_LAYER;
 static volatile uint32_t* g_mad_ticks = (volatile uint32_t*)(uintptr_t)ADDR_MAD_TICKS;
 static volatile int* g_debug = (volatile int*)(uintptr_t)ADDR_DEBUG;
 static volatile int* g_debug_slowmo = (volatile int*)(uintptr_t)ADDR_DEBUG_SLOWMO;
+static volatile unsigned char* g_native_synth_enabled = (volatile unsigned char*)(uintptr_t)ADDR_NATIVE_SYNTH_ENABLED;
+static volatile uint32_t* g_native_mrand_seed = (volatile uint32_t*)(uintptr_t)ADDR_MRAND_SEED;
 
 static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)ADDR_RGBA_LOAD;
 static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
+static fn_synth_callback_t           p_respawn_warble_trampoline = NULL;
+static fn_synth_callback_t           p_synth_effect_whistling_trampoline = NULL;
+
+void* g_hooks_rng_mrand_trampoline = NULL;
+void* g_hooks_rng_rnd_trampoline = NULL;
+void* g_hooks_rng_frnd_trampoline = NULL;
+void* g_hooks_rng_rnd5050_trampoline = NULL;
+void* g_hooks_rng_rndsign_trampoline = NULL;
 
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
@@ -302,6 +333,13 @@ static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
 static Detour g_high_water_action_detour;
+static Detour g_rng_mrand_detour;
+static Detour g_rng_rnd_detour;
+static Detour g_rng_frnd_detour;
+static Detour g_rng_rnd5050_detour;
+static Detour g_rng_rndsign_detour;
+static Detour g_respawn_warble_detour;
+static Detour g_synth_effect_whistling_detour;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -550,8 +588,11 @@ static int console_try_parse_double(const char* s, double* out_value);
 static int console_try_parse_bool(const char* s, int* out_value);
 static void console_strip_crlf(char* s);
 static void console_run_ggpo_selftest(const char* arg);
+static void console_run_ggpo_roundtrip(const char* arg);
 static void queue_ggpo_selftest(int frames, const char* source);
 static void toggle_ggpo_loopback(const char* source);
+static void console_run_ggpo_local(const char* arg);
+static void toggle_ggpo_local(const char* source);
 
 static GameState g_mods_state = {
     mods_enter,
@@ -620,6 +661,242 @@ static void format_bytes_compact(unsigned int bytes, char* out, size_t out_sz) {
     } else {
         snprintf(out, out_sz, "%uB", bytes);
     }
+}
+
+static volatile int g_hooks_rng_trace_active = 0;
+static HooksRngTrace g_hooks_rng_trace;
+
+static const char* hooks_rng_kind_name(uint32_t kind) {
+    switch (kind) {
+        case 1: return "mrand";
+        case 2: return "rnd";
+        case 3: return "frnd";
+        case 4: return "rnd5050";
+        case 5: return "rndsign";
+        default: return "rng";
+    }
+}
+
+static const char* hooks_rng_known_caller(uintptr_t caller) {
+    switch ((uint32_t)caller) {
+        case 0x0041BB8Cu: return "respawn_warble";
+        case 0x0041BC18u: return "synth_whistling.frnd";
+        case 0x0041BC2Fu: return "synth_whistling.rnd";
+        case 0x0041BC36u: return "synth_whistling.rndsign";
+        case 0x00427E5Bu: return "find_good_spot";
+        case 0x00427F23u: return "find_good_spot";
+        case 0x00428204u: return "player_respawn.particle_rnd";
+        case 0x00428217u: return "player_respawn.particle_flip";
+        case 0x0042847Cu: return "player_respawn_self";
+        default: return NULL;
+    }
+}
+
+static void hooks_rng_trace_format_event(const HooksRngTraceEvent* ev, char* out, size_t out_cap) {
+    const char* known = NULL;
+    if (!out || out_cap == 0) return;
+    if (!ev || ev->kind == 0) {
+        snprintf(out, out_cap, "none");
+        return;
+    }
+    known = hooks_rng_known_caller(ev->caller);
+    if (known) {
+        snprintf(out, out_cap, "%s@%08X:%s",
+                 hooks_rng_kind_name(ev->kind),
+                 (unsigned int)ev->caller,
+                 known);
+    } else {
+        snprintf(out, out_cap, "%s@%08X",
+                 hooks_rng_kind_name(ev->kind),
+                 (unsigned int)ev->caller);
+    }
+}
+
+void hooks_rng_trace_begin(uint32_t frame, uint32_t phase) {
+    memset(&g_hooks_rng_trace, 0, sizeof(g_hooks_rng_trace));
+    g_hooks_rng_trace.frame = frame;
+    g_hooks_rng_trace.phase = phase;
+    g_hooks_rng_trace_active = 1;
+}
+
+void hooks_rng_trace_end(void) {
+    g_hooks_rng_trace_active = 0;
+}
+
+void hooks_rng_trace_copy(HooksRngTrace* out_trace) {
+    if (!out_trace) return;
+    *out_trace = g_hooks_rng_trace;
+}
+
+void hooks_rng_trace_describe_diff(const HooksRngTrace* expected, const HooksRngTrace* got, char* out, size_t out_cap) {
+    uint32_t expected_count = expected ? expected->count : 0u;
+    uint32_t got_count = got ? got->count : 0u;
+    uint32_t min_count = (expected_count < got_count) ? expected_count : got_count;
+    uint32_t first_diff = min_count;
+    char expected_ev[96];
+    char got_ev[96];
+
+    if (!out || out_cap == 0) return;
+
+    for (uint32_t i = 0; i < min_count; i++) {
+        const HooksRngTraceEvent* a = &expected->events[i];
+        const HooksRngTraceEvent* b = &got->events[i];
+        if (a->kind != b->kind || a->caller != b->caller) {
+            first_diff = i;
+            break;
+        }
+    }
+
+    if (first_diff < expected_count && first_diff < HOOKS_RNG_TRACE_CAPACITY) {
+        hooks_rng_trace_format_event(&expected->events[first_diff], expected_ev, sizeof(expected_ev));
+    } else {
+        snprintf(expected_ev, sizeof(expected_ev), "none");
+    }
+    if (first_diff < got_count && first_diff < HOOKS_RNG_TRACE_CAPACITY) {
+        hooks_rng_trace_format_event(&got->events[first_diff], got_ev, sizeof(got_ev));
+    } else {
+        snprintf(got_ev, sizeof(got_ev), "none");
+    }
+
+    snprintf(out,
+             out_cap,
+             "rng_trace expected_count=%u got_count=%u first_diff=%u expected=%s got=%s expected_overflow=%u got_overflow=%u",
+             (unsigned int)expected_count,
+             (unsigned int)got_count,
+             (unsigned int)first_diff,
+             expected_ev,
+             got_ev,
+             expected ? (unsigned int)expected->overflow : 0u,
+             got ? (unsigned int)got->overflow : 0u);
+}
+
+void __cdecl hooks_rng_trace_record_from_hook(uint32_t kind, uintptr_t caller) {
+    uint32_t index;
+    if (!g_hooks_rng_trace_active) return;
+    index = g_hooks_rng_trace.count++;
+    if (index < HOOKS_RNG_TRACE_CAPACITY) {
+        g_hooks_rng_trace.events[index].kind = kind;
+        g_hooks_rng_trace.events[index].caller = caller;
+    } else {
+        g_hooks_rng_trace.overflow++;
+    }
+}
+
+static void __attribute__((naked)) hooked_mrand(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $1\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_mrand_trampoline\n\t"
+    );
+}
+
+static void __attribute__((naked)) hooked_rnd(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $2\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_rnd_trampoline\n\t"
+    );
+}
+
+static void __attribute__((naked)) hooked_frnd(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $3\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_frnd_trampoline\n\t"
+    );
+}
+
+static void __attribute__((naked)) hooked_rnd5050(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $4\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_rnd5050_trampoline\n\t"
+    );
+}
+
+static void __attribute__((naked)) hooked_rndsign(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $5\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_rndsign_trampoline\n\t"
+    );
+}
+
+int hooks_get_native_synth_enabled(void) {
+    return g_native_synth_enabled ? ((*g_native_synth_enabled != 0) ? 1 : 0) : 0;
+}
+
+int hooks_set_native_synth_enabled(int enabled) {
+    int old_enabled = hooks_get_native_synth_enabled();
+    if (g_native_synth_enabled) {
+        *g_native_synth_enabled = enabled ? 1u : 0u;
+    }
+    return old_enabled;
+}
+
+static uint32_t g_audio_rng_seed = 0xA53C9E21u;
+static volatile int g_audio_rng_wrap_depth = 0;
+
+static int hooks_call_synth_callback_with_audio_rng(fn_synth_callback_t callback, void* effect) {
+    int result = 0;
+    uint32_t game_seed = 0;
+
+    if (!callback) return 0;
+    if (!g_native_mrand_seed || g_audio_rng_wrap_depth > 0) {
+        return callback(effect);
+    }
+
+    game_seed = *g_native_mrand_seed;
+    g_audio_rng_wrap_depth++;
+    *g_native_mrand_seed = g_audio_rng_seed;
+    result = callback(effect);
+    g_audio_rng_seed = *g_native_mrand_seed;
+    *g_native_mrand_seed = game_seed;
+    g_audio_rng_wrap_depth--;
+    return result;
+}
+
+static int __cdecl hooked_respawn_warble(void* effect) {
+    return hooks_call_synth_callback_with_audio_rng(p_respawn_warble_trampoline, effect);
+}
+
+static int __cdecl hooked_synth_effect_whistling(void* effect) {
+    return hooks_call_synth_callback_with_audio_rng(p_synth_effect_whistling_trampoline, effect);
 }
 
 static int str_bool_true(const char* s) {
@@ -1394,6 +1671,7 @@ static const char* k_console_commands[] = {
     "binds.list", "binds.find", "binds.set", "binds.clear",
     "profiles.list", "profiles.save", "profiles.load", "profiles.delete", "profiles.current",
     "reload.mods", "mods.reload", "reload.assets",
+    "ggpo.net",
     "log.level", "log.tail", "input.show", "input.override", "input.clear",
     "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
 };
@@ -1951,7 +2229,10 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  reload.mods", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ggpo.net <host|join|off|status>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
@@ -2017,7 +2298,21 @@ static void console_show_help(const char* topic) {
         return;
     }
     if (_stricmp(t, "ggpo.selftest") == 0) {
-        console_push_line_rgb("ggpo.selftest [frames]: run native rollback self-test through ggpo_ext save/load/advance.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.selftest [frames]: invasive hidden-frame replay test. Prefer F3 for live rollback testing.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "ggpo.roundtrip") == 0) {
+        console_push_line_rgb("ggpo.roundtrip: non-invasive save/load/checksum callback test.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "ggpo.local") == 0) {
+        console_push_line_rgb("ggpo.local [toggle|on|off|status]: route gameplay through the GGPO-shaped local callback session.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "ggpo.net") == 0) {
+        console_push_line_rgb("ggpo.net host [port]: host a UDP rollback input session as player 0.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net join <host> [port] [local_port]: join as player 1.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("F6 hosts on 47777. F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "reload.mods") == 0) {
@@ -2782,10 +3077,128 @@ static void console_run_reload_assets(void) {
     }
 }
 
+static void run_ggpo_roundtrip_check(const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    char err[256];
+    size_t state_size = ggpo_ext_game_state_size();
+    uint8_t* state_blob = NULL;
+    size_t state_len = 0;
+    uint32_t saved_checksum = 0;
+    uint32_t restored_checksum = 0;
+
+    if (ggpo_loopback_active()) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: skipped from %s (loopback active; press F3 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (ggpo_local_active()) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: skipped from %s (local session active; press F4 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (ggpo_net_active()) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: skipped from %s (net session active; stop ggpo.net first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (g_ggpo_selftest.active || g_ggpo_selftest_pending) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: skipped from %s (selftest already running)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (state_size == 0) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: failed from %s (game state unavailable)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        return;
+    }
+
+    state_blob = (uint8_t*)malloc(state_size);
+    if (!state_blob) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: failed from %s (out of memory)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        return;
+    }
+
+    err[0] = '\0';
+    if (!ggpo_ext_save_game_state(state_blob, state_size, &state_len, &saved_checksum, err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: failed from %s (save failed: %s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        free(state_blob);
+        return;
+    }
+    if (!ggpo_ext_load_game_state(state_blob, state_len, err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: failed from %s (load failed: %s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        free(state_blob);
+        return;
+    }
+    if (!lua_manager_game_state_rollback_checksum(&restored_checksum, err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: failed from %s (checksum failed: %s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        free(state_blob);
+        return;
+    }
+    if (restored_checksum != saved_checksum) {
+        snprintf(out, sizeof(out), "ggpo.roundtrip: failed from %s (expected=%u got=%u)",
+                 (source && source[0]) ? source : "unknown",
+                 (unsigned int)saved_checksum,
+                 (unsigned int)restored_checksum);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        free(state_blob);
+        return;
+    }
+
+    snprintf(out,
+             sizeof(out),
+             "ggpo.roundtrip: ok from %s state_size=%u checksum=%u",
+             (source && source[0]) ? source : "unknown",
+             (unsigned int)state_len,
+             (unsigned int)saved_checksum);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+    free(state_blob);
+}
+
 static void queue_ggpo_selftest(int frames, const char* source) {
     char out[CONSOLE_LINE_TEXT];
     if (ggpo_loopback_active()) {
         snprintf(out, sizeof(out), "ggpo.selftest: skipped from %s (loopback active; press F3 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (ggpo_local_active()) {
+        snprintf(out, sizeof(out), "ggpo.selftest: skipped from %s (local session active; press F4 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (ggpo_net_active()) {
+        snprintf(out, sizeof(out), "ggpo.selftest: skipped from %s (net session active; stop ggpo.net first)",
                  (source && source[0]) ? source : "unknown");
         console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
         LOG_WARN("%s", out);
@@ -2835,6 +3248,20 @@ static void toggle_ggpo_loopback(const char* source) {
         LOG_WARN("%s", out);
         return;
     }
+    if (ggpo_local_active()) {
+        snprintf(out, sizeof(out), "ggpo.loopback: skipped from %s (local session active; press F4 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (ggpo_net_active()) {
+        snprintf(out, sizeof(out), "ggpo.loopback: skipped from %s (net session active; stop ggpo.net first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
 
     err[0] = '\0';
     if (!ggpo_loopback_start(err, sizeof(err))) {
@@ -2856,6 +3283,343 @@ static void toggle_ggpo_loopback(const char* source) {
     LOG_INFO("%s", out);
 }
 
+static void print_ggpo_local_status(void) {
+    char out[CONSOLE_LINE_TEXT];
+    if (ggpo_local_active()) {
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.local: active frames=%u last_checksum=%u state_size=%u",
+                 (unsigned int)ggpo_local_frame_count(),
+                 (unsigned int)ggpo_local_last_checksum(),
+                 (unsigned int)ggpo_local_state_size());
+    } else {
+        snprintf(out, sizeof(out), "ggpo.local: inactive");
+    }
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    LOG_INFO("%s", out);
+}
+
+static void toggle_ggpo_local(const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    char err[256];
+
+    if (ggpo_local_active()) {
+        uint32_t frames = ggpo_local_frame_count();
+        uint32_t checksum = ggpo_local_last_checksum();
+        ggpo_local_stop();
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.local: disabled from %s after %u frame(s), last_checksum=%u",
+                 (source && source[0]) ? source : "unknown",
+                 (unsigned int)frames,
+                 (unsigned int)checksum);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+
+    if (ggpo_loopback_active()) {
+        snprintf(out, sizeof(out), "ggpo.local: skipped from %s (loopback active; press F3 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (g_ggpo_selftest_pending || g_ggpo_selftest.active) {
+        snprintf(out, sizeof(out), "ggpo.local: skipped from %s (selftest pending)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+    if (ggpo_net_active()) {
+        snprintf(out, sizeof(out), "ggpo.local: skipped from %s (net session active; stop ggpo.net first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return;
+    }
+
+    err[0] = '\0';
+    if (!ggpo_local_start(err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.local: failed to enable from %s (%s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        return;
+    }
+
+    snprintf(out,
+             sizeof(out),
+             "ggpo.local: enabled from %s state_size=%u callbacks=save/load/advance",
+             (source && source[0]) ? source : "unknown",
+             (unsigned int)ggpo_local_state_size());
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+}
+
+static void console_run_ggpo_local(const char* arg) {
+    char arg_buf[64];
+    const char* t = "";
+
+    if (arg && arg[0]) {
+        safe_copy(arg_buf, sizeof(arg_buf), arg);
+        t = trim_ws(arg_buf);
+    }
+
+    if (!t || !t[0] || _stricmp(t, "toggle") == 0) {
+        toggle_ggpo_local("console");
+        console_close();
+        return;
+    }
+    if (_stricmp(t, "status") == 0) {
+        print_ggpo_local_status();
+        return;
+    }
+    if (_stricmp(t, "on") == 0 || _stricmp(t, "enable") == 0 || _stricmp(t, "start") == 0) {
+        if (!ggpo_local_active()) toggle_ggpo_local("console");
+        else print_ggpo_local_status();
+        console_close();
+        return;
+    }
+    if (_stricmp(t, "off") == 0 || _stricmp(t, "disable") == 0 || _stricmp(t, "stop") == 0) {
+        if (ggpo_local_active()) toggle_ggpo_local("console");
+        else print_ggpo_local_status();
+        console_close();
+        return;
+    }
+
+    console_push_line_rgb("Usage: ggpo.local [toggle|on|off|status]", 0.98f, 0.76f, 0.40f);
+}
+
+static void print_ggpo_net_status(void) {
+    char out[CONSOLE_LINE_TEXT];
+    if (ggpo_net_active()) {
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: %s connected=%d frame=%u remote_frame=%u lp=%d rp=%d port=%u peer_port=%u checksum=%u state=%u tx=%u rx=%u pred=%u rb=%u late=%u drop=%u stalls=%u desync=%u",
+                 ggpo_net_mode_name(),
+                 ggpo_net_connected(),
+                 (unsigned int)ggpo_net_frame_count(),
+                 (unsigned int)ggpo_net_remote_frame_count(),
+                 ggpo_net_local_player(),
+                 ggpo_net_remote_player(),
+                 (unsigned int)ggpo_net_local_port(),
+                 (unsigned int)ggpo_net_remote_port(),
+                 (unsigned int)ggpo_net_last_checksum(),
+                 (unsigned int)ggpo_net_state_size(),
+                 (unsigned int)ggpo_net_packets_sent(),
+                 (unsigned int)ggpo_net_packets_received(),
+                 (unsigned int)ggpo_net_prediction_count(),
+                 (unsigned int)ggpo_net_rollback_count(),
+                 (unsigned int)ggpo_net_late_input_count(),
+                 (unsigned int)ggpo_net_dropped_input_count(),
+                 (unsigned int)ggpo_net_frame_advantage_stall_count(),
+                 (unsigned int)ggpo_net_desync_count());
+    } else {
+        snprintf(out, sizeof(out), "ggpo.net: inactive");
+    }
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    LOG_INFO("%s", out);
+    if (ggpo_net_active() && ggpo_net_desync_count() > 0) {
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: last_desync frame=%u local=%u remote=%u",
+                 (unsigned int)ggpo_net_desync_frame(),
+                 (unsigned int)ggpo_net_desync_local_checksum(),
+                 (unsigned int)ggpo_net_desync_remote_checksum());
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_INFO("%s", out);
+    }
+}
+
+static void stop_ggpo_net(const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    uint32_t frames = ggpo_net_frame_count();
+    uint32_t checksum = ggpo_net_last_checksum();
+    uint32_t tx = ggpo_net_packets_sent();
+    uint32_t rx = ggpo_net_packets_received();
+    uint32_t pred = ggpo_net_prediction_count();
+    uint32_t rb = ggpo_net_rollback_count();
+    uint32_t desync = ggpo_net_desync_count();
+    uint32_t stalls = ggpo_net_frame_advantage_stall_count();
+    if (!ggpo_net_active()) {
+        print_ggpo_net_status();
+        return;
+    }
+    ggpo_net_stop();
+    snprintf(out,
+             sizeof(out),
+             "ggpo.net: stopped from %s after %u frame(s), checksum=%u tx=%u rx=%u pred=%u rb=%u stalls=%u desync=%u",
+             (source && source[0]) ? source : "unknown",
+             (unsigned int)frames,
+             (unsigned int)checksum,
+             (unsigned int)tx,
+             (unsigned int)rx,
+             (unsigned int)pred,
+             (unsigned int)rb,
+             (unsigned int)stalls,
+             (unsigned int)desync);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+}
+
+static int can_start_ggpo_net(const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    if (ggpo_loopback_active()) {
+        snprintf(out, sizeof(out), "ggpo.net: skipped from %s (loopback active; press F3 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return 0;
+    }
+    if (ggpo_local_active()) {
+        snprintf(out, sizeof(out), "ggpo.net: skipped from %s (local session active; press F4 to disable first)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return 0;
+    }
+    if (g_ggpo_selftest_pending || g_ggpo_selftest.active) {
+        snprintf(out, sizeof(out), "ggpo.net: skipped from %s (selftest pending)",
+                 (source && source[0]) ? source : "unknown");
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        LOG_WARN("%s", out);
+        return 0;
+    }
+    return 1;
+}
+
+static void start_ggpo_net_host(uint16_t port, const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    char err[256];
+
+    if (ggpo_net_active()) {
+        stop_ggpo_net(source);
+        return;
+    }
+    if (!can_start_ggpo_net(source)) return;
+
+    err[0] = '\0';
+    if (!ggpo_net_start_host(port, err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.net: host failed from %s (%s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        return;
+    }
+
+    snprintf(out,
+             sizeof(out),
+             "ggpo.net: hosting from %s udp=%u player=0 state_size=%u",
+             (source && source[0]) ? source : "unknown",
+             (unsigned int)ggpo_net_local_port(),
+             (unsigned int)ggpo_net_state_size());
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+}
+
+static void start_ggpo_net_join(const char* host, uint16_t remote_port, uint16_t local_port, const char* source) {
+    char out[CONSOLE_LINE_TEXT];
+    char err[256];
+
+    if (ggpo_net_active()) {
+        stop_ggpo_net(source);
+        return;
+    }
+    if (!can_start_ggpo_net(source)) return;
+
+    err[0] = '\0';
+    if (!ggpo_net_start_join(host, remote_port, local_port, err, sizeof(err))) {
+        snprintf(out, sizeof(out), "ggpo.net: join failed from %s (%s)",
+                 (source && source[0]) ? source : "unknown",
+                 err[0] ? err : "unknown error");
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        LOG_ERROR("%s", out);
+        return;
+    }
+
+    snprintf(out,
+             sizeof(out),
+             "ggpo.net: joining from %s %s:%u local_udp=%u player=1 state_size=%u",
+             (source && source[0]) ? source : "unknown",
+             host ? host : "",
+             (unsigned int)remote_port,
+             (unsigned int)ggpo_net_local_port(),
+             (unsigned int)ggpo_net_state_size());
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    LOG_INFO("%s", out);
+}
+
+static int parse_port_token(const char* tok, uint16_t* out_port) {
+    long port = 0;
+    if (!tok || !tok[0]) return 0;
+    if (!console_try_parse_long(tok, &port) || port < 0 || port > 65535) return 0;
+    if (out_port) *out_port = (uint16_t)port;
+    return 1;
+}
+
+static void console_run_ggpo_net(const char* arg) {
+    char arg_buf[CONSOLE_INPUT_BUF];
+    char* cursor;
+    char* action;
+
+    if (!arg || !arg[0]) {
+        print_ggpo_net_status();
+        return;
+    }
+
+    safe_copy(arg_buf, sizeof(arg_buf), arg);
+    cursor = arg_buf;
+    action = console_parse_token(&cursor);
+    if (!action || !action[0] || _stricmp(action, "status") == 0) {
+        print_ggpo_net_status();
+        return;
+    }
+    if (_stricmp(action, "off") == 0 || _stricmp(action, "stop") == 0 || _stricmp(action, "disable") == 0) {
+        stop_ggpo_net("console");
+        console_close();
+        return;
+    }
+    if (_stricmp(action, "host") == 0) {
+        uint16_t port = GGPO_NET_DEFAULT_PORT;
+        char* tok_port = console_parse_token(&cursor);
+        if (tok_port && tok_port[0] && !parse_port_token(tok_port, &port)) {
+            console_push_line_rgb("Usage: ggpo.net host [port]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        start_ggpo_net_host(port, "console");
+        console_close();
+        return;
+    }
+    if (_stricmp(action, "join") == 0) {
+        uint16_t remote_port = GGPO_NET_DEFAULT_PORT;
+        uint16_t local_port = 0;
+        char* host = console_parse_token(&cursor);
+        char* tok_remote_port = console_parse_token(&cursor);
+        char* tok_local_port = console_parse_token(&cursor);
+        if (!host || !host[0]) {
+            console_push_line_rgb("Usage: ggpo.net join <host> [port] [local_port]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (tok_remote_port && tok_remote_port[0] && !parse_port_token(tok_remote_port, &remote_port)) {
+            console_push_line_rgb("Usage: ggpo.net join <host> [port] [local_port]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (tok_local_port && tok_local_port[0] && !parse_port_token(tok_local_port, &local_port)) {
+            console_push_line_rgb("Usage: ggpo.net join <host> [port] [local_port]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        start_ggpo_net_join(host, remote_port, local_port, "console");
+        console_close();
+        return;
+    }
+
+    console_push_line_rgb("Usage: ggpo.net <host|join|off|status>", 0.98f, 0.76f, 0.40f);
+}
+
 static void console_run_ggpo_selftest(const char* arg) {
     long frames = 120;
 
@@ -2868,6 +3632,11 @@ static void console_run_ggpo_selftest(const char* arg) {
 
     queue_ggpo_selftest((int)frames, "console");
     console_close();
+}
+
+static void console_run_ggpo_roundtrip(const char* arg) {
+    (void)arg;
+    run_ggpo_roundtrip_check("console");
 }
 
 static void console_set_log_level(const char* level_arg) {
@@ -3518,8 +4287,14 @@ static void console_execute_input(void) {
         console_run_reload_mods();
     } else if (_stricmp(cmd, "reload.assets") == 0) {
         console_run_reload_assets();
+    } else if (_stricmp(cmd, "ggpo.roundtrip") == 0) {
+        console_run_ggpo_roundtrip(arg);
     } else if (_stricmp(cmd, "ggpo.selftest") == 0) {
         console_run_ggpo_selftest(arg);
+    } else if (_stricmp(cmd, "ggpo.local") == 0) {
+        console_run_ggpo_local(arg);
+    } else if (_stricmp(cmd, "ggpo.net") == 0) {
+        console_run_ggpo_net(arg);
     } else if (_stricmp(cmd, "log.level") == 0) {
         console_set_log_level(arg);
     } else if (_stricmp(cmd, "log.tail") == 0) {
@@ -3659,7 +4434,7 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
     if (!is_console_state_active() && sym == SDLK_F2) {
         void* cur = p_state_current ? p_state_current() : NULL;
         if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
-            queue_ggpo_selftest(600, "F2");
+            run_ggpo_roundtrip_check("F2");
             return 1;
         }
     }
@@ -3667,6 +4442,27 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
         void* cur = p_state_current ? p_state_current() : NULL;
         if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
             toggle_ggpo_loopback("F3");
+            return 1;
+        }
+    }
+    if (!is_console_state_active() && sym == SDLK_F4) {
+        void* cur = p_state_current ? p_state_current() : NULL;
+        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
+            toggle_ggpo_local("F4");
+            return 1;
+        }
+    }
+    if (!is_console_state_active() && sym == SDLK_F6) {
+        void* cur = p_state_current ? p_state_current() : NULL;
+        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
+            start_ggpo_net_host(GGPO_NET_DEFAULT_PORT, "F6");
+            return 1;
+        }
+    }
+    if (!is_console_state_active() && sym == SDLK_F7) {
+        void* cur = p_state_current ? p_state_current() : NULL;
+        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
+            start_ggpo_net_join("127.0.0.1", GGPO_NET_DEFAULT_PORT, 0, "F7");
             return 1;
         }
     }
@@ -4062,6 +4858,13 @@ static void hooks_prepare_deterministic_game_update(void) {
     if (g_debug_slowmo) {
         *g_debug_slowmo = 0;
     }
+    if (g_mad_ticks && lua_manager_game_native_ticks(&native_ticks)) {
+        *g_mad_ticks = native_ticks;
+    }
+}
+
+void hooks_sync_mad_ticks_to_game_clock(void) {
+    uint32_t native_ticks = 0;
     if (g_mad_ticks && lua_manager_game_native_ticks(&native_ticks)) {
         *g_mad_ticks = native_ticks;
     }
@@ -5018,6 +5821,13 @@ static void ggpo_selftest_cleanup(void) {
     memset(&g_ggpo_selftest, 0, sizeof(g_ggpo_selftest));
 }
 
+static int ggpo_selftest_advance_frame_silent(const GgpoFrameInputs* inputs, int arg0, uint32_t* out_checksum, char* err, size_t err_cap) {
+    int old_synth_enabled = hooks_set_native_synth_enabled(0);
+    int ok = ggpo_ext_advance_frame(inputs, arg0, out_checksum, err, err_cap);
+    hooks_set_native_synth_enabled(old_synth_enabled);
+    return ok;
+}
+
 static int ggpo_selftest_start(char* err, size_t err_cap) {
     int frames = g_ggpo_selftest_frames > 0 ? g_ggpo_selftest_frames : 120;
     size_t state_size = ggpo_ext_game_state_size();
@@ -5075,6 +5885,18 @@ static void run_pending_ggpo_selftest(void) {
             LOG_WARN("%s", out);
             return;
         }
+        if (ggpo_local_active()) {
+            snprintf(out, sizeof(out), "ggpo.selftest: skipped (local session active)");
+            console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+            LOG_WARN("%s", out);
+            return;
+        }
+        if (ggpo_net_active()) {
+            snprintf(out, sizeof(out), "ggpo.selftest: skipped (net session active)");
+            console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+            LOG_WARN("%s", out);
+            return;
+        }
         err[0] = '\0';
         if (!ggpo_selftest_start(err, sizeof(err))) {
             snprintf(out, sizeof(out), "ggpo.selftest: failed (%s)", err[0] ? err : "unknown error");
@@ -5102,6 +5924,16 @@ static void run_pending_ggpo_selftest(void) {
         failed = 1;
         goto finish_without_live_restore;
     }
+    if (ggpo_local_active()) {
+        snprintf(err, sizeof(err), "local session became active");
+        failed = 1;
+        goto finish_without_live_restore;
+    }
+    if (ggpo_net_active()) {
+        snprintf(err, sizeof(err), "net session became active");
+        failed = 1;
+        goto finish_without_live_restore;
+    }
 
     if (!ggpo_ext_save_game_state(g_ggpo_selftest.live_blob,
                                   g_ggpo_selftest.state_size,
@@ -5125,7 +5957,7 @@ static void run_pending_ggpo_selftest(void) {
         inputs.player_cmd[0] = k_ggpo_selftest_masks[i % mask_count];
         inputs.player_cmd[1] = k_ggpo_selftest_masks[((i * 3) + 2) % mask_count];
 
-        if (!ggpo_ext_advance_frame(&inputs, 0, &frame_checksum, err, sizeof(err))) {
+        if (!ggpo_selftest_advance_frame_silent(&inputs, 0, &frame_checksum, err, sizeof(err))) {
             failed = 1;
             goto finish_with_live_restore;
         }
@@ -5287,18 +6119,63 @@ static void __cdecl hooked_game_update(int arg0) {
         uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
         uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
         uint32_t checksum = 0;
-        char err[256];
+        char err[1024];
         char out[CONSOLE_LINE_TEXT];
         if (!ggpo_loopback_advance(raw0, raw1, arg0, &checksum, err, sizeof(err))) {
-            snprintf(out, sizeof(out), "ggpo.loopback: failed (%s)", err[0] ? err : "unknown error");
+            snprintf(out, sizeof(out), "ggpo.loopback: failed (see log)");
             console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
-            LOG_ERROR("%s", out);
+            LOG_ERROR("ggpo.loopback: failed (%s)", err[0] ? err : "unknown error");
             ggpo_loopback_stop();
             lua_manager_on_tick_post();
             hooks_finish_game_tick();
             return;
         }
         lua_manager_on_tick_post();
+        return;
+    }
+
+    if (ggpo_local_active()) {
+        uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
+        uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
+        uint32_t checksum = 0;
+        char err[512];
+        char out[CONSOLE_LINE_TEXT];
+        if (!ggpo_local_advance(raw0, raw1, arg0, &checksum, err, sizeof(err))) {
+            snprintf(out, sizeof(out), "ggpo.local: failed (see log)");
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            LOG_ERROR("ggpo.local: failed (%s)", err[0] ? err : "unknown error");
+            ggpo_local_stop();
+            lua_manager_on_tick_post();
+            hooks_finish_game_tick();
+            return;
+        }
+        lua_manager_on_tick_post();
+        return;
+    }
+
+    if (ggpo_net_active()) {
+        uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
+        uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
+        uint32_t checksum = 0;
+        int advanced = 0;
+        char err[512];
+        char out[CONSOLE_LINE_TEXT];
+        if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: failed (%s)",
+                     err[0] ? err : "see log");
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            LOG_ERROR("ggpo.net: failed (%s)", err[0] ? err : "unknown error");
+            ggpo_net_stop();
+            lua_manager_on_tick_post();
+            hooks_finish_game_tick();
+            return;
+        }
+        lua_manager_on_tick_post();
+        if (!advanced) {
+            hooks_finish_game_tick();
+        }
         return;
     }
 
@@ -5440,6 +6317,43 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour high_water_action (W will keep vanilla rendering)");
     } else {
         p_high_water_action_trampoline = (fn_tile_action_t)g_high_water_action_detour.trampoline;
+    }
+
+    if (!install_detour(&g_rng_mrand_detour, (void*)(uintptr_t)ADDR_MRAND, (void*)&hooked_mrand, 10)) {
+        LOG_WARN("hooks_init: failed to detour mrand (RNG tracing disabled for mrand)");
+    } else {
+        g_hooks_rng_mrand_trampoline = g_rng_mrand_detour.trampoline;
+    }
+    if (!install_detour(&g_rng_rnd_detour, (void*)(uintptr_t)ADDR_RND, (void*)&hooked_rnd, 10)) {
+        LOG_WARN("hooks_init: failed to detour rnd (RNG tracing disabled for rnd)");
+    } else {
+        g_hooks_rng_rnd_trampoline = g_rng_rnd_detour.trampoline;
+    }
+    if (!install_detour(&g_rng_frnd_detour, (void*)(uintptr_t)ADDR_FRND, (void*)&hooked_frnd, 13)) {
+        LOG_WARN("hooks_init: failed to detour frnd (RNG tracing disabled for frnd)");
+    } else {
+        g_hooks_rng_frnd_trampoline = g_rng_frnd_detour.trampoline;
+    }
+    if (!install_detour(&g_rng_rnd5050_detour, (void*)(uintptr_t)ADDR_RND5050, (void*)&hooked_rnd5050, 10)) {
+        LOG_WARN("hooks_init: failed to detour rnd5050 (RNG tracing disabled for rnd5050)");
+    } else {
+        g_hooks_rng_rnd5050_trampoline = g_rng_rnd5050_detour.trampoline;
+    }
+    if (!install_detour(&g_rng_rndsign_detour, (void*)(uintptr_t)ADDR_RNDSIGN, (void*)&hooked_rndsign, 13)) {
+        LOG_WARN("hooks_init: failed to detour rndsign (RNG tracing disabled for rndsign)");
+    } else {
+        g_hooks_rng_rndsign_trampoline = g_rng_rndsign_detour.trampoline;
+    }
+
+    if (!install_detour(&g_respawn_warble_detour, (void*)(uintptr_t)ADDR_RESPAWN_WARBLE, (void*)&hooked_respawn_warble, 12)) {
+        LOG_WARN("hooks_init: failed to detour respawn_warble (audio RNG may affect gameplay RNG)");
+    } else {
+        p_respawn_warble_trampoline = (fn_synth_callback_t)g_respawn_warble_detour.trampoline;
+    }
+    if (!install_detour(&g_synth_effect_whistling_detour, (void*)(uintptr_t)ADDR_SYNTH_EFFECT_WHISTLING, (void*)&hooked_synth_effect_whistling, 6)) {
+        LOG_WARN("hooks_init: failed to detour synth_effect_whistling (audio RNG may affect gameplay RNG)");
+    } else {
+        p_synth_effect_whistling_trampoline = (fn_synth_callback_t)g_synth_effect_whistling_detour.trampoline;
     }
 
     

@@ -2312,6 +2312,7 @@ static void console_show_help(const char* topic) {
     if (_stricmp(t, "ggpo.net") == 0) {
         console_push_line_rgb("ggpo.net host [port]: host a UDP rollback input session as player 0.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net join <host> [port] [local_port]: join as player 1.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net delay [frames]: show or set local input delay (0..8).", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("F6 hosts on 47777. F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
         return;
     }
@@ -3398,17 +3399,23 @@ static void print_ggpo_net_status(void) {
     if (ggpo_net_active()) {
         snprintf(out,
                  sizeof(out),
-                 "ggpo.net: %s connected=%d frame=%u remote_frame=%u lp=%d rp=%d port=%u peer_port=%u checksum=%u state=%u tx=%u rx=%u pred=%u rb=%u late=%u drop=%u stalls=%u desync=%u",
+                 "ggpo.net: %s connected=%d frame=%u remote_frame=%u lp=%d rp=%d delay=%u port=%u peer_port=%u checksum=%u state=%u",
                  ggpo_net_mode_name(),
                  ggpo_net_connected(),
                  (unsigned int)ggpo_net_frame_count(),
                  (unsigned int)ggpo_net_remote_frame_count(),
                  ggpo_net_local_player(),
                  ggpo_net_remote_player(),
+                 (unsigned int)ggpo_net_input_delay(),
                  (unsigned int)ggpo_net_local_port(),
                  (unsigned int)ggpo_net_remote_port(),
                  (unsigned int)ggpo_net_last_checksum(),
-                 (unsigned int)ggpo_net_state_size(),
+                 (unsigned int)ggpo_net_state_size());
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        LOG_INFO("%s", out);
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net.stats: tx=%u rx=%u pred=%u rb=%u late=%u drop=%u adv_stall=%u pred_stall=%u silence=%u desync=%u",
                  (unsigned int)ggpo_net_packets_sent(),
                  (unsigned int)ggpo_net_packets_received(),
                  (unsigned int)ggpo_net_prediction_count(),
@@ -3416,6 +3423,8 @@ static void print_ggpo_net_status(void) {
                  (unsigned int)ggpo_net_late_input_count(),
                  (unsigned int)ggpo_net_dropped_input_count(),
                  (unsigned int)ggpo_net_frame_advantage_stall_count(),
+                 (unsigned int)ggpo_net_prediction_stall_count(),
+                 (unsigned int)ggpo_net_peer_silence_ticks(),
                  (unsigned int)ggpo_net_desync_count());
     } else {
         snprintf(out, sizeof(out), "ggpo.net: inactive");
@@ -3444,6 +3453,7 @@ static void stop_ggpo_net(const char* source) {
     uint32_t rb = ggpo_net_rollback_count();
     uint32_t desync = ggpo_net_desync_count();
     uint32_t stalls = ggpo_net_frame_advantage_stall_count();
+    uint32_t pred_stalls = ggpo_net_prediction_stall_count();
     if (!ggpo_net_active()) {
         print_ggpo_net_status();
         return;
@@ -3451,7 +3461,7 @@ static void stop_ggpo_net(const char* source) {
     ggpo_net_stop();
     snprintf(out,
              sizeof(out),
-             "ggpo.net: stopped from %s after %u frame(s), checksum=%u tx=%u rx=%u pred=%u rb=%u stalls=%u desync=%u",
+             "ggpo.net: stopped from %s after %u frame(s), checksum=%u tx=%u rx=%u pred=%u rb=%u adv_stall=%u pred_stall=%u desync=%u",
              (source && source[0]) ? source : "unknown",
              (unsigned int)frames,
              (unsigned int)checksum,
@@ -3460,6 +3470,7 @@ static void stop_ggpo_net(const char* source) {
              (unsigned int)pred,
              (unsigned int)rb,
              (unsigned int)stalls,
+             (unsigned int)pred_stalls,
              (unsigned int)desync);
     console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
     LOG_INFO("%s", out);
@@ -3513,9 +3524,10 @@ static void start_ggpo_net_host(uint16_t port, const char* source) {
 
     snprintf(out,
              sizeof(out),
-             "ggpo.net: hosting from %s udp=%u player=0 state_size=%u",
+             "ggpo.net: hosting from %s udp=%u player=0 delay=%u state_size=%u",
              (source && source[0]) ? source : "unknown",
              (unsigned int)ggpo_net_local_port(),
+             (unsigned int)ggpo_net_input_delay(),
              (unsigned int)ggpo_net_state_size());
     console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
     LOG_INFO("%s", out);
@@ -3543,11 +3555,12 @@ static void start_ggpo_net_join(const char* host, uint16_t remote_port, uint16_t
 
     snprintf(out,
              sizeof(out),
-             "ggpo.net: joining from %s %s:%u local_udp=%u player=1 state_size=%u",
+             "ggpo.net: joining from %s %s:%u local_udp=%u player=1 delay=%u state_size=%u",
              (source && source[0]) ? source : "unknown",
              host ? host : "",
              (unsigned int)remote_port,
              (unsigned int)ggpo_net_local_port(),
+             (unsigned int)ggpo_net_input_delay(),
              (unsigned int)ggpo_net_state_size());
     console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
     LOG_INFO("%s", out);
@@ -3581,6 +3594,35 @@ static void console_run_ggpo_net(const char* arg) {
     if (_stricmp(action, "off") == 0 || _stricmp(action, "stop") == 0 || _stricmp(action, "disable") == 0) {
         stop_ggpo_net("console");
         console_close();
+        return;
+    }
+    if (_stricmp(action, "delay") == 0 || _stricmp(action, "input_delay") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_delay = console_parse_token(&cursor);
+        if (!tok_delay || !tok_delay[0]) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: input delay=%u frame(s)",
+                     (unsigned int)ggpo_net_input_delay());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        long delay = 0;
+        if (!console_try_parse_long(tok_delay, &delay) || delay < 0 || delay > GGPO_NET_MAX_INPUT_DELAY) {
+            console_push_line_rgb("Usage: ggpo.net delay [0..8]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!ggpo_net_set_input_delay((uint32_t)delay)) {
+            console_push_line_rgb("ggpo.net: failed to set input delay", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: input delay set to %ld frame(s)%s",
+                 delay,
+                 ggpo_net_active() ? " for future inputs" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
         return;
     }
     if (_stricmp(action, "host") == 0) {
@@ -3617,7 +3659,7 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
 
-    console_push_line_rgb("Usage: ggpo.net <host|join|off|status>", 0.98f, 0.76f, 0.40f);
+    console_push_line_rgb("Usage: ggpo.net <host|join|off|status|delay>", 0.98f, 0.76f, 0.40f);
 }
 
 static void console_run_ggpo_selftest(const char* arg) {

@@ -28,3 +28,6 @@ help
 ggpo.selftest 600
 ggpo.selftest 48
 ggpo.selftest 600
+ggpo.net delay 2
+ggpo.status
+ggpo.net status

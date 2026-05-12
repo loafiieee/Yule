@@ -21,6 +21,8 @@
 #define GGPO_NET_PACKET_CHECKSUMS 24
 #define GGPO_NET_MAX_PREDICTION 16
 #define GGPO_NET_MAX_FRAME_ADVANTAGE 2
+#define GGPO_NET_DEFAULT_INPUT_DELAY 2
+#define GGPO_NET_TIMEOUT_TICKS 600
 #define GGPO_NET_STATE_CHUNK_BYTES 900
 
 #define GGPO_NET_PACKET_HELLO 1u
@@ -105,6 +107,10 @@ typedef struct GgpoNetSession {
     struct sockaddr_in peer_addr;
     int has_peer_addr;
     uint32_t session_id;
+    uint32_t remote_session_id;
+    int has_remote_session_id;
+    uint32_t service_tick;
+    uint32_t last_rx_tick;
     uint32_t frame;
     uint32_t last_checksum;
     uint32_t initial_checksum;
@@ -127,6 +133,9 @@ typedef struct GgpoNetSession {
     int start_state_loaded;
     int frame0_wait_announced;
     int frame_advantage_wait_announced;
+    int prediction_limit_wait_announced;
+    int peer_disconnected;
+    uint32_t input_delay;
     GgpoNetHistoryEntry history[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry local_inputs[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry remote_inputs[GGPO_NET_HISTORY_FRAMES];
@@ -148,10 +157,12 @@ typedef struct GgpoNetSession {
     uint32_t dropped_inputs;
     uint32_t desyncs;
     uint32_t frame_advantage_stalls;
+    uint32_t prediction_stalls;
 } GgpoNetSession;
 
 static GgpoNetSession g_net;
 static int g_wsa_ready = 0;
+static uint32_t g_net_config_input_delay = GGPO_NET_DEFAULT_INPUT_DELAY;
 
 static void ggpo_net_set_err(char* err, size_t err_cap, const char* msg) {
     if (!err || err_cap == 0) return;
@@ -177,9 +188,10 @@ static uint32_t ggpo_net_make_session_id(void) {
     return seed ^ (uint32_t)GetTickCount() ^ (uint32_t)(uintptr_t)&g_net;
 }
 
-static int ggpo_net_make_socket(uint16_t local_port, SOCKET* out_sock, char* err, size_t err_cap) {
+static int ggpo_net_make_socket(uint16_t local_port, SOCKET* out_sock, uint16_t* out_bound_port, char* err, size_t err_cap) {
     SOCKET s;
     struct sockaddr_in addr;
+    int addr_len = sizeof(addr);
     u_long nb = 1;
     int reuse = 1;
 
@@ -205,6 +217,9 @@ static int ggpo_net_make_socket(uint16_t local_port, SOCKET* out_sock, char* err
         closesocket(s);
         ggpo_net_set_err(err, err_cap, "udp bind failed");
         return 0;
+    }
+    if (getsockname(s, (struct sockaddr*)&addr, &addr_len) == 0 && out_bound_port) {
+        *out_bound_port = ntohs(addr.sin_port);
     }
 
     *out_sock = s;
@@ -244,6 +259,18 @@ static int ggpo_net_addr_equal(const struct sockaddr_in* a, const struct sockadd
            a->sin_addr.s_addr == b->sin_addr.s_addr;
 }
 
+static int ggpo_net_accept_remote_session(uint32_t session_id) {
+    if (!g_net.has_remote_session_id) {
+        g_net.remote_session_id = session_id;
+        g_net.has_remote_session_id = 1;
+        return 1;
+    }
+    if (g_net.remote_session_id != session_id && g_net.frame == 0u) {
+        g_net.remote_session_id = session_id;
+    }
+    return 1;
+}
+
 static GgpoNetInputEntry* ggpo_net_input_slot(GgpoNetInputEntry* entries, uint32_t frame) {
     return &entries[frame % GGPO_NET_HISTORY_FRAMES];
 }
@@ -275,6 +302,20 @@ static uint32_t ggpo_net_latch_local_input(uint32_t frame, uint32_t raw_cmd) {
     }
     ggpo_net_store_input(g_net.local_inputs, frame, raw_cmd);
     return raw_cmd;
+}
+
+static uint32_t ggpo_net_queue_local_input(uint32_t frame, uint32_t raw_cmd) {
+    if (frame > g_net.frame) {
+        ggpo_net_store_input(g_net.local_inputs, frame, raw_cmd);
+        return raw_cmd;
+    }
+    return ggpo_net_latch_local_input(frame, raw_cmd);
+}
+
+static void ggpo_net_seed_local_input_delay(void) {
+    for (uint32_t f = 0; f < g_net.input_delay; f++) {
+        ggpo_net_store_input(g_net.local_inputs, f, 0u);
+    }
 }
 
 static void ggpo_net_mark_desync(uint32_t frame, uint32_t local_checksum, uint32_t remote_checksum, const char* why) {
@@ -353,6 +394,7 @@ static uint32_t ggpo_net_predict_remote(uint32_t frame, int* out_predicted) {
 static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     uint32_t count = 0;
     uint32_t checksum_count = 0;
+    uint32_t latest_input_frame = g_net.frame + g_net.input_delay;
     memset(p, 0, sizeof(*p));
     p->magic = GGPO_NET_MAGIC;
     p->version = GGPO_NET_VERSION;
@@ -365,7 +407,7 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     p->last_checksum = g_net.last_checksum;
 
     for (uint32_t i = 0; i < GGPO_NET_HISTORY_FRAMES && count < GGPO_NET_PACKET_INPUTS; i++) {
-        uint32_t frame = (g_net.frame >= i) ? (g_net.frame - i) : UINT_MAX;
+        uint32_t frame = (latest_input_frame >= i) ? (latest_input_frame - i) : UINT_MAX;
         uint32_t cmd = 0;
         if (frame == UINT_MAX) break;
         if (!ggpo_net_get_input(g_net.local_inputs, frame, &cmd)) continue;
@@ -495,6 +537,7 @@ static void ggpo_net_clear_runtime_history(void) {
     g_net.remote_frame = 0;
     g_net.has_remote_frame = 0;
     g_net.frame_advantage_wait_announced = 0;
+    g_net.prediction_limit_wait_announced = 0;
 }
 
 static void ggpo_net_reset_recv_state(void) {
@@ -507,7 +550,7 @@ static void ggpo_net_reset_recv_state(void) {
     g_net.state_sync_chunks_received = 0;
 }
 
-static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int got_len) {
+static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int got_len, const struct sockaddr_in* from) {
     uint32_t end;
     uint32_t seen_count = 0;
     uint32_t checksum = 0;
@@ -517,10 +560,15 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     if (p->type != GGPO_NET_PACKET_STATE_CHUNK) return;
     if (g_net.mode != GGPO_NET_MODE_JOIN) return;
     if ((int)p->sender_player != g_net.remote_player) return;
+    if (!from || !ggpo_net_addr_equal(&g_net.peer_addr, from)) return;
+    if (!ggpo_net_accept_remote_session(p->session_id)) return;
     if (p->state_size == 0 || p->state_size > (uint32_t)g_net.state_size) return;
     if (p->chunk_size == 0 || p->chunk_size > GGPO_NET_STATE_CHUNK_BYTES) return;
     if (got_len < (int)(offsetof(GgpoNetStateChunkPacket, data) + p->chunk_size)) return;
     if (p->offset >= p->state_size || p->offset + p->chunk_size > p->state_size) return;
+
+    g_net.last_rx_tick = g_net.service_tick;
+    g_net.packets_received++;
 
     if (!g_net.recv_state || g_net.recv_state_len != p->state_size || g_net.recv_state_checksum != p->state_checksum) {
         ggpo_net_reset_recv_state();
@@ -592,10 +640,14 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
     } else if (!ggpo_net_addr_equal(&g_net.peer_addr, from)) {
         return;
     }
+    if (!ggpo_net_accept_remote_session(p->session_id)) {
+        return;
+    }
 
     g_net.remote_player = (int)p->sender_player;
     if (!g_net.connected) {
         g_net.connected = 1;
+        g_net.last_rx_tick = g_net.service_tick;
         LOG_INFO("ggpo.net: connected mode=%s local_player=%d remote_player=%d peer_port=%u",
                  ggpo_net_mode_name(),
                  g_net.local_player,
@@ -603,11 +655,24 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
                  (unsigned int)ntohs(g_net.peer_addr.sin_port));
     }
 
+    g_net.last_rx_tick = g_net.service_tick;
     if (p->type == GGPO_NET_PACKET_STATE_ACK) {
         if (!g_net.remote_state_synced) {
             g_net.remote_state_synced = 1;
             LOG_INFO("ggpo.net: remote state sync ack received");
         }
+    }
+    if (!g_net.remote_state_synced &&
+        g_net.mode == GGPO_NET_MODE_HOST &&
+        p->state_size == (uint32_t)g_net.state_size &&
+        p->state_checksum == g_net.initial_checksum) {
+        g_net.remote_state_synced = 1;
+        LOG_INFO("ggpo.net: remote state sync confirmed by peer packet");
+    }
+    if (p->type == GGPO_NET_PACKET_BYE) {
+        g_net.peer_disconnected = 1;
+        LOG_INFO("ggpo.net: peer disconnected");
+        return;
     }
 
     if (!g_net.warned_initial_mismatch &&
@@ -661,12 +726,33 @@ static void ggpo_net_poll_socket(void) {
         if (prefix->magic != GGPO_NET_MAGIC || prefix->version != GGPO_NET_VERSION) continue;
         if (prefix->type == GGPO_NET_PACKET_STATE_CHUNK) {
             if (got >= (int)offsetof(GgpoNetStateChunkPacket, data)) {
-                ggpo_net_handle_state_chunk(&packet.state_chunk, got);
+                ggpo_net_handle_state_chunk(&packet.state_chunk, got, &from);
             }
         } else if (got >= (int)offsetof(GgpoNetPacket, inputs)) {
             ggpo_net_handle_packet(&packet.normal, &from);
         }
     }
+}
+
+static int ggpo_net_prediction_stall_needed(uint32_t frame, uint32_t* out_oldest_missing) {
+    uint32_t tmp = 0;
+    uint32_t oldest_missing = frame;
+    uint32_t start = (frame > GGPO_NET_MAX_PREDICTION) ? (frame - GGPO_NET_MAX_PREDICTION) : 0u;
+
+    if (ggpo_net_get_input(g_net.remote_inputs, frame, &tmp)) {
+        if (out_oldest_missing) *out_oldest_missing = frame;
+        return 0;
+    }
+
+    for (uint32_t f = start; f <= frame; f++) {
+        if (!ggpo_net_get_input(g_net.remote_inputs, f, &tmp)) {
+            oldest_missing = f;
+            break;
+        }
+    }
+
+    if (out_oldest_missing) *out_oldest_missing = oldest_missing;
+    return (frame - oldest_missing) >= GGPO_NET_MAX_PREDICTION;
 }
 
 static int ggpo_net_build_inputs(uint32_t frame, GgpoFrameInputs* out_inputs, int* out_remote_predicted) {
@@ -747,9 +833,12 @@ static int ggpo_net_load_start_state_if_ready(char* err, size_t err_cap) {
     memcpy(g_net.state_blobs, g_net.initial_state, g_net.initial_state_len);
     ggpo_net_clear_runtime_history();
     g_net.frame = 0;
+    ggpo_net_seed_local_input_delay();
     g_net.last_checksum = checksum;
     g_net.start_state_loaded = 1;
-    LOG_INFO("ggpo.net: start state loaded checksum=%u", (unsigned int)checksum);
+    LOG_INFO("ggpo.net: start state loaded checksum=%u input_delay=%u",
+             (unsigned int)checksum,
+             (unsigned int)g_net.input_delay);
     return 1;
 }
 
@@ -842,6 +931,25 @@ uint16_t ggpo_net_remote_port(void) {
     return g_net.remote_port;
 }
 
+uint32_t ggpo_net_input_delay(void) {
+    return g_net.active ? g_net.input_delay : g_net_config_input_delay;
+}
+
+int ggpo_net_set_input_delay(uint32_t frames) {
+    if (frames > GGPO_NET_MAX_INPUT_DELAY) return 0;
+    g_net_config_input_delay = frames;
+    if (g_net.active) {
+        g_net.input_delay = frames;
+        for (uint32_t f = g_net.frame; f < g_net.frame + frames; f++) {
+            uint32_t tmp = 0;
+            if (!ggpo_net_get_input(g_net.local_inputs, f, &tmp)) {
+                ggpo_net_store_input(g_net.local_inputs, f, 0u);
+            }
+        }
+    }
+    return 1;
+}
+
 void ggpo_net_stop(void) {
     if (g_net.sock != INVALID_SOCKET && g_net.sock != 0) {
         if (g_net.has_peer_addr) (void)ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
@@ -857,6 +965,7 @@ void ggpo_net_stop(void) {
 
 static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* err, size_t err_cap) {
     SOCKET s = INVALID_SOCKET;
+    uint16_t bound_port = local_port;
     size_t state_len = 0;
     uint32_t checksum = 0;
 
@@ -872,7 +981,7 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
         ggpo_net_set_err(err, err_cap, "game state unavailable");
         return 0;
     }
-    if (!ggpo_net_make_socket(local_port, &s, err, err_cap)) {
+    if (!ggpo_net_make_socket(local_port, &s, &bound_port, err, err_cap)) {
         return 0;
     }
 
@@ -906,9 +1015,10 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
     g_net.mode = mode;
     g_net.local_player = (mode == GGPO_NET_MODE_HOST) ? 0 : 1;
     g_net.remote_player = (mode == GGPO_NET_MODE_HOST) ? 1 : 0;
-    g_net.local_port = local_port;
+    g_net.local_port = bound_port;
     g_net.sock = s;
     g_net.session_id = ggpo_net_make_session_id();
+    g_net.input_delay = g_net_config_input_delay;
     g_net.initial_checksum = checksum;
     g_net.last_checksum = checksum;
     g_net.state_synced = (mode == GGPO_NET_MODE_HOST) ? 1 : 0;
@@ -921,8 +1031,9 @@ int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap) {
     if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, err, err_cap)) {
         return 0;
     }
-    LOG_INFO("ggpo.net: hosting udp port=%u state_size=%u checksum=%u",
-             (unsigned int)local_port,
+    LOG_INFO("ggpo.net: hosting udp port=%u input_delay=%u state_size=%u checksum=%u",
+             (unsigned int)g_net.local_port,
+             (unsigned int)g_net.input_delay,
              (unsigned int)g_net.state_size,
              (unsigned int)g_net.initial_checksum);
     return 1;
@@ -939,10 +1050,11 @@ int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_p
     }
     g_net.has_peer_addr = 1;
     g_net.remote_port = remote_port;
-    LOG_INFO("ggpo.net: joining %s:%u local_port=%u state_size=%u checksum=%u",
+    LOG_INFO("ggpo.net: joining %s:%u local_port=%u input_delay=%u state_size=%u checksum=%u",
              host ? host : "",
              (unsigned int)remote_port,
-             (unsigned int)local_port,
+             (unsigned int)g_net.local_port,
+             (unsigned int)g_net.input_delay,
              (unsigned int)g_net.state_size,
              (unsigned int)g_net.initial_checksum);
     (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
@@ -968,7 +1080,20 @@ int ggpo_net_advance(uint32_t raw_p0,
         return 0;
     }
 
+    g_net.service_tick++;
     ggpo_net_poll_socket();
+    if (g_net.peer_disconnected) {
+        ggpo_net_set_err(err, err_cap, "peer disconnected");
+        return 0;
+    }
+    if (g_net.connected &&
+        g_net.last_rx_tick != 0 &&
+        g_net.service_tick - g_net.last_rx_tick > GGPO_NET_TIMEOUT_TICKS) {
+        g_net.peer_disconnected = 1;
+        ggpo_net_set_err(err, err_cap, "peer timeout");
+        return 0;
+    }
+
     (void)ggpo_net_send_packet(g_net.connected ? GGPO_NET_PACKET_INPUT : GGPO_NET_PACKET_HELLO);
     ggpo_net_send_state_sync_burst();
 
@@ -1007,7 +1132,11 @@ int ggpo_net_advance(uint32_t raw_p0,
         return 0;
     }
 
-    local_cmd = ggpo_net_latch_local_input(g_net.frame, (g_net.local_player == 0) ? raw_p0 : raw_p1);
+    {
+        uint32_t sampled_cmd = (g_net.local_player == 0) ? raw_p0 : raw_p1;
+        uint32_t input_frame = g_net.frame + g_net.input_delay;
+        (void)ggpo_net_queue_local_input(input_frame, sampled_cmd);
+    }
     (void)ggpo_net_send_packet(GGPO_NET_PACKET_INPUT);
 
     if (g_net.frame == 0) {
@@ -1051,6 +1180,27 @@ int ggpo_net_advance(uint32_t raw_p0,
         ggpo_net_set_err(err, err_cap, detail);
         return 0;
     }
+
+    if (!ggpo_net_get_input(g_net.local_inputs, g_net.frame, &local_cmd)) {
+        local_cmd = 0u;
+    }
+
+    {
+        uint32_t oldest_missing = 0;
+        if (ggpo_net_prediction_stall_needed(g_net.frame, &oldest_missing)) {
+            g_net.prediction_stalls++;
+            if (!g_net.prediction_limit_wait_announced) {
+                LOG_WARN("ggpo.net: stalling at frame=%u to keep prediction within %u frames (oldest_missing=%u)",
+                         (unsigned int)g_net.frame,
+                         (unsigned int)GGPO_NET_MAX_PREDICTION,
+                         (unsigned int)oldest_missing);
+                g_net.prediction_limit_wait_announced = 1;
+            }
+            if (out_checksum) *out_checksum = g_net.last_checksum;
+            return 1;
+        }
+    }
+    g_net.prediction_limit_wait_announced = 0;
 
     remote_cmd = ggpo_net_predict_remote(g_net.frame, &predicted);
     if (predicted && !g_net.warned_prediction_limit) {
@@ -1141,6 +1291,10 @@ uint32_t ggpo_net_frame_advantage_stall_count(void) {
     return g_net.frame_advantage_stalls;
 }
 
+uint32_t ggpo_net_prediction_stall_count(void) {
+    return g_net.prediction_stalls;
+}
+
 uint32_t ggpo_net_desync_count(void) {
     return g_net.desyncs;
 }
@@ -1155,4 +1309,9 @@ uint32_t ggpo_net_desync_local_checksum(void) {
 
 uint32_t ggpo_net_desync_remote_checksum(void) {
     return g_net.desync_remote_checksum;
+}
+
+uint32_t ggpo_net_peer_silence_ticks(void) {
+    if (!g_net.active || !g_net.connected || g_net.last_rx_tick == 0) return 0u;
+    return g_net.service_tick - g_net.last_rx_tick;
 }

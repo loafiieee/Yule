@@ -78,6 +78,16 @@
 - `input.override <player> <mask> [frames] [replace]`
 - `input.clear <player>`
 
+### Rollback netplay
+- `ggpo.local [toggle|on|off|status]`
+- `ggpo.net host [port]`
+- `ggpo.net join <host> [port] [local_port]`
+- `ggpo.net delay [frames]`
+- `ggpo.net status`
+- `ggpo.net off`
+- `ggpo.selftest [frames]`
+- `ggpo.roundtrip`
+
 ## Examples
 - `mods.find speed`
 - `state.last`
@@ -106,6 +116,9 @@
 - `input.override 0 0x10 30 0`
 - `input.override 1 0x4 -1 1`
 - `input.clear 1`
+- `ggpo.net delay 2`
+- `ggpo.net host 47777`
+- `ggpo.net join 127.0.0.1 47777`
 
 ## Notes
 - `mods.enable` recreates the mod runtime if dependencies/conflicts allow it.

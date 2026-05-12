@@ -14,6 +14,11 @@
 - Mouse wheel: scroll console output.
 - `Tab`: autocomplete command names.
 - `Ctrl+L`: clear console output.
+- `Ctrl+C`: copy current input, or copy console output if input is empty.
+- `Ctrl+V`: paste clipboard text into input.
+- Right mouse button: paste clipboard text into input.
+- Left mouse button on input row: move cursor.
+- Middle mouse button: copy console output.
 - History is persisted to `mods\console_history.txt`.
 
 ## Command reference
@@ -25,6 +30,7 @@
 - `history [count]`
 - `echo <text>`
 - `console.stats`
+- `console.copy [output|input]`
 
 ### Runtime and system
 - `state`
@@ -83,6 +89,7 @@
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
 - `ggpo.net delay [frames]`
+- `ggpo.net sim [loss_pct] [min_delay] [max_delay]`
 - `ggpo.net status`
 - `ggpo.net off`
 - `ggpo.selftest [frames]`
@@ -107,6 +114,7 @@
 - `mods.config.set speedhack enabled true`
 - `mods.config.action speedhack reset_defaults`
 - `log.tail 40`
+- `console.copy output`
 - `lua return 2 + 2`
 - `lua.mod speedhack return config.get("max_speed")`
 - `lua.file mods\\speedhack\\speedhack.lua`
@@ -117,6 +125,8 @@
 - `input.override 1 0x4 -1 1`
 - `input.clear 1`
 - `ggpo.net delay 2`
+- `ggpo.net sim 5 2 8`
+- `ggpo.net sim off`
 - `ggpo.net host 47777`
 - `ggpo.net join 127.0.0.1 47777`
 

@@ -21,9 +21,10 @@
 #define GGPO_NET_PACKET_CHECKSUMS 24
 #define GGPO_NET_MAX_PREDICTION 16
 #define GGPO_NET_MAX_FRAME_ADVANTAGE 2
-#define GGPO_NET_DEFAULT_INPUT_DELAY 2
+#define GGPO_NET_DEFAULT_INPUT_DELAY 1
 #define GGPO_NET_TIMEOUT_TICKS 600
 #define GGPO_NET_STATE_CHUNK_BYTES 900
+#define GGPO_NET_SIM_QUEUE_PACKETS 128
 
 #define GGPO_NET_PACKET_HELLO 1u
 #define GGPO_NET_PACKET_INPUT 2u
@@ -95,6 +96,14 @@ typedef struct GgpoNetStateChunkPacket {
 } GgpoNetStateChunkPacket;
 #pragma pack(pop)
 
+typedef struct GgpoNetQueuedPacket {
+    int valid;
+    uint32_t send_tick;
+    int len;
+    struct sockaddr_in addr;
+    uint8_t bytes[sizeof(GgpoNetStateChunkPacket)];
+} GgpoNetQueuedPacket;
+
 typedef struct GgpoNetSession {
     int active;
     int connected;
@@ -158,11 +167,22 @@ typedef struct GgpoNetSession {
     uint32_t desyncs;
     uint32_t frame_advantage_stalls;
     uint32_t prediction_stalls;
+    uint32_t sim_loss_percent;
+    uint32_t sim_delay_min_ticks;
+    uint32_t sim_delay_max_ticks;
+    uint32_t sim_rng;
+    uint32_t sim_packets_dropped;
+    uint32_t sim_packets_delayed;
+    uint32_t sim_queue_drops;
+    GgpoNetQueuedPacket sim_queue[GGPO_NET_SIM_QUEUE_PACKETS];
 } GgpoNetSession;
 
 static GgpoNetSession g_net;
 static int g_wsa_ready = 0;
 static uint32_t g_net_config_input_delay = GGPO_NET_DEFAULT_INPUT_DELAY;
+static uint32_t g_net_config_sim_loss_percent = 0;
+static uint32_t g_net_config_sim_delay_min_ticks = 0;
+static uint32_t g_net_config_sim_delay_max_ticks = 0;
 
 static void ggpo_net_set_err(char* err, size_t err_cap, const char* msg) {
     if (!err || err_cap == 0) return;
@@ -257,6 +277,103 @@ static int ggpo_net_addr_equal(const struct sockaddr_in* a, const struct sockadd
            a->sin_family == b->sin_family &&
            a->sin_port == b->sin_port &&
            a->sin_addr.s_addr == b->sin_addr.s_addr;
+}
+
+static uint32_t ggpo_net_rand_u32(void) {
+    if (g_net.sim_rng == 0u) {
+        g_net.sim_rng = ggpo_net_make_session_id() ^ 0xA5C31F27u;
+        if (g_net.sim_rng == 0u) g_net.sim_rng = 1u;
+    }
+    g_net.sim_rng ^= g_net.sim_rng << 13;
+    g_net.sim_rng ^= g_net.sim_rng >> 17;
+    g_net.sim_rng ^= g_net.sim_rng << 5;
+    return g_net.sim_rng;
+}
+
+static uint32_t ggpo_net_rand_range(uint32_t count) {
+    if (count == 0u) return 0u;
+    return ggpo_net_rand_u32() % count;
+}
+
+static int ggpo_net_tick_reached(uint32_t now, uint32_t then) {
+    return (int32_t)(now - then) >= 0;
+}
+
+static uint32_t ggpo_net_sim_pending_count(void) {
+    uint32_t count = 0;
+    for (int i = 0; i < GGPO_NET_SIM_QUEUE_PACKETS; i++) {
+        if (g_net.sim_queue[i].valid) count++;
+    }
+    return count;
+}
+
+static int ggpo_net_send_raw_bytes(const void* data, int len, const struct sockaddr_in* addr) {
+    int sent;
+    if (!data || len <= 0 || !addr || g_net.sock == INVALID_SOCKET) return 0;
+    sent = sendto(g_net.sock,
+                  (const char*)data,
+                  len,
+                  0,
+                  (const struct sockaddr*)addr,
+                  sizeof(*addr));
+    if (sent == SOCKET_ERROR) {
+        int e = WSAGetLastError();
+        if (e == WSAEWOULDBLOCK) return 1;
+        return 0;
+    }
+    g_net.packets_sent++;
+    return 1;
+}
+
+static int ggpo_net_queue_sim_packet(const void* data, int len, const struct sockaddr_in* addr, uint32_t delay_ticks) {
+    for (int i = 0; i < GGPO_NET_SIM_QUEUE_PACKETS; i++) {
+        GgpoNetQueuedPacket* q = &g_net.sim_queue[i];
+        if (q->valid) continue;
+        q->valid = 1;
+        q->send_tick = g_net.service_tick + delay_ticks;
+        q->len = len;
+        q->addr = *addr;
+        memcpy(q->bytes, data, (size_t)len);
+        g_net.sim_packets_delayed++;
+        return 1;
+    }
+    g_net.sim_queue_drops++;
+    return 1;
+}
+
+static void ggpo_net_flush_sim_queue(void) {
+    for (int i = 0; i < GGPO_NET_SIM_QUEUE_PACKETS; i++) {
+        GgpoNetQueuedPacket* q = &g_net.sim_queue[i];
+        if (!q->valid) continue;
+        if (!ggpo_net_tick_reached(g_net.service_tick, q->send_tick)) continue;
+        if (ggpo_net_send_raw_bytes(q->bytes, q->len, &q->addr)) {
+            q->valid = 0;
+        }
+    }
+}
+
+static int ggpo_net_send_bytes(const void* data, int len, const struct sockaddr_in* addr, int simulate) {
+    uint32_t delay = 0;
+    if (!data || len <= 0 || len > (int)sizeof(GgpoNetStateChunkPacket) || !addr) return 0;
+
+    if (simulate && g_net.sim_loss_percent > 0u) {
+        if (ggpo_net_rand_range(100u) < g_net.sim_loss_percent) {
+            g_net.sim_packets_dropped++;
+            return 1;
+        }
+    }
+
+    if (simulate && g_net.sim_delay_max_ticks > 0u) {
+        uint32_t min_delay = g_net.sim_delay_min_ticks;
+        uint32_t max_delay = g_net.sim_delay_max_ticks;
+        if (max_delay < min_delay) max_delay = min_delay;
+        delay = min_delay + ggpo_net_rand_range((max_delay - min_delay) + 1u);
+        if (delay > 0u) {
+            return ggpo_net_queue_sim_packet(data, len, addr, delay);
+        }
+    }
+
+    return ggpo_net_send_raw_bytes(data, len, addr);
 }
 
 static int ggpo_net_accept_remote_session(uint32_t session_id) {
@@ -432,49 +549,22 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
 
 static int ggpo_net_send_packet(uint16_t type) {
     GgpoNetPacket p;
-    int sent;
     if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
     ggpo_net_fill_packet(&p, type);
-    sent = sendto(g_net.sock,
-                  (const char*)&p,
-                  sizeof(p),
-                  0,
-                  (const struct sockaddr*)&g_net.peer_addr,
-                  sizeof(g_net.peer_addr));
-    if (sent == SOCKET_ERROR) {
-        int e = WSAGetLastError();
-        if (e == WSAEWOULDBLOCK) return 1;
-        return 0;
-    }
-    g_net.packets_sent++;
-    return 1;
+    return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, type != GGPO_NET_PACKET_BYE);
 }
 
 static int ggpo_net_send_state_ack(void) {
     GgpoNetPacket p;
-    int sent;
     if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
     ggpo_net_fill_packet(&p, GGPO_NET_PACKET_STATE_ACK);
-    sent = sendto(g_net.sock,
-                  (const char*)&p,
-                  sizeof(p),
-                  0,
-                  (const struct sockaddr*)&g_net.peer_addr,
-                  sizeof(g_net.peer_addr));
-    if (sent == SOCKET_ERROR) {
-        int e = WSAGetLastError();
-        if (e == WSAEWOULDBLOCK) return 1;
-        return 0;
-    }
-    g_net.packets_sent++;
-    return 1;
+    return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, 1);
 }
 
 static int ggpo_net_send_state_chunk(void) {
     GgpoNetStateChunkPacket p;
     uint32_t remaining;
     uint32_t chunk;
-    int sent;
 
     if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
     if (!g_net.initial_state || g_net.initial_state_len == 0) return 0;
@@ -497,19 +587,9 @@ static int ggpo_net_send_state_chunk(void) {
     p.chunk_size = chunk;
     memcpy(p.data, g_net.initial_state + g_net.state_send_offset, chunk);
 
-    sent = sendto(g_net.sock,
-                  (const char*)&p,
-                  (int)(offsetof(GgpoNetStateChunkPacket, data) + chunk),
-                  0,
-                  (const struct sockaddr*)&g_net.peer_addr,
-                  sizeof(g_net.peer_addr));
-    if (sent == SOCKET_ERROR) {
-        int e = WSAGetLastError();
-        if (e == WSAEWOULDBLOCK) return 1;
+    if (!ggpo_net_send_bytes(&p, (int)(offsetof(GgpoNetStateChunkPacket, data) + chunk), &g_net.peer_addr, 1)) {
         return 0;
     }
-
-    g_net.packets_sent++;
     g_net.state_sync_chunks_sent++;
     g_net.state_send_offset += chunk;
     if (g_net.state_send_offset >= (uint32_t)g_net.initial_state_len) {
@@ -950,6 +1030,54 @@ int ggpo_net_set_input_delay(uint32_t frames) {
     return 1;
 }
 
+int ggpo_net_set_network_sim(uint32_t loss_percent, uint32_t min_delay_ticks, uint32_t max_delay_ticks) {
+    if (loss_percent > 100u) return 0;
+    if (min_delay_ticks > GGPO_NET_SIM_MAX_DELAY_TICKS || max_delay_ticks > GGPO_NET_SIM_MAX_DELAY_TICKS) return 0;
+    if (min_delay_ticks > max_delay_ticks) return 0;
+
+    g_net_config_sim_loss_percent = loss_percent;
+    g_net_config_sim_delay_min_ticks = min_delay_ticks;
+    g_net_config_sim_delay_max_ticks = max_delay_ticks;
+
+    if (g_net.active) {
+        g_net.sim_loss_percent = loss_percent;
+        g_net.sim_delay_min_ticks = min_delay_ticks;
+        g_net.sim_delay_max_ticks = max_delay_ticks;
+        if (max_delay_ticks == 0u) {
+            memset(g_net.sim_queue, 0, sizeof(g_net.sim_queue));
+        }
+    }
+    return 1;
+}
+
+uint32_t ggpo_net_sim_loss_percent(void) {
+    return g_net.active ? g_net.sim_loss_percent : g_net_config_sim_loss_percent;
+}
+
+uint32_t ggpo_net_sim_delay_min_ticks(void) {
+    return g_net.active ? g_net.sim_delay_min_ticks : g_net_config_sim_delay_min_ticks;
+}
+
+uint32_t ggpo_net_sim_delay_max_ticks(void) {
+    return g_net.active ? g_net.sim_delay_max_ticks : g_net_config_sim_delay_max_ticks;
+}
+
+uint32_t ggpo_net_sim_dropped_packets(void) {
+    return g_net.sim_packets_dropped;
+}
+
+uint32_t ggpo_net_sim_delayed_packets(void) {
+    return g_net.sim_packets_delayed;
+}
+
+uint32_t ggpo_net_sim_queue_drop_count(void) {
+    return g_net.sim_queue_drops;
+}
+
+uint32_t ggpo_net_sim_pending_packets(void) {
+    return g_net.active ? ggpo_net_sim_pending_count() : 0u;
+}
+
 void ggpo_net_stop(void) {
     if (g_net.sock != INVALID_SOCKET && g_net.sock != 0) {
         if (g_net.has_peer_addr) (void)ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
@@ -1019,6 +1147,11 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
     g_net.sock = s;
     g_net.session_id = ggpo_net_make_session_id();
     g_net.input_delay = g_net_config_input_delay;
+    g_net.sim_loss_percent = g_net_config_sim_loss_percent;
+    g_net.sim_delay_min_ticks = g_net_config_sim_delay_min_ticks;
+    g_net.sim_delay_max_ticks = g_net_config_sim_delay_max_ticks;
+    g_net.sim_rng = g_net.session_id ^ 0x75BCD15u;
+    if (g_net.sim_rng == 0u) g_net.sim_rng = 1u;
     g_net.initial_checksum = checksum;
     g_net.last_checksum = checksum;
     g_net.state_synced = (mode == GGPO_NET_MODE_HOST) ? 1 : 0;
@@ -1081,6 +1214,7 @@ int ggpo_net_advance(uint32_t raw_p0,
     }
 
     g_net.service_tick++;
+    ggpo_net_flush_sim_queue();
     ggpo_net_poll_socket();
     if (g_net.peer_disconnected) {
         ggpo_net_set_err(err, err_cap, "peer disconnected");

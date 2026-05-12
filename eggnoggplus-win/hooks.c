@@ -75,6 +75,10 @@
 #include "custom_maps.h"
 #include "log.h"
 
+extern char* SDL_GetClipboardText(void);
+extern int SDL_SetClipboardText(const char* text);
+extern void SDL_free(void* mem);
+
 
 #define ADDR_STATE_CURRENT            0x405DB0u
 #define ADDR_STATE_LAST               0x405DB8u
@@ -581,6 +585,7 @@ static void __cdecl mods_entry_leave(void);
 
 static void console_push_line_rgb(const char* text, float r, float g, float b);
 static void console_set_input(const char* s);
+static void console_insert_text(const char* text);
 static const char* console_stristr(const char* haystack, const char* needle);
 static char* console_parse_token(char** inout_cursor);
 static int console_try_parse_long(const char* s, long* out_value);
@@ -1662,8 +1667,90 @@ static void console_push_command_line(const char* cmd) {
     console_push_line_rgb(line, 0.95f, 0.86f, 0.34f);
 }
 
+static int console_clipboard_set(const char* text) {
+    return SDL_SetClipboardText(text ? text : "") == 0;
+}
+
+static void console_copy_input_to_clipboard(void) {
+    if (console_clipboard_set(g_console_input)) {
+        console_push_line_rgb("console.copy: copied input", 0.64f, 0.92f, 0.66f);
+    } else {
+        console_push_line_rgb("console.copy: clipboard write failed", 0.98f, 0.45f, 0.45f);
+    }
+}
+
+static void console_copy_output_to_clipboard(void) {
+    size_t cap = ((size_t)CONSOLE_LINE_TEXT + 2u) * (size_t)(g_console_line_count + 1);
+    size_t pos = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) {
+        console_push_line_rgb("console.copy: out of memory", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    buf[0] = '\0';
+    for (int i = 0; i < g_console_line_count; i++) {
+        ConsoleLine* line = console_line_at_oldest_index(i);
+        size_t len;
+        if (!line) continue;
+        len = strlen(line->text);
+        if (pos + len + 2 >= cap) break;
+        memcpy(buf + pos, line->text, len);
+        pos += len;
+        buf[pos++] = '\r';
+        buf[pos++] = '\n';
+        buf[pos] = '\0';
+    }
+    if (console_clipboard_set(buf)) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "console.copy: copied %d output line(s)", g_console_line_count);
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+    } else {
+        console_push_line_rgb("console.copy: clipboard write failed", 0.98f, 0.45f, 0.45f);
+    }
+    free(buf);
+}
+
+static void console_paste_clipboard(void) {
+    char* raw = SDL_GetClipboardText();
+    char clean[CONSOLE_INPUT_BUF];
+    size_t pos = 0;
+    if (!raw || !raw[0]) {
+        if (raw) SDL_free(raw);
+        return;
+    }
+    for (const char* p = raw; *p && pos + 1 < sizeof(clean); p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch == '\r' || ch == '\n' || ch == '\t') {
+            if (pos > 0 && clean[pos - 1] != ' ') clean[pos++] = ' ';
+        } else if (ch >= 32) {
+            clean[pos++] = (char)ch;
+        }
+    }
+    clean[pos] = '\0';
+    console_insert_text(clean);
+    SDL_free(raw);
+}
+
+static void console_copy_cmd(const char* arg) {
+    char arg_buf[CONSOLE_INPUT_BUF];
+    const char* mode = "";
+    if (arg && arg[0]) {
+        safe_copy(arg_buf, sizeof(arg_buf), arg);
+        mode = trim_ws(arg_buf);
+    }
+    if (!mode || !mode[0] || _stricmp(mode, "output") == 0 || _stricmp(mode, "all") == 0) {
+        console_copy_output_to_clipboard();
+        return;
+    }
+    if (_stricmp(mode, "input") == 0) {
+        console_copy_input_to_clipboard();
+        return;
+    }
+    console_push_line_rgb("Usage: console.copy [output|input]", 0.98f, 0.76f, 0.40f);
+}
+
 static const char* k_console_commands[] = {
-    "help", "commands", "clear", "history", "echo", "console.stats",
+    "help", "commands", "clear", "history", "echo", "console.stats", "console.copy",
     "state", "state.last", "state.return", "state.switch", "sys.info", "ui.size",
     "time.scale", "framework.api",
     "mods.count", "mods.list", "mods.find", "mods.info", "mods.trace", "mods.enable", "mods.disable", "mods.toggle",
@@ -2196,6 +2283,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  history [count]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  echo <text>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  console.stats", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  console.copy [output|input]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state.last", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state.return [main|main_initial|options|options_paused|mods|mods_entry]", 0.87f, 0.87f, 0.87f);
@@ -2232,7 +2320,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  ggpo.net <host|join|off|status>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ggpo.net <host|join|off|status|delay|sim>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
@@ -2249,6 +2337,11 @@ static void console_show_help(const char* topic) {
 
     if (_stricmp(t, "mods.config.set") == 0) {
         console_push_line_rgb("mods.config.set <id> <key> <value>: set bool/int/float/string config by key.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "console.copy") == 0) {
+        console_push_line_rgb("console.copy [output|input]: copy console output or current input to clipboard.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("Shortcuts: Ctrl+C copies input or output, Ctrl+V/right-click pastes.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "mods.config.action") == 0) {
@@ -2313,6 +2406,8 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("ggpo.net host [port]: host a UDP rollback input session as player 0.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net join <host> [port] [local_port]: join as player 1.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net delay [frames]: show or set local input delay (0..8).", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net sim [loss_pct] [min_delay] [max_delay]: simulate outgoing UDP loss/jitter.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net sim off: clear simulated network loss and delay.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("F6 hosts on 47777. F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
         return;
     }
@@ -3431,6 +3526,20 @@ static void print_ggpo_net_status(void) {
     }
     console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
     LOG_INFO("%s", out);
+    if (ggpo_net_active()) {
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net.sim: loss=%u%% delay=%u-%u pending=%u sim_drop=%u sim_delay=%u qdrop=%u",
+                 (unsigned int)ggpo_net_sim_loss_percent(),
+                 (unsigned int)ggpo_net_sim_delay_min_ticks(),
+                 (unsigned int)ggpo_net_sim_delay_max_ticks(),
+                 (unsigned int)ggpo_net_sim_pending_packets(),
+                 (unsigned int)ggpo_net_sim_dropped_packets(),
+                 (unsigned int)ggpo_net_sim_delayed_packets(),
+                 (unsigned int)ggpo_net_sim_queue_drop_count());
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        LOG_INFO("%s", out);
+    }
     if (ggpo_net_active() && ggpo_net_desync_count() > 0) {
         snprintf(out,
                  sizeof(out),
@@ -3625,6 +3734,67 @@ static void console_run_ggpo_net(const char* arg) {
         LOG_INFO("%s", out);
         return;
     }
+    if (_stricmp(action, "sim") == 0 || _stricmp(action, "netem") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_loss = console_parse_token(&cursor);
+        long loss = 0;
+        long min_delay = 0;
+        long max_delay = 0;
+        if (!tok_loss || !tok_loss[0]) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: sim loss=%u%% delay=%u-%u tick(s)",
+                     (unsigned int)ggpo_net_sim_loss_percent(),
+                     (unsigned int)ggpo_net_sim_delay_min_ticks(),
+                     (unsigned int)ggpo_net_sim_delay_max_ticks());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        if (_stricmp(tok_loss, "off") == 0 || _stricmp(tok_loss, "clear") == 0 || _stricmp(tok_loss, "none") == 0) {
+            if (!ggpo_net_set_network_sim(0u, 0u, 0u)) {
+                console_push_line_rgb("ggpo.net: failed to clear network simulation", 0.98f, 0.45f, 0.45f);
+                return;
+            }
+            console_push_line_rgb("ggpo.net: network simulation cleared", 0.64f, 0.92f, 0.66f);
+            LOG_INFO("ggpo.net: network simulation cleared");
+            return;
+        }
+        if (!console_try_parse_long(tok_loss, &loss) || loss < 0 || loss > 100) {
+            console_push_line_rgb("Usage: ggpo.net sim [loss_pct 0..100] [min_delay 0..120] [max_delay 0..120]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        {
+            char* tok_min = console_parse_token(&cursor);
+            char* tok_max = console_parse_token(&cursor);
+            if (tok_min && tok_min[0]) {
+                if (!console_try_parse_long(tok_min, &min_delay) || min_delay < 0 || min_delay > GGPO_NET_SIM_MAX_DELAY_TICKS) {
+                    console_push_line_rgb("Usage: ggpo.net sim [loss_pct 0..100] [min_delay 0..120] [max_delay 0..120]", 0.98f, 0.76f, 0.40f);
+                    return;
+                }
+                max_delay = min_delay;
+            }
+            if (tok_max && tok_max[0]) {
+                if (!console_try_parse_long(tok_max, &max_delay) || max_delay < 0 || max_delay > GGPO_NET_SIM_MAX_DELAY_TICKS || max_delay < min_delay) {
+                    console_push_line_rgb("Usage: ggpo.net sim [loss_pct 0..100] [min_delay 0..120] [max_delay 0..120]", 0.98f, 0.76f, 0.40f);
+                    return;
+                }
+            }
+        }
+        if (!ggpo_net_set_network_sim((uint32_t)loss, (uint32_t)min_delay, (uint32_t)max_delay)) {
+            console_push_line_rgb("ggpo.net: failed to set network simulation", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: sim loss=%ld%% delay=%ld-%ld tick(s)%s",
+                 loss,
+                 min_delay,
+                 max_delay,
+                 ggpo_net_active() ? " now active" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
     if (_stricmp(action, "host") == 0) {
         uint16_t port = GGPO_NET_DEFAULT_PORT;
         char* tok_port = console_parse_token(&cursor);
@@ -3659,7 +3829,7 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
 
-    console_push_line_rgb("Usage: ggpo.net <host|join|off|status|delay>", 0.98f, 0.76f, 0.40f);
+    console_push_line_rgb("Usage: ggpo.net <host|join|off|status|delay|sim>", 0.98f, 0.76f, 0.40f);
 }
 
 static void console_run_ggpo_selftest(const char* arg) {
@@ -4228,6 +4398,8 @@ static void console_execute_input(void) {
         console_echo(arg);
     } else if (_stricmp(cmd, "console.stats") == 0) {
         console_show_console_stats();
+    } else if (_stricmp(cmd, "console.copy") == 0) {
+        console_copy_cmd(arg);
     } else if (_stricmp(cmd, "state") == 0) {
         console_show_state();
     } else if (_stricmp(cmd, "state.last") == 0) {
@@ -4470,6 +4642,89 @@ int hooks_console_mousewheel(int y) {
     return 1;
 }
 
+int hooks_console_mousebutton(int x, int y, int button, int down) {
+    float w;
+    float h;
+    float ui;
+    float margin;
+    float panel_x;
+    float panel_w;
+    float panel_h;
+    float panel_y;
+    float text_scale;
+    float line_h;
+    float input_y;
+    size_t in_len;
+
+    if (!is_console_state_active()) return 0;
+    if (!down) return 1;
+
+    if (button == 3) {
+        console_paste_clipboard();
+        return 1;
+    }
+    if (button == 2) {
+        console_copy_output_to_clipboard();
+        return 1;
+    }
+    if (button != 1) return 1;
+
+    w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    ui = calc_ui_scale();
+    margin = 36.0f * ui;
+    if (w < 640.0f) margin = 12.0f;
+    else if (w < 900.0f) margin = 20.0f * ui;
+    panel_x = margin;
+    panel_w = w - (margin * 2.0f);
+    if (panel_w < 260.0f) {
+        panel_x = 10.0f;
+        panel_w = w - 20.0f;
+    }
+    panel_h = h * 0.50f;
+    if (h < 720.0f) panel_h = h - (44.0f * ui);
+    if (h >= 860.0f) panel_h = h * 0.58f;
+    if (h >= 1080.0f) panel_h = h * 0.62f;
+    if (panel_h > h - (82.0f * ui)) panel_h = h - (82.0f * ui);
+    if (panel_h < 220.0f) panel_h = 220.0f;
+    panel_y = h - panel_h - (26.0f * ui);
+    if (panel_y < 20.0f * ui) panel_y = 20.0f * ui;
+
+    text_scale = clampf(0.92f * ui, 1.00f, 1.25f);
+    {
+        int text_q = (int)(text_scale * 4.0f + 0.5f);
+        if (text_q < 1) text_q = 1;
+        text_scale = (float)text_q / 4.0f;
+    }
+    line_h = (10.0f * text_scale) + (9.0f * ui);
+    input_y = panel_y + panel_h - (27.0f * ui);
+    if ((float)y < input_y - (8.0f * ui) || (float)y > input_y + line_h) {
+        return 1;
+    }
+
+    in_len = strlen(g_console_input);
+    if ((size_t)g_console_cursor > in_len) g_console_cursor = (int)in_len;
+    {
+        int avail_chars = (int)((panel_w - (36.0f * ui)) / (6.0f * text_scale));
+        int start_idx = 0;
+        float text_x = panel_x + (14.0f * ui);
+        int clicked_col;
+        int cursor;
+        if (avail_chars < 12) avail_chars = 12;
+        if (g_console_cursor > avail_chars - 4) {
+            start_idx = g_console_cursor - (avail_chars - 4);
+        }
+        clicked_col = (int)(((float)x - text_x - (18.0f * text_scale)) / (9.0f * text_scale) + 0.5f);
+        if (clicked_col < 0) clicked_col = 0;
+        cursor = start_idx + clicked_col;
+        if (cursor < 0) cursor = 0;
+        if ((size_t)cursor > in_len) cursor = (int)in_len;
+        g_console_cursor = cursor;
+        console_detach_from_history();
+    }
+    return 1;
+}
+
 int hooks_console_keydown(int sym, int scancode, int mod) {
     (void)scancode;
 
@@ -4523,6 +4778,30 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
     }
 
     if (!is_console_state_active()) return 0;
+
+    if (mod & KMOD_CTRL) {
+        if (sym == 'v' || sym == 'V') {
+            console_paste_clipboard();
+            return 1;
+        }
+        if (sym == 'c' || sym == 'C') {
+            if (g_console_input[0]) console_copy_input_to_clipboard();
+            else console_copy_output_to_clipboard();
+            return 1;
+        }
+        if (sym == 'x' || sym == 'X') {
+            if (g_console_input[0]) {
+                console_copy_input_to_clipboard();
+                console_set_input("");
+                console_detach_from_history();
+            }
+            return 1;
+        }
+        if (sym == 'a' || sym == 'A') {
+            g_console_cursor = (int)strlen(g_console_input);
+            return 1;
+        }
+    }
 
     switch (sym) {
         case SDLK_ESCAPE:
@@ -5365,8 +5644,9 @@ static void console_render_ui(void) {
     float w = p_mad_w ? p_mad_w() : BASE_UI_W;
     float h = p_mad_h ? p_mad_h() : BASE_UI_H;
     float ui = calc_ui_scale();
-    float panel_x = 36.0f * ui;
-    float panel_w = w - (72.0f * ui);
+    float margin = 36.0f * ui;
+    float panel_x;
+    float panel_w;
     float panel_h = h * 0.50f;
     float panel_y;
     float title_scale;
@@ -5380,8 +5660,16 @@ static void console_render_ui(void) {
     int line_no;
     int text_q;
 
-    if (panel_w < 320.0f) panel_w = 320.0f;
+    if (w < 640.0f) margin = 12.0f;
+    else if (w < 900.0f) margin = 20.0f * ui;
+    panel_x = margin;
+    panel_w = w - (margin * 2.0f);
+    if (panel_w < 260.0f) {
+        panel_x = 10.0f;
+        panel_w = w - 20.0f;
+    }
     // Give taller consoles on larger windows while keeping safe margins.
+    if (h < 720.0f) panel_h = h - (44.0f * ui);
     if (h >= 860.0f) panel_h = h * 0.58f;
     if (h >= 1080.0f) panel_h = h * 0.62f;
     if (panel_h > h - (82.0f * ui)) panel_h = h - (82.0f * ui);
@@ -5426,7 +5714,7 @@ static void console_render_ui(void) {
     glPopAttrib();
 
     title_scale = clampf(1.00f * ui, 0.95f, 1.55f);
-    text_scale = clampf(0.82f * ui, 0.80f, 1.20f);
+    text_scale = clampf(0.92f * ui, 1.00f, 1.25f);
     text_q = (int)(text_scale * 4.0f + 0.5f);
     if (text_q < 1) text_q = 1;
     text_scale = (float)text_q / 4.0f;
@@ -5483,8 +5771,10 @@ static void console_render_ui(void) {
         }
         draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
                          0.95f, 0.88f, 0.40f, input_line);
-        draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
-                               0.66f, 0.74f, 0.86f, "Tab=complete  Wheel/PgUp/PgDn=scroll");
+        if (panel_w > 640.0f) {
+            draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
+                                   0.66f, 0.74f, 0.86f, "Tab=complete  Ctrl+C/V=copy/paste  Wheel=scroll");
+        }
     }
 }
 

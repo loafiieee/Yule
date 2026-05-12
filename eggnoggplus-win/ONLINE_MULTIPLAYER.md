@@ -74,6 +74,8 @@ Console commands:
 - `ggpo.local`
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
+- `ggpo.net delay [frames]`
+- `ggpo.net sim [loss_pct] [min_delay] [max_delay]`
 - `ggpo.net off`
 - `ggpo.net status`
 
@@ -253,7 +255,7 @@ Additional tests to add:
 - automated deterministic replay test with fixed input traces
 - long soak test across rooms, deaths, respawns, score changes, and match reset
 - checksum diff dump on first desync
-- packet loss/jitter simulation
+- packet loss/jitter simulation via `ggpo.net sim`
 - artificial input delay tests
 - mismatched map/version rejection tests
 - mod mismatch rejection tests

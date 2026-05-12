@@ -9,6 +9,7 @@ extern "C" {
 
 #define GGPO_NET_DEFAULT_PORT 47777
 #define GGPO_NET_MAX_INPUT_DELAY 8
+#define GGPO_NET_SIM_MAX_DELAY_TICKS 120
 
 typedef enum GgpoNetMode {
     GGPO_NET_MODE_NONE = 0,
@@ -26,6 +27,14 @@ uint16_t ggpo_net_local_port(void);
 uint16_t ggpo_net_remote_port(void);
 uint32_t ggpo_net_input_delay(void);
 int ggpo_net_set_input_delay(uint32_t frames);
+int ggpo_net_set_network_sim(uint32_t loss_percent, uint32_t min_delay_ticks, uint32_t max_delay_ticks);
+uint32_t ggpo_net_sim_loss_percent(void);
+uint32_t ggpo_net_sim_delay_min_ticks(void);
+uint32_t ggpo_net_sim_delay_max_ticks(void);
+uint32_t ggpo_net_sim_dropped_packets(void);
+uint32_t ggpo_net_sim_delayed_packets(void);
+uint32_t ggpo_net_sim_queue_drop_count(void);
+uint32_t ggpo_net_sim_pending_packets(void);
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);

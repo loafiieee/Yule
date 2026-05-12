@@ -21,6 +21,7 @@ int hooks_console_keydown(int sym, int scancode, int mod);
 int hooks_console_textinput(const char* text);
 int hooks_console_control_action(int action);
 int hooks_console_mousewheel(int y);
+int hooks_console_mousebutton(int x, int y, int button, int down);
 void hooks_console_pump(void);
 void hooks_console_on_pre_swap(void);
 

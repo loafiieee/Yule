@@ -512,6 +512,7 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             case SDL_MOUSEBUTTONDOWN:
                 if (hooks_console_active()) {
+                    hooks_console_mousebutton(event->button.x, event->button.y, event->button.button, 1);
                     consumed = 1;
                     break;
                 }
@@ -520,6 +521,7 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             case SDL_MOUSEBUTTONUP:
                 if (hooks_console_active()) {
+                    hooks_console_mousebutton(event->button.x, event->button.y, event->button.button, 0);
                     consumed = 1;
                     break;
                 }

@@ -1,35 +1,64 @@
-help
-mods.toggle vs_ai
-mods.list
-mods.toggle vs_ai
-help
-state.reload
-state.switch pregame
-state.switch main
-1help
-help
-exit
-1help
-help
-input.override 1 left 5 yes
-input.override 1 1 999999 yes
-input.override 1 1 999999 1
-state.switch main_initial
-input.override 1 1 1 1
-state.switch main
-help
-state.switch hub
-state.switch return
-state.switch mods
-state.switch main
-state.last
-state.switch main
-help
-ggpo.selftest 600
-ggpo.selftest 48
-ggpo.selftest 600
-ggpo.net delay 2
-ggpo.status
-ggpo.net status
+ggpo.net sim 5 2 8
+ggpo.net sim 0 0 0
 ggpo.net sim 2 1 4
 ggpo.net sim 5 2 8
+ggpo.net sim 10 10 20
+ggpo.net sim 100 10 20
+ggpo.net sim 0 20 30
+ggpo.net sim 5 2 8
+ggpo.net sim 20 0 0
+ggpo.net sim 20 2 10
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 50
+ggpo.net sim 1 50 50
+ggpo.net highping 50
+ggpo.net sim 1 50 50
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net sim off
+ggpo.net sim 1 100 120
+ggpo.net sim off
+ggpo.net highping 140
+ggpo.net sim 1 100 120
+ggpo.net sim off
+ggpo.net highping 0
+ggpo.net highping 1
+ggpo.net sim 0 9 9
+hhpo.net highping 18
+ggpo.net highping 18
+ggpo.net sim 0 4 5
+ggpo.net highping 9
+ggpo.net sim 0 9 9
+ggpo.net highping 18
+ggpo.net sim 0 4 5
+ggpo.net highping 9
+ggpo.net sim 1 11 16
+ggpo.net highping 27
+ggpo.net sim 1 11 16
+ggpo.net highping 27

@@ -2320,7 +2320,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  ggpo.net <host|join|off|status|delay|sim>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  ggpo.net <host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
@@ -2406,6 +2406,11 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("ggpo.net host [port]: host a UDP rollback input session as player 0.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net join <host> [port] [local_port]: join as player 1.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net delay [frames]: show or set local input delay (0..8).", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net advantage [frames]: show or set frame-advantage throttle (0..220).", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net predict [frames]: show or set max prediction before stalling (1..220).", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net highping [frames]: conservative high-latency profile; favors shorter pauses over long prediction.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net smoothping [frames]: aggressive high-latency profile; favors smoothness over correction risk.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net correction [on|off]: recover desyncs with host-authoritative state.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net sim [loss_pct] [min_delay] [max_delay]: simulate outgoing UDP loss/jitter.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net sim off: clear simulated network loss and delay.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("F6 hosts on 47777. F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
@@ -3494,7 +3499,7 @@ static void print_ggpo_net_status(void) {
     if (ggpo_net_active()) {
         snprintf(out,
                  sizeof(out),
-                 "ggpo.net: %s connected=%d frame=%u remote_frame=%u lp=%d rp=%d delay=%u port=%u peer_port=%u checksum=%u state=%u",
+                 "ggpo.net: %s connected=%d frame=%u remote_frame=%u lp=%d rp=%d delay=%u adv=%u predcap=%u corr=%s active=%d wait=%d port=%u peer_port=%u checksum=%u state=%u",
                  ggpo_net_mode_name(),
                  ggpo_net_connected(),
                  (unsigned int)ggpo_net_frame_count(),
@@ -3502,6 +3507,11 @@ static void print_ggpo_net_status(void) {
                  ggpo_net_local_player(),
                  ggpo_net_remote_player(),
                  (unsigned int)ggpo_net_input_delay(),
+                 (unsigned int)ggpo_net_max_frame_advantage(),
+                 (unsigned int)ggpo_net_max_prediction(),
+                 ggpo_net_correction_enabled() ? "on" : "off",
+                 ggpo_net_correction_active(),
+                 ggpo_net_awaiting_correction(),
                  (unsigned int)ggpo_net_local_port(),
                  (unsigned int)ggpo_net_remote_port(),
                  (unsigned int)ggpo_net_last_checksum(),
@@ -3510,7 +3520,7 @@ static void print_ggpo_net_status(void) {
         LOG_INFO("%s", out);
         snprintf(out,
                  sizeof(out),
-                 "ggpo.net.stats: tx=%u rx=%u pred=%u rb=%u late=%u drop=%u adv_stall=%u pred_stall=%u silence=%u desync=%u",
+                 "ggpo.net.stats: tx=%u rx=%u pred=%u rb=%u late=%u drop=%u adv_stall=%u pred_stall=%u silence=%u desync=%u corr_tx=%u corr_rx=%u corr_req=%u stale_req=%u dup_chunk=%u corr_id=%u applied_id=%u",
                  (unsigned int)ggpo_net_packets_sent(),
                  (unsigned int)ggpo_net_packets_received(),
                  (unsigned int)ggpo_net_prediction_count(),
@@ -3520,7 +3530,14 @@ static void print_ggpo_net_status(void) {
                  (unsigned int)ggpo_net_frame_advantage_stall_count(),
                  (unsigned int)ggpo_net_prediction_stall_count(),
                  (unsigned int)ggpo_net_peer_silence_ticks(),
-                 (unsigned int)ggpo_net_desync_count());
+                 (unsigned int)ggpo_net_desync_count(),
+                 (unsigned int)ggpo_net_corrections_sent(),
+                 (unsigned int)ggpo_net_corrections_received(),
+                 (unsigned int)ggpo_net_correction_request_count(),
+                 (unsigned int)ggpo_net_stale_correction_request_count(),
+                 (unsigned int)ggpo_net_duplicate_state_chunk_count(),
+                 (unsigned int)ggpo_net_correction_id(),
+                 (unsigned int)ggpo_net_last_correction_applied_id());
     } else {
         snprintf(out, sizeof(out), "ggpo.net: inactive");
     }
@@ -3538,6 +3555,18 @@ static void print_ggpo_net_status(void) {
                  (unsigned int)ggpo_net_sim_delayed_packets(),
                  (unsigned int)ggpo_net_sim_queue_drop_count());
         console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        LOG_INFO("%s", out);
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net.build: local=%08X exe=%08X dll=%08X remote=%08X exe=%08X dll=%08X mismatch=%d",
+                 (unsigned int)ggpo_net_local_build_id(),
+                 (unsigned int)ggpo_net_local_exe_id(),
+                 (unsigned int)ggpo_net_local_dll_id(),
+                 (unsigned int)ggpo_net_remote_build_id(),
+                 (unsigned int)ggpo_net_remote_exe_id(),
+                 (unsigned int)ggpo_net_remote_dll_id(),
+                 ggpo_net_build_mismatch());
+        console_push_line_rgb(out, ggpo_net_build_mismatch() ? 0.98f : 0.72f, ggpo_net_build_mismatch() ? 0.76f : 0.90f, ggpo_net_build_mismatch() ? 0.40f : 1.00f);
         LOG_INFO("%s", out);
     }
     if (ggpo_net_active() && ggpo_net_desync_count() > 0) {
@@ -3633,10 +3662,13 @@ static void start_ggpo_net_host(uint16_t port, const char* source) {
 
     snprintf(out,
              sizeof(out),
-             "ggpo.net: hosting from %s udp=%u player=0 delay=%u state_size=%u",
+             "ggpo.net: hosting from %s udp=%u player=0 delay=%u adv=%u predcap=%u corr=%s state_size=%u",
              (source && source[0]) ? source : "unknown",
              (unsigned int)ggpo_net_local_port(),
              (unsigned int)ggpo_net_input_delay(),
+             (unsigned int)ggpo_net_max_frame_advantage(),
+             (unsigned int)ggpo_net_max_prediction(),
+             ggpo_net_correction_enabled() ? "on" : "off",
              (unsigned int)ggpo_net_state_size());
     console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
     LOG_INFO("%s", out);
@@ -3664,12 +3696,15 @@ static void start_ggpo_net_join(const char* host, uint16_t remote_port, uint16_t
 
     snprintf(out,
              sizeof(out),
-             "ggpo.net: joining from %s %s:%u local_udp=%u player=1 delay=%u state_size=%u",
+             "ggpo.net: joining from %s %s:%u local_udp=%u player=1 delay=%u adv=%u predcap=%u corr=%s state_size=%u",
              (source && source[0]) ? source : "unknown",
              host ? host : "",
              (unsigned int)remote_port,
              (unsigned int)ggpo_net_local_port(),
              (unsigned int)ggpo_net_input_delay(),
+             (unsigned int)ggpo_net_max_frame_advantage(),
+             (unsigned int)ggpo_net_max_prediction(),
+             ggpo_net_correction_enabled() ? "on" : "off",
              (unsigned int)ggpo_net_state_size());
     console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
     LOG_INFO("%s", out);
@@ -3730,6 +3765,176 @@ static void console_run_ggpo_net(const char* arg) {
                  "ggpo.net: input delay set to %ld frame(s)%s",
                  delay,
                  ggpo_net_active() ? " for future inputs" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+    if (_stricmp(action, "advantage") == 0 || _stricmp(action, "max_advantage") == 0 || _stricmp(action, "timesync") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_advantage = console_parse_token(&cursor);
+        if (!tok_advantage || !tok_advantage[0]) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: frame advantage throttle=%u frame(s)",
+                     (unsigned int)ggpo_net_max_frame_advantage());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        long advantage = 0;
+        if (!console_try_parse_long(tok_advantage, &advantage) || advantage < 0 || advantage > GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT) {
+            console_push_line_rgb("Usage: ggpo.net advantage [0..220]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!ggpo_net_set_max_frame_advantage((uint32_t)advantage)) {
+            console_push_line_rgb("ggpo.net: failed to set frame advantage throttle", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: frame advantage throttle set to %ld frame(s)%s",
+                 advantage,
+                 ggpo_net_active() ? " now active" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+    if (_stricmp(action, "predict") == 0 || _stricmp(action, "prediction") == 0 || _stricmp(action, "max_prediction") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_prediction = console_parse_token(&cursor);
+        if (!tok_prediction || !tok_prediction[0]) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: max prediction=%u frame(s)",
+                     (unsigned int)ggpo_net_max_prediction());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        long prediction = 0;
+        if (!console_try_parse_long(tok_prediction, &prediction) || prediction <= 0 || prediction > GGPO_NET_MAX_PREDICTION_LIMIT) {
+            console_push_line_rgb("Usage: ggpo.net predict [1..220]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!ggpo_net_set_max_prediction((uint32_t)prediction)) {
+            console_push_line_rgb("ggpo.net: failed to set max prediction", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: max prediction set to %ld frame(s)%s",
+                 prediction,
+                 ggpo_net_active() ? " now active" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+    if (_stricmp(action, "highping") == 0 || _stricmp(action, "latency") == 0 || _stricmp(action, "budget") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_budget = console_parse_token(&cursor);
+        if (!tok_budget || !tok_budget[0]) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: conservative latency profile adv=%u predcap=%u frame(s)",
+                     (unsigned int)ggpo_net_max_frame_advantage(),
+                     (unsigned int)ggpo_net_max_prediction());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        long budget = 0;
+        if (!console_try_parse_long(tok_budget, &budget) || budget <= 0 || budget > GGPO_NET_MAX_PREDICTION_LIMIT) {
+            console_push_line_rgb("Usage: ggpo.net highping [1..220]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        uint32_t predcap = (uint32_t)budget;
+        uint32_t advantage = (uint32_t)budget;
+        if (predcap > 32u) {
+            predcap = ((uint32_t)budget + 3u) / 4u;
+            if (predcap < 16u) predcap = 16u;
+            if (predcap > 48u) predcap = 48u;
+        }
+        if (advantage > 48u) {
+            advantage = ((uint32_t)budget + 1u) / 2u;
+            if (advantage < 24u) advantage = 24u;
+            if (advantage > 72u) advantage = 72u;
+        }
+        if (!ggpo_net_set_max_prediction(predcap) ||
+            !ggpo_net_set_max_frame_advantage(advantage)) {
+            console_push_line_rgb("ggpo.net: failed to set high ping budget", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: high ping profile budget=%ld adv=%u predcap=%u%s",
+                 budget,
+                 (unsigned int)advantage,
+                 (unsigned int)predcap,
+                 ggpo_net_active() ? " now active" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+    if (_stricmp(action, "smoothping") == 0 || _stricmp(action, "smooth") == 0 || _stricmp(action, "aggressive") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_budget = console_parse_token(&cursor);
+        if (!tok_budget || !tok_budget[0]) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: smooth latency profile adv=%u predcap=%u frame(s)",
+                     (unsigned int)ggpo_net_max_frame_advantage(),
+                     (unsigned int)ggpo_net_max_prediction());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            return;
+        }
+        long budget = 0;
+        if (!console_try_parse_long(tok_budget, &budget) || budget <= 0 || budget > GGPO_NET_MAX_PREDICTION_LIMIT) {
+            console_push_line_rgb("Usage: ggpo.net smoothping [1..220]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        if (!ggpo_net_set_max_prediction((uint32_t)budget) ||
+            !ggpo_net_set_max_frame_advantage((uint32_t)budget)) {
+            console_push_line_rgb("ggpo.net: failed to set smooth ping budget", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: smooth ping budget set to %ld frame(s)%s",
+                 budget,
+                 ggpo_net_active() ? " now active" : "");
+        console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+        LOG_INFO("%s", out);
+        return;
+    }
+    if (_stricmp(action, "correction") == 0 || _stricmp(action, "correct") == 0 || _stricmp(action, "resync") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok_enabled = console_parse_token(&cursor);
+        int enabled = 0;
+        if (!tok_enabled || !tok_enabled[0] || _stricmp(tok_enabled, "status") == 0) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: correction=%s active=%d awaiting=%d sent=%u received=%u requests=%u stale=%u dup_chunk=%u id=%u applied=%u",
+                     ggpo_net_correction_enabled() ? "on" : "off",
+                     ggpo_net_correction_active(),
+                     ggpo_net_awaiting_correction(),
+                     (unsigned int)ggpo_net_corrections_sent(),
+                     (unsigned int)ggpo_net_corrections_received(),
+                     (unsigned int)ggpo_net_correction_request_count(),
+                     (unsigned int)ggpo_net_stale_correction_request_count(),
+                     (unsigned int)ggpo_net_duplicate_state_chunk_count(),
+                     (unsigned int)ggpo_net_correction_id(),
+                     (unsigned int)ggpo_net_last_correction_applied_id());
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            LOG_INFO("%s", out);
+            return;
+        }
+        if (!console_try_parse_bool(tok_enabled, &enabled)) {
+            console_push_line_rgb("Usage: ggpo.net correction [on|off]", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        (void)ggpo_net_set_correction_enabled(enabled);
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: correction %s%s",
+                 enabled ? "enabled" : "disabled",
+                 ggpo_net_active() ? " for this session" : "");
         console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
         LOG_INFO("%s", out);
         return;
@@ -3829,7 +4034,7 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
 
-    console_push_line_rgb("Usage: ggpo.net <host|join|off|status|delay|sim>", 0.98f, 0.76f, 0.40f);
+    console_push_line_rgb("Usage: ggpo.net <host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.98f, 0.76f, 0.40f);
 }
 
 static void console_run_ggpo_selftest(const char* arg) {

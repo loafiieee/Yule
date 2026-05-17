@@ -8,6 +8,7 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 
 #include "ggpo_ext.h"
 #include "hooks.h"
@@ -15,22 +16,30 @@
 #include "lua_manager.h"
 
 #define GGPO_NET_MAGIC 0x50474E45u
-#define GGPO_NET_VERSION 1u
-#define GGPO_NET_HISTORY_FRAMES 256
-#define GGPO_NET_PACKET_INPUTS 24
-#define GGPO_NET_PACKET_CHECKSUMS 24
-#define GGPO_NET_MAX_PREDICTION 16
-#define GGPO_NET_MAX_FRAME_ADVANTAGE 2
+#define GGPO_NET_VERSION 5u
+#define GGPO_NET_HISTORY_FRAMES 512
+#define GGPO_NET_PACKET_INPUTS 64
+#define GGPO_NET_PACKET_CHECKSUMS 32
+#define GGPO_NET_DEFAULT_MAX_PREDICTION 24
+#define GGPO_NET_DEFAULT_MAX_FRAME_ADVANTAGE 20
 #define GGPO_NET_DEFAULT_INPUT_DELAY 1
 #define GGPO_NET_TIMEOUT_TICKS 600
+#define GGPO_NET_CORRECTION_TIMEOUT_TICKS 2400
+#define GGPO_NET_MAX_BLOCK_TICKS 60
+#define GGPO_NET_CORRECTION_BURST_CHUNKS 32
+#define GGPO_NET_RESYNC_REQUEST_INTERVAL_TICKS 30
 #define GGPO_NET_STATE_CHUNK_BYTES 900
-#define GGPO_NET_SIM_QUEUE_PACKETS 128
+#define GGPO_NET_SIM_QUEUE_PACKETS 512
 
 #define GGPO_NET_PACKET_HELLO 1u
 #define GGPO_NET_PACKET_INPUT 2u
 #define GGPO_NET_PACKET_BYE   3u
 #define GGPO_NET_PACKET_STATE_CHUNK 4u
 #define GGPO_NET_PACKET_STATE_ACK   5u
+#define GGPO_NET_PACKET_RESYNC_REQUEST 6u
+
+#define GGPO_NET_STATE_FLAG_CORRECTION 1u
+#define GGPO_NET_STATE_FLAG_DELTA      2u
 
 typedef struct GgpoNetInputEntry {
     int valid;
@@ -72,6 +81,13 @@ typedef struct GgpoNetPacket {
     uint16_t type;
     uint32_t session_id;
     uint32_t sender_player;
+    uint32_t build_id;
+    uint32_t exe_id;
+    uint32_t dll_id;
+    uint32_t correction_ack_checksum;
+    uint32_t correction_id;
+    uint32_t correction_ack_id;
+    uint32_t correction_request_frame;
     uint32_t frame;
     uint32_t state_size;
     uint32_t state_checksum;
@@ -88,6 +104,16 @@ typedef struct GgpoNetStateChunkPacket {
     uint16_t type;
     uint32_t session_id;
     uint32_t sender_player;
+    uint32_t build_id;
+    uint32_t exe_id;
+    uint32_t dll_id;
+    uint32_t frame;
+    uint32_t flags;
+    uint32_t correction_id;
+    uint32_t base_checksum;
+    uint32_t full_chunk_count;
+    uint32_t chunk_index;
+    uint32_t chunk_count;
     uint32_t state_size;
     uint32_t state_checksum;
     uint32_t offset;
@@ -128,14 +154,47 @@ typedef struct GgpoNetSession {
     size_t state_size;
     uint8_t* state_blobs;
     uint8_t* initial_state;
+    uint8_t* correction_state;
+    uint8_t* correction_base_state;
     uint8_t* recv_state;
-    uint8_t* recv_state_seen;
+    uint8_t* recv_state_chunks_seen;
     size_t initial_state_len;
+    size_t correction_state_len;
+    size_t correction_base_state_len;
     size_t recv_state_len;
     uint32_t recv_state_checksum;
+    uint32_t recv_state_frame;
+    uint32_t recv_state_flags;
+    uint32_t recv_state_id;
+    uint32_t recv_state_base_checksum;
+    uint32_t recv_state_seen_chunk_count;
+    uint32_t recv_state_chunk_count;
+    uint32_t recv_state_chunks_complete;
     uint32_t state_send_offset;
+    uint32_t correction_send_offset;
+    uint32_t correction_send_next_chunk;
+    uint32_t correction_send_chunk_count;
+    uint32_t correction_send_base_checksum;
     uint32_t state_sync_chunks_sent;
     uint32_t state_sync_chunks_received;
+    uint32_t correction_chunks_sent;
+    uint32_t correction_chunks_received;
+    uint32_t correction_id;
+    uint32_t correction_frame;
+    uint32_t correction_checksum;
+    uint32_t correction_request_frame;
+    uint32_t correction_wait_start_tick;
+    uint32_t correction_base_checksum;
+    uint32_t last_correction_ack_checksum;
+    uint32_t last_correction_ack_id;
+    uint32_t last_correction_applied_checksum;
+    uint32_t last_correction_applied_id;
+    uint32_t last_resync_request_tick;
+    int correction_active;
+    int correction_send_delta;
+    int awaiting_correction;
+    int correction_wait_cap_announced;
+    int correction_enabled;
     int state_synced;
     int remote_state_synced;
     int state_sync_announced;
@@ -143,8 +202,12 @@ typedef struct GgpoNetSession {
     int frame0_wait_announced;
     int frame_advantage_wait_announced;
     int prediction_limit_wait_announced;
+    int frame_advantage_wait_cap_announced;
+    int prediction_wait_cap_announced;
     int peer_disconnected;
     uint32_t input_delay;
+    uint32_t max_frame_advantage;
+    uint32_t max_prediction;
     GgpoNetHistoryEntry history[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry local_inputs[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry remote_inputs[GGPO_NET_HISTORY_FRAMES];
@@ -165,8 +228,19 @@ typedef struct GgpoNetSession {
     uint32_t late_inputs;
     uint32_t dropped_inputs;
     uint32_t desyncs;
+    uint32_t corrections_sent;
+    uint32_t corrections_received;
+    uint32_t correction_requests;
+    uint32_t stale_correction_requests;
+    uint32_t duplicate_state_chunks;
+    uint32_t correction_delta_chunks_sent;
+    uint32_t correction_delta_chunks_received;
+    uint32_t correction_full_chunks_sent;
+    uint32_t correction_full_chunks_received;
     uint32_t frame_advantage_stalls;
     uint32_t prediction_stalls;
+    uint32_t frame_advantage_wait_start_tick;
+    uint32_t prediction_wait_start_tick;
     uint32_t sim_loss_percent;
     uint32_t sim_delay_min_ticks;
     uint32_t sim_delay_max_ticks;
@@ -175,18 +249,181 @@ typedef struct GgpoNetSession {
     uint32_t sim_packets_delayed;
     uint32_t sim_queue_drops;
     GgpoNetQueuedPacket sim_queue[GGPO_NET_SIM_QUEUE_PACKETS];
+    uint32_t local_build_id;
+    uint32_t local_exe_id;
+    uint32_t local_dll_id;
+    uint32_t remote_build_id;
+    uint32_t remote_exe_id;
+    uint32_t remote_dll_id;
+    int has_remote_fingerprint;
+    int warned_fingerprint_mismatch;
 } GgpoNetSession;
 
 static GgpoNetSession g_net;
 static int g_wsa_ready = 0;
 static uint32_t g_net_config_input_delay = GGPO_NET_DEFAULT_INPUT_DELAY;
+static uint32_t g_net_config_max_frame_advantage = GGPO_NET_DEFAULT_MAX_FRAME_ADVANTAGE;
+static uint32_t g_net_config_max_prediction = GGPO_NET_DEFAULT_MAX_PREDICTION;
 static uint32_t g_net_config_sim_loss_percent = 0;
 static uint32_t g_net_config_sim_delay_min_ticks = 0;
 static uint32_t g_net_config_sim_delay_max_ticks = 0;
+static int g_net_config_correction_enabled = 1;
+static uint32_t g_net_local_build_id = 0;
+static uint32_t g_net_local_exe_id = 0;
+static uint32_t g_net_local_dll_id = 0;
+
+static int ggpo_net_send_packet(uint16_t type);
+static void ggpo_net_clear_rollback_history(void);
+
+static uint32_t ggpo_net_state_chunk_count(uint32_t state_size) {
+    if (state_size == 0u) return 0u;
+    return (state_size + (GGPO_NET_STATE_CHUNK_BYTES - 1u)) / GGPO_NET_STATE_CHUNK_BYTES;
+}
+
+static uint32_t ggpo_net_state_chunk_offset(uint32_t chunk_index) {
+    return chunk_index * GGPO_NET_STATE_CHUNK_BYTES;
+}
+
+static uint32_t ggpo_net_state_chunk_size(size_t state_len, uint32_t chunk_index) {
+    uint32_t offset = ggpo_net_state_chunk_offset(chunk_index);
+    uint32_t remaining = 0;
+    if (state_len == 0 || state_len > (size_t)UINT_MAX || offset >= (uint32_t)state_len) return 0u;
+    remaining = (uint32_t)state_len - offset;
+    return remaining > GGPO_NET_STATE_CHUNK_BYTES ? GGPO_NET_STATE_CHUNK_BYTES : remaining;
+}
+
+static int ggpo_net_state_chunk_differs(const uint8_t* a, const uint8_t* b, size_t state_len, uint32_t chunk_index) {
+    uint32_t offset = ggpo_net_state_chunk_offset(chunk_index);
+    uint32_t chunk = ggpo_net_state_chunk_size(state_len, chunk_index);
+    if (!a || !b || chunk == 0u) return 0;
+    return memcmp(a + offset, b + offset, chunk) != 0;
+}
+
+static uint32_t ggpo_net_count_changed_chunks(const uint8_t* base, const uint8_t* state, size_t state_len) {
+    uint32_t full_chunks = ggpo_net_state_chunk_count((uint32_t)state_len);
+    uint32_t changed = 0;
+    if (!base || !state || state_len == 0 || state_len > (size_t)UINT_MAX) return full_chunks;
+    for (uint32_t i = 0; i < full_chunks; i++) {
+        if (ggpo_net_state_chunk_differs(base, state, state_len, i)) {
+            changed++;
+        }
+    }
+    return changed;
+}
+
+static int ggpo_net_set_correction_base(const uint8_t* state, size_t state_len, uint32_t checksum) {
+    if (!g_net.correction_base_state || !state || state_len == 0 || state_len > g_net.state_size) return 0;
+    memcpy(g_net.correction_base_state, state, state_len);
+    g_net.correction_base_state_len = state_len;
+    g_net.correction_base_checksum = checksum;
+    return 1;
+}
+
+static uint32_t ggpo_net_next_correction_id(void) {
+    uint32_t id = g_net.correction_id + 1u;
+    return id ? id : 1u;
+}
 
 static void ggpo_net_set_err(char* err, size_t err_cap, const char* msg) {
     if (!err || err_cap == 0) return;
     snprintf(err, err_cap, "%s", msg ? msg : "unknown error");
+}
+
+static uint32_t ggpo_net_hash_mix_u32(uint32_t h, uint32_t v) {
+    h ^= v;
+    h *= 16777619u;
+    return h ? h : 2166136261u;
+}
+
+static uint32_t ggpo_net_file_hash(const char* path) {
+    FILE* f;
+    uint8_t buf[4096];
+    size_t n;
+    uint32_t h = 2166136261u;
+    if (!path || !path[0]) return 0u;
+    f = fopen(path, "rb");
+    if (!f) return 0u;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        for (size_t i = 0; i < n; i++) {
+            h ^= (uint32_t)buf[i];
+            h *= 16777619u;
+        }
+    }
+    fclose(f);
+    return h ? h : 1u;
+}
+
+static void ggpo_net_ensure_local_fingerprint(void) {
+    char path[MAX_PATH];
+    HMODULE self_mod;
+    uint32_t exe_id = g_net_local_exe_id;
+    uint32_t dll_id = g_net_local_dll_id;
+    uint32_t build_id = g_net_local_build_id;
+
+    if (build_id != 0u) return;
+
+    path[0] = '\0';
+    if (GetModuleFileNameA(NULL, path, (DWORD)sizeof(path)) > 0) {
+        exe_id = ggpo_net_file_hash(path);
+    }
+
+    path[0] = '\0';
+    self_mod = GetModuleHandleA("SDL2.dll");
+    if (self_mod && GetModuleFileNameA(self_mod, path, (DWORD)sizeof(path)) > 0) {
+        dll_id = ggpo_net_file_hash(path);
+    }
+
+    build_id = 2166136261u;
+    build_id = ggpo_net_hash_mix_u32(build_id, GGPO_NET_MAGIC);
+    build_id = ggpo_net_hash_mix_u32(build_id, GGPO_NET_VERSION);
+    build_id = ggpo_net_hash_mix_u32(build_id, GGPO_NET_HISTORY_FRAMES);
+    build_id = ggpo_net_hash_mix_u32(build_id, GGPO_NET_PACKET_INPUTS);
+    build_id = ggpo_net_hash_mix_u32(build_id, GGPO_NET_PACKET_CHECKSUMS);
+    build_id = ggpo_net_hash_mix_u32(build_id, (uint32_t)ggpo_ext_game_state_size());
+    build_id = ggpo_net_hash_mix_u32(build_id, exe_id);
+    build_id = ggpo_net_hash_mix_u32(build_id, dll_id);
+
+    g_net_local_exe_id = exe_id;
+    g_net_local_dll_id = dll_id;
+    g_net_local_build_id = build_id ? build_id : 1u;
+}
+
+static void ggpo_net_note_remote_fingerprint(uint32_t build_id, uint32_t exe_id, uint32_t dll_id) {
+    if (!build_id && !exe_id && !dll_id) return;
+    if (!g_net.has_remote_fingerprint) {
+        g_net.remote_build_id = build_id;
+        g_net.remote_exe_id = exe_id;
+        g_net.remote_dll_id = dll_id;
+        g_net.has_remote_fingerprint = 1;
+    }
+    if (g_net.remote_build_id == build_id &&
+        g_net.remote_exe_id == exe_id &&
+        g_net.remote_dll_id == dll_id) {
+        if (!g_net.warned_fingerprint_mismatch &&
+            g_net.local_build_id != 0u &&
+            g_net.local_build_id == build_id &&
+            g_net.local_exe_id == exe_id &&
+            g_net.local_dll_id == dll_id) {
+            return;
+        }
+    }
+
+    g_net.remote_build_id = build_id;
+    g_net.remote_exe_id = exe_id;
+    g_net.remote_dll_id = dll_id;
+    if (!g_net.warned_fingerprint_mismatch &&
+        (g_net.local_build_id != build_id ||
+         g_net.local_exe_id != exe_id ||
+         g_net.local_dll_id != dll_id)) {
+        LOG_WARN("ggpo.net: peer build fingerprint differs local build=%08X exe=%08X dll=%08X remote build=%08X exe=%08X dll=%08X",
+                 (unsigned int)g_net.local_build_id,
+                 (unsigned int)g_net.local_exe_id,
+                 (unsigned int)g_net.local_dll_id,
+                 (unsigned int)build_id,
+                 (unsigned int)exe_id,
+                 (unsigned int)dll_id);
+        g_net.warned_fingerprint_mismatch = 1;
+    }
 }
 
 static int ggpo_net_ensure_wsa(char* err, size_t err_cap) {
@@ -382,10 +619,11 @@ static int ggpo_net_accept_remote_session(uint32_t session_id) {
         g_net.has_remote_session_id = 1;
         return 1;
     }
-    if (g_net.remote_session_id != session_id && g_net.frame == 0u) {
+    if (g_net.remote_session_id != session_id && g_net.frame == 0u && !g_net.start_state_loaded) {
         g_net.remote_session_id = session_id;
+        return 1;
     }
-    return 1;
+    return g_net.remote_session_id == session_id;
 }
 
 static GgpoNetInputEntry* ggpo_net_input_slot(GgpoNetInputEntry* entries, uint32_t frame) {
@@ -422,17 +660,128 @@ static uint32_t ggpo_net_latch_local_input(uint32_t frame, uint32_t raw_cmd) {
 }
 
 static uint32_t ggpo_net_queue_local_input(uint32_t frame, uint32_t raw_cmd) {
-    if (frame > g_net.frame) {
-        ggpo_net_store_input(g_net.local_inputs, frame, raw_cmd);
-        return raw_cmd;
+    uint32_t cmd = 0;
+    if (ggpo_net_get_input(g_net.local_inputs, frame, &cmd)) {
+        return cmd;
     }
-    return ggpo_net_latch_local_input(frame, raw_cmd);
+    ggpo_net_store_input(g_net.local_inputs, frame, raw_cmd);
+    return raw_cmd;
+}
+
+static void ggpo_net_seed_local_input_delay_from(uint32_t start_frame) {
+    for (uint32_t i = 0; i < g_net.input_delay; i++) {
+        uint32_t frame = start_frame + i;
+        uint32_t tmp = 0;
+        if (!ggpo_net_get_input(g_net.local_inputs, frame, &tmp)) {
+            ggpo_net_store_input(g_net.local_inputs, frame, 0u);
+        }
+    }
 }
 
 static void ggpo_net_seed_local_input_delay(void) {
-    for (uint32_t f = 0; f < g_net.input_delay; f++) {
-        ggpo_net_store_input(g_net.local_inputs, f, 0u);
+    ggpo_net_seed_local_input_delay_from(0u);
+}
+
+static uint32_t ggpo_net_now_tick(void) {
+    return g_net.service_tick ? g_net.service_tick : 1u;
+}
+
+static void ggpo_net_begin_awaiting_correction(uint32_t request_frame) {
+    g_net.awaiting_correction = 1;
+    g_net.correction_request_frame = request_frame;
+    if (g_net.correction_wait_start_tick == 0u) {
+        g_net.correction_wait_start_tick = ggpo_net_now_tick();
+        g_net.correction_wait_cap_announced = 0;
     }
+}
+
+static uint32_t ggpo_net_correction_wait_ticks(void) {
+    if (!g_net.awaiting_correction || g_net.correction_wait_start_tick == 0u) return 0u;
+    return g_net.service_tick - g_net.correction_wait_start_tick;
+}
+
+static int ggpo_net_request_host_correction(const char* reason, int force) {
+    if (!g_net.correction_enabled || g_net.mode != GGPO_NET_MODE_JOIN) return 0;
+    if (!force &&
+        g_net.last_resync_request_tick != 0u &&
+        g_net.service_tick - g_net.last_resync_request_tick < GGPO_NET_RESYNC_REQUEST_INTERVAL_TICKS) {
+        return 0;
+    }
+    if (g_net.correction_request_frame == 0u) {
+        g_net.correction_request_frame = g_net.frame;
+    }
+    g_net.last_resync_request_tick = ggpo_net_now_tick();
+    g_net.correction_requests++;
+    if (!ggpo_net_send_packet(GGPO_NET_PACKET_RESYNC_REQUEST)) {
+        return 0;
+    }
+    if (force) {
+        LOG_WARN("ggpo.net: requested host correction frame=%u request_frame=%u reason=%s total=%u",
+                 (unsigned int)g_net.frame,
+                 (unsigned int)g_net.correction_request_frame,
+                 reason ? reason : "desync",
+                 (unsigned int)g_net.correction_requests);
+    } else {
+        LOG_DEBUG("ggpo.net: repeated host correction request frame=%u request_frame=%u total=%u",
+                  (unsigned int)g_net.frame,
+                  (unsigned int)g_net.correction_request_frame,
+                  (unsigned int)g_net.correction_requests);
+    }
+    return 1;
+}
+
+static int ggpo_net_prepare_host_correction(const char* reason) {
+    size_t state_len = 0;
+    uint32_t checksum = 0;
+    char err[256];
+    if (!g_net.correction_enabled || g_net.mode != GGPO_NET_MODE_HOST) return 0;
+    if (!g_net.correction_state || g_net.state_size == 0) return 0;
+    if (g_net.correction_active) return 1;
+
+    err[0] = '\0';
+    if (!ggpo_ext_save_game_state(g_net.correction_state,
+                                  g_net.state_size,
+                                  &state_len,
+                                  &checksum,
+                                  err,
+                                  sizeof(err))) {
+        LOG_ERROR("ggpo.net: failed to capture correction state (%s)", err[0] ? err : "unknown error");
+        return 0;
+    }
+    g_net.correction_state_len = state_len;
+    g_net.correction_checksum = checksum;
+    g_net.correction_id = ggpo_net_next_correction_id();
+    g_net.correction_frame = g_net.frame;
+    g_net.correction_send_offset = 0;
+    g_net.correction_send_next_chunk = 0;
+    g_net.correction_send_chunk_count = ggpo_net_state_chunk_count((uint32_t)state_len);
+    g_net.correction_send_base_checksum = 0;
+    g_net.correction_send_delta = 0;
+    if (g_net.correction_base_state &&
+        g_net.correction_base_state_len == state_len &&
+        g_net.correction_base_checksum != 0u) {
+        uint32_t full_chunks = ggpo_net_state_chunk_count((uint32_t)state_len);
+        uint32_t changed_chunks = ggpo_net_count_changed_chunks(g_net.correction_base_state,
+                                                                g_net.correction_state,
+                                                                state_len);
+        if (changed_chunks > 0u && changed_chunks < full_chunks) {
+            g_net.correction_send_delta = 1;
+            g_net.correction_send_chunk_count = changed_chunks;
+            g_net.correction_send_base_checksum = g_net.correction_base_checksum;
+        }
+    }
+    g_net.correction_active = 1;
+    g_net.corrections_sent++;
+    ggpo_net_clear_rollback_history();
+    LOG_WARN("ggpo.net: host correction queued id=%u frame=%u checksum=%u chunks=%u/%u mode=%s reason=%s",
+             (unsigned int)g_net.correction_id,
+             (unsigned int)g_net.correction_frame,
+             (unsigned int)g_net.correction_checksum,
+             (unsigned int)g_net.correction_send_chunk_count,
+             (unsigned int)ggpo_net_state_chunk_count((uint32_t)state_len),
+             g_net.correction_send_delta ? "delta" : "full",
+             reason ? reason : "desync");
+    return 1;
 }
 
 static void ggpo_net_mark_desync(uint32_t frame, uint32_t local_checksum, uint32_t remote_checksum, const char* why) {
@@ -455,6 +804,41 @@ static void ggpo_net_mark_desync(uint32_t frame, uint32_t local_checksum, uint32
               g_net.has_remote_frame ? (unsigned int)g_net.remote_frame : 0u);
 }
 
+static void ggpo_net_recoverable_desync(uint32_t frame, uint32_t local_checksum, uint32_t remote_checksum, const char* why) {
+    GgpoNetHistoryEntry* h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
+    if (g_net.correction_enabled && (g_net.correction_active || g_net.awaiting_correction)) {
+        return;
+    }
+    g_net.desync_frame = frame;
+    g_net.desync_local_checksum = local_checksum;
+    g_net.desync_remote_checksum = remote_checksum;
+    g_net.desyncs++;
+    LOG_ERROR("ggpo.net: recoverable desync frame=%u local=%u remote=%u reason=%s local_cmd=0x%08X remote_cmd=0x%08X remote_predicted=%d local_frame=%u remote_frame=%u corr_id=%u corr_frame=%u applied_id=%u",
+              (unsigned int)frame,
+              (unsigned int)local_checksum,
+              (unsigned int)remote_checksum,
+              why ? why : "checksum mismatch",
+              (h->valid && h->frame == frame) ? h->local_cmd : 0u,
+              (h->valid && h->frame == frame) ? h->remote_cmd : 0u,
+              (h->valid && h->frame == frame) ? h->remote_predicted : -1,
+              (unsigned int)g_net.frame,
+              g_net.has_remote_frame ? (unsigned int)g_net.remote_frame : 0u,
+              (unsigned int)g_net.correction_id,
+              (unsigned int)g_net.correction_frame,
+              (unsigned int)g_net.last_correction_applied_id);
+
+    if (!g_net.correction_enabled) {
+        ggpo_net_mark_desync(frame, local_checksum, remote_checksum, why);
+        return;
+    }
+    if (g_net.mode == GGPO_NET_MODE_HOST) {
+        (void)ggpo_net_prepare_host_correction(why);
+    } else {
+        ggpo_net_begin_awaiting_correction(g_net.frame);
+        (void)ggpo_net_request_host_correction(why, 1);
+    }
+}
+
 static void ggpo_net_note_remote_input(uint32_t frame, uint32_t cmd) {
     uint32_t old_cmd = 0;
     int had_old = ggpo_net_get_input(g_net.remote_inputs, frame, &old_cmd);
@@ -463,7 +847,7 @@ static void ggpo_net_note_remote_input(uint32_t frame, uint32_t cmd) {
     if (had_old && frame < g_net.frame) {
         GgpoNetHistoryEntry* h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
         if (h->valid && h->frame == frame && !h->remote_predicted) {
-            ggpo_net_mark_desync(frame, h->post_checksum, 0u, "remote input changed after frame finalized");
+            ggpo_net_recoverable_desync(frame, h->post_checksum, 0u, "remote input changed after frame finalized");
             return;
         }
     }
@@ -518,6 +902,13 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     p->type = type;
     p->session_id = g_net.session_id;
     p->sender_player = (uint32_t)g_net.local_player;
+    p->build_id = g_net.local_build_id;
+    p->exe_id = g_net.local_exe_id;
+    p->dll_id = g_net.local_dll_id;
+    p->correction_ack_checksum = g_net.last_correction_applied_checksum;
+    p->correction_id = g_net.correction_id;
+    p->correction_ack_id = g_net.last_correction_applied_id;
+    p->correction_request_frame = g_net.awaiting_correction ? g_net.correction_request_frame : 0u;
     p->frame = g_net.frame;
     p->state_size = (uint32_t)g_net.state_size;
     p->state_checksum = g_net.initial_checksum;
@@ -534,15 +925,18 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     }
     p->input_count = count;
 
-    for (uint32_t i = 1; i <= GGPO_NET_HISTORY_FRAMES && checksum_count < GGPO_NET_PACKET_CHECKSUMS; i++) {
-        uint32_t frame = (g_net.frame >= i) ? (g_net.frame - i) : UINT_MAX;
-        GgpoNetHistoryEntry* h = NULL;
-        if (frame == UINT_MAX) break;
-        h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
-        if (!h->valid || h->frame != frame || h->remote_predicted) continue;
-        p->checksums[checksum_count].frame = frame;
-        p->checksums[checksum_count].checksum = h->post_checksum;
-        checksum_count++;
+    if (!g_net.correction_active && !g_net.awaiting_correction) {
+        for (uint32_t i = 1; i <= GGPO_NET_HISTORY_FRAMES && checksum_count < GGPO_NET_PACKET_CHECKSUMS; i++) {
+            uint32_t frame = (g_net.frame >= i) ? (g_net.frame - i) : UINT_MAX;
+            GgpoNetHistoryEntry* h = NULL;
+            if (frame == UINT_MAX) break;
+            if (g_net.last_correction_applied_checksum != 0u && frame < g_net.correction_frame) continue;
+            h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
+            if (!h->valid || h->frame != frame || h->remote_predicted) continue;
+            p->checksums[checksum_count].frame = frame;
+            p->checksums[checksum_count].checksum = h->post_checksum;
+            checksum_count++;
+        }
     }
     p->checksum_count = checksum_count;
 }
@@ -561,19 +955,32 @@ static int ggpo_net_send_state_ack(void) {
     return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, 1);
 }
 
-static int ggpo_net_send_state_chunk(void) {
+static int ggpo_net_send_state_chunk_from(const uint8_t* state,
+                                          size_t state_len,
+                                          uint32_t state_checksum,
+                                          uint32_t state_frame,
+                                          uint32_t flags,
+                                          uint32_t state_id,
+                                          uint32_t* inout_offset) {
     GgpoNetStateChunkPacket p;
     uint32_t remaining;
     uint32_t chunk;
+    uint32_t offset;
+    uint32_t chunk_index;
+    uint32_t chunk_count;
 
     if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
-    if (!g_net.initial_state || g_net.initial_state_len == 0) return 0;
-    if (g_net.state_send_offset >= (uint32_t)g_net.initial_state_len) {
-        g_net.state_send_offset = 0;
+    if (!state || state_len == 0 || state_len > (size_t)UINT_MAX || !inout_offset) return 0;
+    if (*inout_offset >= (uint32_t)state_len) {
+        *inout_offset = 0;
     }
 
-    remaining = (uint32_t)g_net.initial_state_len - g_net.state_send_offset;
-    chunk = remaining > GGPO_NET_STATE_CHUNK_BYTES ? GGPO_NET_STATE_CHUNK_BYTES : remaining;
+    offset = *inout_offset;
+    remaining = (uint32_t)state_len - offset;
+    chunk_index = offset / GGPO_NET_STATE_CHUNK_BYTES;
+    chunk_count = ggpo_net_state_chunk_count((uint32_t)state_len);
+    chunk = ggpo_net_state_chunk_size(state_len, chunk_index);
+    if (chunk == 0u) return 0;
 
     memset(&p, 0, sizeof(p));
     p.magic = GGPO_NET_MAGIC;
@@ -581,20 +988,146 @@ static int ggpo_net_send_state_chunk(void) {
     p.type = GGPO_NET_PACKET_STATE_CHUNK;
     p.session_id = g_net.session_id;
     p.sender_player = (uint32_t)g_net.local_player;
-    p.state_size = (uint32_t)g_net.initial_state_len;
-    p.state_checksum = g_net.initial_checksum;
-    p.offset = g_net.state_send_offset;
+    p.build_id = g_net.local_build_id;
+    p.exe_id = g_net.local_exe_id;
+    p.dll_id = g_net.local_dll_id;
+    p.frame = state_frame;
+    p.flags = flags;
+    p.correction_id = state_id;
+    p.base_checksum = 0u;
+    p.full_chunk_count = chunk_count;
+    p.chunk_index = chunk_index;
+    p.chunk_count = chunk_count;
+    p.state_size = (uint32_t)state_len;
+    p.state_checksum = state_checksum;
+    p.offset = offset;
     p.chunk_size = chunk;
-    memcpy(p.data, g_net.initial_state + g_net.state_send_offset, chunk);
+    memcpy(p.data, state + offset, chunk);
 
     if (!ggpo_net_send_bytes(&p, (int)(offsetof(GgpoNetStateChunkPacket, data) + chunk), &g_net.peer_addr, 1)) {
         return 0;
     }
-    g_net.state_sync_chunks_sent++;
-    g_net.state_send_offset += chunk;
-    if (g_net.state_send_offset >= (uint32_t)g_net.initial_state_len) {
-        g_net.state_send_offset = 0;
+
+    *inout_offset = offset + chunk;
+    if (*inout_offset >= (uint32_t)state_len) {
+        *inout_offset = 0;
     }
+    return 1;
+}
+
+static int ggpo_net_send_delta_state_chunk_from(const uint8_t* base,
+                                                const uint8_t* state,
+                                                size_t state_len,
+                                                uint32_t state_checksum,
+                                                uint32_t base_checksum,
+                                                uint32_t state_frame,
+                                                uint32_t state_id,
+                                                uint32_t changed_chunk_count,
+                                                uint32_t* inout_next_chunk) {
+    GgpoNetStateChunkPacket p;
+    uint32_t full_chunk_count;
+    uint32_t chunk_index = UINT_MAX;
+    uint32_t offset = 0;
+    uint32_t chunk = 0;
+
+    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (!base || !state || state_len == 0 || state_len > (size_t)UINT_MAX || !inout_next_chunk) return 0;
+    full_chunk_count = ggpo_net_state_chunk_count((uint32_t)state_len);
+    if (full_chunk_count == 0u || changed_chunk_count == 0u || changed_chunk_count > full_chunk_count) return 0;
+    if (*inout_next_chunk >= full_chunk_count) {
+        *inout_next_chunk = 0;
+    }
+
+    for (uint32_t scanned = 0; scanned < full_chunk_count; scanned++) {
+        uint32_t candidate = (*inout_next_chunk + scanned) % full_chunk_count;
+        if (ggpo_net_state_chunk_differs(base, state, state_len, candidate)) {
+            chunk_index = candidate;
+            break;
+        }
+    }
+    if (chunk_index == UINT_MAX) return 0;
+
+    offset = ggpo_net_state_chunk_offset(chunk_index);
+    chunk = ggpo_net_state_chunk_size(state_len, chunk_index);
+    if (chunk == 0u) return 0;
+
+    memset(&p, 0, sizeof(p));
+    p.magic = GGPO_NET_MAGIC;
+    p.version = GGPO_NET_VERSION;
+    p.type = GGPO_NET_PACKET_STATE_CHUNK;
+    p.session_id = g_net.session_id;
+    p.sender_player = (uint32_t)g_net.local_player;
+    p.build_id = g_net.local_build_id;
+    p.exe_id = g_net.local_exe_id;
+    p.dll_id = g_net.local_dll_id;
+    p.frame = state_frame;
+    p.flags = GGPO_NET_STATE_FLAG_CORRECTION | GGPO_NET_STATE_FLAG_DELTA;
+    p.correction_id = state_id;
+    p.base_checksum = base_checksum;
+    p.full_chunk_count = full_chunk_count;
+    p.chunk_index = chunk_index;
+    p.chunk_count = changed_chunk_count;
+    p.state_size = (uint32_t)state_len;
+    p.state_checksum = state_checksum;
+    p.offset = offset;
+    p.chunk_size = chunk;
+    memcpy(p.data, state + offset, chunk);
+
+    if (!ggpo_net_send_bytes(&p, (int)(offsetof(GgpoNetStateChunkPacket, data) + chunk), &g_net.peer_addr, 1)) {
+        return 0;
+    }
+
+    *inout_next_chunk = chunk_index + 1u;
+    if (*inout_next_chunk >= full_chunk_count) {
+        *inout_next_chunk = 0;
+    }
+    return 1;
+}
+
+static int ggpo_net_send_state_chunk(void) {
+    if (!g_net.initial_state || g_net.initial_state_len == 0) return 0;
+    if (!ggpo_net_send_state_chunk_from(g_net.initial_state,
+                                        g_net.initial_state_len,
+                                        g_net.initial_checksum,
+                                        0u,
+                                        0u,
+                                        0u,
+                                        &g_net.state_send_offset)) {
+        return 0;
+    }
+    g_net.state_sync_chunks_sent++;
+    return 1;
+}
+
+static int ggpo_net_send_correction_chunk(void) {
+    if (!g_net.correction_active || !g_net.correction_state || g_net.correction_state_len == 0) return 0;
+    if (g_net.correction_send_delta) {
+        if (!ggpo_net_send_delta_state_chunk_from(g_net.correction_base_state,
+                                                  g_net.correction_state,
+                                                  g_net.correction_state_len,
+                                                  g_net.correction_checksum,
+                                                  g_net.correction_send_base_checksum,
+                                                  g_net.correction_frame,
+                                                  g_net.correction_id,
+                                                  g_net.correction_send_chunk_count,
+                                                  &g_net.correction_send_next_chunk)) {
+            return 0;
+        }
+        g_net.correction_chunks_sent++;
+        g_net.correction_delta_chunks_sent++;
+        return 1;
+    }
+    if (!ggpo_net_send_state_chunk_from(g_net.correction_state,
+                                        g_net.correction_state_len,
+                                        g_net.correction_checksum,
+                                        g_net.correction_frame,
+                                        GGPO_NET_STATE_FLAG_CORRECTION,
+                                        g_net.correction_id,
+                                        &g_net.correction_send_offset)) {
+        return 0;
+    }
+    g_net.correction_chunks_sent++;
+    g_net.correction_full_chunks_sent++;
     return 1;
 }
 
@@ -618,22 +1151,54 @@ static void ggpo_net_clear_runtime_history(void) {
     g_net.has_remote_frame = 0;
     g_net.frame_advantage_wait_announced = 0;
     g_net.prediction_limit_wait_announced = 0;
+    g_net.frame_advantage_wait_start_tick = 0;
+    g_net.prediction_wait_start_tick = 0;
+    g_net.frame_advantage_wait_cap_announced = 0;
+    g_net.prediction_wait_cap_announced = 0;
+}
+
+static void ggpo_net_clear_rollback_history(void) {
+    memset(g_net.history, 0, sizeof(g_net.history));
+    g_net.rollback_to = 0;
+    g_net.rollback_pending = 0;
+    g_net.frame_advantage_wait_announced = 0;
+    g_net.prediction_limit_wait_announced = 0;
+    g_net.frame_advantage_wait_start_tick = 0;
+    g_net.prediction_wait_start_tick = 0;
+    g_net.frame_advantage_wait_cap_announced = 0;
+    g_net.prediction_wait_cap_announced = 0;
+    g_net.warned_prediction_limit = 0;
+    g_net.desync_detected = 0;
 }
 
 static void ggpo_net_reset_recv_state(void) {
     free(g_net.recv_state);
-    free(g_net.recv_state_seen);
+    free(g_net.recv_state_chunks_seen);
     g_net.recv_state = NULL;
-    g_net.recv_state_seen = NULL;
+    g_net.recv_state_chunks_seen = NULL;
     g_net.recv_state_len = 0;
     g_net.recv_state_checksum = 0;
+    g_net.recv_state_frame = 0;
+    g_net.recv_state_flags = 0;
+    g_net.recv_state_id = 0;
+    g_net.recv_state_base_checksum = 0;
+    g_net.recv_state_seen_chunk_count = 0;
+    g_net.recv_state_chunk_count = 0;
+    g_net.recv_state_chunks_complete = 0;
     g_net.state_sync_chunks_received = 0;
 }
 
 static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int got_len, const struct sockaddr_in* from) {
-    uint32_t end;
-    uint32_t seen_count = 0;
     uint32_t checksum = 0;
+    uint32_t flags = 0;
+    uint32_t chunks_received = 0;
+    uint32_t expected_chunk_count = 0;
+    uint32_t expected_full_chunk_count = 0;
+    uint32_t expected_offset = 0;
+    uint32_t expected_chunk_size = 0;
+    int is_correction = 0;
+    int is_delta = 0;
+    const uint8_t* delta_base = NULL;
     char err[256];
 
     if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
@@ -646,34 +1211,119 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     if (p->chunk_size == 0 || p->chunk_size > GGPO_NET_STATE_CHUNK_BYTES) return;
     if (got_len < (int)(offsetof(GgpoNetStateChunkPacket, data) + p->chunk_size)) return;
     if (p->offset >= p->state_size || p->offset + p->chunk_size > p->state_size) return;
+    expected_full_chunk_count = ggpo_net_state_chunk_count(p->state_size);
+    if (p->full_chunk_count != expected_full_chunk_count) return;
+    if (p->chunk_index >= expected_full_chunk_count) return;
+    expected_offset = p->chunk_index * GGPO_NET_STATE_CHUNK_BYTES;
+    expected_chunk_size = p->state_size - expected_offset;
+    if (expected_chunk_size > GGPO_NET_STATE_CHUNK_BYTES) expected_chunk_size = GGPO_NET_STATE_CHUNK_BYTES;
+    if (p->offset != expected_offset || p->chunk_size != expected_chunk_size) return;
 
+    ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
     g_net.last_rx_tick = g_net.service_tick;
     g_net.packets_received++;
 
-    if (!g_net.recv_state || g_net.recv_state_len != p->state_size || g_net.recv_state_checksum != p->state_checksum) {
+    flags = p->flags & (GGPO_NET_STATE_FLAG_CORRECTION | GGPO_NET_STATE_FLAG_DELTA);
+    is_correction = (flags & GGPO_NET_STATE_FLAG_CORRECTION) ? 1 : 0;
+    is_delta = (flags & GGPO_NET_STATE_FLAG_DELTA) ? 1 : 0;
+    if (is_correction && !g_net.correction_enabled) return;
+    if (is_delta && !is_correction) return;
+    if (is_delta) {
+        if (p->chunk_count == 0u || p->chunk_count > expected_full_chunk_count) return;
+        if (p->base_checksum == g_net.correction_base_checksum &&
+            g_net.correction_base_state &&
+            g_net.correction_base_state_len == p->state_size) {
+            delta_base = g_net.correction_base_state;
+        } else if (p->base_checksum == g_net.initial_checksum &&
+                   g_net.initial_state &&
+                   g_net.initial_state_len == p->state_size) {
+            delta_base = g_net.initial_state;
+        } else {
+            LOG_WARN("ggpo.net: cannot apply delta correction id=%u base=%u local_base=%u initial=%u; requesting full correction",
+                     (unsigned int)p->correction_id,
+                     (unsigned int)p->base_checksum,
+                     (unsigned int)g_net.correction_base_checksum,
+                     (unsigned int)g_net.initial_checksum);
+            ggpo_net_begin_awaiting_correction(g_net.frame);
+            (void)ggpo_net_request_host_correction("delta base mismatch", 1);
+            return;
+        }
+        expected_chunk_count = p->chunk_count;
+    } else {
+        if (p->chunk_count != expected_full_chunk_count) return;
+        expected_chunk_count = expected_full_chunk_count;
+    }
+
+    if (is_correction &&
+        g_net.last_correction_applied_id != 0u &&
+        p->correction_id <= g_net.last_correction_applied_id) {
+        (void)ggpo_net_send_state_ack();
+        return;
+    }
+
+    if (!is_correction && g_net.state_synced && p->state_checksum == g_net.initial_checksum) {
+        (void)ggpo_net_send_state_ack();
+        return;
+    }
+
+    if (!g_net.recv_state ||
+        g_net.recv_state_len != p->state_size ||
+        g_net.recv_state_checksum != p->state_checksum ||
+        g_net.recv_state_frame != p->frame ||
+        g_net.recv_state_flags != flags ||
+        g_net.recv_state_id != p->correction_id ||
+        g_net.recv_state_base_checksum != p->base_checksum ||
+        g_net.recv_state_seen_chunk_count != expected_full_chunk_count ||
+        g_net.recv_state_chunk_count != p->chunk_count) {
         ggpo_net_reset_recv_state();
         g_net.recv_state = (uint8_t*)calloc(1, p->state_size);
-        g_net.recv_state_seen = (uint8_t*)calloc(1, p->state_size);
-        if (!g_net.recv_state || !g_net.recv_state_seen) {
+        g_net.recv_state_chunks_seen = (uint8_t*)calloc(1, expected_full_chunk_count);
+        if (!g_net.recv_state || !g_net.recv_state_chunks_seen) {
             ggpo_net_reset_recv_state();
             return;
         }
+        if (is_delta) {
+            memcpy(g_net.recv_state, delta_base, p->state_size);
+        }
         g_net.recv_state_len = p->state_size;
         g_net.recv_state_checksum = p->state_checksum;
-        LOG_INFO("ggpo.net: receiving host state size=%u checksum=%u",
+        g_net.recv_state_frame = p->frame;
+        g_net.recv_state_flags = flags;
+        g_net.recv_state_id = p->correction_id;
+        g_net.recv_state_base_checksum = p->base_checksum;
+        g_net.recv_state_seen_chunk_count = expected_full_chunk_count;
+        g_net.recv_state_chunk_count = p->chunk_count;
+        g_net.recv_state_chunks_complete = 0;
+        LOG_INFO("ggpo.net: receiving %s%s state id=%u frame=%u size=%u checksum=%u chunks=%u/%u",
+                 is_correction ? "correction" : "host",
+                 is_delta ? " delta" : "",
+                 (unsigned int)p->correction_id,
+                 (unsigned int)p->frame,
                  (unsigned int)p->state_size,
-                 (unsigned int)p->state_checksum);
+                 (unsigned int)p->state_checksum,
+                 (unsigned int)p->chunk_count,
+                 (unsigned int)expected_full_chunk_count);
     }
 
+    if (g_net.recv_state_chunks_seen[p->chunk_index]) {
+        g_net.duplicate_state_chunks++;
+        return;
+    }
     memcpy(g_net.recv_state + p->offset, p->data, p->chunk_size);
-    memset(g_net.recv_state_seen + p->offset, 1, p->chunk_size);
-    g_net.state_sync_chunks_received++;
-
-    end = p->state_size;
-    for (uint32_t i = 0; i < end; i++) {
-        if (g_net.recv_state_seen[i]) seen_count++;
+    g_net.recv_state_chunks_seen[p->chunk_index] = 1;
+    g_net.recv_state_chunks_complete++;
+    if (is_correction) {
+        g_net.correction_chunks_received++;
+        if (is_delta) {
+            g_net.correction_delta_chunks_received++;
+        } else {
+            g_net.correction_full_chunks_received++;
+        }
+    } else {
+        g_net.state_sync_chunks_received++;
     }
-    if (seen_count < end) {
+
+    if (g_net.recv_state_chunks_complete < g_net.recv_state_chunk_count) {
         return;
     }
 
@@ -687,7 +1337,49 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
         return;
     }
     if (checksum != p->state_checksum) {
+        if (is_correction) {
+            LOG_ERROR("ggpo.net: correction transfer checksum mismatch id=%u local=%u remote=%u frame=%u",
+                      (unsigned int)p->correction_id,
+                      (unsigned int)checksum,
+                      (unsigned int)p->state_checksum,
+                      (unsigned int)p->frame);
+            ggpo_net_begin_awaiting_correction(g_net.frame);
+            (void)ggpo_net_request_host_correction("correction transfer checksum mismatch", 1);
+            ggpo_net_reset_recv_state();
+            return;
+        }
         ggpo_net_mark_desync(0u, checksum, p->state_checksum, "host state transfer checksum mismatch");
+        return;
+    }
+
+    if (is_correction) {
+        chunks_received = g_net.recv_state_chunks_complete;
+        ggpo_net_clear_rollback_history();
+        g_net.frame = p->frame;
+        g_net.correction_id = p->correction_id;
+        g_net.correction_frame = p->frame;
+        ggpo_net_seed_local_input_delay_from(g_net.frame);
+        g_net.last_checksum = checksum;
+        g_net.awaiting_correction = 0;
+        g_net.correction_request_frame = 0;
+        g_net.correction_wait_start_tick = 0;
+        g_net.correction_wait_cap_announced = 0;
+        g_net.last_resync_request_tick = 0;
+        g_net.last_correction_applied_checksum = checksum;
+        g_net.last_correction_applied_id = p->correction_id;
+        (void)ggpo_net_set_correction_base(g_net.recv_state, g_net.recv_state_len, checksum);
+        g_net.corrections_received++;
+        LOG_WARN("ggpo.net: correction applied id=%u frame=%u checksum=%u chunks=%u/%u mode=%s total=%u dup=%u",
+                 (unsigned int)p->correction_id,
+                 (unsigned int)g_net.frame,
+                 (unsigned int)checksum,
+                 (unsigned int)chunks_received,
+                 (unsigned int)g_net.recv_state_chunk_count,
+                 is_delta ? "delta" : "full",
+                 (unsigned int)g_net.corrections_received,
+                 (unsigned int)g_net.duplicate_state_chunks);
+        (void)ggpo_net_send_state_ack();
+        ggpo_net_reset_recv_state();
         return;
     }
 
@@ -697,6 +1389,7 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     g_net.initial_state_len = g_net.recv_state_len;
     g_net.initial_checksum = checksum;
     g_net.last_checksum = checksum;
+    (void)ggpo_net_set_correction_base(g_net.initial_state, g_net.initial_state_len, checksum);
     g_net.frame = 0;
     g_net.state_synced = 1;
     g_net.remote_state_synced = 1;
@@ -724,6 +1417,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
         return;
     }
 
+    ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
     g_net.remote_player = (int)p->sender_player;
     if (!g_net.connected) {
         g_net.connected = 1;
@@ -736,6 +1430,28 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
     }
 
     g_net.last_rx_tick = g_net.service_tick;
+    if (g_net.mode == GGPO_NET_MODE_HOST &&
+        g_net.correction_active &&
+        p->correction_ack_id == g_net.correction_id &&
+        p->correction_ack_checksum != 0u &&
+        p->correction_ack_checksum == g_net.correction_checksum) {
+        g_net.last_correction_ack_checksum = p->correction_ack_checksum;
+        g_net.last_correction_ack_id = p->correction_ack_id;
+        (void)ggpo_net_set_correction_base(g_net.correction_state,
+                                           g_net.correction_state_len,
+                                           g_net.correction_checksum);
+        g_net.correction_active = 0;
+        g_net.correction_state_len = 0;
+        g_net.correction_send_offset = 0;
+        g_net.correction_send_next_chunk = 0;
+        g_net.correction_send_chunk_count = 0;
+        g_net.correction_send_base_checksum = 0;
+        g_net.correction_send_delta = 0;
+        LOG_INFO("ggpo.net: correction ack received id=%u checksum=%u frame=%u",
+                 (unsigned int)p->correction_ack_id,
+                 (unsigned int)p->correction_ack_checksum,
+                 (unsigned int)g_net.correction_frame);
+    }
     if (p->type == GGPO_NET_PACKET_STATE_ACK) {
         if (!g_net.remote_state_synced) {
             g_net.remote_state_synced = 1;
@@ -753,6 +1469,34 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
         g_net.peer_disconnected = 1;
         LOG_INFO("ggpo.net: peer disconnected");
         return;
+    }
+    if (p->type == GGPO_NET_PACKET_RESYNC_REQUEST && g_net.mode == GGPO_NET_MODE_HOST) {
+        uint32_t request_frame = p->correction_request_frame ? p->correction_request_frame : p->frame;
+        int stale_request = 0;
+        if (g_net.correction_active) {
+            stale_request = 1;
+        } else if (g_net.last_correction_ack_id != 0u && request_frame <= g_net.correction_frame) {
+            stale_request = 1;
+        }
+        if (stale_request) {
+            g_net.stale_correction_requests++;
+            LOG_DEBUG("ggpo.net: ignored stale resync request request_frame=%u remote_frame=%u corr_frame=%u corr_id=%u ack_id=%u stale=%u",
+                      (unsigned int)request_frame,
+                      (unsigned int)p->frame,
+                      (unsigned int)g_net.correction_frame,
+                      (unsigned int)g_net.correction_id,
+                      (unsigned int)p->correction_ack_id,
+                      (unsigned int)g_net.stale_correction_requests);
+        } else {
+            g_net.correction_requests++;
+            LOG_WARN("ggpo.net: peer requested correction request_frame=%u remote_frame=%u last_corr_frame=%u ack_id=%u total=%u",
+                     (unsigned int)request_frame,
+                     (unsigned int)p->frame,
+                     (unsigned int)g_net.correction_frame,
+                     (unsigned int)p->correction_ack_id,
+                     (unsigned int)g_net.correction_requests);
+            (void)ggpo_net_prepare_host_correction("peer resync request");
+        }
     }
 
     if (!g_net.warned_initial_mismatch &&
@@ -773,14 +1517,18 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
     for (uint32_t i = 0; i < p->input_count && i < GGPO_NET_PACKET_INPUTS; i++) {
         ggpo_net_note_remote_input(p->inputs[i].frame, p->inputs[i].cmd);
     }
+    if (g_net.correction_active || g_net.awaiting_correction) {
+        return;
+    }
     for (uint32_t i = 0; i < p->checksum_count && i < GGPO_NET_PACKET_CHECKSUMS; i++) {
         uint32_t frame = p->checksums[i].frame;
         uint32_t remote_checksum = p->checksums[i].checksum;
         GgpoNetHistoryEntry* h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
+        if (g_net.last_correction_applied_checksum != 0u && frame < g_net.correction_frame) continue;
         if (!h->valid || h->frame != frame) continue;
         if (h->remote_predicted) continue;
         if (h->post_checksum != remote_checksum) {
-            ggpo_net_mark_desync(frame, h->post_checksum, remote_checksum, "confirmed frame checksum mismatch");
+            ggpo_net_recoverable_desync(frame, h->post_checksum, remote_checksum, "confirmed frame checksum mismatch");
             break;
         }
     }
@@ -814,10 +1562,19 @@ static void ggpo_net_poll_socket(void) {
     }
 }
 
+static void ggpo_net_send_correction_burst(void) {
+    if (g_net.mode != GGPO_NET_MODE_HOST) return;
+    if (!g_net.connected || !g_net.correction_active) return;
+    for (int i = 0; i < GGPO_NET_CORRECTION_BURST_CHUNKS; i++) {
+        if (!ggpo_net_send_correction_chunk()) break;
+    }
+}
+
 static int ggpo_net_prediction_stall_needed(uint32_t frame, uint32_t* out_oldest_missing) {
     uint32_t tmp = 0;
     uint32_t oldest_missing = frame;
-    uint32_t start = (frame > GGPO_NET_MAX_PREDICTION) ? (frame - GGPO_NET_MAX_PREDICTION) : 0u;
+    uint32_t max_prediction = g_net.max_prediction ? g_net.max_prediction : GGPO_NET_DEFAULT_MAX_PREDICTION;
+    uint32_t start = (frame > max_prediction) ? (frame - max_prediction) : 0u;
 
     if (ggpo_net_get_input(g_net.remote_inputs, frame, &tmp)) {
         if (out_oldest_missing) *out_oldest_missing = frame;
@@ -832,7 +1589,7 @@ static int ggpo_net_prediction_stall_needed(uint32_t frame, uint32_t* out_oldest
     }
 
     if (out_oldest_missing) *out_oldest_missing = oldest_missing;
-    return (frame - oldest_missing) >= GGPO_NET_MAX_PREDICTION;
+    return (frame - oldest_missing) >= max_prediction;
 }
 
 static int ggpo_net_build_inputs(uint32_t frame, GgpoFrameInputs* out_inputs, int* out_remote_predicted) {
@@ -968,11 +1725,11 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
 
     g_net.last_checksum = checksum;
     g_net.rollbacks++;
-    LOG_INFO("ggpo.net: rollback start=%u end=%u checksum=%u total=%u",
-             (unsigned int)start,
-             (unsigned int)(end ? end - 1u : 0u),
-             (unsigned int)checksum,
-             (unsigned int)g_net.rollbacks);
+    LOG_DEBUG("ggpo.net: rollback start=%u end=%u checksum=%u total=%u",
+              (unsigned int)start,
+              (unsigned int)(end ? end - 1u : 0u),
+              (unsigned int)checksum,
+              (unsigned int)g_net.rollbacks);
     g_net.rollback_pending = 0;
     return 1;
 }
@@ -1030,6 +1787,32 @@ int ggpo_net_set_input_delay(uint32_t frames) {
     return 1;
 }
 
+uint32_t ggpo_net_max_frame_advantage(void) {
+    return g_net.active ? g_net.max_frame_advantage : g_net_config_max_frame_advantage;
+}
+
+int ggpo_net_set_max_frame_advantage(uint32_t frames) {
+    if (frames > GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT) return 0;
+    g_net_config_max_frame_advantage = frames;
+    if (g_net.active) {
+        g_net.max_frame_advantage = frames;
+    }
+    return 1;
+}
+
+uint32_t ggpo_net_max_prediction(void) {
+    return g_net.active ? g_net.max_prediction : g_net_config_max_prediction;
+}
+
+int ggpo_net_set_max_prediction(uint32_t frames) {
+    if (frames == 0u || frames > GGPO_NET_MAX_PREDICTION_LIMIT || frames >= GGPO_NET_HISTORY_FRAMES) return 0;
+    g_net_config_max_prediction = frames;
+    if (g_net.active) {
+        g_net.max_prediction = frames;
+    }
+    return 1;
+}
+
 int ggpo_net_set_network_sim(uint32_t loss_percent, uint32_t min_delay_ticks, uint32_t max_delay_ticks) {
     if (loss_percent > 100u) return 0;
     if (min_delay_ticks > GGPO_NET_SIM_MAX_DELAY_TICKS || max_delay_ticks > GGPO_NET_SIM_MAX_DELAY_TICKS) return 0;
@@ -1078,6 +1861,101 @@ uint32_t ggpo_net_sim_pending_packets(void) {
     return g_net.active ? ggpo_net_sim_pending_count() : 0u;
 }
 
+int ggpo_net_correction_enabled(void) {
+    return g_net.active ? (g_net.correction_enabled ? 1 : 0) : (g_net_config_correction_enabled ? 1 : 0);
+}
+
+int ggpo_net_set_correction_enabled(int enabled) {
+    g_net_config_correction_enabled = enabled ? 1 : 0;
+    if (g_net.active) {
+        g_net.correction_enabled = g_net_config_correction_enabled;
+        if (!g_net.correction_enabled) {
+            g_net.correction_active = 0;
+            g_net.awaiting_correction = 0;
+            g_net.correction_state_len = 0;
+            g_net.correction_send_offset = 0;
+            g_net.correction_send_next_chunk = 0;
+            g_net.correction_send_chunk_count = 0;
+            g_net.correction_send_base_checksum = 0;
+            g_net.correction_send_delta = 0;
+            g_net.correction_request_frame = 0;
+            g_net.correction_wait_start_tick = 0;
+            g_net.correction_wait_cap_announced = 0;
+        }
+    }
+    return 1;
+}
+
+int ggpo_net_awaiting_correction(void) {
+    return g_net.awaiting_correction ? 1 : 0;
+}
+
+int ggpo_net_correction_active(void) {
+    return g_net.correction_active ? 1 : 0;
+}
+
+uint32_t ggpo_net_corrections_sent(void) {
+    return g_net.corrections_sent;
+}
+
+uint32_t ggpo_net_corrections_received(void) {
+    return g_net.corrections_received;
+}
+
+uint32_t ggpo_net_correction_request_count(void) {
+    return g_net.correction_requests;
+}
+
+uint32_t ggpo_net_correction_id(void) {
+    return g_net.correction_id;
+}
+
+uint32_t ggpo_net_last_correction_applied_id(void) {
+    return g_net.last_correction_applied_id;
+}
+
+uint32_t ggpo_net_stale_correction_request_count(void) {
+    return g_net.stale_correction_requests;
+}
+
+uint32_t ggpo_net_duplicate_state_chunk_count(void) {
+    return g_net.duplicate_state_chunks;
+}
+
+uint32_t ggpo_net_local_build_id(void) {
+    ggpo_net_ensure_local_fingerprint();
+    return g_net.active ? g_net.local_build_id : g_net_local_build_id;
+}
+
+uint32_t ggpo_net_local_exe_id(void) {
+    ggpo_net_ensure_local_fingerprint();
+    return g_net.active ? g_net.local_exe_id : g_net_local_exe_id;
+}
+
+uint32_t ggpo_net_local_dll_id(void) {
+    ggpo_net_ensure_local_fingerprint();
+    return g_net.active ? g_net.local_dll_id : g_net_local_dll_id;
+}
+
+uint32_t ggpo_net_remote_build_id(void) {
+    return g_net.remote_build_id;
+}
+
+uint32_t ggpo_net_remote_exe_id(void) {
+    return g_net.remote_exe_id;
+}
+
+uint32_t ggpo_net_remote_dll_id(void) {
+    return g_net.remote_dll_id;
+}
+
+int ggpo_net_build_mismatch(void) {
+    if (!g_net.active || !g_net.has_remote_fingerprint) return 0;
+    return (g_net.local_build_id != g_net.remote_build_id ||
+            g_net.local_exe_id != g_net.remote_exe_id ||
+            g_net.local_dll_id != g_net.remote_dll_id) ? 1 : 0;
+}
+
 void ggpo_net_stop(void) {
     if (g_net.sock != INVALID_SOCKET && g_net.sock != 0) {
         if (g_net.has_peer_addr) (void)ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
@@ -1085,8 +1963,10 @@ void ggpo_net_stop(void) {
     }
     free(g_net.state_blobs);
     free(g_net.initial_state);
+    free(g_net.correction_state);
+    free(g_net.correction_base_state);
     free(g_net.recv_state);
-    free(g_net.recv_state_seen);
+    free(g_net.recv_state_chunks_seen);
     memset(&g_net, 0, sizeof(g_net));
     g_net.sock = INVALID_SOCKET;
 }
@@ -1128,16 +2008,41 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
         ggpo_net_set_err(err, err_cap, "out of memory");
         return 0;
     }
+    g_net.correction_state = (uint8_t*)malloc(g_net.state_size);
+    if (!g_net.correction_state) {
+        closesocket(s);
+        free(g_net.state_blobs);
+        free(g_net.initial_state);
+        memset(&g_net, 0, sizeof(g_net));
+        g_net.sock = INVALID_SOCKET;
+        ggpo_net_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
+    g_net.correction_base_state = (uint8_t*)malloc(g_net.state_size);
+    if (!g_net.correction_base_state) {
+        closesocket(s);
+        free(g_net.state_blobs);
+        free(g_net.initial_state);
+        free(g_net.correction_state);
+        memset(&g_net, 0, sizeof(g_net));
+        g_net.sock = INVALID_SOCKET;
+        ggpo_net_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
     if (!ggpo_ext_save_game_state(g_net.state_blobs, g_net.state_size, &state_len, &checksum, err, err_cap)) {
         closesocket(s);
         free(g_net.state_blobs);
         free(g_net.initial_state);
+        free(g_net.correction_state);
+        free(g_net.correction_base_state);
         memset(&g_net, 0, sizeof(g_net));
         g_net.sock = INVALID_SOCKET;
         return 0;
     }
     memcpy(g_net.initial_state, g_net.state_blobs, state_len);
     g_net.initial_state_len = state_len;
+    (void)ggpo_net_set_correction_base(g_net.initial_state, g_net.initial_state_len, checksum);
+    ggpo_net_ensure_local_fingerprint();
 
     g_net.active = 1;
     g_net.mode = mode;
@@ -1147,15 +2052,26 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
     g_net.sock = s;
     g_net.session_id = ggpo_net_make_session_id();
     g_net.input_delay = g_net_config_input_delay;
+    g_net.max_frame_advantage = g_net_config_max_frame_advantage;
+    g_net.max_prediction = g_net_config_max_prediction;
     g_net.sim_loss_percent = g_net_config_sim_loss_percent;
     g_net.sim_delay_min_ticks = g_net_config_sim_delay_min_ticks;
     g_net.sim_delay_max_ticks = g_net_config_sim_delay_max_ticks;
+    g_net.correction_enabled = g_net_config_correction_enabled ? 1 : 0;
+    g_net.local_build_id = g_net_local_build_id;
+    g_net.local_exe_id = g_net_local_exe_id;
+    g_net.local_dll_id = g_net_local_dll_id;
     g_net.sim_rng = g_net.session_id ^ 0x75BCD15u;
     if (g_net.sim_rng == 0u) g_net.sim_rng = 1u;
     g_net.initial_checksum = checksum;
     g_net.last_checksum = checksum;
     g_net.state_synced = (mode == GGPO_NET_MODE_HOST) ? 1 : 0;
     g_net.remote_state_synced = (mode == GGPO_NET_MODE_HOST) ? 0 : 1;
+    LOG_INFO("ggpo.net: local build fingerprint build=%08X exe=%08X dll=%08X correction=%s",
+             (unsigned int)g_net.local_build_id,
+             (unsigned int)g_net.local_exe_id,
+             (unsigned int)g_net.local_dll_id,
+             g_net.correction_enabled ? "on" : "off");
     return 1;
 }
 
@@ -1164,9 +2080,11 @@ int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap) {
     if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, err, err_cap)) {
         return 0;
     }
-    LOG_INFO("ggpo.net: hosting udp port=%u input_delay=%u state_size=%u checksum=%u",
+    LOG_INFO("ggpo.net: hosting udp port=%u input_delay=%u max_advantage=%u max_prediction=%u state_size=%u checksum=%u",
              (unsigned int)g_net.local_port,
              (unsigned int)g_net.input_delay,
+             (unsigned int)g_net.max_frame_advantage,
+             (unsigned int)g_net.max_prediction,
              (unsigned int)g_net.state_size,
              (unsigned int)g_net.initial_checksum);
     return 1;
@@ -1183,11 +2101,13 @@ int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_p
     }
     g_net.has_peer_addr = 1;
     g_net.remote_port = remote_port;
-    LOG_INFO("ggpo.net: joining %s:%u local_port=%u input_delay=%u state_size=%u checksum=%u",
+    LOG_INFO("ggpo.net: joining %s:%u local_port=%u input_delay=%u max_advantage=%u max_prediction=%u state_size=%u checksum=%u",
              host ? host : "",
              (unsigned int)remote_port,
              (unsigned int)g_net.local_port,
              (unsigned int)g_net.input_delay,
+             (unsigned int)g_net.max_frame_advantage,
+             (unsigned int)g_net.max_prediction,
              (unsigned int)g_net.state_size,
              (unsigned int)g_net.initial_checksum);
     (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
@@ -1204,6 +2124,7 @@ int ggpo_net_advance(uint32_t raw_p0,
     uint32_t local_cmd = 0;
     uint32_t remote_cmd = 0;
     int predicted = 0;
+    int correction_wait_expired = 0;
     GgpoNetHistoryEntry* h = NULL;
     uint32_t checksum = 0;
 
@@ -1220,16 +2141,41 @@ int ggpo_net_advance(uint32_t raw_p0,
         ggpo_net_set_err(err, err_cap, "peer disconnected");
         return 0;
     }
-    if (g_net.connected &&
-        g_net.last_rx_tick != 0 &&
-        g_net.service_tick - g_net.last_rx_tick > GGPO_NET_TIMEOUT_TICKS) {
-        g_net.peer_disconnected = 1;
-        ggpo_net_set_err(err, err_cap, "peer timeout");
-        return 0;
+    if (g_net.connected && g_net.last_rx_tick != 0) {
+        uint32_t timeout_ticks = (g_net.correction_active || g_net.awaiting_correction || g_net.recv_state)
+            ? GGPO_NET_CORRECTION_TIMEOUT_TICKS
+            : GGPO_NET_TIMEOUT_TICKS;
+        if (g_net.service_tick - g_net.last_rx_tick > timeout_ticks) {
+            g_net.peer_disconnected = 1;
+            ggpo_net_set_err(err, err_cap, "peer timeout");
+            return 0;
+        }
     }
 
     (void)ggpo_net_send_packet(g_net.connected ? GGPO_NET_PACKET_INPUT : GGPO_NET_PACKET_HELLO);
     ggpo_net_send_state_sync_burst();
+    ggpo_net_send_correction_burst();
+
+    if (g_net.awaiting_correction) {
+        uint32_t wait_ticks = 0;
+        if (g_net.awaiting_correction && g_net.mode == GGPO_NET_MODE_JOIN) {
+            (void)ggpo_net_request_host_correction("awaiting correction", 0);
+        }
+        if (g_net.correction_wait_start_tick == 0u) {
+            g_net.correction_wait_start_tick = ggpo_net_now_tick();
+        }
+        wait_ticks = ggpo_net_correction_wait_ticks();
+        if (wait_ticks < GGPO_NET_MAX_BLOCK_TICKS) {
+            if (out_checksum) *out_checksum = g_net.last_checksum;
+            return 1;
+        }
+        if (!g_net.correction_wait_cap_announced) {
+            LOG_WARN("ggpo.net: correction wait exceeded %u ticks; resuming prediction while state transfer continues",
+                     (unsigned int)GGPO_NET_MAX_BLOCK_TICKS);
+            g_net.correction_wait_cap_announced = 1;
+        }
+        correction_wait_expired = 1;
+    }
 
     if (g_net.desync_detected) {
         char detail[192];
@@ -1289,19 +2235,40 @@ int ggpo_net_advance(uint32_t raw_p0,
         return 0;
     }
 
-    if (g_net.has_remote_frame && g_net.frame > g_net.remote_frame + GGPO_NET_MAX_FRAME_ADVANTAGE) {
-        g_net.frame_advantage_stalls++;
-        if (!g_net.frame_advantage_wait_announced) {
-            LOG_INFO("ggpo.net: throttling local frame=%u remote_frame=%u max_advantage=%u",
-                     (unsigned int)g_net.frame,
-                     (unsigned int)g_net.remote_frame,
-                     (unsigned int)GGPO_NET_MAX_FRAME_ADVANTAGE);
-            g_net.frame_advantage_wait_announced = 1;
+    if (!g_net.correction_active &&
+        !correction_wait_expired &&
+        g_net.has_remote_frame &&
+        g_net.frame > g_net.remote_frame + g_net.max_frame_advantage) {
+        uint32_t wait_ticks = 0;
+        if (g_net.frame_advantage_wait_start_tick == 0u) {
+            g_net.frame_advantage_wait_start_tick = ggpo_net_now_tick();
+            g_net.frame_advantage_wait_cap_announced = 0;
         }
-        if (out_checksum) *out_checksum = g_net.last_checksum;
-        return 1;
+        wait_ticks = g_net.service_tick - g_net.frame_advantage_wait_start_tick;
+        if (wait_ticks < GGPO_NET_MAX_BLOCK_TICKS) {
+            g_net.frame_advantage_stalls++;
+            if (!g_net.frame_advantage_wait_announced) {
+                LOG_DEBUG("ggpo.net: throttling local frame=%u remote_frame=%u max_advantage=%u",
+                          (unsigned int)g_net.frame,
+                          (unsigned int)g_net.remote_frame,
+                          (unsigned int)g_net.max_frame_advantage);
+                g_net.frame_advantage_wait_announced = 1;
+            }
+            if (out_checksum) *out_checksum = g_net.last_checksum;
+            return 1;
+        }
+        if (!g_net.frame_advantage_wait_cap_announced) {
+            LOG_WARN("ggpo.net: frame advantage wait exceeded %u ticks; resuming prediction local_frame=%u remote_frame=%u",
+                     (unsigned int)GGPO_NET_MAX_BLOCK_TICKS,
+                     (unsigned int)g_net.frame,
+                     (unsigned int)g_net.remote_frame);
+            g_net.frame_advantage_wait_cap_announced = 1;
+        }
+    } else {
+        g_net.frame_advantage_wait_start_tick = 0;
+        g_net.frame_advantage_wait_cap_announced = 0;
+        g_net.frame_advantage_wait_announced = 0;
     }
-    g_net.frame_advantage_wait_announced = 0;
 
     if (g_net.desync_detected) {
         char detail[192];
@@ -1321,34 +2288,54 @@ int ggpo_net_advance(uint32_t raw_p0,
 
     {
         uint32_t oldest_missing = 0;
-        if (ggpo_net_prediction_stall_needed(g_net.frame, &oldest_missing)) {
-            g_net.prediction_stalls++;
-            if (!g_net.prediction_limit_wait_announced) {
-                LOG_WARN("ggpo.net: stalling at frame=%u to keep prediction within %u frames (oldest_missing=%u)",
-                         (unsigned int)g_net.frame,
-                         (unsigned int)GGPO_NET_MAX_PREDICTION,
-                         (unsigned int)oldest_missing);
-                g_net.prediction_limit_wait_announced = 1;
+        if (!correction_wait_expired && ggpo_net_prediction_stall_needed(g_net.frame, &oldest_missing)) {
+            uint32_t wait_ticks = 0;
+            if (g_net.prediction_wait_start_tick == 0u) {
+                g_net.prediction_wait_start_tick = ggpo_net_now_tick();
+                g_net.prediction_wait_cap_announced = 0;
             }
-            if (out_checksum) *out_checksum = g_net.last_checksum;
-            return 1;
+            wait_ticks = g_net.service_tick - g_net.prediction_wait_start_tick;
+            if (wait_ticks < GGPO_NET_MAX_BLOCK_TICKS) {
+                g_net.prediction_stalls++;
+                if (!g_net.prediction_limit_wait_announced) {
+                    LOG_DEBUG("ggpo.net: stalling at frame=%u to keep prediction within %u frames (oldest_missing=%u)",
+                              (unsigned int)g_net.frame,
+                              (unsigned int)g_net.max_prediction,
+                              (unsigned int)oldest_missing);
+                    g_net.prediction_limit_wait_announced = 1;
+                }
+                if (out_checksum) *out_checksum = g_net.last_checksum;
+                return 1;
+            }
+            if (!g_net.prediction_wait_cap_announced) {
+                LOG_WARN("ggpo.net: prediction wait exceeded %u ticks; continuing past predcap=%u oldest_missing=%u current=%u",
+                         (unsigned int)GGPO_NET_MAX_BLOCK_TICKS,
+                         (unsigned int)g_net.max_prediction,
+                         (unsigned int)oldest_missing,
+                         (unsigned int)g_net.frame);
+                g_net.prediction_wait_cap_announced = 1;
+            }
+        } else {
+            g_net.prediction_wait_start_tick = 0;
+            g_net.prediction_wait_cap_announced = 0;
+            g_net.prediction_limit_wait_announced = 0;
         }
     }
-    g_net.prediction_limit_wait_announced = 0;
 
     remote_cmd = ggpo_net_predict_remote(g_net.frame, &predicted);
     if (predicted && !g_net.warned_prediction_limit) {
         uint32_t oldest_missing = g_net.frame;
-        for (uint32_t f = (g_net.frame > GGPO_NET_MAX_PREDICTION) ? g_net.frame - GGPO_NET_MAX_PREDICTION : 0; f <= g_net.frame; f++) {
+        uint32_t max_prediction = g_net.max_prediction ? g_net.max_prediction : GGPO_NET_DEFAULT_MAX_PREDICTION;
+        for (uint32_t f = (g_net.frame > max_prediction) ? g_net.frame - max_prediction : 0; f <= g_net.frame; f++) {
             uint32_t tmp = 0;
             if (!ggpo_net_get_input(g_net.remote_inputs, f, &tmp)) {
                 oldest_missing = f;
                 break;
             }
         }
-        if (g_net.frame - oldest_missing >= GGPO_NET_MAX_PREDICTION) {
+        if (g_net.frame - oldest_missing >= max_prediction) {
             LOG_WARN("ggpo.net: predicting remote input for %u+ frames (oldest_missing=%u current=%u)",
-                     (unsigned int)GGPO_NET_MAX_PREDICTION,
+                     (unsigned int)max_prediction,
                      (unsigned int)oldest_missing,
                      (unsigned int)g_net.frame);
             g_net.warned_prediction_limit = 1;

@@ -75,6 +75,11 @@ Console commands:
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
 - `ggpo.net delay [frames]`
+- `ggpo.net advantage [frames]`
+- `ggpo.net predict [frames]`
+- `ggpo.net highping [frames]`
+- `ggpo.net smoothping [frames]`
+- `ggpo.net correction [on|off]`
 - `ggpo.net sim [loss_pct] [min_delay] [max_delay]`
 - `ggpo.net off`
 - `ggpo.net status`
@@ -185,6 +190,29 @@ Recommended flow:
 
 Host full-state sync can remain as a debug or recovery tool, but production online should prefer deterministic match initialization over transferring arbitrary live state.
 
+## Latency Tuning
+
+The debug UDP harness has two high-latency profiles:
+
+- `ggpo.net highping [frames]`
+  - Conservative profile.
+  - Uses the supplied latency budget to pick lower frame-advantage and prediction caps.
+  - Intended to trade smoothness for fewer desync corrections and shorter hard pauses.
+- `ggpo.net smoothping [frames]`
+  - Aggressive profile.
+  - Sets frame-advantage and prediction caps directly to the supplied budget.
+  - Intended for testing smooth long prediction, but it can create large rollbacks/corrections under interactive hazards.
+
+For ugly links, prefer `ggpo.net highping 140` over `ggpo.net smoothping 140`. The conservative profile should feel more delayed or stuttery, but it should avoid the worst long freeze-and-correct cycles.
+
+State correction is capped to avoid giant hard pauses:
+
+- the host keeps sending/retrying correction state, but does not freeze while waiting for the peer's ACK
+- correction, frame-advantage, and prediction waits are capped to about 60 ticks
+- the joiner hard-waits for a correction for about 60 ticks, then resumes prediction while the state transfer continues
+- if the correction arrives late, the client applies it as a visible snap instead of staying frozen for many seconds
+- correction transfers use delta chunks against the last shared correction/start-state baseline when possible, with full-state chunks as the fallback
+
 ## Online UX Needed
 
 Add a proper online menu instead of relying on F6/F7:
@@ -199,7 +227,27 @@ Add a proper online menu instead of relying on F6/F7:
 - return to local play cleanly
 - Login/Friend system with the ability to challenge friends
 
-For development, keep console commands available.
+For development, keep console commands available. afterwards though, we should keep game updates through pausing, ban all F# keys (like f9)
+
+## Player Identity And Cosmetics
+
+Future in-game online identity should include clear player labels during a match:
+
+- show the enemy player's username above their character
+- show a small `V` indicator under the local player's character so each client can quickly tell which fighter is theirs
+- keep the labels readable without affecting gameplay, collision, camera, or rollback state
+
+Character customization and cosmetics should be planned as online metadata, not gameplay state:
+
+- hats/outfits/cosmetic choices must render consistently on both clients
+- cosmetic choices should be exchanged and validated before gameplay starts
+- cosmetic assets, animation data, and any required texture/font resources should be loaded before the match begins
+- cosmetic data should not be sent every frame
+- cosmetics must not affect gameplay simulation
+- cosmetics must not be included in rollback state checksums or desync decisions
+- if a cosmetic asset is missing or mismatched, the match should either fall back to a default cosmetic or fail before gameplay starts
+
+Before implementing this section, ask for the full customization/cosmetics design. There is a separate planned design for how usernames, player indicators, hats, animations, unlocks, and cosmetic selection should work.
 
 ## Matchmaking / Transport Needed
 
@@ -256,6 +304,7 @@ Additional tests to add:
 - long soak test across rooms, deaths, respawns, score changes, and match reset
 - checksum diff dump on first desync
 - packet loss/jitter simulation via `ggpo.net sim`
+- host-authoritative state correction via `ggpo.net correction`
 - artificial input delay tests
 - mismatched map/version rejection tests
 - mod mismatch rejection tests

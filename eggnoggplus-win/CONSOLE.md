@@ -89,6 +89,11 @@
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
 - `ggpo.net delay [frames]`
+- `ggpo.net advantage [frames]`
+- `ggpo.net predict [frames]`
+- `ggpo.net highping [frames]`
+- `ggpo.net smoothping [frames]`
+- `ggpo.net correction [on|off]`
 - `ggpo.net sim [loss_pct] [min_delay] [max_delay]`
 - `ggpo.net status`
 - `ggpo.net off`
@@ -125,6 +130,11 @@
 - `input.override 1 0x4 -1 1`
 - `input.clear 1`
 - `ggpo.net delay 2`
+- `ggpo.net advantage 20`
+- `ggpo.net predict 24`
+- `ggpo.net highping 140`
+- `ggpo.net smoothping 140`
+- `ggpo.net correction on`
 - `ggpo.net sim 5 2 8`
 - `ggpo.net sim off`
 - `ggpo.net host 47777`

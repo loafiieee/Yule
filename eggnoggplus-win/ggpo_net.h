@@ -9,6 +9,8 @@ extern "C" {
 
 #define GGPO_NET_DEFAULT_PORT 47777
 #define GGPO_NET_MAX_INPUT_DELAY 8
+#define GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT 220
+#define GGPO_NET_MAX_PREDICTION_LIMIT 220
 #define GGPO_NET_SIM_MAX_DELAY_TICKS 120
 
 typedef enum GgpoNetMode {
@@ -27,6 +29,10 @@ uint16_t ggpo_net_local_port(void);
 uint16_t ggpo_net_remote_port(void);
 uint32_t ggpo_net_input_delay(void);
 int ggpo_net_set_input_delay(uint32_t frames);
+uint32_t ggpo_net_max_frame_advantage(void);
+int ggpo_net_set_max_frame_advantage(uint32_t frames);
+uint32_t ggpo_net_max_prediction(void);
+int ggpo_net_set_max_prediction(uint32_t frames);
 int ggpo_net_set_network_sim(uint32_t loss_percent, uint32_t min_delay_ticks, uint32_t max_delay_ticks);
 uint32_t ggpo_net_sim_loss_percent(void);
 uint32_t ggpo_net_sim_delay_min_ticks(void);
@@ -35,6 +41,24 @@ uint32_t ggpo_net_sim_dropped_packets(void);
 uint32_t ggpo_net_sim_delayed_packets(void);
 uint32_t ggpo_net_sim_queue_drop_count(void);
 uint32_t ggpo_net_sim_pending_packets(void);
+int ggpo_net_correction_enabled(void);
+int ggpo_net_set_correction_enabled(int enabled);
+int ggpo_net_correction_active(void);
+int ggpo_net_awaiting_correction(void);
+uint32_t ggpo_net_corrections_sent(void);
+uint32_t ggpo_net_corrections_received(void);
+uint32_t ggpo_net_correction_request_count(void);
+uint32_t ggpo_net_correction_id(void);
+uint32_t ggpo_net_last_correction_applied_id(void);
+uint32_t ggpo_net_stale_correction_request_count(void);
+uint32_t ggpo_net_duplicate_state_chunk_count(void);
+uint32_t ggpo_net_local_build_id(void);
+uint32_t ggpo_net_local_exe_id(void);
+uint32_t ggpo_net_local_dll_id(void);
+uint32_t ggpo_net_remote_build_id(void);
+uint32_t ggpo_net_remote_exe_id(void);
+uint32_t ggpo_net_remote_dll_id(void);
+int ggpo_net_build_mismatch(void);
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);

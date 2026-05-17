@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [23:09:42] [INFO] Mod framework initializing...
 [23:09:42] [INFO] Mod framework API version: 1
 [23:09:42] [INFO] Scanning mods/ folder...
@@ -56,3 +57,128 @@ cksum=3363837058 chunks=123/164
 [23:10:26] [INFO] [mod:crash] Unloaded
 [23:10:26] [INFO] [mod:poc_speedhack] Unloaded
 [23:10:26] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+=======
+[10:59:06] [INFO] Mod framework initializing...
+[10:59:06] [INFO] Mod framework API version: 1
+[10:59:06] [INFO] Scanning mods/ folder...
+[10:59:06] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[10:59:06] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[10:59:06] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[10:59:06] [INFO] [mod:crash] enabled=false
+[10:59:06] [INFO] Loaded mod: crash
+[10:59:06] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[10:59:06] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[10:59:06] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[10:59:06] [INFO] [mod:poc_speedhack] enabled=false
+[10:59:06] [INFO] [mod:poc_speedhack] speed=1
+[10:59:06] [INFO] Loaded mod: poc_speedhack
+[10:59:06] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[10:59:06] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[10:59:06] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[10:59:06] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[10:59:06] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[10:59:06] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[10:59:06] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[10:59:06] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[10:59:07] [INFO] Loaded mod: texture_pack_test
+[10:59:07] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
+[10:59:07] [INFO] [maps] scanning maps/ for custom maps
+[10:59:07] [INFO] [maps][example_map] scanning folder: maps\example_map
+[10:59:07] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[10:59:07] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[10:59:07] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[10:59:07] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[10:59:07] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[10:59:07] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
+[10:59:07] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[10:59:07] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[10:59:07] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[10:59:07] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[10:59:07] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[10:59:07] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[10:59:07] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[10:59:07] [INFO] hooks_init: custom MODS menu ready
+[10:59:07] [INFO] [maps][big_jump] applying custom map for selector index 6
+[10:59:28] [INFO] ggpo.net: joining 127.0.0.1:47777 local_port=50965 input_delay=1 state_size=141128 checksum=1263560080
+[10:59:28] [INFO] ggpo.net: joining from F7 127.0.0.1:47777 local_udp=50965 player=1 delay=1 state_size=141128
+[10:59:28] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=47777
+[10:59:28] [WARN] ggpo.net: initial state differs; using host state local_size=141128 remote_size=147464 local_checksum=1263560080 remote_checksum=2456501876
+[10:59:28] [INFO] ggpo.net: waiting for host sta[10:59:41] [INFO] ggpo.net: peer disconnected
+[10:59:41] [ERROR] ggpo.net: failed (peer disconnected)
+[10:59:44] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 state_size=147464 checksum=667866034
+[10:59:44] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 delay=1 state_size=147464
+[10:59:45] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=52276
+[10:59:45] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=667866034 remote_checksum=3991084233
+[10:59:45] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[10:59:46] [INFO] ggpo.net: remote state sync ack received
+[10:59:46] [INFO] ggpo.net: start state loaded checksum=667866034 input_delay=1
+[10:59:46] [INFO] ggpo.net: waiting for remote frame 0 input
+[10:59:46] [INFO] ggpo.net: throttling local frame=6 remote_frame=3 max_advantage=2
+[10:59:46] [ERROR] ggpo.net: desync frame=3 local=120454912 remote=2297630875 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=6 remote_frame=4
+[10:59:46] [INFO] ggpo.net: peer disconnected
+[10:59:46] [ERROR] ggpo.net: failed (peer disconnected)
+[10:59:50] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 state_size=147464 checksum=1628229891
+[10:59:50] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 delay=1 state_size=147464
+[10:59:51] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=58375
+[10:59:51] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=1628229891 remote_checksum=1725914315
+[10:59:51] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[10:59:51] [INFO] ggpo.net: remote state sync ack received
+[10:59:51] [INFO] ggpo.net: start state loaded checksum=1628229891 input_delay=1
+[10:59:52] [INFO] ggpo.net: waiting for remote frame 0 input
+[10:59:52] [INFO] ggpo.net: throttling local frame=6 remote_frame=3 max_advantage=2
+[10:59:52] [ERROR] ggpo.net: desync frame=3 local=1239639697 remote=1105813095 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=6 remote_frame=4
+[10:59:52] [INFO] ggpo.net: peer disconnected
+[10:59:52] [ERROR] ggpo.net: failed (peer disconnected)
+[11:00:07] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 state_size=147464 checksum=4157084320
+[11:00:07] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 delay=1 state_size=147464
+[11:00:09] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=52019
+[11:00:09] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=4157084320 remote_checksum=1398138262
+[11:00:09] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:00:09] [INFO] ggpo.net: remote state sync ack received
+[11:00:09] [INFO] ggpo.net: start state loaded checksum=4157084320 input_delay=1
+[11:00:09] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:00:09] [ERROR] ggpo.net: desync frame=2 local=1053882167 remote=1060161359 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=3 remote_frame=3
+[11:00:09] [ERROR] ggpo.net: failed (desync frame=2 local=1053882167 remote=1060161359)
+[11:00:14] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 state_size=147464 checksum=2520680862
+[11:00:14] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 delay=1 state_size=147464
+[11:00:15] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=59781
+[11:00:15] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=2520680862 remote_checksum=4080556850
+[11:00:15] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:00:16] [INFO] ggpo.net: remote state sync ack received
+[11:00:16] [INFO] ggpo.net: start state loaded checksum=2520680862 input_delay=1
+[11:00:16] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:00:16] [ERROR] ggpo.net: desync frame=1 local=1318137701 remote=4102434003 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=3 remote_frame=2
+[11:00:16] [INFO] ggpo.net: peer disconnected
+[11:00:16] [ERROR] ggpo.net: failed (peer disconnected)
+[11:00:17] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 state_size=147464 checksum=1235529698
+[11:00:17] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 delay=1 state_size=147464
+[11:00:18] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=59784
+[11:00:18] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=1235529698 remote_checksum=3606210198
+[11:00:18] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:00:18] [INFO] ggpo.net: remote state sync ack received
+[11:00:18] [INFO] ggpo.net: start state loaded checksum=1235529698 input_delay=1
+[11:00:18] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:00:18] [ERROR] ggpo.net: desync frame=9 local=990029722 remote=1379123625 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=10 remote_frame=10
+[11:00:18] [ERROR] ggpo.net: failed (desync frame=9 local=990029722 remote=1379123625)
+[11:00:19] [INFO] [mod:crash] Unloaded
+[11:00:19] [INFO] [mod:poc_speedhack] Unloaded
+[11:00:19] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+] ggpo.net: joining 127.0.0.1:47777 local_port=59784 input_delay=1 state_size=147464 checksum=3606210198
+[11:00:17] [INFO] ggpo.net: joining from F7 127.0.0.1:47777 local_udp=59784 player=1 delay=1 state_size=147464
+[11:00:18] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=47777
+[11:00:18] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=3606210198 remote_checksum=1235529698
+[11:00:18] [INFO] ggpo.net: receiving host state size=147464 checksum=1235529698
+[11:00:18] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[11:00:18] [INFO] ggpo.net: host state synced size=147464 checksum=1235529698 chunks=164
+[11:00:18] [INFO] ggpo.net: receiving host state size=147464 checksum=1235529698
+[11:00:18] [INFO] ggpo.net: start state loaded checksum=1235529698 input_delay=1
+[11:00:18] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:00:18] [INFO] ggpo.net: throttling local frame=9 remote_frame=6 max_advantage=2
+[11:00:18] [INFO] ggpo.net: throttling local frame=12 remote_frame=9 max_advantage=2
+[11:00:18] [ERROR] ggpo.net: desync frame=9 local=1379123625 remote=990029722 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=12 remote_frame=10
+[11:00:18] [INFO] ggpo.net: peer disconnected
+[11:00:18] [ERROR] ggpo.net: failed (peer disconnected)
+[11:00:20] [INFO] [mod:crash] Unloaded
+[11:00:20] [INFO] [mod:poc_speedhack] Unloaded
+[11:00:20] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+>>>>>>> cb28cbb8e4912dee50845cb59ab44f2c5a8f6cd9

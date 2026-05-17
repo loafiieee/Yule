@@ -182,13 +182,39 @@ Required match-start data:
 
 Recommended flow:
 
-1. Matchmaking/lobby picks host/session owner.
-2. Both clients verify version, assets, map, rules, and mod policy.
-3. Host chooses or confirms seed and match parameters.
-4. Both clients enter the match through the same deterministic start path.
-5. GGPO begins at frame 0 after both clients are synchronized.
+1. Player logs in before entering online features.
+2. Player enters a ranked/casual queue or, later, accepts a friend challenge.
+3. Backend matches two players and creates a signed match config.
+4. Backend chooses player slots, seed, map/rules, cosmetics metadata, and transport route.
+5. Both clients verify version, assets, map, rules, cosmetic availability, and mod policy.
+6. Both clients enter the match through the same deterministic start path.
+7. GGPO begins at frame 0 after both clients are synchronized.
 
 Host full-state sync can remain as a debug or recovery tool, but production online should prefer deterministic match initialization over transferring arbitrary live state.
+
+## Chosen Production Direction
+
+The finished frontend should not expose a host/join menu. Players should see an online hub, queue buttons, account status, and later friend/challenge UI. The server decides who gets matched and how the match connects.
+
+Use a hybrid transport model:
+
+- backend for accounts, sessions, queues, MMR, matchmaking, cosmetics metadata, match configs, results, and friend systems
+- direct P2P UDP gameplay when both clients can connect directly and the route is good
+- relay gameplay fallback when direct P2P fails, when NAT is strict, or when hiding player IPs is required
+- no fully authoritative gameplay server for the first production online version
+
+In normal gameplay there should not be a gameplay-authoritative host. Both clients run deterministic rollback simulation. The server can still choose a session owner, P0/P1 assignment, or direct/relay route, but gameplay truth comes from deterministic inputs and checksum validation.
+
+Recommended backend stack:
+
+- Go service for the first backend because it can handle HTTP/WebSocket control traffic and UDP relay/signaling in one deployable binary.
+- PostgreSQL for accounts, player profile data, MMR, match history, cosmetics ownership, and friend data.
+- In-memory queue state at first, with Redis later if queues need to span multiple backend instances.
+- HTTPS REST for account/profile operations.
+- WebSocket for live queue, matchmaking, match found, ready checks, and post-match result flow.
+- UDP sockets for gameplay relay and connectivity probes.
+
+This keeps the client simple, gives enough performance headroom for a relay, and avoids committing to a heavyweight service layout too early.
 
 ## Latency Tuning
 
@@ -215,55 +241,162 @@ State correction is capped to avoid giant hard pauses:
 
 ## Online UX Needed
 
-Add a proper online menu instead of relying on F6/F7:
+The real frontend should be queue-first, not host/join-first.
 
-- Queueing system (ranked with elo/mmr and casual)
-- Cancel connection
-- Connection status
-- Ping display
-- rollback/prediction counters
-- disconnect reason
-- rematch
-- return to local play cleanly
-- Login/Friend system with the ability to challenge friends
+Online hub:
 
-For development, keep console commands available. afterwards though, we should keep game updates through pausing, ban all F# keys (like f9)
+- account login/create account from day one
+- current username, rating, connection region/status, and selected character/cosmetics
+- ranked queue button
+- casual queue button
+- queue cancel button
+- match found / connecting / synchronizing / loading states
+- ping/route display once a match is found
+- disconnect reason and recovery path
+
+Gameplay overlay/debug:
+
+- enemy username above their character
+- local `V` indicator under the local player's character
+- optional debug-only ping, rollback, prediction, transport route, and checksum counters
+
+Post-game screen:
+
+- custom online end screen showing winner/loser
+- match result, rating/MMR change when ranked, and disconnect/desync reason if relevant
+- rematch button when both players are eligible
+- queue again button
+- return to online hub button
+
+Friend and challenge system should come after queueing works:
+
+- friend list
+- add/remove/block friends
+- online presence
+- direct challenge
+- accept/decline challenge
+- private rematch/challenge flow
+
+For development, keep console commands available. Later, online production builds should keep game updates flowing through pause/menu states where needed and should block online-unsafe debug hotkeys.
 
 ## Player Identity And Cosmetics
 
-Future in-game online identity should include clear player labels during a match:
+Cosmetics and character customization should be planned soon, before the online menu and matchmaking UI harden around player identity. They should work in offline/local play too, not only online.
 
-- show the enemy player's username above their character
-- show a small `V` indicator under the local player's character so each client can quickly tell which fighter is theirs
-- keep the labels readable without affecting gameplay, collision, camera, or rollback state
+Near-term cosmetics planning goals:
 
-Character customization and cosmetics should be planned as online metadata, not gameplay state:
+- define what can be customized: colors, body parts, hats, outfits, trails, nameplates, animations, etc.
+- define which cosmetics are built in, unlockable, account-owned, local-only, or modded
+- define how customization is selected in local play
+- define how customization is selected and validated in online play
+- define how cosmetic assets are loaded, cached, animated, and attached to characters
+- define fallback behavior for missing or mismatched cosmetics
 
-- hats/outfits/cosmetic choices must render consistently on both clients
-- cosmetic choices should be exchanged and validated before gameplay starts
-- cosmetic assets, animation data, and any required texture/font resources should be loaded before the match begins
-- cosmetic data should not be sent every frame
-- cosmetics must not affect gameplay simulation
-- cosmetics must not be included in rollback state checksums or desync decisions
+Online cosmetic rules:
+
+- enemy username above their character
+- small `V` indicator under the local player's character
+- hats/outfits/cosmetic choices render consistently on both clients
+- cosmetic choices are exchanged and validated before gameplay starts
+- cosmetic assets, animation data, and required texture/font resources load before the match begins
+- cosmetic data is not sent every frame
+- cosmetics do not affect gameplay simulation
+- cosmetics are not included in rollback state checksums or desync decisions
 - if a cosmetic asset is missing or mismatched, the match should either fall back to a default cosmetic or fail before gameplay starts
 
-Before implementing this section, ask for the full customization/cosmetics design. There is a separate planned design for how usernames, player indicators, hats, animations, unlocks, and cosmetic selection should work.
+Before implementing this section, ask for the full customization/cosmetics design. There is a separate planned design for usernames, player indicators, hats, animations, unlocks, ownership, local customization, online validation, and cosmetic selection UX.
 
 ## Matchmaking / Transport Needed
 
 For real internet play, direct UDP localhost testing is not enough.
 
-Needed pieces:
+Needed backend pieces:
 
-- signaling server or lobby service
-- NAT traversal strategy
-- relay fallback for strict NATs
+- account registration/login
 - session tokens
-- player identity
-- timeout and reconnect policy
+- player profiles
+- ranked and casual queue state
+- MMR/rating updates
+- matchmaking rules
+- signed match config generation
+- match result reporting
+- friend/challenge APIs later
 - basic rate limiting and packet validation
 
-GGPO handles the rollback protocol, but it does not provide matchmaking, account identity, lobbies, or relay infrastructure by itself.
+Needed transport pieces:
+
+- signaling service for client connection setup
+- NAT traversal strategy
+- direct UDP connectivity probes
+- relay fallback for strict NATs or bad routes
+- route selection based on connectivity and latency
+- timeout, disconnect, and reconnect policy
+- per-match transport tokens so random packets cannot join a match
+
+The backend should hide transport details from the frontend. The online UI should say "queueing", "match found", "connecting", or "synchronizing", not "host" or "join".
+
+GGPO handles rollback protocol details, but it does not provide accounts, queues, matchmaking, friend systems, signaling, NAT traversal, or relay infrastructure by itself.
+
+## Implementation Phases
+
+Phase 1: production plan and data contracts
+
+- write match config schema
+- write account/profile schema
+- write queue and match result data model
+- define client/server messages
+- define direct/relay transport abstraction
+- define cosmetics metadata shape enough that online match config can carry it later
+
+Phase 2: backend skeleton
+
+- Go backend project
+- local dev config
+- PostgreSQL schema
+- account create/login
+- session token validation
+- health/status endpoint
+
+Phase 3: queue and match config
+
+- ranked queue API
+- casual queue API
+- queue cancel
+- simple matchmaking loop
+- signed match config returned to both clients
+- result submission stub
+
+Phase 4: client integration without final UI
+
+- console or debug commands for login and queue
+- backend connection status
+- receive match config
+- start deterministic online match from match config
+- keep F6/F7 harness as a debug-only path
+
+Phase 5: transport hardening
+
+- direct UDP signaling
+- NAT traversal probes
+- relay fallback
+- route choice and ping display
+- disconnect handling
+
+Phase 6: online hub and post-game UX
+
+- login/create account UI
+- online hub
+- ranked/casual queue buttons
+- queue cancel/status
+- custom winner/rematch/queue-again/hub end screen
+
+Phase 7: friends and challenges
+
+- friend list
+- friend requests
+- presence
+- challenge flow
+- private rematch/challenge handling
 
 ## Mod And Anti-Cheat Policy
 
@@ -330,11 +463,18 @@ Desync diagnostics should report:
 ## Production Checklist
 
 - Real GGPO session wrapper.
-- Online menu and status UI.
+- Account creation/login from day one.
+- Queue-first online hub and status UI.
+- Ranked and casual matchmaking queues.
+- Signed backend match config.
 - Deterministic match-start flow.
 - Version/map/mod compatibility handshake.
-- NAT traversal or relay.
+- Hybrid direct P2P / relay gameplay transport.
+- NAT traversal and relay fallback.
+- Custom online end screen with winner, rematch, queue again, and hub actions.
 - Disconnect/rematch handling.
+- Post-match result reporting and MMR/rating update path.
+- Cosmetics/customization plan that works offline and online.
 - Configurable input delay if needed.
 - Packet loss/jitter testing.
 - Desync dump files.

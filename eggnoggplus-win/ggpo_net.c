@@ -1228,6 +1228,12 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     is_delta = (flags & GGPO_NET_STATE_FLAG_DELTA) ? 1 : 0;
     if (is_correction && !g_net.correction_enabled) return;
     if (is_delta && !is_correction) return;
+    if (is_correction &&
+        g_net.last_correction_applied_id != 0u &&
+        p->correction_id <= g_net.last_correction_applied_id) {
+        (void)ggpo_net_send_state_ack();
+        return;
+    }
     if (is_delta) {
         if (p->chunk_count == 0u || p->chunk_count > expected_full_chunk_count) return;
         if (p->base_checksum == g_net.correction_base_checksum &&
@@ -1252,13 +1258,6 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     } else {
         if (p->chunk_count != expected_full_chunk_count) return;
         expected_chunk_count = expected_full_chunk_count;
-    }
-
-    if (is_correction &&
-        g_net.last_correction_applied_id != 0u &&
-        p->correction_id <= g_net.last_correction_applied_id) {
-        (void)ggpo_net_send_state_ack();
-        return;
     }
 
     if (!is_correction && g_net.state_synced && p->state_checksum == g_net.initial_checksum) {

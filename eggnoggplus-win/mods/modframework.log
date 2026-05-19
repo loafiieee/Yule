@@ -1,0 +1,166 @@
+[23:07:30] [INFO] Mod framework initializing...
+[23:07:30] [INFO] Mod framework API version: 1
+[23:07:30] [INFO] Scanning mods/ folder...
+[23:07:30] [INFO] Loading mod: official_cosmetics (Official Cosmetics) v0.1.0 by Eggnogg+
+[23:07:30] [INFO]   First-pass hats-only cosmetics browser and renderer.
+[23:07:30] [INFO] CUSTOM STATE: registered (official_cosmetics_hats)
+[23:07:30] [INFO] Loaded mod: official_cosmetics
+[23:07:30] [INFO] Loading mod: ui_api_test (UI API Test) v1.0.0 by Eggnogg+
+[23:07:30] [INFO]   Custom state that exercises legacy and upgraded mod.ui helpers.
+[23:07:30] [INFO] CUSTOM STATE: registered (ui_api_test)
+[23:07:30] [INFO] [mod:ui_api_test] UI API Test loaded. Open it from the main menu with UI API or press F8.
+[23:07:30] [INFO] Loaded mod: ui_api_test
+[23:07:30] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[23:07:30] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[23:07:30] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[23:07:30] [INFO] [mod:crash] enabled=false
+[23:07:30] [INFO] Loaded mod: crash
+[23:07:30] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:07:30] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:07:30] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:07:30] [INFO] [mod:poc_speedhack] enabled=false
+[23:07:30] [INFO] [mod:poc_speedhack] speed=1
+[23:07:30] [INFO] Loaded mod: poc_speedhack
+[23:07:30] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[23:07:30] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[23:07:30] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[23:07:30] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[23:07:30] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[23:07:30] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[23:07:30] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[23:07:30] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[23:07:30] [INFO] Loaded mod: texture_pack_test
+[23:07:30] [INFO] Done. 5 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
+[23:07:30] [INFO] [maps] scanning maps/ for custom maps
+[23:07:30] [INFO] [maps][example_map] scanning folder: maps\example_map
+[23:07:30] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[23:07:30] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[23:07:30] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[23:07:30] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[23:07:30] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[23:07:30] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
+[23:07:30] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[23:07:30] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[23:07:30] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[23:07:30] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[23:07:30] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[23:07:30] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[23:07:30] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[23:07:30] [INFO] hooks_init: custom MODS menu ready
+[23:07:31] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
+[23:07:31] [INFO] mod.assets: packed official_cosmetics:hats base=704 count=6
+[23:07:31] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
+[23:07:33] [INFO] CUSTOM STATE: enter (official_cosmetics_hats)
+[23:07:39] [INFO] CUSTOM STATE: leave (official_cosmetics_hats)
+[23:07:53] [INFO] CUSTOM STATE: enter (ui_api_test)
+[23:07:54] [INFO] CUSTOM STATE: leave (ui_api_test)
+[23:08:55] [INFO] CUSTOM STATE: enter (official_cosmetics_hats)
+[23:09:00] [INFO] CUSTOM STATE: leave (official_cosmetics_hats)
+[23:11:12] [INFO] Hot reload: mods/ filesystem change detected
+[23:11:12] [INFO] [mod:crash] Unloaded
+[23:11:12] [INFO] [mod:poc_speedhack] Unloaded
+[23:11:12] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[23:11:12] [INFO] Scanning mods/ folder...
+[23:11:12] [INFO] Loading mod: official_cosmetics (Official Cosmetics) v0.1.0 by Eggnogg+
+[23:11:12] [INFO]   First-pass hats-only cosmetics browser and renderer.
+[23:11:12] [INFO] Loaded mod: official_cosmetics
+[23:11:12] [INFO] Loading mod: ui_api_test (UI API Test) v1.0.0 by Eggnogg+
+[23:11:12] [INFO]   Custom state that exercises legacy and upgraded mod.ui helpers.
+[23:11:12] [INFO] [mod:ui_api_test] UI API Test loaded. Open it from the main menu with UI API or press F8.
+[23:11:12] [INFO] Loaded mod: ui_api_test
+[23:11:12] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[23:11:12] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[23:11:12] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[23:11:12] [INFO] [mod:crash] enabled=false
+[23:11:12] [INFO] Loaded mod: crash
+[23:11:12] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:11:12] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:11:12] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:11:12] [INFO] [mod:poc_speedhack] enabled=false
+[23:11:12] [INFO] [mod:poc_speedhack] speed=1
+[23:11:12] [INFO] Loaded mod: poc_speedhack
+[23:11:12] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[23:11:12] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[23:11:12] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[23:11:12] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[23:11:12] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[23:11:12] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[23:11:12] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[23:11:12] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[23:11:12] [INFO] Loaded mod: texture_pack_test
+[23:11:12] [INFO] Done. 5 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
+[23:11:12] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
+[23:11:12] [INFO] mod.assets: packed official_cosmetics:hats base=704 count=6
+[23:11:12] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
+[23:11:16] [INFO] Hot reload: mods/ filesystem change detected
+[23:11:16] [INFO] [mod:crash] Unloaded
+[23:11:16] [INFO] [mod:poc_speedhack] Unloaded
+[23:11:16] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[23:11:16] [INFO] Scanning mods/ folder...
+[23:11:16] [INFO] Loading mod: official_cosmetics (Official Cosmetics) v0.1.0 by Eggnogg+
+[23:11:16] [INFO]   First-pass hats-only cosmetics browser and renderer.
+[23:11:16] [INFO] Loaded mod: official_cosmetics
+[23:11:16] [INFO] Loading mod: ui_api_test (UI API Test) v1.0.0 by Eggnogg+
+[23:11:16] [INFO]   Custom state that exercises legacy and upgraded mod.ui helpers.
+[23:11:16] [INFO] [mod:ui_api_test] UI API Test loaded. Open it from the main menu with UI API or press F8.
+[23:11:16] [INFO] Loaded mod: ui_api_test
+[23:11:16] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[23:11:16] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[23:11:16] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[23:11:16] [INFO] [mod:crash] enabled=false
+[23:11:16] [INFO] Loaded mod: crash
+[23:11:16] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:11:16] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:11:16] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:11:16] [INFO] [mod:poc_speedhack] enabled=false
+[23:11:16] [INFO] [mod:poc_speedhack] speed=1
+[23:11:16] [INFO] Loaded mod: poc_speedhack
+[23:11:17] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[23:11:17] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[23:11:17] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[23:11:17] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[23:11:17] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[23:11:17] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[23:11:17] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[23:11:17] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[23:11:17] [INFO] Loaded mod: texture_pack_test
+[23:11:17] [INFO] Done. 5 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
+[23:11:17] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
+[23:11:17] [INFO] mod.assets: packed official_cosmetics:hats base=704 count=6
+[23:11:17] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
+[23:11:19] [INFO] Hot reload: mods/ filesystem change detected
+[23:11:19] [INFO] [mod:crash] Unloaded
+[23:11:19] [INFO] [mod:poc_speedhack] Unloaded
+[23:11:19] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[23:11:19] [INFO] Scanning mods/ folder...
+[23:11:19] [INFO] Loading mod: official_cosmetics (Official Cosmetics) v0.1.0 by Eggnogg+
+[23:11:19] [INFO]   First-pass hats-only cosmetics browser and renderer.
+[23:11:19] [INFO] Loaded mod: official_cosmetics
+[23:11:19] [INFO] Loading mod: ui_api_test (UI API Test) v1.0.0 by Eggnogg+
+[23:11:19] [INFO]   Custom state that exercises legacy and upgraded mod.ui helpers.
+[23:11:19] [INFO] [mod:ui_api_test] UI API Test loaded. Open it from the main menu with UI API or press F8.
+[23:11:19] [INFO] Loaded mod: ui_api_test
+[23:11:19] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[23:11:19] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[23:11:19] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[23:11:19] [INFO] [mod:crash] enabled=false
+[23:11:19] [INFO] Loaded mod: crash
+[23:11:19] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[23:11:19] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:11:19] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[23:11:19] [INFO] [mod:poc_speedhack] enabled=false
+[23:11:19] [INFO] [mod:poc_speedhack] speed=1
+[23:11:19] [INFO] Loaded mod: poc_speedhack
+[23:11:19] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[23:11:19] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[23:11:19] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[23:11:19] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[23:11:19] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[23:11:19] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[23:11:19] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[23:11:19] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[23:11:19] [INFO] Loaded mod: texture_pack_test
+[23:11:19] [INFO] Done. 5 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
+[23:11:19] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
+[23:11:19] [INFO] mod.assets: packed official_cosmetics:hats base=704 count=6
+[23:11:19] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)

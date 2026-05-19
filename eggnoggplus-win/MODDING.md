@@ -12,15 +12,6 @@ This project loads **Lua mods** from the `mods/` folder.
 
 Logs go to `mods/modframework.log`.
 
-Standalone tooling is available too:
-- `.\modtool.cmd validate <mod-folder|package.zip>`
-- `.\modtool.cmd pack <mod-folder>`
-- `.\modtool.cmd install <mod-folder|package.zip>`
-- `.\modtool.cmd update <mod-folder|package.zip>`
-- `.\modtool.cmd uninstall <mod-id>`
-
-See `MOD_TOOLING.md` for the package format and safety behavior.
-
 ---
 
 ## Folder layout
@@ -352,7 +343,35 @@ local is_any_menu = mod.ui.is_state("menu")
 ```lua
 local w, h = mod.ui.screen_size()
 local mx, my = mod.ui.mouse_pos()
+local left_down, left_pressed, right_down, right_pressed = mod.ui.mouse_buttons()
+local rmb_down, rmb_pressed = mod.ui.mouse_buttons(3)
 ```
+
+### Overlay + drawing primitives
+
+Use `begin_overlay()` / `end_overlay()` when drawing HUDs or custom states from `mod.on_frame(...)`. They flush the engine sprite batch before and after the mod draw calls so your UI appears above the game/menu render.
+
+```lua
+mod.ui.begin_overlay()
+mod.ui.rect(40, 40, 260, 120, { color = {0.05, 0.06, 0.07, 0.90} })
+mod.ui.border(40, 40, 260, 120, { line_w = 2, color = {1.0, 0.78, 0.25, 1.0} })
+mod.ui.line(40, 82, 300, 82, { line_w = 1, color = {0.3, 0.35, 0.4, 1.0} })
+local tw, th = mod.ui.measure_text("Cosmetics", 1.0)
+local rendered_scale = mod.ui.readable_scale(1.0)
+mod.ui.text_at("Cosmetics", 52, 70, 1.0, 0.95, 0.95, 0.95)
+mod.ui.end_overlay()
+```
+
+Primitive helpers:
+- `mod.ui.rect(x, y, w, h, opts)` draws a filled rectangle. `opts.color`, `opts.bg`, or `opts.fill` can be `{r,g,b,a}`.
+- `mod.ui.border(x, y, w, h, opts)` draws a rectangle outline. `opts.line_w` and `opts.color` are supported.
+- `mod.ui.line(x1, y1, x2, y2, opts)` draws a line. `opts.line_w` and `opts.color` are supported.
+- `mod.ui.measure_text(text [,scale]) -> w, h` returns the approximate rendered bounds after the framework's readable text scaling.
+- `mod.ui.readable_scale([scale]) -> rendered_scale` returns the effective native text scale for the current window size.
+- `mod.ui.wrap_text(text, max_w [,scale]) -> lines` splits text into measured lines that fit `max_w`.
+- `mod.ui.text_wrapped(text, x, y, w [,opts]) -> height, line_count` draws readable wrapped text. `opts.scale`, `opts.color`, and `opts.line_gap` are supported.
+- `mod.ui.hitbox(id, x, y, w, h [,button]) -> hovered, clicked, down` registers an invisible interactive region. `button` uses SDL button ids: `1` left, `2` middle, `3` right.
+- `mod.ui.fill_rect(...)` and `mod.ui.stroke_rect(...)` remain as compatibility aliases.
 
 ### Layout + elements
 
@@ -376,6 +395,51 @@ if mod.ui.button_at("x", "X", 1180, 20, 40, 28) then
 end
 ```
 
+Styled immediate-mode widgets:
+
+```lua
+mod.ui.push_style({
+  bg = {0.08, 0.09, 0.10, 0.92},
+  fg = {0.92, 0.94, 0.96, 1.0},
+  accent = {1.0, 0.78, 0.25, 1.0},
+})
+
+category = select(1, mod.ui.tabs("category", {
+  { id = "hats", label = "Hats" },
+  { id = "masks", label = "Masks" },
+}, category, { x = 48, y = 96, w = 240, h = 28 }))
+
+color_id = select(1, mod.ui.swatch_grid("skin_colors", colors, color_id, {
+  x = 48, y = 140,
+  cols = 8,
+  cell = 22,
+}))
+
+scale = select(1, mod.ui.slider("preview_scale", scale, 1.0, 4.0, {
+  x = 48, y = 220,
+  w = 220,
+  step = 0.25,
+}))
+
+mod.ui.pop_style()
+```
+
+Widget helpers return `value, changed` where applicable:
+- `mod.ui.icon_button(id, icon, x, y, w, h [,opts]) -> clicked, hovered`
+- `mod.ui.tabs(id, items, selected, opts) -> selected, changed`
+- `mod.ui.segmented(id, items, selected, opts) -> selected, changed`
+- `mod.ui.swatch_grid(id, colors, selected, opts) -> selected, changed`
+- `mod.ui.item_grid(id, items, selected, opts) -> selected, changed`
+- `mod.ui.slider(id, value, min, max, opts) -> value, changed`
+- `mod.ui.checkbox(id, value, opts) -> value, changed`
+- `mod.ui.tooltip(text [,opts])`
+
+Style helpers:
+- `mod.ui.push_style(style)`, `mod.ui.pop_style()`
+- `mod.ui.theme(style)` merges into the active style.
+- `mod.ui.set_theme("default_dark")`
+- `mod.ui.current_style() -> table`
+
 Sprite helpers:
 
 ```lua
@@ -389,11 +453,44 @@ mod.ui.draw_sprite(id, 400, 240, {
 ```
 
 - `mod.ui.sheet_base(name) -> sprite_base | nil`
-  - Known names: `sprites`, `tiles`, `misc`, `glyphs` (+ `data/*.png` aliases).
+  - Known names: `sprites`, `tiles`, `misc`, `glyphs` (+ `data/*.png` aliases), plus any mod-owned sheet loaded with `mod.assets.load_spritesheet`.
 - `mod.ui.sprite_id(sheet_or_base, index) -> sprite_id | nil, err`
   - `sheet_or_base` can be a sheet name or numeric base id.
 - `mod.ui.draw_sprite(sprite_id_or_frame, x, y [,opts]) -> bool`
   - Supports `flip`, `scale`/`scale_x`/`scale_y`, `tint` (`{r,g,b,a}`), `r/g/b/a`, `angle`, `layer`.
+
+Asset helpers:
+
+```lua
+local sheet = mod.assets.load_spritesheet("my_icon", "assets/icon.png", {
+  cell_w = 32,
+  cell_h = 32,
+})
+local sprite = mod.assets.sprite_id("my_icon", 0)
+mod.ui.draw_sprite(sprite, 400, 240, { scale = 1.0 })
+```
+
+- `mod.assets.load_spritesheet(id, rel_path [,opts]) -> sheet | nil, err`
+  - Registers a PNG relative to the mod folder and rebuilds the live atlas so it can be drawn immediately.
+  - Options: `cell_w`, `cell_h`, `padding`, `flags`, `force`.
+  - Returns `{ id, path, full_path, base_id, count, cell_w, cell_h, padding, flags }`.
+  - If the engine graphics atlas is not ready yet, the sheet is registered and the call returns `nil, err`; call again on a later frame or use `mod.assets.info(id)`.
+- `mod.assets.sprite_id(id [,index=0]) -> sprite_id | nil, err`
+- `mod.assets.info([id]) -> sheet | nil` or a list of loaded sheets when `id` is omitted.
+
+Mouse cursor helpers:
+
+```lua
+-- misc[7] is the vanilla menu mouse cursor, the top-right 16x16 sprite in data/misc.png.
+mod.ui.draw_cursor()
+```
+
+- `mod.ui.cursor_sprite([index=7]) -> sprite_id | nil`
+- `mod.ui.draw_cursor([opts]) -> bool`
+  - Draws the vanilla cursor by default.
+  - Supports `sprite`, `index`, `scale`, `size`, `hot_x`, `hot_y`, `tint`, and `layer`.
+  - Registered custom states draw the default cursor automatically.
+  - `define_state` can disable it with `cursor = false` or replace it with custom cursor options.
 
 Tile preview helper:
 
@@ -405,9 +502,10 @@ end
 ```
 
 - `mod.ui.tile_preview(id, frame, arg, x, y [,scale [,tile_y]]) -> bool`
-- Draws the exact rendered output for a tile byte triplet at screen position `x`,`y`.
+- Draws a preview for a tile byte triplet at screen position `x`,`y`.
 - `scale` defaults to `1.0`.
 - `tile_y` defaults to `0` and should usually be the source tile's zero-based row when previewing tiles whose draw callback depends on vertical position.
+- Current fallback previews the base `tiles` spritesheet entry by `id`; callback-specific animated/special tiles may be approximate until native tile-renderer routing is added.
 - Returns `false` if the preview could not be drawn.
 
 
@@ -487,14 +585,44 @@ Pointer APIs:
 - `mod.ui.button_remove_ptr(ptr) -> bool` (best-effort remove by hide + tiny size + offscreen)
 
 API summary:
+- `mod.ui.state_name() -> string`
+- `mod.ui.state_ptr() -> number`
+- `mod.ui.is_state(name) -> bool`
+- `mod.ui.screen_size() -> w, h`
+- `mod.ui.mouse_pos() -> x, y`
+- `mod.ui.mouse_buttons([button]) -> left_down, left_pressed, right_down, right_pressed, middle_down, middle_pressed` or, with `button`, `down, pressed`
+- `mod.ui.begin_overlay()`
+- `mod.ui.end_overlay()`
+- `mod.ui.flush()`
+- `mod.ui.rect(x, y, w, h, opts)`
+- `mod.ui.border(x, y, w, h, opts)`
+- `mod.ui.line(x1, y1, x2, y2, opts)`
+- `mod.ui.measure_text(text [,scale]) -> w, h`
+- `mod.ui.readable_scale([scale]) -> rendered_scale`
+- `mod.ui.text_scale_factor([scale]) -> rendered_scale` (alias)
+- `mod.ui.wrap_text(text, max_w [,scale]) -> lines`
+- `mod.ui.text_wrapped(text, x, y, w [,opts]) -> height, line_count`
+- `mod.ui.hitbox(id, x, y, w, h [,button]) -> hovered, clicked, down`
 - `mod.ui.layout(x, y [,row_h [,gap [,width [,text_scale]]]])`
 - `mod.ui.cursor([x [,y]]) -> x, y`
 - `mod.ui.next_row([count])`
 - `mod.ui.text(text [,r [,g [,b [,scale]]]])`
 - `mod.ui.text_at(text, x, y [,scale [,r [,g [,b]]]])`
 - `mod.ui.tile_preview(id, frame, arg, x, y [,scale [,tile_y]]) -> bool`
+- `mod.ui.cursor_sprite([index]) -> sprite_id | nil`
+- `mod.ui.draw_cursor([opts]) -> bool`
 - `mod.ui.button(id, label [,w [,h]]) -> clicked`
 - `mod.ui.button_at(id, label, x, y [,w [,h]]) -> clicked`
+- `mod.ui.icon_button(id, icon, x, y, w, h [,opts]) -> clicked, hovered`
+- `mod.ui.tabs(id, items, selected, opts) -> selected, changed`
+- `mod.ui.segmented(id, items, selected, opts) -> selected, changed`
+- `mod.ui.swatch_grid(id, colors, selected, opts) -> selected, changed`
+- `mod.ui.item_grid(id, items, selected, opts) -> selected, changed`
+- `mod.ui.slider(id, value, min, max, opts) -> value, changed`
+- `mod.ui.checkbox(id, value, opts) -> value, changed`
+- `mod.ui.tooltip(text [,opts])`
+- `mod.ui.push_style(style)`, `mod.ui.pop_style()`
+- `mod.ui.theme(style)`, `mod.ui.set_theme(name)`, `mod.ui.current_style()`
 
 Custom state API:
 - `mod.ui.create_state(name) -> bool`
@@ -503,6 +631,8 @@ Custom state API:
 - `mod.ui.leave_state() -> bool`
 - Custom states are blank framework-managed states intended for fully custom Lua-driven screens.
 - While a custom state is active, `mod.ui.state_name()` returns the registered state name, `on_frame` continues to run, and `on_event` can fully consume input.
+- `mod.ui.define_state(name, { enter, update, render, event, leave, cursor }) -> bool` creates the state and routes lifecycle callbacks for that mod.
+- `cursor = false` disables the automatic custom-state mouse cursor. `cursor = { ... }` passes options to `mod.ui.draw_cursor`.
 
 ## Gameplay API (`mod.game`)
 
@@ -782,6 +912,27 @@ Registered texture PNGs are watched for source-file changes:
 - `mod.ui.is_state(name) -> bool`
 - `mod.ui.screen_size() -> w, h`
 - `mod.ui.mouse_pos() -> x, y`
+- `mod.ui.mouse_buttons([button]) -> left_down, left_pressed, right_down, right_pressed, middle_down, middle_pressed` or, with `button`, `down, pressed`
+- `mod.ui.begin_overlay()`
+- `mod.ui.end_overlay()`
+- `mod.ui.flush()`
+- `mod.ui.rect(x, y, w, h, opts)`
+- `mod.ui.border(x, y, w, h, opts)`
+- `mod.ui.line(x1, y1, x2, y2, opts)`
+- `mod.ui.measure_text(text [,scale]) -> w, h`
+- `mod.ui.readable_scale([scale]) -> rendered_scale`
+- `mod.ui.text_scale_factor([scale]) -> rendered_scale` (alias)
+- `mod.ui.hitbox(id, x, y, w, h [,button]) -> hovered, clicked, down`
+- `mod.ui.icon_button(id, icon, x, y, w, h [,opts]) -> clicked, hovered`
+- `mod.ui.tabs(id, items, selected, opts) -> selected, changed`
+- `mod.ui.segmented(id, items, selected, opts) -> selected, changed`
+- `mod.ui.swatch_grid(id, colors, selected, opts) -> selected, changed`
+- `mod.ui.item_grid(id, items, selected, opts) -> selected, changed`
+- `mod.ui.slider(id, value, min, max, opts) -> value, changed`
+- `mod.ui.checkbox(id, value, opts) -> value, changed`
+- `mod.ui.tooltip(text [,opts])`
+- `mod.ui.push_style(style)`, `mod.ui.pop_style()`
+- `mod.ui.theme(style)`, `mod.ui.set_theme(name)`, `mod.ui.current_style()`
 - `mod.ui.sheet_base(name) -> sprite_base | nil`
 - `mod.ui.sprite_id(sheet_or_base, index) -> sprite_id | nil, err`
 - `mod.ui.draw_sprite(sprite_id_or_frame, x, y [,opts]) -> bool`

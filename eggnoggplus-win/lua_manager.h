@@ -130,6 +130,9 @@ int lua_manager_reload_assets(
     int* out_fonts_restart_required
 );
 
+// Called by the atlas_upload hook while load_gfx still has a live packing atlas.
+void lua_manager_before_atlas_upload(int atlas_ptr);
+
 // Console Lua execution helpers.
 int lua_manager_console_eval(const char* code, char* out, int out_sz);
 int lua_manager_console_eval_mod(const char* mod_id, const char* code, char* out, int out_sz);

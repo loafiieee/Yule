@@ -41,6 +41,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_PLOT_TEXT             0x4304E0u
 #define ADDR_TURTLE_SET_ANGLE      0x409000u
 #define ADDR_TURTLE_SET_POS        0x409040u
+#define ADDR_TURTLE_SET_POS_UNSCALED 0x409040u
 #define ADDR_TURTLE_SET_SCALE      0x409080u
 #define ADDR_TURTLE_SET_RGB        0x4091E0u
 #define ADDR_TURTLE_SET_RGBA       0x4090C0u
@@ -55,11 +56,17 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_MAIN_PLAYER_POLL_CMDS   0x433F90u
 #define ADDR_MAP_TILES_H             0x434950u
 #define ADDR_MAP_TILE                0x434A50u
+#define ADDR_GAME_PLAYER_COLOUR      0x4207C0u
 #define ADDR_SPRITE_BATCH_PLOT       0x405890u
 #define ADDR_SPRITE_GET              0x405D20u
+#define ADDR_SPRITE_COUNT            0x405D60u
+#define ADDR_ATLAS_GET               0x4013E0u
+#define ADDR_ATLAS_UPLOAD            0x401480u
 #define ADDR_ATLAS_EXIT              0x402560u
+#define ADDR_ATLAS_LOAD_SPRITESHEET  0x4023A0u
 #define ADDR_SPRITES_RESET           0x405D70u
 #define ADDR_LOAD_GFX                0x42FB00u
+#define ADDR_FREETYPE_ATLAS          0x45B4E0u
 #define ADDR_MISC_ID                 0x547B7Cu
 #define ADDR_TILES_ID                0x547B80u
 #define ADDR_SPRITES_ID              0x547B94u
@@ -181,6 +188,7 @@ typedef float (__cdecl *fn_mad_dim_t)(void);
 typedef void  (__cdecl *fn_plot_text_t)(const char*, int);
 typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
 typedef void  (__cdecl *fn_turtle_set_pos_t)(double, double);
+typedef void  (__cdecl *fn_turtle_set_pos_unscaled_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_scale_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
 typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
@@ -197,9 +205,14 @@ typedef void  (__cdecl *fn_button_set_h_ex_t)(int, float, float);
 typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 typedef int   (__cdecl *fn_map_tiles_h_t)(void);
 typedef int   (__cdecl *fn_map_tile_t)(int, int);
+typedef void  (__cdecl *fn_game_player_colour_t)(float*, uint32_t, int);
 typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite_ptr, int flip, int layer);
 typedef void* (__cdecl *fn_sprite_get_t)(uint32_t sprite_id);
+typedef int   (__cdecl *fn_sprite_count_t)(void);
+typedef int   (__cdecl *fn_atlas_get_t)(int);
+typedef int   (__cdecl *fn_atlas_upload_t)(int, int, int);
 typedef void  (__cdecl *fn_atlas_exit_t)(void);
+typedef int   (__cdecl *fn_atlas_load_spritesheet_t)(int, int*, int, int, int, uint32_t, char*);
 typedef void  (__cdecl *fn_sprites_reset_t)(void);
 typedef int   (__cdecl *fn_load_gfx_t)(void);
 typedef void* (__cdecl *fn_sound_sword_ching_t)(float, float);
@@ -240,6 +253,7 @@ static fn_mad_dim_t         p_mad_h           = (fn_mad_dim_t)(uintptr_t)ADDR_MA
 static fn_plot_text_t       p_plot_text       = (fn_plot_text_t)(uintptr_t)ADDR_PLOT_TEXT;
 static fn_turtle_set_angle_t p_turtle_set_angle = (fn_turtle_set_angle_t)(uintptr_t)ADDR_TURTLE_SET_ANGLE;
 static fn_turtle_set_pos_t  p_turtle_set_pos  = (fn_turtle_set_pos_t)(uintptr_t)ADDR_TURTLE_SET_POS;
+static fn_turtle_set_pos_unscaled_t p_turtle_set_pos_unscaled = (fn_turtle_set_pos_unscaled_t)(uintptr_t)ADDR_TURTLE_SET_POS_UNSCALED;
 static fn_turtle_set_scale_t p_turtle_set_scale = (fn_turtle_set_scale_t)(uintptr_t)ADDR_TURTLE_SET_SCALE;
 static fn_turtle_set_rgb_t  p_turtle_set_rgb  = (fn_turtle_set_rgb_t)(uintptr_t)ADDR_TURTLE_SET_RGB;
 static fn_turtle_set_rgba_t p_turtle_set_rgba = (fn_turtle_set_rgba_t)(uintptr_t)ADDR_TURTLE_SET_RGBA;
@@ -256,9 +270,14 @@ static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintp
 static fn_main_player_poll_cmds_t p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_map_tiles_h_t      p_map_tiles_h       = (fn_map_tiles_h_t)(uintptr_t)ADDR_MAP_TILES_H;
 static fn_map_tile_t         p_map_tile          = (fn_map_tile_t)(uintptr_t)ADDR_MAP_TILE;
+static fn_game_player_colour_t p_game_player_colour = (fn_game_player_colour_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR;
 static fn_sprite_batch_plot_t p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
 static fn_sprite_get_t        p_sprite_get        = (fn_sprite_get_t)(uintptr_t)ADDR_SPRITE_GET;
+static fn_sprite_count_t      p_sprite_count      = (fn_sprite_count_t)(uintptr_t)ADDR_SPRITE_COUNT;
+static fn_atlas_get_t         p_atlas_get         = (fn_atlas_get_t)(uintptr_t)ADDR_ATLAS_GET;
+static fn_atlas_upload_t      p_atlas_upload      = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
 static fn_atlas_exit_t        p_atlas_exit        = (fn_atlas_exit_t)(uintptr_t)ADDR_ATLAS_EXIT;
+static fn_atlas_load_spritesheet_t p_atlas_load_spritesheet = (fn_atlas_load_spritesheet_t)(uintptr_t)ADDR_ATLAS_LOAD_SPRITESHEET;
 static fn_sprites_reset_t     p_sprites_reset     = (fn_sprites_reset_t)(uintptr_t)ADDR_SPRITES_RESET;
 static fn_load_gfx_t          p_load_gfx          = (fn_load_gfx_t)(uintptr_t)ADDR_LOAD_GFX;
 static fn_sound_sword_ching_t p_sound_sword_ching = (fn_sound_sword_ching_t)(uintptr_t)ADDR_SOUND_SWORD_CHING;
@@ -332,6 +351,7 @@ static volatile int* p_misc_id = (volatile int*)(uintptr_t)ADDR_MISC_ID;
 static volatile int* p_tiles_id = (volatile int*)(uintptr_t)ADDR_TILES_ID;
 static volatile int* p_sprites_id = (volatile int*)(uintptr_t)ADDR_SPRITES_ID;
 static volatile int* p_glyphs_id = (volatile int*)(uintptr_t)ADDR_GLYPHS_ID;
+static volatile uintptr_t* p_freetype_atlas = (volatile uintptr_t*)(uintptr_t)ADDR_FREETYPE_ATLAS;
 static volatile float* p_camera_x = (volatile float*)(uintptr_t)ADDR_CAMERA_X;
 static volatile float* p_camera_y = (volatile float*)(uintptr_t)ADDR_CAMERA_Y;
 static volatile float* p_camera_shake = (volatile float*)(uintptr_t)ADDR_CAMERA_SHAKE;
@@ -414,6 +434,18 @@ typedef struct TextureRegistration {
     char relpath[128];
 } TextureRegistration;
 
+typedef struct ModAssetSheet {
+    char id[64];
+    char relpath[MAX_PATH];
+    char fullpath[MAX_PATH];
+    int base_id;
+    int count;
+    int cell_w;
+    int cell_h;
+    int padding;
+    uint32_t flags;
+} ModAssetSheet;
+
 typedef struct ModPerfCounter {
     unsigned int call_count;
     double total_ms;
@@ -428,6 +460,8 @@ static void reflist_clear(lua_State* Ls, LuaRefList* list);
 static int ui_engine_button_exists(void* btn_ptr);
 static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden);
 static int reload_engine_gfx_atlases(const char* reason);
+static void ui_reset_render_state(void);
+static int ptr_readable(const void* p, SIZE_T len);
 static LoadedMod* get_mod_by_index(int mod_index);
 static LoadedMod* get_mod_by_id_ci(const char* mod_id);
 
@@ -551,6 +585,10 @@ struct LoadedMod {
     TextureRegistration* texture_regs;
     int texture_reg_count;
     int texture_reg_cap;
+
+    ModAssetSheet* asset_sheets;
+    int asset_sheet_count;
+    int asset_sheet_cap;
 };
 
 
@@ -650,6 +688,12 @@ static int g_ui_mouse_x = 0;
 static int g_ui_mouse_y = 0;
 static int g_ui_mouse_down_left = 0;
 static int g_ui_mouse_pressed_left = 0;
+static int g_ui_mouse_down_middle = 0;
+static int g_ui_mouse_pressed_middle = 0;
+static int g_ui_mouse_down_right = 0;
+static int g_ui_mouse_pressed_right = 0;
+static int g_ui_default_custom_cursor_suppressed = 0;
+static int g_mod_asset_injection_active = 0;
 
 // Runtime hot-reload state (polled once per second from on_frame).
 #define HOT_RELOAD_INTERVAL_MS 1000ULL
@@ -2804,6 +2848,9 @@ static LoadedMod* mods_add(void) {
     m->texture_regs = NULL;
     m->texture_reg_count = 0;
     m->texture_reg_cap = 0;
+    m->asset_sheets = NULL;
+    m->asset_sheet_count = 0;
+    m->asset_sheet_cap = 0;
     return m;
 }
 
@@ -2878,6 +2925,7 @@ static unsigned int mod_diag_estimate_memory_bytes(const LoadedMod* mod) {
     bytes += (unsigned long long)mod->audio_chunk_cap * (unsigned long long)sizeof(AudioChunkCacheEntry);
     bytes += (unsigned long long)mod->font_reg_cap * (unsigned long long)sizeof(FontRegistration);
     bytes += (unsigned long long)mod->texture_reg_cap * (unsigned long long)sizeof(TextureRegistration);
+    bytes += (unsigned long long)mod->asset_sheet_cap * (unsigned long long)sizeof(ModAssetSheet);
 
     if (mod->cfg_actions) {
         for (int i = 0; i < mod->cfg_action_count; i++) {
@@ -2963,6 +3011,332 @@ static int audio_resolve_mod_path(LoadedMod* mod, const char* in_path, char* out
 
     audio_normalize_slashes(out);
     return 1;
+}
+
+static int mod_asset_id_valid(const char* id) {
+    int len = 0;
+    if (!id || !id[0]) return 0;
+    for (const char* p = id; *p; p++, len++) {
+        unsigned char c = (unsigned char)*p;
+        if (len >= 63) return 0;
+        if (isalnum(c) || c == '_' || c == '-' || c == '.' || c == ':') continue;
+        return 0;
+    }
+    return len > 0;
+}
+
+static int mod_asset_rel_path_safe(const char* path) {
+    const char* p;
+    if (!path || !path[0]) return 0;
+    if (audio_is_absolute_path(path)) return 0;
+    if (path[0] == '\\' || path[0] == '/') return 0;
+    p = path;
+    while (*p) {
+        unsigned char c = (unsigned char)*p;
+        if (c < 32) return 0;
+        if ((p[0] == '.' && p[1] == '.') &&
+            (p[2] == '\0' || p[2] == '\\' || p[2] == '/' || p == path || p[-1] == '\\' || p[-1] == '/')) {
+            return 0;
+        }
+        p++;
+    }
+    return 1;
+}
+
+static int mod_asset_resolve_path(LoadedMod* mod, const char* rel_path, char* out, int out_sz, char* err, int err_sz) {
+    if (!mod || !rel_path || !rel_path[0]) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "missing asset path");
+        return 0;
+    }
+    if (!mod_asset_rel_path_safe(rel_path)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "asset paths must be relative to the mod folder");
+        return 0;
+    }
+    if (!audio_resolve_mod_path(mod, rel_path, out, out_sz)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "failed to resolve asset path");
+        return 0;
+    }
+    if (!audio_file_exists(out)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "file not found: %s", rel_path);
+        return 0;
+    }
+    return 1;
+}
+
+static int mod_asset_sheet_find(const LoadedMod* mod, const char* id) {
+    if (!mod || !id || !id[0]) return -1;
+    for (int i = 0; i < mod->asset_sheet_count; i++) {
+        if (_stricmp(mod->asset_sheets[i].id, id) == 0) return i;
+    }
+    return -1;
+}
+
+static int mod_asset_sheet_reserve(LoadedMod* mod, int want_count) {
+    if (!mod) return 0;
+    if (want_count <= mod->asset_sheet_cap) return 1;
+    int newcap = (mod->asset_sheet_cap == 0) ? 4 : mod->asset_sheet_cap * 2;
+    while (newcap < want_count) newcap *= 2;
+    ModAssetSheet* ns = (ModAssetSheet*)realloc(mod->asset_sheets, sizeof(ModAssetSheet) * newcap);
+    if (!ns) return 0;
+    mod->asset_sheets = ns;
+    mod->asset_sheet_cap = newcap;
+    return 1;
+}
+
+static void mod_asset_sheets_clear(LoadedMod* mod) {
+    if (!mod) return;
+    free(mod->asset_sheets);
+    mod->asset_sheets = NULL;
+    mod->asset_sheet_count = 0;
+    mod->asset_sheet_cap = 0;
+}
+
+static void lua_push_asset_sheet_info(lua_State* Ls, const ModAssetSheet* s) {
+    lua_newtable(Ls);
+    if (!s) return;
+    lua_pushstring(Ls, s->id); lua_setfield(Ls, -2, "id");
+    lua_pushstring(Ls, s->relpath); lua_setfield(Ls, -2, "path");
+    lua_pushstring(Ls, s->fullpath); lua_setfield(Ls, -2, "full_path");
+    lua_pushinteger(Ls, s->base_id); lua_setfield(Ls, -2, "base_id");
+    lua_pushinteger(Ls, s->base_id); lua_setfield(Ls, -2, "base");
+    lua_pushinteger(Ls, s->count); lua_setfield(Ls, -2, "count");
+    lua_pushinteger(Ls, s->cell_w); lua_setfield(Ls, -2, "cell_w");
+    lua_pushinteger(Ls, s->cell_h); lua_setfield(Ls, -2, "cell_h");
+    lua_pushinteger(Ls, s->padding); lua_setfield(Ls, -2, "padding");
+    lua_pushinteger(Ls, (lua_Integer)s->flags); lua_setfield(Ls, -2, "flags");
+}
+
+static int mod_assets_native_load_ready(void) {
+    if (!p_atlas_load_spritesheet || !p_sprite_count) return 0;
+    if (IsBadCodePtr((FARPROC)(void*)p_atlas_load_spritesheet) ||
+        IsBadCodePtr((FARPROC)(void*)p_sprite_count)) {
+        return 0;
+    }
+    return 1;
+}
+
+static int mod_assets_can_rebuild_now(void) {
+    if (!mod_assets_native_load_ready()) return 0;
+    if (!p_atlas_exit || !p_sprites_reset || !p_load_gfx) return 0;
+    if (IsBadCodePtr((FARPROC)(void*)p_atlas_exit) ||
+        IsBadCodePtr((FARPROC)(void*)p_sprites_reset) ||
+        IsBadCodePtr((FARPROC)(void*)p_load_gfx)) {
+        return 0;
+    }
+    return p_sprite_count() > 0;
+}
+
+void lua_manager_before_atlas_upload(int atlas_ptr) {
+    if (g_mod_asset_injection_active) return;
+    if (!atlas_ptr || !mod_assets_native_load_ready()) return;
+    if (!p_freetype_atlas || !ptr_readable((const void*)p_freetype_atlas, sizeof(uintptr_t)) || *p_freetype_atlas == 0) {
+        return;
+    }
+
+    g_mod_asset_injection_active = 1;
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled || mod->asset_sheet_count <= 0) continue;
+        for (int si = 0; si < mod->asset_sheet_count; si++) {
+            ModAssetSheet* sheet = &mod->asset_sheets[si];
+            int before;
+            int after;
+            int loaded;
+
+            sheet->base_id = -1;
+            sheet->count = 0;
+            if (!sheet->fullpath[0] || !audio_file_exists(sheet->fullpath)) {
+                LOG_WARN("mod.assets: missing spritesheet for %s:%s (%s)",
+                         mod->id[0] ? mod->id : "?",
+                         sheet->id,
+                         sheet->relpath);
+                continue;
+            }
+
+            before = p_sprite_count();
+            loaded = p_atlas_load_spritesheet(atlas_ptr,
+                                              NULL,
+                                              sheet->cell_w,
+                                              sheet->cell_h,
+                                              sheet->padding,
+                                              sheet->flags,
+                                              sheet->fullpath);
+            after = p_sprite_count();
+            if (loaded >= 0 && after > before) {
+                sheet->base_id = before;
+                sheet->count = after - before;
+                LOG_INFO("mod.assets: packed %s:%s base=%d count=%d",
+                         mod->id[0] ? mod->id : "?",
+                         sheet->id,
+                         sheet->base_id,
+                         sheet->count);
+            } else {
+                LOG_WARN("mod.assets: failed to pack %s:%s (%s), code=%d",
+                         mod->id[0] ? mod->id : "?",
+                         sheet->id,
+                         sheet->relpath,
+                         loaded);
+            }
+        }
+    }
+    g_mod_asset_injection_active = 0;
+}
+
+static int lua_assets_load_spritesheet(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* id = luaL_checkstring(Ls, 1);
+    const char* rel_path = luaL_checkstring(Ls, 2);
+    int cell_w = 16;
+    int cell_h = 16;
+    int padding = 0;
+    uint32_t flags = 1u;
+    int force = 0;
+    int existing;
+    char full_path[MAX_PATH];
+    char err[256];
+    ModAssetSheet* sheet;
+
+    err[0] = '\0';
+    if (!mod || !mod->enabled) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "mod is not active");
+        return 2;
+    }
+    if (!mod_asset_id_valid(id)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "asset id must be 1..63 chars using letters, numbers, _, -, ., or :");
+        return 2;
+    }
+
+    if (lua_istable(Ls, 3)) {
+        lua_getfield(Ls, 3, "cell_w");
+        if (lua_isnumber(Ls, -1)) cell_w = (int)lua_tointeger(Ls, -1);
+        lua_pop(Ls, 1);
+        lua_getfield(Ls, 3, "cell_h");
+        if (lua_isnumber(Ls, -1)) cell_h = (int)lua_tointeger(Ls, -1);
+        lua_pop(Ls, 1);
+        lua_getfield(Ls, 3, "padding");
+        if (lua_isnumber(Ls, -1)) padding = (int)lua_tointeger(Ls, -1);
+        lua_pop(Ls, 1);
+        lua_getfield(Ls, 3, "flags");
+        if (lua_isnumber(Ls, -1)) flags = (uint32_t)lua_tointeger(Ls, -1);
+        lua_pop(Ls, 1);
+        lua_getfield(Ls, 3, "force");
+        if (lua_isboolean(Ls, -1)) force = lua_toboolean(Ls, -1) ? 1 : 0;
+        lua_pop(Ls, 1);
+    }
+
+    if (cell_w <= 0 || cell_h <= 0 || cell_w > 512 || cell_h > 512 || padding < 0 || padding > 64) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "invalid spritesheet cell size or padding");
+        return 2;
+    }
+
+    existing = mod_asset_sheet_find(mod, id);
+    if (existing >= 0 && !force && mod->asset_sheets[existing].count > 0) {
+        lua_push_asset_sheet_info(Ls, &mod->asset_sheets[existing]);
+        return 1;
+    }
+
+    if (!mod_asset_resolve_path(mod, rel_path, full_path, (int)sizeof(full_path), err, (int)sizeof(err))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err[0] ? err : "failed to resolve asset path");
+        return 2;
+    }
+
+    if (existing >= 0) {
+        sheet = &mod->asset_sheets[existing];
+    } else {
+        if (!mod_asset_sheet_reserve(mod, mod->asset_sheet_count + 1)) {
+            lua_pushnil(Ls);
+            lua_pushstring(Ls, "failed to store asset sheet metadata");
+            return 2;
+        }
+        sheet = &mod->asset_sheets[mod->asset_sheet_count++];
+        memset(sheet, 0, sizeof(*sheet));
+    }
+
+    snprintf(sheet->id, sizeof(sheet->id), "%s", id);
+    snprintf(sheet->relpath, sizeof(sheet->relpath), "%s", rel_path);
+    snprintf(sheet->fullpath, sizeof(sheet->fullpath), "%s", full_path);
+    sheet->base_id = -1;
+    sheet->count = 0;
+    sheet->cell_w = cell_w;
+    sheet->cell_h = cell_h;
+    sheet->padding = padding;
+    sheet->flags = flags;
+
+    if (!mod_assets_can_rebuild_now()) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "asset registered; waiting for graphics atlas rebuild");
+        return 2;
+    }
+
+    if (!reload_engine_gfx_atlases("mod asset spritesheet registered")) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "asset registered, but atlas rebuild failed");
+        return 2;
+    }
+
+    if (sheet->count <= 0 || sheet->base_id < 0) {
+        lua_pushnil(Ls);
+        lua_pushfstring(Ls, "failed to pack spritesheet '%s'", rel_path);
+        return 2;
+    }
+
+    lua_push_asset_sheet_info(Ls, sheet);
+    return 1;
+}
+
+static int lua_assets_sprite_id(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* id = luaL_checkstring(Ls, 1);
+    int index = (int)luaL_optinteger(Ls, 2, 0);
+    int found = mod_asset_sheet_find(mod, id);
+    if (found < 0) {
+        lua_pushnil(Ls);
+        lua_pushfstring(Ls, "unknown asset sheet '%s'", id);
+        return 2;
+    }
+    if (index < 0 || index >= mod->asset_sheets[found].count) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "asset sprite index out of range");
+        return 2;
+    }
+    lua_pushinteger(Ls, mod->asset_sheets[found].base_id + index);
+    return 1;
+}
+
+static int lua_assets_info(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (lua_isnoneornil(Ls, 1)) {
+        lua_newtable(Ls);
+        if (mod) {
+            for (int i = 0; i < mod->asset_sheet_count; i++) {
+                lua_push_asset_sheet_info(Ls, &mod->asset_sheets[i]);
+                lua_rawseti(Ls, -2, i + 1);
+            }
+        }
+        return 1;
+    }
+
+    {
+        const char* id = luaL_checkstring(Ls, 1);
+        int found = mod_asset_sheet_find(mod, id);
+        if (found < 0) {
+            lua_pushnil(Ls);
+            return 1;
+        }
+        lua_push_asset_sheet_info(Ls, &mod->asset_sheets[found]);
+        return 1;
+    }
+}
+
+static void push_assets_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_load_spritesheet, 1); lua_setfield(Ls, -2, "load_spritesheet");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_sprite_id, 1);        lua_setfield(Ls, -2, "sprite_id");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_info, 1);             lua_setfield(Ls, -2, "info");
 }
 
 static int audio_opts_get_int(lua_State* Ls, int arg_index, const char* key, int fallback) {
@@ -3574,9 +3948,75 @@ static float ui_screen_h(void) {
     return p_mad_h ? p_mad_h() : 720.0f;
 }
 
+static float ui_clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static float ui_sqrt_approx(float v) {
+    float x;
+    int i;
+    if (v <= 0.0f) return 0.0f;
+    x = (v >= 1.0f) ? v : 1.0f;
+    for (i = 0; i < 5; i++) {
+        x = 0.5f * (x + (v / x));
+    }
+    return x;
+}
+
+static float ui_text_window_factor(void) {
+    float w = ui_screen_w();
+    float h = ui_screen_h();
+    float sx = w / 1280.0f;
+    float sy = h / 720.0f;
+    float s = (sx < sy) ? sx : sy;
+
+    if (s < 1.0f) s = 1.0f;
+    return ui_clampf(1.35f * ui_sqrt_approx(s), 1.35f, 2.10f);
+}
+
+static float ui_readable_text_scale(float scale) {
+    float effective;
+    if (scale < 0.85f) scale = 0.85f;
+    if (scale > 4.0f) scale = 4.0f;
+    effective = scale * ui_text_window_factor();
+    return ui_clampf(effective, 1.20f, 5.0f);
+}
+
 static float ui_approx_text_width(const char* text, float scale) {
     if (!text) return 0.0f;
-    return (float)strlen(text) * 9.0f * scale;
+    return (float)strlen(text) * 9.0f * ui_readable_text_scale(scale);
+}
+
+static float ui_text_line_height(float scale) {
+    return 9.0f * ui_readable_text_scale(scale);
+}
+
+static void ui_measure_text_bounds(const char* text, float scale, float* out_w, float* out_h) {
+    size_t line_len = 0;
+    size_t max_line_len = 0;
+    int lines = 1;
+    const unsigned char* p;
+
+    if (scale < 0.0f) scale = 0.0f;
+    if (!text) text = "";
+    scale = ui_readable_text_scale(scale);
+
+    for (p = (const unsigned char*)text; *p; p++) {
+        if (*p == '\r') continue;
+        if (*p == '\n') {
+            if (line_len > max_line_len) max_line_len = line_len;
+            line_len = 0;
+            lines++;
+            continue;
+        }
+        line_len++;
+    }
+    if (line_len > max_line_len) max_line_len = line_len;
+
+    if (out_w) *out_w = (float)max_line_len * 9.0f * scale;
+    if (out_h) *out_h = (float)lines * 9.0f * scale;
 }
 
 static void ui_reset_render_state(void) {
@@ -3590,9 +4030,39 @@ static void ui_reset_render_state(void) {
     else if (p_turtle_set_rgb) p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
 }
 
+static void ui_draw_default_custom_state_cursor(void) {
+    int sprite_id;
+    void* sprite_ptr;
+    float scale;
+
+    if (g_ui_default_custom_cursor_suppressed) return;
+    if (!hooks_custom_state_active_name()) return;
+    if (!p_misc_id || !p_sprite_get || !p_sprite_batch_plot || !p_turtle_set_pos ||
+        !p_turtle_set_scale || !p_turtle_set_angle) {
+        return;
+    }
+    if (!p_turtle_set_rgba && !p_turtle_set_rgb) return;
+
+    sprite_id = *p_misc_id + 7;  // Vanilla menu cursor: top-right 16x16 cell in misc.png.
+    if (sprite_id < 0) return;
+
+    sprite_ptr = p_sprite_get((uint32_t)sprite_id);
+    if (!sprite_ptr) return;
+
+    scale = ui_readable_text_scale(1.0f);
+    p_turtle_set_angle(0.0);
+    p_turtle_set_scale((double)scale, (double)scale);
+    if (p_turtle_set_rgba) p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
+    else p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
+    p_turtle_set_pos((double)((float)g_ui_mouse_x + 8.0f * scale),
+                     (double)((float)g_ui_mouse_y + 8.0f * scale));
+    p_sprite_batch_plot((int)(intptr_t)sprite_ptr, 0, 0);
+}
+
 static void ui_draw_text_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
     if (!text || !text[0] || !p_plot_text || !p_turtle_set_pos || !p_turtle_set_scale || !p_turtle_set_angle) return;
     if (!p_turtle_set_rgb && !p_turtle_set_rgba) return;
+    scale = ui_readable_text_scale(scale);
     p_turtle_set_angle(0.0);
     p_turtle_set_scale((double)scale, (double)scale);
     if (p_turtle_set_rgb) p_turtle_set_rgb(r, g, b);
@@ -3692,6 +4162,52 @@ static void ui_lua_read_tint(lua_State* Ls, int table_index,
     lua_rawgeti(Ls, table_index, 4);
     if (lua_isnumber(Ls, -1)) *out_a = (float)lua_tonumber(Ls, -1);
     lua_pop(Ls, 1);
+}
+
+static float ui_lua_read_number_field(lua_State* Ls, int table_index, const char* key, float fallback) {
+    float value = fallback;
+    if (!lua_istable(Ls, table_index) || !key) return fallback;
+    lua_getfield(Ls, table_index, key);
+    if (lua_isnumber(Ls, -1)) value = (float)lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    return value;
+}
+
+static int ui_lua_read_color_field(lua_State* Ls, int table_index, const char* key,
+                                   float* out_r, float* out_g, float* out_b, float* out_a) {
+    int found = 0;
+    if (!lua_istable(Ls, table_index) || !key) return 0;
+    lua_getfield(Ls, table_index, key);
+    if (lua_istable(Ls, -1)) {
+        ui_lua_read_tint(Ls, lua_gettop(Ls), out_r, out_g, out_b, out_a);
+        found = 1;
+    }
+    lua_pop(Ls, 1);
+    return found;
+}
+
+static void ui_lua_read_color_opts(lua_State* Ls, int table_index, const char* preferred_key,
+                                   float* out_r, float* out_g, float* out_b, float* out_a) {
+    if (!lua_istable(Ls, table_index)) return;
+    if (preferred_key && ui_lua_read_color_field(Ls, table_index, preferred_key, out_r, out_g, out_b, out_a)) {
+        return;
+    }
+    if (ui_lua_read_color_field(Ls, table_index, "color", out_r, out_g, out_b, out_a)) return;
+    if (ui_lua_read_color_field(Ls, table_index, "colour", out_r, out_g, out_b, out_a)) return;
+    if (ui_lua_read_color_field(Ls, table_index, "tint", out_r, out_g, out_b, out_a)) return;
+    if (ui_lua_read_color_field(Ls, table_index, "fg", out_r, out_g, out_b, out_a)) return;
+    ui_lua_read_tint(Ls, table_index, out_r, out_g, out_b, out_a);
+}
+
+static float ui_lua_read_line_width_opts(lua_State* Ls, int table_index, float fallback) {
+    float line_w = fallback;
+    if (!lua_istable(Ls, table_index)) return fallback;
+    line_w = ui_lua_read_number_field(Ls, table_index, "line_w", line_w);
+    line_w = ui_lua_read_number_field(Ls, table_index, "line_width", line_w);
+    line_w = ui_lua_read_number_field(Ls, table_index, "width", line_w);
+    line_w = ui_lua_read_number_field(Ls, table_index, "thickness", line_w);
+    if (line_w < 1.0f) line_w = 1.0f;
+    return line_w;
 }
 
 static void ui_lua_apply_sprite_opts(lua_State* Ls,
@@ -3965,6 +4481,8 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_OFS_PREV_COLLISION   0xAC
 #define PLAYER_OFS_COLLISION_FLAGS  0xAD
 #define PLAYER_OFS_ROOM             0x9B
+#define PLAYER_OFS_RENDER_RGBA      0xD8
+#define PLAYER_RENDER_RGBA_LEN      0x20
 #define PLAYER_OFS_STATE_BLOB       0x78
 #define PLAYER_STATE_BLOB_LEN       0x80
 #define PLAYER_OFS_ANIM_PTR         0x158
@@ -4866,6 +5384,25 @@ static int full_state_validate_blob_header(const void* src, size_t src_len, cons
     return 1;
 }
 
+static void full_state_zero_player_render_colours(FullStateBlobHeader* hdr) {
+    uint8_t* payload;
+    uint8_t* things;
+
+    if (!hdr) return;
+    payload = (uint8_t*)hdr + sizeof(*hdr);
+    for (int i = 0; i < 2; i++) {
+        memset(payload + ((size_t)i * PLAYER_SIZE) + PLAYER_OFS_RENDER_RGBA, 0, PLAYER_RENDER_RGBA_LEN);
+    }
+
+    things = payload + ((size_t)PLAYER_SIZE * 2u);
+    for (uint32_t i = 0; i < hdr->thing_count; i++) {
+        uint8_t* thing = things + ((size_t)i * THING_SIZE);
+        if (thing[THING_OFS_TYPE] == THING_TYPE_PLAYER) {
+            memset(thing + PLAYER_OFS_RENDER_RGBA, 0, PLAYER_RENDER_RGBA_LEN);
+        }
+    }
+}
+
 static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, char* err, size_t err_cap) {
     FullStateBlobHeader* hdr = (FullStateBlobHeader*)blob;
 
@@ -4888,6 +5425,7 @@ static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, ch
     full_state_zero_transient_range(hdr, ADDR_PLAYER_ARRAY, sizeof(uintptr_t) * 2u);
     full_state_zero_transient_range(hdr, ADDR_CONTROLLER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_LOSER, sizeof(uintptr_t));
+    full_state_zero_player_render_colours(hdr);
 
     return 1;
 }
@@ -4929,6 +5467,23 @@ static void lua_push_field_int(lua_State* Ls, const char* key, int v) {
 
 static void lua_push_field_bool(lua_State* Ls, const char* key, int v) {
     lua_pushboolean(Ls, v ? 1 : 0);
+    lua_setfield(Ls, -2, key);
+}
+
+static void lua_push_rgba_table(lua_State* Ls, const float rgba[4]) {
+    lua_newtable(Ls);
+    for (int i = 0; i < 4; i++) {
+        lua_pushnumber(Ls, (lua_Number)rgba[i]);
+        lua_rawseti(Ls, -2, i + 1);
+    }
+    lua_push_field_number(Ls, "r", rgba[0]);
+    lua_push_field_number(Ls, "g", rgba[1]);
+    lua_push_field_number(Ls, "b", rgba[2]);
+    lua_push_field_number(Ls, "a", rgba[3]);
+}
+
+static void lua_push_rgba_field(lua_State* Ls, const char* key, const float rgba[4]) {
+    lua_push_rgba_table(Ls, rgba);
     lua_setfield(Ls, -2, key);
 }
 
@@ -5654,31 +6209,193 @@ static int lua_ui_mouse_pos(lua_State* Ls) {
     return 2;
 }
 
-static int lua_ui_fill_rect(lua_State* Ls) {
+static int lua_ui_mouse_buttons(lua_State* Ls) {
+    int button = lua_isnumber(Ls, 1) ? (int)lua_tointeger(Ls, 1) : 0;
+    if (button == 1) {
+        lua_pushboolean(Ls, g_ui_mouse_down_left);
+        lua_pushboolean(Ls, g_ui_mouse_pressed_left);
+        return 2;
+    }
+    if (button == 2) {
+        lua_pushboolean(Ls, g_ui_mouse_down_middle);
+        lua_pushboolean(Ls, g_ui_mouse_pressed_middle);
+        return 2;
+    }
+    if (button == 3) {
+        lua_pushboolean(Ls, g_ui_mouse_down_right);
+        lua_pushboolean(Ls, g_ui_mouse_pressed_right);
+        return 2;
+    }
+
+    lua_pushboolean(Ls, g_ui_mouse_down_left);
+    lua_pushboolean(Ls, g_ui_mouse_pressed_left);
+    lua_pushboolean(Ls, g_ui_mouse_down_right);
+    lua_pushboolean(Ls, g_ui_mouse_pressed_right);
+    lua_pushboolean(Ls, g_ui_mouse_down_middle);
+    lua_pushboolean(Ls, g_ui_mouse_pressed_middle);
+    return 6;
+}
+
+static int lua_ui_set_default_cursor_visible(lua_State* Ls) {
+    int visible = (lua_gettop(Ls) < 1) ? 1 : (lua_toboolean(Ls, 1) ? 1 : 0);
+    if (!visible) g_ui_default_custom_cursor_suppressed = 1;
+    else g_ui_default_custom_cursor_suppressed = 0;
+    return 0;
+}
+
+static int lua_ui_hitbox(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int off = lua_isstring(Ls, 1) ? 1 : 0;
+    float x = (float)luaL_checknumber(Ls, 1 + off);
+    float y = (float)luaL_checknumber(Ls, 2 + off);
+    float w = (float)luaL_checknumber(Ls, 3 + off);
+    float h = (float)luaL_checknumber(Ls, 4 + off);
+    int button = 1;
+    int hovered = 0;
+    int clicked = 0;
+    int down = 0;
+    int top = lua_gettop(Ls);
+
+    if (top >= 5 + off) {
+        int opt_index = 5 + off;
+        if (lua_isnumber(Ls, opt_index)) {
+            button = (int)lua_tointeger(Ls, opt_index);
+        } else if (lua_istable(Ls, opt_index)) {
+            lua_getfield(Ls, opt_index, "button");
+            if (lua_isnumber(Ls, -1)) button = (int)lua_tointeger(Ls, -1);
+            lua_pop(Ls, 1);
+        }
+    }
+
+    if (w > 0.0f && h > 0.0f) {
+        hovered = (g_ui_mouse_x >= (int)x &&
+                   g_ui_mouse_y >= (int)y &&
+                   g_ui_mouse_x <= (int)(x + w) &&
+                   g_ui_mouse_y <= (int)(y + h));
+        if (button == 3) {
+            clicked = hovered && g_ui_mouse_pressed_right;
+            down = hovered && g_ui_mouse_down_right;
+        } else if (button == 2) {
+            clicked = hovered && g_ui_mouse_pressed_middle;
+            down = hovered && g_ui_mouse_down_middle;
+        } else {
+            clicked = hovered && g_ui_mouse_pressed_left;
+            down = hovered && g_ui_mouse_down_left;
+        }
+        mod_ui_push_hitbox(mod, x, y, w, h);
+    }
+
+    lua_pushboolean(Ls, hovered);
+    lua_pushboolean(Ls, clicked);
+    lua_pushboolean(Ls, down);
+    return 3;
+}
+
+static int lua_ui_rect(lua_State* Ls) {
     float x = (float)luaL_checknumber(Ls, 1);
     float y = (float)luaL_checknumber(Ls, 2);
     float w = (float)luaL_checknumber(Ls, 3);
     float h = (float)luaL_checknumber(Ls, 4);
-    float r = (float)luaL_optnumber(Ls, 5, 1.0);
-    float g = (float)luaL_optnumber(Ls, 6, 1.0);
-    float b = (float)luaL_optnumber(Ls, 7, 1.0);
-    float a = (float)luaL_optnumber(Ls, 8, 1.0);
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float a = 1.0f;
+    if (lua_istable(Ls, 5)) {
+        if (!ui_lua_read_color_field(Ls, 5, "bg", &r, &g, &b, &a) &&
+            !ui_lua_read_color_field(Ls, 5, "fill", &r, &g, &b, &a)) {
+            ui_lua_read_color_opts(Ls, 5, NULL, &r, &g, &b, &a);
+        }
+        a = ui_lua_read_number_field(Ls, 5, "alpha", a);
+    } else {
+        r = (float)luaL_optnumber(Ls, 5, 1.0);
+        g = (float)luaL_optnumber(Ls, 6, 1.0);
+        b = (float)luaL_optnumber(Ls, 7, 1.0);
+        a = (float)luaL_optnumber(Ls, 8, 1.0);
+    }
     hooks_ui_fill_rect(x, y, w, h, r, g, b, a);
     return 0;
 }
 
-static int lua_ui_stroke_rect(lua_State* Ls) {
+static int lua_ui_fill_rect(lua_State* Ls) {
+    return lua_ui_rect(Ls);
+}
+
+static int lua_ui_border(lua_State* Ls) {
     float x = (float)luaL_checknumber(Ls, 1);
     float y = (float)luaL_checknumber(Ls, 2);
     float w = (float)luaL_checknumber(Ls, 3);
     float h = (float)luaL_checknumber(Ls, 4);
-    float line_w = (float)luaL_optnumber(Ls, 5, 1.0);
-    float r = (float)luaL_optnumber(Ls, 6, 1.0);
-    float g = (float)luaL_optnumber(Ls, 7, 1.0);
-    float b = (float)luaL_optnumber(Ls, 8, 1.0);
-    float a = (float)luaL_optnumber(Ls, 9, 1.0);
+    float line_w = 1.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float a = 1.0f;
+    if (lua_istable(Ls, 5)) {
+        line_w = ui_lua_read_line_width_opts(Ls, 5, 1.0f);
+        if (!ui_lua_read_color_field(Ls, 5, "border", &r, &g, &b, &a)) {
+            ui_lua_read_color_opts(Ls, 5, NULL, &r, &g, &b, &a);
+        }
+        a = ui_lua_read_number_field(Ls, 5, "alpha", a);
+    } else {
+        line_w = (float)luaL_optnumber(Ls, 5, 1.0);
+        r = (float)luaL_optnumber(Ls, 6, 1.0);
+        g = (float)luaL_optnumber(Ls, 7, 1.0);
+        b = (float)luaL_optnumber(Ls, 8, 1.0);
+        a = (float)luaL_optnumber(Ls, 9, 1.0);
+    }
     hooks_ui_stroke_rect(x, y, w, h, line_w, r, g, b, a);
     return 0;
+}
+
+static int lua_ui_stroke_rect(lua_State* Ls) {
+    return lua_ui_border(Ls);
+}
+
+static int lua_ui_line(lua_State* Ls) {
+    float x1 = (float)luaL_checknumber(Ls, 1);
+    float y1 = (float)luaL_checknumber(Ls, 2);
+    float x2 = (float)luaL_checknumber(Ls, 3);
+    float y2 = (float)luaL_checknumber(Ls, 4);
+    float line_w = 1.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float a = 1.0f;
+    if (lua_istable(Ls, 5)) {
+        line_w = ui_lua_read_line_width_opts(Ls, 5, 1.0f);
+        ui_lua_read_color_opts(Ls, 5, NULL, &r, &g, &b, &a);
+        a = ui_lua_read_number_field(Ls, 5, "alpha", a);
+    } else {
+        line_w = (float)luaL_optnumber(Ls, 5, 1.0);
+        r = (float)luaL_optnumber(Ls, 6, 1.0);
+        g = (float)luaL_optnumber(Ls, 7, 1.0);
+        b = (float)luaL_optnumber(Ls, 8, 1.0);
+        a = (float)luaL_optnumber(Ls, 9, 1.0);
+    }
+    hooks_ui_draw_line(x1, y1, x2, y2, line_w, r, g, b, a);
+    return 0;
+}
+
+static int lua_ui_measure_text(lua_State* Ls) {
+    const char* text = luaL_checkstring(Ls, 1);
+    float scale = 1.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+    if (lua_istable(Ls, 2)) {
+        scale = ui_lua_read_number_field(Ls, 2, "scale", 1.0f);
+    } else {
+        scale = (float)luaL_optnumber(Ls, 2, 1.0);
+    }
+    ui_measure_text_bounds(text, scale, &w, &h);
+    lua_pushnumber(Ls, w);
+    lua_pushnumber(Ls, h);
+    return 2;
+}
+
+static int lua_ui_readable_scale(lua_State* Ls) {
+    float scale = (float)luaL_optnumber(Ls, 1, 1.0);
+    lua_pushnumber(Ls, ui_readable_text_scale(scale));
+    return 1;
 }
 
 /* ── UI draw layering ────────────────────────────────────────────────────
@@ -5743,17 +6460,23 @@ static int lua_ui_end_overlay(lua_State* Ls) {
 }
 
 static int lua_ui_sheet_base(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
     const char* sheet = luaL_checkstring(Ls, 1);
     int base = -1;
     if (!ui_sheet_base_from_name(sheet, &base)) {
-        lua_pushnil(Ls);
-        return 1;
+        int found = mod_asset_sheet_find(mod, sheet);
+        if (found < 0) {
+            lua_pushnil(Ls);
+            return 1;
+        }
+        base = mod->asset_sheets[found].base_id;
     }
     lua_pushinteger(Ls, base);
     return 1;
 }
 
 static int lua_ui_sprite_id(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
     int base = -1;
     int idx = (int)luaL_checkinteger(Ls, 2);
     if (lua_isnumber(Ls, 1)) {
@@ -5761,9 +6484,18 @@ static int lua_ui_sprite_id(lua_State* Ls) {
     } else {
         const char* sheet = luaL_checkstring(Ls, 1);
         if (!ui_sheet_base_from_name(sheet, &base)) {
-            lua_pushnil(Ls);
-            lua_pushfstring(Ls, "unknown sheet '%s'", sheet);
-            return 2;
+            int found = mod_asset_sheet_find(mod, sheet);
+            if (found < 0) {
+                lua_pushnil(Ls);
+                lua_pushfstring(Ls, "unknown sheet '%s'", sheet);
+                return 2;
+            }
+            if (idx < 0 || idx >= mod->asset_sheets[found].count) {
+                lua_pushnil(Ls);
+                lua_pushstring(Ls, "asset sprite index out of range");
+                return 2;
+            }
+            base = mod->asset_sheets[found].base_id;
         }
     }
     lua_pushinteger(Ls, base + idx);
@@ -5771,6 +6503,7 @@ static int lua_ui_sprite_id(lua_State* Ls) {
 }
 
 static int lua_ui_draw_sprite(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
     int sprite_id = -1;
     float x = (float)luaL_checknumber(Ls, 2);
     float y = (float)luaL_checknumber(Ls, 3);
@@ -5802,7 +6535,11 @@ static int lua_ui_draw_sprite(lua_State* Ls) {
             if (lua_isnumber(Ls, -1)) {
                 base = (int)lua_tointeger(Ls, -1);
             } else if (lua_isstring(Ls, -1)) {
-                ui_sheet_base_from_name(lua_tostring(Ls, -1), &base);
+                const char* sheet_name = lua_tostring(Ls, -1);
+                if (!ui_sheet_base_from_name(sheet_name, &base)) {
+                    int found = mod_asset_sheet_find(mod, sheet_name);
+                    if (found >= 0) base = mod->asset_sheets[found].base_id;
+                }
             }
             lua_pop(Ls, 1);
 
@@ -5818,7 +6555,7 @@ static int lua_ui_draw_sprite(lua_State* Ls) {
         sprite_id = (int)luaL_checkinteger(Ls, 1);
     }
 
-    if (sprite_id < 0 || !p_sprite_get || !p_sprite_batch_plot || !p_turtle_set_pos || !p_turtle_set_scale || !p_turtle_set_angle) {
+    if (sprite_id < 0 || !p_sprite_get || !p_sprite_batch_plot || !p_turtle_set_pos_unscaled || !p_turtle_set_scale || !p_turtle_set_angle) {
         lua_pushboolean(Ls, 0);
         return 1;
     }
@@ -5834,6 +6571,7 @@ static int lua_ui_draw_sprite(lua_State* Ls) {
     if (lua_istable(Ls, 4)) {
         ui_lua_apply_sprite_opts(Ls, 4, &flip, &layer, &sx, &sy, &angle, &r, &g, &b, &a);
     }
+    if (layer < 0 || layer > 1) layer = 0;
 
     sprite_ptr = p_sprite_get((uint32_t)sprite_id);
     if (!sprite_ptr) {
@@ -5845,7 +6583,7 @@ static int lua_ui_draw_sprite(lua_State* Ls) {
     p_turtle_set_scale((double)sx, (double)sy);
     if (p_turtle_set_rgba) p_turtle_set_rgba(r, g, b, a);
     else p_turtle_set_rgb(r, g, b);
-    p_turtle_set_pos((double)x, (double)y);
+    p_turtle_set_pos_unscaled((double)x, (double)y);
     p_sprite_batch_plot((int)(intptr_t)sprite_ptr, flip ? 1 : 0, layer);
 
     lua_pushboolean(Ls, 1);
@@ -5942,8 +6680,9 @@ static int ui_button_common(lua_State* Ls,
     if (!label) label = "";
     if (scale < 0.4f) scale = 0.4f;
     if (scale > 3.0f) scale = 3.0f;
-    if (w <= 0.0f) w = ui_approx_text_width(label, scale) + 30.0f;
-    if (h <= 0.0f) h = 28.0f;
+    snprintf(rendered, sizeof(rendered), "[ %s ]", label);
+    if (w <= 0.0f) w = ui_approx_text_width(rendered, scale) + 14.0f;
+    if (h <= 0.0f) h = ui_text_line_height(scale) + 14.0f;
 
     hovered = (g_ui_mouse_x >= (int)x &&
                g_ui_mouse_y >= (int)y &&
@@ -5959,7 +6698,6 @@ static int ui_button_common(lua_State* Ls,
         tr = 0.95f; tg = 0.90f; tb = 0.60f;
     }
 
-    snprintf(rendered, sizeof(rendered), "[ %s ]", label);
     tx = x + 4.0f;
     ty = y + (h * 0.55f);
     ui_draw_text_mode(tx, ty, scale, tr, tg, tb, rendered, 0);
@@ -6607,6 +7345,11 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         uint32_t state_timer = *(uint32_t*)(player_ptr + PLAYER_OFS_STATE_TIMER);
         uint8_t jump_buffer = *(uint8_t*)(player_ptr + PLAYER_OFS_JUMP_BUFFER);
         uint8_t attack_buffer = *(uint8_t*)(player_ptr + PLAYER_OFS_ATTACK_BUFFER);
+        float skin_rgba[4];
+        float clothing_rgba[4];
+
+        memcpy(skin_rgba, (const void*)(player_ptr + PLAYER_OFS_RENDER_RGBA), sizeof(skin_rgba));
+        memcpy(clothing_rgba, (const void*)(player_ptr + PLAYER_OFS_RENDER_RGBA + sizeof(skin_rgba)), sizeof(clothing_rgba));
 
         lua_newtable(Ls);
         lua_push_field_int(Ls, "index", player_index);
@@ -6629,6 +7372,8 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         lua_push_field_int(Ls, "attack_buffer", (int)attack_buffer);
         lua_push_field_int(Ls, "collision_flags", (int)collision_flags);
         lua_push_field_int(Ls, "prev_collision_flags", (int)prev_collision_flags);
+        lua_push_rgba_field(Ls, "skin_rgba", skin_rgba);
+        lua_push_rgba_field(Ls, "clothing_rgba", clothing_rgba);
         lua_push_hex_field(Ls, "action_blob", (const uint8_t*)(player_ptr + PLAYER_OFS_ACTION_BLOB), PLAYER_ACTION_BLOB_LEN);
         lua_push_hex_field(Ls, "state_blob", (const uint8_t*)(player_ptr + PLAYER_OFS_STATE_BLOB), PLAYER_STATE_BLOB_LEN);
         lua_push_field_number(Ls, "anim_ptr", (lua_Number)(double)(uint32_t)(uintptr_t)(*(void**)(player_ptr + PLAYER_OFS_ANIM_PTR)));
@@ -6766,6 +7511,22 @@ static int lua_game_native_state(lua_State* Ls) {
         lua_pushnil(Ls);
         lua_setfield(Ls, -2, "game_level");
     }
+    return 1;
+}
+
+static int lua_game_player_colour(lua_State* Ls) {
+    int player_index = (int)luaL_optinteger(Ls, 1, 0);
+    int clothing = (int)luaL_optinteger(Ls, 2, 0);
+    float rgba[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    if (!p_game_player_colour || IsBadCodePtr((FARPROC)(void*)p_game_player_colour)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "game_player_colour unavailable");
+        return 2;
+    }
+
+    p_game_player_colour(rgba, (uint32_t)(player_index & 1), clothing ? 1 : 0);
+    lua_push_rgba_table(Ls, rgba);
     return 1;
 }
 
@@ -8197,6 +8958,15 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_is_state, 1);   lua_setfield(Ls, -2, "is_state");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_screen_size, 1);lua_setfield(Ls, -2, "screen_size");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_pos, 1);  lua_setfield(Ls, -2, "mouse_pos");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_buttons, 1); lua_setfield(Ls, -2, "mouse_buttons");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_set_default_cursor_visible, 1); lua_setfield(Ls, -2, "_set_default_cursor_visible");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_hitbox, 1);     lua_setfield(Ls, -2, "hitbox");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_rect, 1);       lua_setfield(Ls, -2, "rect");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_border, 1);     lua_setfield(Ls, -2, "border");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_line, 1);       lua_setfield(Ls, -2, "line");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_measure_text, 1); lua_setfield(Ls, -2, "measure_text");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_readable_scale, 1); lua_setfield(Ls, -2, "readable_scale");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_readable_scale, 1); lua_setfield(Ls, -2, "text_scale_factor");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_fill_rect, 1);  lua_setfield(Ls, -2, "fill_rect");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_stroke_rect, 1);lua_setfield(Ls, -2, "stroke_rect");
     lua_pushcfunction(Ls, lua_ui_flush);         lua_setfield(Ls, -2, "flush");
@@ -8283,6 +9053,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_rng_seed);                                          lua_setfield(Ls, -2, "rng_seed");
     lua_pushcfunction(Ls, lua_game_set_rng_seed);                                      lua_setfield(Ls, -2, "set_rng_seed");
     lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
+    lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_colour");
+    lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_color");
     lua_pushcfunction(Ls, lua_game_state_checksum);                                    lua_setfield(Ls, -2, "state_checksum");
     lua_pushcfunction(Ls, lua_game_full_state_blob);                                   lua_setfield(Ls, -2, "full_state_blob");
     lua_pushcfunction(Ls, lua_game_apply_full_state_blob);                             lua_setfield(Ls, -2, "apply_full_state_blob");
@@ -8704,6 +9476,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     push_texture_api_table(Ls, mod);
     lua_setfield(Ls, -2, "texture");
 
+    // Mod-owned PNG spritesheets for UI icons and small overlay assets.
+    push_assets_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "assets");
+
     // Persistent key/value storage with schema migration helpers.
     push_storage_api_table(Ls, mod);
     lua_setfield(Ls, -2, "storage");
@@ -8725,6 +9501,486 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushstring(Ls, mod->name);    lua_setfield(Ls, -2, "name");
     lua_pushstring(Ls, mod->version); lua_setfield(Ls, -2, "version");
     lua_pushinteger(Ls, MOD_API_VERSION); lua_setfield(Ls, -2, "framework_api");
+}
+
+static const char* k_mod_ui_helpers_lua =
+    "local ui = mod and mod.ui\n"
+    "if not ui then return end\n"
+    "\n"
+    "local function copy(src)\n"
+    "  local out = {}\n"
+    "  if type(src) ~= 'table' then return out end\n"
+    "  for k, v in pairs(src) do\n"
+    "    if type(v) == 'table' then out[k] = copy(v) else out[k] = v end\n"
+    "  end\n"
+    "  return out\n"
+    "end\n"
+    "\n"
+    "local function merge(dst, src)\n"
+    "  if type(src) ~= 'table' then return dst end\n"
+    "  for k, v in pairs(src) do\n"
+    "    if type(v) == 'table' and type(dst[k]) == 'table' then\n"
+    "      merge(dst[k], v)\n"
+    "    elseif type(v) == 'table' then\n"
+    "      dst[k] = copy(v)\n"
+    "    else\n"
+    "      dst[k] = v\n"
+    "    end\n"
+    "  end\n"
+    "  return dst\n"
+    "end\n"
+    "\n"
+    "local default_dark = {\n"
+    "  bg = {0.06, 0.07, 0.08, 0.88},\n"
+    "  fg = {0.92, 0.94, 0.96, 1.0},\n"
+    "  muted = {0.55, 0.60, 0.68, 1.0},\n"
+    "  accent = {1.0, 0.78, 0.25, 1.0},\n"
+    "  border = {0.23, 0.27, 0.32, 1.0},\n"
+    "  hover = {0.13, 0.16, 0.19, 0.94},\n"
+    "  active = {0.18, 0.17, 0.10, 0.96},\n"
+    "  disabled = {0.16, 0.17, 0.18, 0.50},\n"
+    "  pad = 8,\n"
+    "  gap = 6,\n"
+    "  text_scale = 1.0,\n"
+    "}\n"
+    "\n"
+    "local themes = { default_dark = default_dark }\n"
+    "local style_stack = { copy(default_dark) }\n"
+    "\n"
+    "local function style_for(opts)\n"
+    "  local s = copy(style_stack[#style_stack] or default_dark)\n"
+    "  if type(opts) == 'table' and type(opts.style) == 'table' then merge(s, opts.style) end\n"
+    "  return s\n"
+    "end\n"
+    "\n"
+    "local function color(s, key, fallback)\n"
+    "  local v = s and s[key] or fallback\n"
+    "  if type(v) ~= 'table' then v = fallback or {1, 1, 1, 1} end\n"
+    "  return v\n"
+    "end\n"
+    "\n"
+    "function ui.push_style(style)\n"
+    "  local s = copy(style_stack[#style_stack] or default_dark)\n"
+    "  merge(s, style)\n"
+    "  style_stack[#style_stack + 1] = s\n"
+    "  return copy(s)\n"
+    "end\n"
+    "\n"
+    "function ui.pop_style()\n"
+    "  if #style_stack > 1 then return table.remove(style_stack) end\n"
+    "  return copy(style_stack[1])\n"
+    "end\n"
+    "\n"
+    "function ui.current_style()\n"
+    "  return copy(style_stack[#style_stack] or default_dark)\n"
+    "end\n"
+    "\n"
+    "function ui.theme(style)\n"
+    "  if type(style) == 'table' then merge(style_stack[#style_stack], style) end\n"
+    "  return copy(style_stack[#style_stack])\n"
+    "end\n"
+    "\n"
+    "function ui.set_theme(name)\n"
+    "  local t = themes[tostring(name or 'default_dark')]\n"
+    "  if not t then return false end\n"
+    "  style_stack = { copy(t) }\n"
+    "  return true\n"
+    "end\n"
+    "\n"
+    "local function resolve_bounds(opts, def_w, def_h)\n"
+    "  opts = opts or {}\n"
+    "  local x = tonumber(opts.x)\n"
+    "  local y = tonumber(opts.y)\n"
+    "  if (not x or not y) and ui.cursor then x, y = ui.cursor() end\n"
+    "  x = x or 0\n"
+    "  y = y or 0\n"
+    "  local w = tonumber(opts.w or opts.width) or def_w or 80\n"
+    "  local h = tonumber(opts.h or opts.height) or def_h or 28\n"
+    "  return x, y, w, h\n"
+    "end\n"
+    "\n"
+    "local function advance_if_layout(opts, x, y, h, gap)\n"
+    "  opts = opts or {}\n"
+    "  if opts.no_advance then return end\n"
+    "  if opts.x ~= nil or opts.y ~= nil or not ui.cursor then return end\n"
+    "  ui.cursor(x, y + h + (tonumber(opts.gap) or gap or 6))\n"
+    "end\n"
+    "\n"
+    "local function text_center(text, x, y, w, h, scale, c)\n"
+    "  text = tostring(text or '')\n"
+    "  scale = tonumber(scale) or 1\n"
+    "  local tw = 0\n"
+    "  local th = 9 * scale\n"
+    "  if ui.measure_text then tw, th = ui.measure_text(text, scale) end\n"
+    "  local max_w = math.max(4, w - 4)\n"
+    "  while tw > max_w and scale > 0.55 do\n"
+    "    scale = scale * 0.9\n"
+    "    if ui.measure_text then tw, th = ui.measure_text(text, scale) else break end\n"
+    "  end\n"
+    "  ui.text_at(text, x + (w - tw) * 0.5, y + h * 0.58, scale, c[1] or 1, c[2] or 1, c[3] or 1)\n"
+    "end\n"
+    "\n"
+    "local function measured_width(text, scale)\n"
+    "  if ui.measure_text then local w = ui.measure_text(tostring(text or ''), scale) return w or 0 end\n"
+    "  return #tostring(text or '') * 9 * (tonumber(scale) or 1)\n"
+    "end\n"
+    "\n"
+    "function ui.wrap_text(text, max_w, scale)\n"
+    "  text = tostring(text or '')\n"
+    "  max_w = tonumber(max_w) or 0\n"
+    "  scale = tonumber(scale) or 1\n"
+    "  local lines = {}\n"
+    "  local function push(line) lines[#lines + 1] = tostring(line or '') end\n"
+    "  local function push_long_word(word)\n"
+    "    local chunk = ''\n"
+    "    for i = 1, #word do\n"
+    "      local next_chunk = chunk .. word:sub(i, i)\n"
+    "      if max_w > 0 and chunk ~= '' and measured_width(next_chunk, scale) > max_w then\n"
+    "        push(chunk)\n"
+    "        chunk = word:sub(i, i)\n"
+    "      else\n"
+    "        chunk = next_chunk\n"
+    "      end\n"
+    "    end\n"
+    "    return chunk\n"
+    "  end\n"
+    "  local function emit_para(para)\n"
+    "    if para == '' then push('') return end\n"
+    "    local line = ''\n"
+    "    for word in tostring(para):gmatch('%S+') do\n"
+    "      if max_w > 0 and measured_width(word, scale) > max_w then\n"
+    "        if line ~= '' then push(line) line = '' end\n"
+    "        line = push_long_word(word)\n"
+    "      else\n"
+    "        local candidate = (line == '') and word or (line .. ' ' .. word)\n"
+    "        if max_w > 0 and line ~= '' and measured_width(candidate, scale) > max_w then\n"
+    "          push(line)\n"
+    "          line = word\n"
+    "        else\n"
+    "          line = candidate\n"
+    "        end\n"
+    "      end\n"
+    "    end\n"
+    "    push(line)\n"
+    "  end\n"
+    "  for para in (text .. '\\n'):gmatch('(.-)\\n') do emit_para(para) end\n"
+    "  if #lines == 0 then lines[1] = '' end\n"
+    "  return lines\n"
+    "end\n"
+    "\n"
+    "function ui.text_wrapped(text, x, y, w, opts)\n"
+    "  opts = opts or {}\n"
+    "  local scale = tonumber(opts.scale) or 1\n"
+    "  local line_gap = tonumber(opts.line_gap) or 4\n"
+    "  local s = style_for(opts)\n"
+    "  local fg = opts.color or opts.fg or color(s, 'fg')\n"
+    "  local lines = ui.wrap_text(text, w, scale)\n"
+    "  local line_h = 9 * scale\n"
+    "  if ui.measure_text then local _, measured_h = ui.measure_text('Ag', scale) line_h = tonumber(measured_h) or line_h end\n"
+    "  for i = 1, #lines do\n"
+    "    ui.text_at(lines[i], x, y + (i - 1) * (line_h + line_gap) + line_h * 0.82, scale, fg[1] or 1, fg[2] or 1, fg[3] or 1)\n"
+    "  end\n"
+    "  return #lines * line_h + math.max(#lines - 1, 0) * line_gap, #lines\n"
+    "end\n"
+    "\n"
+    "function ui.tooltip(text, opts)\n"
+    "  if not text or text == '' then return false end\n"
+    "  opts = opts or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local mx, my = ui.mouse_pos()\n"
+    "  local scale = tonumber(opts.scale) or 0.85\n"
+    "  local pad = tonumber(opts.pad) or 6\n"
+    "  local max_w = tonumber(opts.max_w or opts.w) or 280\n"
+    "  local lines = ui.wrap_text(tostring(text), max_w, scale)\n"
+    "  local tw, th = 0, 9 * scale\n"
+    "  for i = 1, #lines do\n"
+    "    local lw, lh = ui.measure_text(lines[i], scale)\n"
+    "    if lw > tw then tw = lw end\n"
+    "    if lh > th then th = lh end\n"
+    "  end\n"
+    "  local box_w = tw + pad * 2\n"
+    "  local box_h = (#lines * th) + math.max(#lines - 1, 0) * 4 + pad * 2\n"
+    "  local x = tonumber(opts.x) or (mx + 12)\n"
+    "  local y = tonumber(opts.y) or (my + 12)\n"
+    "  local sw, sh = ui.screen_size()\n"
+    "  if x + box_w > sw - 4 then x = sw - box_w - 4 end\n"
+    "  if y + box_h > sh - 4 then y = sh - box_h - 4 end\n"
+    "  if x < 4 then x = 4 end\n"
+    "  if y < 4 then y = 4 end\n"
+    "  ui.rect(x, y, box_w, box_h, { color = color(s, 'bg') })\n"
+    "  ui.border(x, y, box_w, box_h, { color = color(s, 'border') })\n"
+    "  ui.text_wrapped(tostring(text), x + pad, y + pad, tw, { scale = scale, color = color(s, 'fg'), line_gap = 4 })\n"
+    "  return true\n"
+    "end\n"
+    "\n"
+    "local function maybe_tooltip(opts, hovered)\n"
+    "  if hovered and type(opts) == 'table' and opts.tooltip then ui.tooltip(opts.tooltip, opts.tooltip_opts) end\n"
+    "end\n"
+    "\n"
+    "function ui.icon_button(id, icon, x, y, w, h, opts)\n"
+    "  opts = opts or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local hovered, clicked, down = false, false, false\n"
+    "  if ui.hitbox then hovered, clicked, down = ui.hitbox(tostring(id or ''), x, y, w, h) end\n"
+    "  if opts.disabled then clicked = false end\n"
+    "  local bg = color(s, 'bg')\n"
+    "  if opts.disabled then bg = color(s, 'disabled')\n"
+    "  elseif opts.selected then bg = color(s, 'active')\n"
+    "  elseif down then bg = color(s, 'active')\n"
+    "  elseif hovered then bg = color(s, 'hover') end\n"
+    "  ui.rect(x, y, w, h, { color = bg })\n"
+    "  ui.border(x, y, w, h, { line_w = opts.line_w or 1, color = opts.selected and color(s, 'accent') or color(s, 'border') })\n"
+    "  local fg = opts.disabled and color(s, 'muted') or color(s, 'fg')\n"
+    "  if type(icon) == 'number' and ui.draw_sprite then\n"
+    "    ui.draw_sprite(icon, x + w * 0.5, y + h * 0.5, { scale = opts.icon_scale or opts.scale or 1, tint = opts.tint or fg })\n"
+    "  elseif type(icon) == 'table' and ui.draw_sprite then\n"
+    "    local draw_opts = copy(icon)\n"
+    "    merge(draw_opts, opts.sprite_opts)\n"
+    "    if not draw_opts.scale then draw_opts.scale = opts.icon_scale or opts.scale or 1 end\n"
+    "    if not draw_opts.tint then draw_opts.tint = opts.tint or fg end\n"
+    "    ui.draw_sprite(draw_opts, x + w * 0.5, y + h * 0.5, draw_opts)\n"
+    "  else\n"
+    "    text_center(icon or opts.label or '', x, y, w, h, opts.text_scale or s.text_scale or 1, fg)\n"
+    "  end\n"
+    "  maybe_tooltip(opts, hovered)\n"
+    "  return clicked and not opts.disabled, hovered\n"
+    "end\n"
+    "\n"
+    "local function item_key_label(item, i)\n"
+    "  if type(item) == 'table' then return item.id or item.value or i, item.label or item.name or tostring(item.id or item.value or i) end\n"
+    "  return i, tostring(item)\n"
+    "end\n"
+    "\n"
+    "function ui.tabs(id, tabs, selected, opts)\n"
+    "  opts = opts or {}\n"
+    "  tabs = tabs or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local x, y, w, h = resolve_bounds(opts, (#tabs > 0 and #tabs or 1) * 88, 30)\n"
+    "  local gap = tonumber(opts.gap) or 0\n"
+    "  local tab_w = tonumber(opts.tab_w) or ((w - gap * math.max(#tabs - 1, 0)) / math.max(#tabs, 1))\n"
+    "  local changed = false\n"
+    "  for i = 1, #tabs do\n"
+    "    local key, label = item_key_label(tabs[i], i)\n"
+    "    local bx = x + (i - 1) * (tab_w + gap)\n"
+    "    local clicked = ui.icon_button(tostring(id) .. ':' .. tostring(key), label, bx, y, tab_w, h, merge({ selected = selected == key, text_scale = opts.text_scale or s.text_scale }, opts.item_opts))\n"
+    "    if clicked and selected ~= key then selected = key changed = true end\n"
+    "  end\n"
+    "  advance_if_layout(opts, x, y, h, s.gap)\n"
+    "  return selected, changed\n"
+    "end\n"
+    "\n"
+    "ui.segmented = ui.tabs\n"
+    "\n"
+    "function ui.swatch_grid(id, colors, selected, opts)\n"
+    "  opts = opts or {}\n"
+    "  colors = colors or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local cols = math.max(1, math.floor(tonumber(opts.cols or opts.columns) or 8))\n"
+    "  local cell = tonumber(opts.cell or opts.cell_w) or 24\n"
+    "  local gap = tonumber(opts.gap) or 5\n"
+    "  local x, y = resolve_bounds(opts, cols * cell + (cols - 1) * gap, cell)\n"
+    "  local changed = false\n"
+    "  for i = 1, #colors do\n"
+    "    local item = colors[i]\n"
+    "    local key = type(item) == 'table' and (item.id or item.value or i) or i\n"
+    "    local c = type(item) == 'table' and (item.color or item.tint or item) or {1, 1, 1, 1}\n"
+    "    local col = (i - 1) % cols\n"
+    "    local row = math.floor((i - 1) / cols)\n"
+    "    local bx = x + col * (cell + gap)\n"
+    "    local by = y + row * (cell + gap)\n"
+    "    local hovered, clicked = ui.hitbox(tostring(id) .. ':' .. tostring(key), bx, by, cell, cell)\n"
+    "    ui.rect(bx, by, cell, cell, { color = c })\n"
+    "    ui.border(bx, by, cell, cell, { line_w = selected == key and 2 or 1, color = selected == key and color(s, 'accent') or color(s, 'border') })\n"
+    "    if hovered then ui.border(bx + 2, by + 2, cell - 4, cell - 4, { color = color(s, 'fg') }) end\n"
+    "    if clicked and selected ~= key then selected = key changed = true end\n"
+    "  end\n"
+    "  local rows = math.ceil(#colors / cols)\n"
+    "  advance_if_layout(opts, x, y, rows * cell + math.max(rows - 1, 0) * gap, s.gap)\n"
+    "  return selected, changed\n"
+    "end\n"
+    "\n"
+    "function ui.item_grid(id, items, selected, opts)\n"
+    "  opts = opts or {}\n"
+    "  items = items or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local cols = math.max(1, math.floor(tonumber(opts.cols or opts.columns) or 5))\n"
+    "  local cell_w = tonumber(opts.cell_w or opts.cell or opts.w_cell) or 84\n"
+    "  local cell_h = tonumber(opts.cell_h or opts.cell or opts.h_cell) or 64\n"
+    "  local gap = tonumber(opts.gap) or 6\n"
+    "  local x, y = resolve_bounds(opts, cols * cell_w + (cols - 1) * gap, cell_h)\n"
+    "  local changed = false\n"
+    "  for i = 1, #items do\n"
+    "    local item = items[i]\n"
+    "    local key, label = item_key_label(item, i)\n"
+    "    local col = (i - 1) % cols\n"
+    "    local row = math.floor((i - 1) / cols)\n"
+    "    local bx = x + col * (cell_w + gap)\n"
+    "    local by = y + row * (cell_h + gap)\n"
+    "    local hovered, clicked, down = ui.hitbox(tostring(id) .. ':' .. tostring(key), bx, by, cell_w, cell_h)\n"
+    "    ui.rect(bx, by, cell_w, cell_h, { color = down and color(s, 'active') or (hovered and color(s, 'hover') or color(s, 'bg')) })\n"
+    "    ui.border(bx, by, cell_w, cell_h, { line_w = selected == key and 2 or 1, color = selected == key and color(s, 'accent') or color(s, 'border') })\n"
+    "    if type(item) == 'table' and item.color then ui.rect(bx + 8, by + 8, cell_w - 16, cell_h - 26, { color = item.color }) end\n"
+    "    if type(item) == 'table' and item.sprite and ui.draw_sprite then ui.draw_sprite(item.sprite, bx + cell_w * 0.5, by + cell_h * 0.42, item.sprite_opts or {}) end\n"
+    "    text_center(label, bx + 4, by + cell_h - 22, cell_w - 8, 18, opts.text_scale or 0.75, color(s, 'fg'))\n"
+    "    if clicked and selected ~= key then selected = key changed = true end\n"
+    "  end\n"
+    "  local rows = math.ceil(#items / cols)\n"
+    "  advance_if_layout(opts, x, y, rows * cell_h + math.max(rows - 1, 0) * gap, s.gap)\n"
+    "  return selected, changed\n"
+    "end\n"
+    "\n"
+    "function ui.slider(id, value, min_value, max_value, opts)\n"
+    "  opts = opts or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local x, y, w, h = resolve_bounds(opts, 180, 26)\n"
+    "  value = tonumber(value) or 0\n"
+    "  min_value = tonumber(min_value) or 0\n"
+    "  max_value = tonumber(max_value) or 1\n"
+    "  if max_value == min_value then max_value = min_value + 1 end\n"
+    "  local hovered, clicked, down = ui.hitbox(tostring(id), x, y, w, h)\n"
+    "  local changed = false\n"
+    "  if clicked or down then\n"
+    "    local mx = ui.mouse_pos()\n"
+    "    local t = (mx - x) / w\n"
+    "    if t < 0 then t = 0 elseif t > 1 then t = 1 end\n"
+    "    local nv = min_value + (max_value - min_value) * t\n"
+    "    local step = tonumber(opts.step)\n"
+    "    if step and step > 0 then nv = math.floor((nv / step) + 0.5) * step end\n"
+    "    if nv ~= value then value = nv changed = true end\n"
+    "  end\n"
+    "  local t = (value - min_value) / (max_value - min_value)\n"
+    "  if t < 0 then t = 0 elseif t > 1 then t = 1 end\n"
+    "  local track_y = y + h * 0.5 - 2\n"
+    "  ui.rect(x, track_y, w, 4, { color = color(s, 'border') })\n"
+    "  ui.rect(x, track_y, w * t, 4, { color = color(s, 'accent') })\n"
+    "  ui.rect(x + w * t - 4, y + 4, 8, h - 8, { color = hovered and color(s, 'fg') or color(s, 'accent') })\n"
+    "  if opts.label then ui.text_at(tostring(opts.label), x, y - 4, opts.text_scale or 0.75, color(s, 'fg')[1], color(s, 'fg')[2], color(s, 'fg')[3]) end\n"
+    "  maybe_tooltip(opts, hovered)\n"
+    "  advance_if_layout(opts, x, y, h, s.gap)\n"
+    "  return value, changed\n"
+    "end\n"
+    "\n"
+    "function ui.checkbox(id, value, opts)\n"
+    "  opts = opts or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local size = tonumber(opts.size) or 22\n"
+    "  local x, y = resolve_bounds(opts, size, size)\n"
+    "  local clicked = ui.icon_button(id, value and 'X' or '', x, y, size, size, opts)\n"
+    "  if opts.label then ui.text_at(tostring(opts.label), x + size + (opts.gap or s.gap), y + size * 0.72, opts.text_scale or s.text_scale, color(s, 'fg')[1], color(s, 'fg')[2], color(s, 'fg')[3]) end\n"
+    "  advance_if_layout(opts, x, y, size, s.gap)\n"
+    "  if clicked then return not value, true end\n"
+    "  return not not value, false\n"
+    "end\n"
+    "\n"
+    "function ui.cursor_sprite(index)\n"
+    "  if not ui.sprite_id then return nil end\n"
+    "  return ui.sprite_id('misc', tonumber(index) or 7)\n"
+    "end\n"
+    "\n"
+    "function ui.draw_cursor(opts)\n"
+    "  opts = opts or {}\n"
+    "  local mx, my = ui.mouse_pos()\n"
+    "  local scale = tonumber(opts.scale) or (ui.readable_scale and ui.readable_scale(1.0)) or 1\n"
+    "  local sprite = opts.sprite or ui.cursor_sprite(opts.index)\n"
+    "  if sprite and ui.draw_sprite then\n"
+    "    local size = tonumber(opts.size) or 16\n"
+    "    local hot_x = tonumber(opts.hot_x) or 0\n"
+    "    local hot_y = tonumber(opts.hot_y) or 0\n"
+    "    if ui.draw_sprite(sprite, mx + (size * 0.5 - hot_x) * scale, my + (size * 0.5 - hot_y) * scale, { scale = scale, tint = opts.tint, layer = opts.layer or 1000 }) then return true end\n"
+    "  end\n"
+    "  if ui.line then\n"
+    "    ui.line(mx - 6, my, mx + 6, my, { color = opts.color or {1, 1, 1, 1}, line_w = 1 })\n"
+    "    ui.line(mx, my - 6, mx, my + 6, { color = opts.color or {1, 1, 1, 1}, line_w = 1 })\n"
+    "    return true\n"
+    "  end\n"
+    "  return false\n"
+    "end\n"
+    "\n"
+    "if not ui.tile_preview then\n"
+    "  function ui.tile_preview(id, frame, arg, x, y, scale, tile_y, opts)\n"
+    "    if not ui.sprite_id or not ui.draw_sprite then return false end\n"
+    "    local sprite = ui.sprite_id('tiles', tonumber(id) or 0)\n"
+    "    if not sprite then return false end\n"
+    "    local draw_opts = type(opts) == 'table' and copy(opts) or {}\n"
+    "    if not draw_opts.scale then draw_opts.scale = tonumber(scale) or 1 end\n"
+    "    return ui.draw_sprite(sprite, tonumber(x) or 0, tonumber(y) or 0, draw_opts) and true or false\n"
+    "  end\n"
+    "end\n"
+    "\n"
+    "local state_specs = {}\n"
+    "local state_router_installed = false\n"
+    "local active_state = nil\n"
+    "local last_clock = os.clock()\n"
+    "\n"
+    "local function install_state_router()\n"
+    "  if state_router_installed then return end\n"
+    "  state_router_installed = true\n"
+    "  mod.on_frame(function()\n"
+    "    local now = os.clock()\n"
+    "    local dt = now - last_clock\n"
+    "    if dt < 0 then dt = 0 elseif dt > 0.25 then dt = 0.25 end\n"
+    "    last_clock = now\n"
+    "    local name = ui.state_name()\n"
+    "    if name ~= active_state then\n"
+    "      local old = active_state\n"
+    "      local old_spec = old and state_specs[old]\n"
+    "      if old_spec and old_spec.leave then old_spec.leave(name) end\n"
+    "      active_state = name\n"
+    "      local new_spec = state_specs[name]\n"
+    "      if new_spec and new_spec.enter then new_spec.enter(old) end\n"
+    "    end\n"
+    "    local spec = state_specs[name]\n"
+    "    if spec then\n"
+    "      if spec.update then spec.update(dt) end\n"
+    "      if spec.render then spec.render() end\n"
+    "      local cursor_opts = type(spec.cursor) == 'table' and spec.cursor or spec.cursor_opts\n"
+    "      if spec.cursor == false then\n"
+    "        if ui._set_default_cursor_visible then ui._set_default_cursor_visible(false) end\n"
+    "      elseif cursor_opts and ui.draw_cursor then\n"
+    "        local drew = false\n"
+    "        if ui.begin_overlay and ui.end_overlay then ui.begin_overlay() drew = ui.draw_cursor(cursor_opts) ui.end_overlay() else drew = ui.draw_cursor(cursor_opts) end\n"
+    "        if drew and ui._set_default_cursor_visible then ui._set_default_cursor_visible(false) end\n"
+    "      end\n"
+    "    end\n"
+    "  end)\n"
+    "  mod.on_event(function(e)\n"
+    "    local spec = state_specs[ui.state_name()]\n"
+    "    if spec and spec.event then return spec.event(e) and true or false end\n"
+    "    return false\n"
+    "  end)\n"
+    "end\n"
+    "\n"
+    "function ui.define_state(name, spec)\n"
+    "  if type(name) ~= 'string' or name == '' then return false, 'state name required' end\n"
+    "  spec = spec or {}\n"
+    "  state_specs[name] = spec\n"
+    "  if ui.create_state then ui.create_state(name) end\n"
+    "  install_state_router()\n"
+    "  return true\n"
+    "end\n";
+
+static void install_mod_ui_helpers(LoadedMod* mod) {
+    if (!L || !mod) return;
+    if (mod->env_ref == LUA_NOREF || mod->env_ref == LUA_REFNIL) return;
+
+    if (luaL_loadbuffer(L, k_mod_ui_helpers_lua, strlen(k_mod_ui_helpers_lua), "@mod_ui_helpers") != 0) {
+        const char* err = lua_tostring(L, -1);
+        char buf[512];
+        snprintf(buf, sizeof(buf), "failed to load UI helpers: %s", err ? err : "(unknown)");
+        log_mod(mod, "ERROR", buf);
+        lua_pop(L, 1);
+        return;
+    }
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, mod->env_ref);
+    lua_setfenv(L, -2);
+    if (lua_pcall(L, 0, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        char buf[512];
+        snprintf(buf, sizeof(buf), "failed to run UI helpers: %s", err ? err : "(unknown)");
+        log_mod(mod, "ERROR", buf);
+        lua_pop(L, 1);
+    }
 }
 
 static const char* k_mod_anim_helpers_lua =
@@ -9140,6 +10396,7 @@ static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
     // Keep env alive
     lua_pushvalue(L, -1);
     mod->env_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    install_mod_ui_helpers(mod);
     install_mod_anim_helpers(mod);
 
     // Set env for the chunk (Lua 5.1 / LuaJIT)
@@ -9187,6 +10444,10 @@ static void reset_runtime_ui_state(void) {
     g_ui_mouse_y = 0;
     g_ui_mouse_down_left = 0;
     g_ui_mouse_pressed_left = 0;
+    g_ui_mouse_down_middle = 0;
+    g_ui_mouse_pressed_middle = 0;
+    g_ui_mouse_down_right = 0;
+    g_ui_mouse_pressed_right = 0;
     g_force_layout_refresh = 1;
     g_last_layout_state = (void*)-1;
     g_last_btn_count = -1;
@@ -9235,6 +10496,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     mod_audio_clear(mod);
     font_ext_forget_owner_cache(mod->id);
     mod_resource_regs_clear(mod);
+    mod_asset_sheets_clear(mod);
 
     if (mod->on_load_ref != LUA_NOREF && mod->on_load_ref != LUA_REFNIL) {
         luaL_unref(L, LUA_REGISTRYINDEX, mod->on_load_ref);
@@ -10107,6 +11369,16 @@ static int ui_handle_event(const char* type, int x, int y, int button) {
             g_ui_mouse_pressed_left = 1;
             return ui_hit_any_visible_button(x, y);
         }
+        if (button == 2) {
+            g_ui_mouse_down_middle = 1;
+            g_ui_mouse_pressed_middle = 1;
+            return ui_hit_any_visible_button(x, y);
+        }
+        if (button == 3) {
+            g_ui_mouse_down_right = 1;
+            g_ui_mouse_pressed_right = 1;
+            return ui_hit_any_visible_button(x, y);
+        }
         return 0;
     }
 
@@ -10115,6 +11387,14 @@ static int ui_handle_event(const char* type, int x, int y, int button) {
         g_ui_mouse_y = y;
         if (button == 1) {
             g_ui_mouse_down_left = 0;
+            return ui_hit_any_visible_button(x, y);
+        }
+        if (button == 2) {
+            g_ui_mouse_down_middle = 0;
+            return ui_hit_any_visible_button(x, y);
+        }
+        if (button == 3) {
+            g_ui_mouse_down_right = 0;
             return ui_hit_any_visible_button(x, y);
         }
         return 0;
@@ -10337,21 +11617,22 @@ void lua_manager_on_frame() {
         free(refs);
     }
 
-    // Reset turtle state after mod callbacks to avoid leaking transforms/tints into the next frame.
-    ui_reset_render_state();
-
     // Always flush sprite batches after mod on_frame callbacks.  We fire from
     // SDL_GL_SwapWindow which is AFTER the game's entire render pass, so any
     // sprites still in the batch are either stale game leftovers or mod draws.
     // Without this flush, mod text/sprites carry over to the NEXT frame and
     // get rendered below tiles (the old "everything we draw is under the
     // tiles" bug).  Flushing here draws them on top, right before SwapWindow.
+    ui_draw_default_custom_state_cursor();
     if (p_main_sprite_batches_draw) {
         p_main_sprite_batches_draw();
     }
 
     ui_reset_render_state();
+    g_ui_default_custom_cursor_suppressed = 0;
     g_ui_mouse_pressed_left = 0;
+    g_ui_mouse_pressed_middle = 0;
+    g_ui_mouse_pressed_right = 0;
 
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];

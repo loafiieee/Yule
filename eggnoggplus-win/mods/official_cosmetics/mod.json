@@ -1,0 +1,11 @@
+{
+  "id": "official_cosmetics",
+  "name": "Official Cosmetics",
+  "version": "0.1.0",
+  "author": "Eggnogg+",
+  "description": "First-pass hats-only cosmetics browser and renderer.",
+  "api_version": 1,
+  "entry": "main.lua",
+  "storage": "storage.cfg",
+  "priority": 40
+}

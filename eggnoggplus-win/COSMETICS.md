@@ -252,6 +252,19 @@ The current immediate-mode UI is intentionally simple. Buttons are rendered as b
 
 ## Exact Implementation Outline
 
+### Hats-Only First Slice
+
+The first implementation is intentionally limited to headwear:
+
+- Add a small main-menu icon button that opens a hats customization screen.
+- Store separate local selections for Player 1 and Player 2.
+- Show a live character preview on the left side of the hats screen.
+- Draw selected hats as render-only overlay sprites anchored above each player's head during gameplay.
+- Let each hat definition opt into or out of motion. Motion-enabled hats can add small velocity drag, bob, and tilt; fixed hats such as halos or tall hats stay locked to the head anchor.
+- Keep hat state outside gameplay structs and rollback blobs.
+
+This is a prototype render path, not the final online asset pipeline. It uses local bundled assets first so UI, profile storage, and head anchoring can be tested before checksum-backed server delivery exists.
+
 ### 1. Do Not Build Cosmetics As A Texture Replacement
 
 The texture-pack system is still correct for global texture packs. Cosmetics should not register a `data/sprites.png` replacement in normal operation.
@@ -453,6 +466,12 @@ Keep the system split into four layers:
 Gameplay code should only receive cosmetic metadata at match setup. It should not care about cosmetics while simulating a frame.
 
 ## Data Model
+
+### Online Hub Profile Note
+
+When the online hub is added, cosmetics should also support a single local account/profile loadout that is independent of the match slot. In an online match the client only controls one character, and players will usually expect their selected cosmetics and colors to follow them whether matchmaking assigns them to Player 1 or Player 2.
+
+The P1/P2 local selections are useful for offline play and local testing. Online profile data should map the authenticated local user to the controlled slot during match setup, then receive the remote player's cosmetic IDs/checksums from the server.
 
 ### Character Profile
 
@@ -1348,6 +1367,10 @@ Done when:
 - Add safe fallback behavior.
 - Add logging for every asset failure.
 
+Current implementation status:
+
+- Not implemented in the current tree after rollback to the UI API foundation work.
+
 Done when:
 
 - The game can load/verify a local manifest.
@@ -1370,9 +1393,24 @@ Done when:
 - Profiles survive restart.
 - Invalid profile entries fall back safely.
 
+Current implementation status:
+
+- Not implemented in the current tree after rollback to the UI API foundation work.
+
 ### Parallel Track: UI API Foundations
 
 This can start before the final cosmetics renderer.
+
+Initial implementation status:
+
+- `MODDING.md` now documents `begin_overlay` and `end_overlay`.
+- Added low-level `mod.ui.rect`, `mod.ui.border`, `mod.ui.line`, `mod.ui.measure_text`, `mod.ui.hitbox`, and `mod.ui.mouse_buttons`.
+- Added Lua-side style helpers and first-pass widgets: `icon_button`, `tabs`/`segmented`, `swatch_grid`, `item_grid`, `slider`, `checkbox`, and `tooltip`.
+- Added `mod.ui.define_state` for per-mod custom state lifecycle callbacks.
+- Added readable text scaling, measured wrapping helpers, an automatic custom-state mouse cursor, and a base `tile_preview` fallback.
+- Added `mod.assets.load_spritesheet`, `mod.assets.sprite_id`, and `mod.assets.info` for loading mod-owned PNG sprites into the live atlas through the `atlas_upload` hook while the engine packer is still valid.
+- Added `mods/ui_api_test` as a custom state for exercising old and new UI APIs.
+- Remaining UI foundation work: keyboard/controller focus/navigation, clipping/scroll areas, and native callback-accurate tile previews.
 
 - Document `mod.ui.begin_overlay` and `mod.ui.end_overlay`.
 - Add low-level `rect`, `border`, and `measure_text`.
@@ -1419,6 +1457,10 @@ Done when:
 Done when:
 
 - A player can enter the screen, equip/remove cosmetics, change colors, preview the result, save, and return.
+
+Current implementation status:
+
+- Not implemented in the current tree after rollback to the UI API foundation work.
 
 ### Phase 5: Cosmetic Overlay Renderer
 

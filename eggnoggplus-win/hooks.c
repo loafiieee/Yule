@@ -1,4 +1,8 @@
 #include <windows.h>
+
+#ifdef __INTELLISENSE__
+#define HOOKS_INTELLISENSE 1
+#endif
 #include <excpt.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -97,6 +101,7 @@ extern void SDL_free(void* mem);
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_SPRITE_BATCH_PLOT        0x405890u
 #define ADDR_SPRITE_BATCH_DRAW        0x405A90u
+#define ADDR_ATLAS_UPLOAD             0x401480u
 #define ADDR_MENU_BUTTON_LINK         0x433950u
 #define ADDR_BUTTON_SET_LAYOUT        0x415F80u
 #define ADDR_BTN_PLAYER_FILTER        0x4325C0u
@@ -122,11 +127,20 @@ extern void SDL_free(void* mem);
 #define ADDR_HIGH_WATER_ACTION        0x43C730u
 #define ADDR_GAME_WATER_HI_COLOUR     0x420100u
 #define ADDR_GAME_WATER_COLOUR        0x4201D0u
+#define ADDR_GAME_PLAYER_COLOUR_INDEX 0x41FE40u
+#define ADDR_GAME_SET_PLAYER_COLOUR_INDEX 0x41FE60u
+#define ADDR_GAME_PLAYER_COLOUR       0x4207C0u
+#define ADDR_GAME_INC_PLAYER_COLOUR_EX 0x420E30u
+#define ADDR_ANGLE_COLOUR             0x4180F0u
 #define ADDR_LAYER                    0x55A33Cu
 #define ADDR_TURTLE_R                 0x448110u
 #define ADDR_TURTLE_G                 0x448114u
 #define ADDR_TURTLE_B                 0x448118u
 #define ADDR_TURTLE_A                 0x44811Cu
+#define ADDR_GAME_STARTED             0x54203Cu
+#define ADDR_PLAYER_CLR_INDEX         0x448320u
+#define ADDR_PLAYER_COLOURS           0x448240u
+#define ADDR_GAME_TICKS               0x547BA0u
 #define ADDR_NATIVE_SYNTH_ENABLED     0x54C0CAu
 #define ADDR_MRAND_SEED               0x496DA0u
 #define ADDR_MRAND                    0x405080u
@@ -253,6 +267,7 @@ typedef void  (__cdecl *fn_main_cursor_spin_t)(int);
 typedef void  (__cdecl *fn_main_sprite_batches_draw_t)(void);
 typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite, int flip, int layer);
 typedef void  (__cdecl *fn_sprite_batch_draw_t)(int atlas);
+typedef int   (__cdecl *fn_atlas_upload_t)(int atlas, int arg2, int format);
 typedef void* (__cdecl *fn_menu_button_link_t)(float, float, const char*, void*);
 typedef void  (__cdecl *fn_button_set_layout_t)(float, float);
 typedef int   (__cdecl *fn_btn_player_filter_t)(void* btn, int event_code);
@@ -270,6 +285,11 @@ typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 typedef int (__cdecl *fn_tile_action_t)(void*, int, int, int, int);
 typedef void (__cdecl *fn_colour_query_t)(float*);
 typedef int (__cdecl *fn_synth_callback_t)(void*);
+typedef int   (__cdecl *fn_game_player_colour_index_t)(uint32_t, int);
+typedef int   (__cdecl *fn_game_set_player_colour_index_t)(uint32_t, int, uint32_t);
+typedef void  (__cdecl *fn_game_player_colour_t)(float*, uint32_t, int);
+typedef int   (__cdecl *fn_game_inc_player_colour_ex_t)(uint32_t, int, int);
+typedef void  (__cdecl *fn_angle_colour_t)(float*, float, float, float);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
 static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr_t)ADDR_STATE_LAST;
@@ -283,6 +303,7 @@ static fn_main_cursors_reset_t       p_main_cursors_reset = (fn_main_cursors_res
 static fn_main_cursor_spin_t        p_main_cursor_spin = (fn_main_cursor_spin_t)(uintptr_t)ADDR_MAIN_CURSOR_SPIN;
 static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprite_batches_draw_t)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW;
 static fn_sprite_batch_plot_t        p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
+static fn_atlas_upload_t             p_atlas_upload = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
 static fn_menu_button_link_t         p_menu_button_link = (fn_menu_button_link_t)(uintptr_t)ADDR_MENU_BUTTON_LINK;
 static fn_button_set_layout_t        p_button_set_layout = (fn_button_set_layout_t)(uintptr_t)ADDR_BUTTON_SET_LAYOUT;
 static fn_btn_player_filter_t        p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
@@ -308,12 +329,26 @@ static fn_game_update_t              p_game_update_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
 static fn_tile_action_t              p_high_water_action_trampoline = NULL;
+static fn_atlas_upload_t             p_atlas_upload_trampoline = NULL;
 static fn_colour_query_t             p_game_water_hi_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_HI_COLOUR;
 static fn_colour_query_t             p_game_water_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_COLOUR;
+static fn_game_player_colour_index_t p_game_player_colour_index = (fn_game_player_colour_index_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR_INDEX;
+static fn_game_player_colour_index_t p_game_player_colour_index_trampoline = NULL;
+static fn_game_set_player_colour_index_t p_game_set_player_colour_index = (fn_game_set_player_colour_index_t)(uintptr_t)ADDR_GAME_SET_PLAYER_COLOUR_INDEX;
+static fn_game_set_player_colour_index_t p_game_set_player_colour_index_trampoline = NULL;
+static fn_game_player_colour_t       p_game_player_colour = (fn_game_player_colour_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR;
+static fn_game_player_colour_t       p_game_player_colour_trampoline = NULL;
+static fn_game_inc_player_colour_ex_t p_game_inc_player_colour_ex = (fn_game_inc_player_colour_ex_t)(uintptr_t)ADDR_GAME_INC_PLAYER_COLOUR_EX;
+static fn_game_inc_player_colour_ex_t p_game_inc_player_colour_ex_trampoline = NULL;
+static fn_angle_colour_t             p_angle_colour = (fn_angle_colour_t)(uintptr_t)ADDR_ANGLE_COLOUR;
 static volatile int* g_layer = (volatile int*)(uintptr_t)ADDR_LAYER;
 static volatile uint32_t* g_mad_ticks = (volatile uint32_t*)(uintptr_t)ADDR_MAD_TICKS;
+static volatile uint32_t* g_game_ticks = (volatile uint32_t*)(uintptr_t)ADDR_GAME_TICKS;
 static volatile int* g_debug = (volatile int*)(uintptr_t)ADDR_DEBUG;
 static volatile int* g_debug_slowmo = (volatile int*)(uintptr_t)ADDR_DEBUG_SLOWMO;
+static volatile int* g_game_started = (volatile int*)(uintptr_t)ADDR_GAME_STARTED;
+static volatile int* g_player_clr_index = (volatile int*)(uintptr_t)ADDR_PLAYER_CLR_INDEX;
+static volatile float* g_player_colours = (volatile float*)(uintptr_t)ADDR_PLAYER_COLOURS;
 static volatile unsigned char* g_native_synth_enabled = (volatile unsigned char*)(uintptr_t)ADDR_NATIVE_SYNTH_ENABLED;
 static volatile uint32_t* g_native_mrand_seed = (volatile uint32_t*)(uintptr_t)ADDR_MRAND_SEED;
 
@@ -337,6 +372,11 @@ static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
 static Detour g_high_water_action_detour;
+static Detour g_atlas_upload_detour;
+static Detour g_game_player_colour_index_detour;
+static Detour g_game_set_player_colour_index_detour;
+static Detour g_game_player_colour_detour;
+static Detour g_game_inc_player_colour_ex_detour;
 static Detour g_rng_mrand_detour;
 static Detour g_rng_rnd_detour;
 static Detour g_rng_frnd_detour;
@@ -639,6 +679,255 @@ static float clampf(float v, float lo, float hi) {
     return v;
 }
 
+#define VANILLA_PLAYER_COLOUR_COUNT 14
+
+typedef enum HooksPlayerColourKind {
+    HOOKS_PLAYER_COLOUR_SOLID = 0,
+    HOOKS_PLAYER_COLOUR_HUE,
+    HOOKS_PLAYER_COLOUR_LERP,
+} HooksPlayerColourKind;
+
+typedef struct HooksPlayerColourDef {
+    HooksPlayerColourKind kind;
+    float r;
+    float g;
+    float b;
+    float a;
+    float r2;
+    float g2;
+    float b2;
+    float hue;
+    float hue_step;
+    uint32_t period;
+} HooksPlayerColourDef;
+
+static const HooksPlayerColourDef k_extra_player_colours[] = {
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.98f, 0.74f, 0.55f, 1.0f, 0, 0, 0, 0, 0, 0 },       // warm skin
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.58f, 0.34f, 0.18f, 1.0f, 0, 0, 0, 0, 0, 0 },       // bronze
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.30f, 0.16f, 0.09f, 1.0f, 0, 0, 0, 0, 0, 0 },       // umber
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.92f, 0.38f, 0.56f, 1.0f, 0, 0, 0, 0, 0, 0 },       // rose
+    { HOOKS_PLAYER_COLOUR_SOLID, 1.00f, 0.33f, 0.23f, 1.0f, 0, 0, 0, 0, 0, 0 },       // coral
+    { HOOKS_PLAYER_COLOUR_SOLID, 1.00f, 0.62f, 0.12f, 1.0f, 0, 0, 0, 0, 0, 0 },       // amber
+    { HOOKS_PLAYER_COLOUR_SOLID, 1.00f, 0.84f, 0.18f, 1.0f, 0, 0, 0, 0, 0, 0 },       // gold
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.54f, 0.92f, 0.18f, 1.0f, 0, 0, 0, 0, 0, 0 },       // lime
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.20f, 0.95f, 0.62f, 1.0f, 0, 0, 0, 0, 0, 0 },       // mint
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.08f, 0.74f, 0.76f, 1.0f, 0, 0, 0, 0, 0, 0 },       // teal
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.10f, 0.83f, 1.00f, 1.0f, 0, 0, 0, 0, 0, 0 },       // cyan
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.35f, 0.60f, 1.00f, 1.0f, 0, 0, 0, 0, 0, 0 },       // sky
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.12f, 0.22f, 0.95f, 1.0f, 0, 0, 0, 0, 0, 0 },       // cobalt
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.55f, 0.25f, 1.00f, 1.0f, 0, 0, 0, 0, 0, 0 },       // violet
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.95f, 0.20f, 0.90f, 1.0f, 0, 0, 0, 0, 0, 0 },       // magenta
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.92f, 0.92f, 0.88f, 1.0f, 0, 0, 0, 0, 0, 0 },       // pearl
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.12f, 0.13f, 0.15f, 1.0f, 0, 0, 0, 0, 0, 0 },       // charcoal
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.35f, 0.42f, 0.50f, 1.0f, 0, 0, 0, 0, 0, 0 },       // slate
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.72f, 0.03f, 0.10f, 1.0f, 0, 0, 0, 0, 0, 0 },       // crimson
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.04f, 0.45f, 0.16f, 1.0f, 0, 0, 0, 0, 0, 0 },       // forest
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.03f, 0.10f, 0.35f, 1.0f, 0, 0, 0, 0, 0, 0 },       // navy
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.65f, 0.95f, 1.00f, 1.0f, 0, 0, 0, 0, 0, 0 },       // ice
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.75f, 0.55f, 1.00f, 1.0f, 0, 0, 0, 0, 0, 0 },       // lavender
+    { HOOKS_PLAYER_COLOUR_SOLID, 0.95f, 0.48f, 0.14f, 1.0f, 0, 0, 0, 0, 0, 0 },       // tangerine
+    { HOOKS_PLAYER_COLOUR_HUE,   0, 0, 0, 1.0f, 0, 0, 0,   0.0f, 6.0f, 0 },          // RGB shift fast
+    { HOOKS_PLAYER_COLOUR_HUE,   0, 0, 0, 1.0f, 0, 0, 0,  45.0f, 2.0f, 0 },          // RGB shift slow
+    { HOOKS_PLAYER_COLOUR_LERP,  1.00f, 0.10f, 0.72f, 1.0f, 0.20f, 0.92f, 1.00f, 0, 0, 90 },  // neon pulse
+    { HOOKS_PLAYER_COLOUR_LERP,  1.00f, 0.15f, 0.05f, 1.0f, 1.00f, 0.84f, 0.12f, 0, 0, 72 },  // fire shift
+    { HOOKS_PLAYER_COLOUR_LERP,  0.12f, 0.78f, 1.00f, 1.0f, 0.84f, 0.96f, 1.00f, 0, 0, 96 },  // ice shift
+    { HOOKS_PLAYER_COLOUR_LERP,  0.10f, 0.05f, 0.22f, 1.0f, 0.35f, 1.00f, 0.78f, 0, 0, 110 }, // void shimmer
+    { HOOKS_PLAYER_COLOUR_LERP,  0.55f, 0.56f, 0.60f, 1.0f, 1.00f, 0.98f, 0.82f, 0, 0, 64 },  // metallic shimmer
+};
+
+static int hooks_player_colour_count(void) {
+    return VANILLA_PLAYER_COLOUR_COUNT +
+           (int)(sizeof(k_extra_player_colours) / sizeof(k_extra_player_colours[0]));
+}
+
+static int hooks_player_colour_slot(uint32_t player_index, int clothing) {
+    int slot = (int)(player_index & 1u);
+    if (clothing) slot += 2;
+    return slot;
+}
+
+static int hooks_wrap_player_colour_index(int index) {
+    int count = hooks_player_colour_count();
+    if (count <= 0) return 0;
+    index %= count;
+    if (index < 0) index += count;
+    return index;
+}
+
+static uint32_t hooks_player_colour_tick(void) {
+    if (g_game_started && *g_game_started && g_game_ticks) return *g_game_ticks;
+    if (g_mad_ticks) return *g_mad_ticks;
+    if (g_game_ticks) return *g_game_ticks;
+    return 0u;
+}
+
+static float hooks_wrap_degrees(float v) {
+    while (v >= 360.0f) v -= 360.0f;
+    while (v < 0.0f) v += 360.0f;
+    return v;
+}
+
+static float hooks_triangle01(uint32_t tick, uint32_t period) {
+    uint32_t t;
+    float f;
+    if (period < 2u) period = 2u;
+    t = tick % period;
+    f = (float)t / (float)period;
+    return (f < 0.5f) ? (f * 2.0f) : ((1.0f - f) * 2.0f);
+}
+
+static void hooks_hue_to_rgb_fallback(float hue, float sat, float val, float out[4]) {
+    float c;
+    float x;
+    float m;
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+
+    hue = hooks_wrap_degrees(hue);
+    sat = clampf(sat, 0.0f, 1.0f);
+    val = clampf(val, 0.0f, 1.0f);
+    c = val * sat;
+    {
+        float h = hue / 60.0f;
+        int sector = (int)h;
+        float frac = h - (float)sector;
+        x = c * ((sector & 1) ? (1.0f - frac) : frac);
+        switch (sector) {
+            case 0: r = c; g = x; b = 0.0f; break;
+            case 1: r = x; g = c; b = 0.0f; break;
+            case 2: r = 0.0f; g = c; b = x; break;
+            case 3: r = 0.0f; g = x; b = c; break;
+            case 4: r = x; g = 0.0f; b = c; break;
+            default: r = c; g = 0.0f; b = x; break;
+        }
+    }
+    m = val - c;
+    out[0] = r + m;
+    out[1] = g + m;
+    out[2] = b + m;
+    out[3] = 1.0f;
+}
+
+static void hooks_native_player_colour(int index, float out[4]) {
+    int i = hooks_wrap_player_colour_index(index);
+    if (i >= VANILLA_PLAYER_COLOUR_COUNT) i %= VANILLA_PLAYER_COLOUR_COUNT;
+    if (g_player_colours) {
+        out[0] = g_player_colours[i * 4 + 0];
+        out[1] = g_player_colours[i * 4 + 1];
+        out[2] = g_player_colours[i * 4 + 2];
+        out[3] = g_player_colours[i * 4 + 3];
+    } else {
+        out[0] = out[1] = out[2] = out[3] = 1.0f;
+    }
+}
+
+static void hooks_resolve_player_colour(int index, float out[4]) {
+    int wrapped = hooks_wrap_player_colour_index(index);
+    const HooksPlayerColourDef* def;
+    uint32_t tick;
+    float t;
+
+    if (wrapped < VANILLA_PLAYER_COLOUR_COUNT) {
+        hooks_native_player_colour(wrapped, out);
+        return;
+    }
+
+    def = &k_extra_player_colours[wrapped - VANILLA_PLAYER_COLOUR_COUNT];
+    tick = hooks_player_colour_tick();
+    switch (def->kind) {
+        case HOOKS_PLAYER_COLOUR_HUE: {
+            float hue = def->hue + (float)tick * def->hue_step;
+            if (p_angle_colour) {
+                p_angle_colour(out, hooks_wrap_degrees(hue), 1.0f, 1.0f);
+                out[3] = def->a;
+            } else {
+                hooks_hue_to_rgb_fallback(hue, 1.0f, 1.0f, out);
+                out[3] = def->a;
+            }
+            break;
+        }
+        case HOOKS_PLAYER_COLOUR_LERP:
+            t = hooks_triangle01(tick, def->period);
+            out[0] = def->r + (def->r2 - def->r) * t;
+            out[1] = def->g + (def->g2 - def->g) * t;
+            out[2] = def->b + (def->b2 - def->b) * t;
+            out[3] = def->a;
+            break;
+        case HOOKS_PLAYER_COLOUR_SOLID:
+        default:
+            out[0] = def->r;
+            out[1] = def->g;
+            out[2] = def->b;
+            out[3] = def->a;
+            break;
+    }
+}
+
+static int __cdecl hooked_game_player_colour_index(uint32_t player_index, int clothing) {
+    int slot = hooks_player_colour_slot(player_index, clothing);
+    return g_player_clr_index ? g_player_clr_index[slot] : 0;
+}
+
+static int __cdecl hooked_game_set_player_colour_index(uint32_t player_index, int clothing, uint32_t colour_index) {
+    int slot = hooks_player_colour_slot(player_index, clothing);
+    int wrapped = hooks_wrap_player_colour_index((int32_t)colour_index);
+    if (g_player_clr_index) g_player_clr_index[slot] = wrapped;
+    return wrapped;
+}
+
+static void __cdecl hooked_game_player_colour(float* out, uint32_t player_index, int clothing) {
+    int player = (int)(player_index & 1u);
+    int skin_index = g_player_clr_index ? g_player_clr_index[player] : 0;
+    int clothing_index = g_player_clr_index ? g_player_clr_index[player + 2] : 0;
+    int selected_index = clothing ? clothing_index : skin_index;
+    float colour[4];
+
+    if (!out) return;
+    if (p_game_player_colour_trampoline &&
+        skin_index >= 0 && skin_index < VANILLA_PLAYER_COLOUR_COUNT &&
+        clothing_index >= 0 && clothing_index < VANILLA_PLAYER_COLOUR_COUNT) {
+        p_game_player_colour_trampoline(out, player_index, clothing);
+        return;
+    }
+
+    hooks_resolve_player_colour(selected_index, colour);
+    if (clothing && skin_index == clothing_index && skin_index != 0x0d) {
+        colour[0] *= 0.75f;
+        colour[1] *= 0.75f;
+        colour[2] *= 0.75f;
+    }
+
+    out[0] = colour[0];
+    out[1] = colour[1];
+    out[2] = colour[2];
+    out[3] = colour[3];
+}
+
+static int hooks_player_colour_combo_matches(int player) {
+    int other = (player + 1) & 1;
+    if (!g_player_clr_index) return 0;
+    return g_player_clr_index[player] == g_player_clr_index[other] &&
+           g_player_clr_index[player + 2] == g_player_clr_index[other + 2];
+}
+
+static int __cdecl hooked_game_inc_player_colour_ex(uint32_t player_index, int clothing, int delta) {
+    int player = (int)(player_index & 1u);
+    int slot = hooks_player_colour_slot(player_index, clothing);
+    int count = hooks_player_colour_count();
+    int step = (delta < 0) ? -1 : 1;
+    int index;
+
+    if (!g_player_clr_index || count <= 0) return 0;
+    index = g_player_clr_index[slot];
+    for (int attempt = 0; attempt < count; attempt++) {
+        index = hooks_wrap_player_colour_index(index + step);
+        g_player_clr_index[slot] = index;
+        if (!hooks_player_colour_combo_matches(player)) break;
+    }
+    return index;
+}
+
 static float calc_ui_scale(void) {
     float w = p_mad_w ? p_mad_w() : BASE_UI_W;
     float h = p_mad_h ? p_mad_h() : BASE_UI_H;
@@ -787,6 +1076,13 @@ void __cdecl hooks_rng_trace_record_from_hook(uint32_t kind, uintptr_t caller) {
     }
 }
 
+#ifdef HOOKS_INTELLISENSE
+static void hooked_mrand(void) { }
+static void hooked_rnd(void) { }
+static void hooked_frnd(void) { }
+static void hooked_rnd5050(void) { }
+static void hooked_rndsign(void) { }
+#else
 static void __attribute__((naked)) hooked_mrand(void) {
     __asm__ __volatile__(
         "pushfl\n\t"
@@ -861,6 +1157,7 @@ static void __attribute__((naked)) hooked_rndsign(void) {
         "jmp *_g_hooks_rng_rndsign_trampoline\n\t"
     );
 }
+#endif
 
 int hooks_get_native_synth_enabled(void) {
     return g_native_synth_enabled ? ((*g_native_synth_enabled != 0) ? 1 : 0) : 0;
@@ -2053,7 +2350,7 @@ static int console_capture_background_now(void) {
     GLint prev_read_buffer = GL_BACK;
     GLint prev_tex_binding_2d = 0;
     unsigned char* src;
-    unsigned char* small;
+    unsigned char* downsampled;
     unsigned char* blur_tmp;
 
     if (w < 2 || h < 2) return 0;
@@ -2063,11 +2360,11 @@ static int console_capture_background_now(void) {
     if (bh < 16) bh = 16;
 
     src = (unsigned char*)malloc((size_t)w * (size_t)h * 4);
-    small = (unsigned char*)malloc((size_t)bw * (size_t)bh * 4);
+    downsampled = (unsigned char*)malloc((size_t)bw * (size_t)bh * 4);
     blur_tmp = (unsigned char*)malloc((size_t)bw * (size_t)bh * 4);
-    if (!src || !small || !blur_tmp) {
+    if (!src || !downsampled || !blur_tmp) {
         free(src);
-        free(small);
+        free(downsampled);
         free(blur_tmp);
         return 0;
     }
@@ -2080,9 +2377,9 @@ static int console_capture_background_now(void) {
     glReadBuffer(GL_BACK);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, src);
 
-    console_downsample_rgba(src, w, h, small, bw, bh);
-    console_box_blur_rgba(small, blur_tmp, bw, bh, 1);
-    console_box_blur_rgba(blur_tmp, small, bw, bh, 1);
+    console_downsample_rgba(src, w, h, downsampled, bw, bh);
+    console_box_blur_rgba(downsampled, blur_tmp, bw, bh, 1);
+    console_box_blur_rgba(blur_tmp, downsampled, bw, bh, 1);
 
     if (!g_console_bg_tex) {
         glGenTextures(1, &g_console_bg_tex);
@@ -2097,7 +2394,7 @@ static int console_capture_background_now(void) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
 #endif
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, bw, bh, 0, GL_RGBA, GL_UNSIGNED_BYTE, small);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, bw, bh, 0, GL_RGBA, GL_UNSIGNED_BYTE, downsampled);
 
     g_console_bg_w = bw;
     g_console_bg_h = bh;
@@ -2108,7 +2405,7 @@ static int console_capture_background_now(void) {
     glBindTexture(GL_TEXTURE_2D, (GLuint)prev_tex_binding_2d);
 
     free(src);
-    free(small);
+    free(downsampled);
     free(blur_tmp);
     return 1;
 }
@@ -5660,6 +5957,16 @@ static void console_draw_rect_outline(float x, float y, float w, float h, float 
     glLineWidth(1.0f);
 }
 
+static void console_draw_line(float x1, float y1, float x2, float y2, float line_w, float r, float g, float b, float a) {
+    glLineWidth(line_w < 1.0f ? 1.0f : line_w);
+    glColor4f(r, g, b, a);
+    glBegin(GL_LINES);
+    glVertex2f(x1, y1);
+    glVertex2f(x2, y2);
+    glEnd();
+    glLineWidth(1.0f);
+}
+
 void hooks_ui_fill_rect(float x, float y, float w, float h,
                         float r, float g, float b, float a) {
     GLint prev_matrix_mode = GL_MODELVIEW;
@@ -5727,6 +6034,44 @@ void hooks_ui_stroke_rect(float x, float y, float w, float h, float line_w,
     glLoadIdentity();
 
     console_draw_rect_outline(x, y, w, h, line_w, r, g, b, a);
+
+    glMatrixMode(GL_TEXTURE);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(prev_matrix_mode);
+    glPopAttrib();
+}
+
+void hooks_ui_draw_line(float x1, float y1, float x2, float y2, float line_w,
+                        float r, float g, float b, float a) {
+    GLint prev_matrix_mode = GL_MODELVIEW;
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float sh = p_mad_h ? p_mad_h() : BASE_UI_H;
+
+    glGetIntegerv(GL_MATRIX_MODE, &prev_matrix_mode);
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (double)sw, (double)sh, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_TEXTURE);
+    glPushMatrix();
+    glLoadIdentity();
+
+    console_draw_line(x1, y1, x2, y2, line_w, r, g, b, a);
 
     glMatrixMode(GL_TEXTURE);
     glPopMatrix();
@@ -6748,6 +7093,14 @@ static RgbaImage* __cdecl hooked_rgba_load(const char* path) {
     return img;
 }
 
+static int __cdecl hooked_atlas_upload(int atlas, int arg2, int format) {
+    fn_atlas_upload_t real = p_atlas_upload_trampoline ? p_atlas_upload_trampoline : p_atlas_upload;
+    if (atlas) {
+        lua_manager_before_atlas_upload(atlas);
+    }
+    return real ? real(atlas, arg2, format) : -1;
+}
+
 static void __cdecl hooked_mapgen_init(void) {
     fn_void_void_t real = p_mapgen_init_trampoline ? p_mapgen_init_trampoline : p_mapgen_init;
     custom_maps_handle_mapgen_init(real);
@@ -6836,6 +7189,42 @@ void hooks_init(void) {
         p_rgba_load_trampoline = (fn_rgba_load_t)g_rgba_load_detour.trampoline;
     }
 
+    if (!install_detour(&g_game_player_colour_index_detour,
+                        (void*)(uintptr_t)ADDR_GAME_PLAYER_COLOUR_INDEX,
+                        (void*)&hooked_game_player_colour_index,
+                        9)) {
+        LOG_WARN("hooks_init: failed to detour game_player_colour_index (expanded player colours will not save correctly)");
+    } else {
+        p_game_player_colour_index_trampoline = (fn_game_player_colour_index_t)g_game_player_colour_index_detour.trampoline;
+    }
+
+    if (!install_detour(&g_game_set_player_colour_index_detour,
+                        (void*)(uintptr_t)ADDR_GAME_SET_PLAYER_COLOUR_INDEX,
+                        (void*)&hooked_game_set_player_colour_index,
+                        6)) {
+        LOG_WARN("hooks_init: failed to detour game_set_player_colour_index (expanded player colours disabled)");
+    } else {
+        p_game_set_player_colour_index_trampoline = (fn_game_set_player_colour_index_t)g_game_set_player_colour_index_detour.trampoline;
+    }
+
+    if (!install_detour(&g_game_player_colour_detour,
+                        (void*)(uintptr_t)ADDR_GAME_PLAYER_COLOUR,
+                        (void*)&hooked_game_player_colour,
+                        7)) {
+        LOG_WARN("hooks_init: failed to detour game_player_colour (expanded player colour rendering disabled)");
+    } else {
+        p_game_player_colour_trampoline = (fn_game_player_colour_t)g_game_player_colour_detour.trampoline;
+    }
+
+    if (!install_detour(&g_game_inc_player_colour_ex_detour,
+                        (void*)(uintptr_t)ADDR_GAME_INC_PLAYER_COLOUR_EX,
+                        (void*)&hooked_game_inc_player_colour_ex,
+                        7)) {
+        LOG_WARN("hooks_init: failed to detour game_inc_player_colour_ex (main menu colour buttons keep vanilla wrap)");
+    } else {
+        p_game_inc_player_colour_ex_trampoline = (fn_game_inc_player_colour_ex_t)g_game_inc_player_colour_ex_detour.trampoline;
+    }
+
     // mapgen_init starts with `sub esp, 0x2c` (3 bytes) followed by a 6-byte
     // absolute mov. Patch 9 bytes so the trampoline never returns into a split
     // instruction.
@@ -6854,6 +7243,18 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour high_water_action (W will keep vanilla rendering)");
     } else {
         p_high_water_action_trampoline = (fn_tile_action_t)g_high_water_action_detour.trampoline;
+    }
+
+    // atlas_upload starts with:
+    //   push ebp
+    //   mov ebp, esp
+    //   push edi
+    //   push esi
+    // Patch exactly 5 bytes so mod asset spritesheets can be packed before upload.
+    if (!install_detour(&g_atlas_upload_detour, (void*)(uintptr_t)ADDR_ATLAS_UPLOAD, (void*)&hooked_atlas_upload, 5)) {
+        LOG_WARN("hooks_init: failed to detour atlas_upload (mod.assets PNG sheets will stay pending)");
+    } else {
+        p_atlas_upload_trampoline = (fn_atlas_upload_t)g_atlas_upload_detour.trampoline;
     }
 
     if (!install_detour(&g_rng_mrand_detour, (void*)(uintptr_t)ADDR_MRAND, (void*)&hooked_mrand, 10)) {

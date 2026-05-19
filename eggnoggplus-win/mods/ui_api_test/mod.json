@@ -1,0 +1,10 @@
+{
+  "id": "ui_api_test",
+  "name": "UI API Test",
+  "version": "1.0.0",
+  "author": "Eggnogg+",
+  "description": "Custom state that exercises legacy and upgraded mod.ui helpers.",
+  "api_version": 1,
+  "entry": "main.lua",
+  "priority": 20
+}

@@ -44,6 +44,8 @@ void hooks_ui_fill_rect(float x, float y, float w, float h,
                         float r, float g, float b, float a);
 void hooks_ui_stroke_rect(float x, float y, float w, float h, float line_w,
                           float r, float g, float b, float a);
+void hooks_ui_draw_line(float x1, float y1, float x2, float y2, float line_w,
+                        float r, float g, float b, float a);
 
 // Legacy online hub helpers (kept as thin wrappers).
 void hooks_enter_online_hub(void);

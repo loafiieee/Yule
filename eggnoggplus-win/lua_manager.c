@@ -54,6 +54,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_MAIN_BTN_FRAMED      0x432390u
 #define ADDR_MAIN_PLAYER_POLL_CMDS   0x433F90u
+#define ADDR_IS_POS_SOLID            0x42B770u
 #define ADDR_MAP_TILES_H             0x434950u
 #define ADDR_MAP_TILE                0x434A50u
 #define ADDR_GAME_PLAYER_COLOUR      0x4207C0u
@@ -203,6 +204,7 @@ typedef int   (__cdecl *fn_main_btn_framed_t)(int btn_ptr, int event_code);
 typedef void  (__cdecl *fn_button_set_w_ex_t)(int, float, float);
 typedef void  (__cdecl *fn_button_set_h_ex_t)(int, float, float);
 typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
+typedef int   (__cdecl *fn_is_pos_solid_t)(float, float);
 typedef int   (__cdecl *fn_map_tiles_h_t)(void);
 typedef int   (__cdecl *fn_map_tile_t)(int, int);
 typedef void  (__cdecl *fn_game_player_colour_t)(float*, uint32_t, int);
@@ -268,6 +270,7 @@ static fn_main_btn_framed_t   p_main_btn_framed   = (fn_main_btn_framed_t)(uintp
 static fn_button_set_w_ex_t   p_button_set_w_ex   = (fn_button_set_w_ex_t)(uintptr_t)0x4161a0u;
 static fn_button_set_h_ex_t   p_button_set_h_ex   = (fn_button_set_h_ex_t)(uintptr_t)0x416230u;
 static fn_main_player_poll_cmds_t p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
+static fn_is_pos_solid_t     p_is_pos_solid     = (fn_is_pos_solid_t)(uintptr_t)ADDR_IS_POS_SOLID;
 static fn_map_tiles_h_t      p_map_tiles_h       = (fn_map_tiles_h_t)(uintptr_t)ADDR_MAP_TILES_H;
 static fn_map_tile_t         p_map_tile          = (fn_map_tile_t)(uintptr_t)ADDR_MAP_TILE;
 static fn_game_player_colour_t p_game_player_colour = (fn_game_player_colour_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR;
@@ -4462,6 +4465,8 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 
 // Gameplay telemetry offsets (player + thing structs).
 #define PLAYER_SIZE                 0x15C
+#define PLAYER_OFS_THING_SLOT       0x00
+#define PLAYER_OFS_SPRITE_INDEX     0x04
 #define PLAYER_OFS_HAS_SWORD        0x11
 #define PLAYER_OFS_X                0x24
 #define PLAYER_OFS_Y                0x28
@@ -4471,6 +4476,9 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_OFS_VY               0x38
 #define PLAYER_OFS_ACTION_BLOB      0x54
 #define PLAYER_ACTION_BLOB_LEN      0x24
+#define PLAYER_OFS_EVENT_FLAGS      0x70
+#define PLAYER_OFS_PREV_EVENT_FLAGS 0x74
+#define PLAYER_OFS_PENDING_EVENT_FLAGS 0x84
 #define PLAYER_OFS_STATE_ID         0x78
 #define PLAYER_OFS_STATE_TIMER      0x8C
 #define PLAYER_OFS_FACING_SIGN      0x98
@@ -4481,6 +4489,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_OFS_PREV_COLLISION   0xAC
 #define PLAYER_OFS_COLLISION_FLAGS  0xAD
 #define PLAYER_OFS_ROOM             0x9B
+#define PLAYER_OFS_ANIM_PHASE       0x94
 #define PLAYER_OFS_RENDER_RGBA      0xD8
 #define PLAYER_RENDER_RGBA_LEN      0x20
 #define PLAYER_OFS_STATE_BLOB       0x78
@@ -7334,6 +7343,8 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         float prev_y = *(float*)(player_ptr + PLAYER_OFS_PREV_Y);
         float vx = *(float*)(player_ptr + PLAYER_OFS_VX);
         float vy = *(float*)(player_ptr + PLAYER_OFS_VY);
+        uint8_t thing_slot = *(uint8_t*)(player_ptr + PLAYER_OFS_THING_SLOT);
+        int sprite_index = *(int*)(player_ptr + PLAYER_OFS_SPRITE_INDEX);
         int has_sword = (*(uint8_t*)(player_ptr + PLAYER_OFS_HAS_SWORD) == 0) ? 1 : 0;
         int facing = (int)*(signed char*)(player_ptr + PLAYER_OFS_FACING_SIGN);
         int room_index = (int)*(signed char*)(player_ptr + PLAYER_OFS_ROOM);
@@ -7341,10 +7352,14 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         uint8_t prev_cmd_bits = *(uint8_t*)(player_ptr + PLAYER_OFS_PREV_CMD_BITS);
         uint8_t collision_flags = *(uint8_t*)(player_ptr + PLAYER_OFS_COLLISION_FLAGS);
         uint8_t prev_collision_flags = *(uint8_t*)(player_ptr + PLAYER_OFS_PREV_COLLISION);
+        uint32_t event_flags = *(uint32_t*)(player_ptr + PLAYER_OFS_EVENT_FLAGS);
+        uint32_t prev_event_flags = *(uint32_t*)(player_ptr + PLAYER_OFS_PREV_EVENT_FLAGS);
+        uint32_t pending_event_flags = *(uint32_t*)(player_ptr + PLAYER_OFS_PENDING_EVENT_FLAGS);
         uint8_t state_id = *(uint8_t*)(player_ptr + PLAYER_OFS_STATE_ID);
         uint32_t state_timer = *(uint32_t*)(player_ptr + PLAYER_OFS_STATE_TIMER);
         uint8_t jump_buffer = *(uint8_t*)(player_ptr + PLAYER_OFS_JUMP_BUFFER);
         uint8_t attack_buffer = *(uint8_t*)(player_ptr + PLAYER_OFS_ATTACK_BUFFER);
+        float anim_phase = *(float*)(player_ptr + PLAYER_OFS_ANIM_PHASE);
         float skin_rgba[4];
         float clothing_rgba[4];
 
@@ -7353,6 +7368,8 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
 
         lua_newtable(Ls);
         lua_push_field_int(Ls, "index", player_index);
+        lua_push_field_int(Ls, "slot", (int)thing_slot);
+        lua_push_field_int(Ls, "thing_slot", (int)thing_slot);
         lua_push_field_number(Ls, "x", x);
         lua_push_field_number(Ls, "y", y);
         lua_push_field_number(Ls, "prev_x", prev_x);
@@ -7361,6 +7378,9 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         lua_push_field_number(Ls, "vy", vy);
         lua_push_field_number(Ls, "dx", x - origin_x);
         lua_push_field_number(Ls, "dy", y - origin_y);
+        lua_push_field_int(Ls, "sprite_index", sprite_index);
+        lua_push_field_int(Ls, "sprite_frame", sprite_index);
+        lua_push_field_number(Ls, "anim_phase", anim_phase);
         lua_push_field_bool(Ls, "has_sword", has_sword);
         lua_push_field_int(Ls, "facing", facing);
         lua_push_field_int(Ls, "room_index", room_index);
@@ -7372,6 +7392,9 @@ static void push_player_snapshot_table(lua_State* Ls, uintptr_t player_ptr, int 
         lua_push_field_int(Ls, "attack_buffer", (int)attack_buffer);
         lua_push_field_int(Ls, "collision_flags", (int)collision_flags);
         lua_push_field_int(Ls, "prev_collision_flags", (int)prev_collision_flags);
+        lua_push_field_int(Ls, "event_flags", (int)event_flags);
+        lua_push_field_int(Ls, "prev_event_flags", (int)prev_event_flags);
+        lua_push_field_int(Ls, "pending_event_flags", (int)pending_event_flags);
         lua_push_rgba_field(Ls, "skin_rgba", skin_rgba);
         lua_push_rgba_field(Ls, "clothing_rgba", clothing_rgba);
         lua_push_hex_field(Ls, "action_blob", (const uint8_t*)(player_ptr + PLAYER_OFS_ACTION_BLOB), PLAYER_ACTION_BLOB_LEN);
@@ -8008,6 +8031,8 @@ static int game_apply_player_table(lua_State* Ls, int idx, int player_index) {
     *(float*)(p + PLAYER_OFS_PREV_Y) = lua_table_get_float_field(Ls, idx, "prev_y", *(float*)(p + PLAYER_OFS_PREV_Y));
     *(float*)(p + PLAYER_OFS_VX) = lua_table_get_float_field(Ls, idx, "vx", *(float*)(p + PLAYER_OFS_VX));
     *(float*)(p + PLAYER_OFS_VY) = lua_table_get_float_field(Ls, idx, "vy", *(float*)(p + PLAYER_OFS_VY));
+    *(int*)(p + PLAYER_OFS_SPRITE_INDEX) = lua_table_get_int_field(Ls, idx, "sprite_index", *(int*)(p + PLAYER_OFS_SPRITE_INDEX));
+    *(float*)(p + PLAYER_OFS_ANIM_PHASE) = lua_table_get_float_field(Ls, idx, "anim_phase", *(float*)(p + PLAYER_OFS_ANIM_PHASE));
     (void)lua_table_copy_hex_field(Ls, idx, "action_blob", (uint8_t*)(p + PLAYER_OFS_ACTION_BLOB), PLAYER_ACTION_BLOB_LEN);
     (void)lua_table_copy_hex_field(Ls, idx, "state_blob", (uint8_t*)(p + PLAYER_OFS_STATE_BLOB), PLAYER_STATE_BLOB_LEN);
     *(uintptr_t*)(p + PLAYER_OFS_ANIM_PTR) = (uintptr_t)lua_table_get_u32_field(
@@ -9042,6 +9067,19 @@ static int lua_game_camera(lua_State* Ls) {
     return 1;
 }
 
+static int lua_game_is_solid(lua_State* Ls) {
+    float x = (float)luaL_checknumber(Ls, 1);
+    float y = (float)luaL_checknumber(Ls, 2);
+
+    if (!p_is_pos_solid || IsBadCodePtr((FARPROC)(void*)p_is_pos_solid)) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+
+    lua_pushboolean(Ls, p_is_pos_solid(x, y) != 0);
+    return 1;
+}
+
 static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_snapshot, 1);       lua_setfield(Ls, -2, "snapshot");
@@ -9072,6 +9110,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
     lua_game_push_command_constants(Ls);
     lua_pushcfunction(Ls, lua_game_camera);                                              lua_setfield(Ls, -2, "camera");
+    lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_solid");
+    lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_pos_solid");
     /* map selector (online mod) */
     lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
     lua_pushcfunction(Ls, lua_game_get_map_selector); lua_setfield(Ls, -2, "get_map_selector");

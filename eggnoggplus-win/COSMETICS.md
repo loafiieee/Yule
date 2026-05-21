@@ -1285,6 +1285,60 @@ Also document:
 - how mouse/controller focus interacts
 - how to avoid drawing under tiles
 
+## Current Hats Server Contract
+
+The current hats-only implementation fetches official cosmetic metadata from:
+
+- `https://loafiieee.com/eggnogg/cosmetics/v1/manifest.json`
+- `https://loafiieee.com/eggnogg/cosmetics/v1/assets/hats.png`
+
+Host exactly those files for the first pass. The client downloads the manifest, reads the expected SHA-256 for `hats.png`, downloads the PNG, checks the bytes, then caches the verified PNG in the mod cache. If the game starts offline, it keeps using bundled hats and retries the server check later. Before an online match, the future online hub should call the cosmetics interop API and wait until `validate_for_online()` returns true.
+
+Example `manifest.json`:
+
+```json
+{
+  "schema": 1,
+  "version": "2026-05-21.1",
+  "assets": {
+    "hats": {
+      "url": "https://loafiieee.com/eggnogg/cosmetics/v1/assets/hats.png",
+      "sha256": "3bbc38cdc3b540ea337e75a4800d84c47c5c199e456cfca5312c1bf662ca0245",
+      "cell_w": 32,
+      "cell_h": 32
+    }
+  },
+  "hats": [
+    { "id": "cap", "name": "Cap", "sprite_index": 0, "motion": true, "scale": 0.64, "y": 10.2, "bob": 0.7, "tilt": 7.0, "drag": 0.40, "allowed_online": true },
+    { "id": "crown", "name": "Crown", "sprite_index": 1, "motion": true, "scale": 0.68, "y": 10.8, "bob": 0.45, "tilt": 5.0, "drag": 0.25, "allowed_online": true },
+    { "id": "halo", "name": "Halo", "sprite_index": 2, "motion": false, "scale": 0.72, "y": 11.4, "bob": 0.0, "tilt": 0.0, "drag": 0.0, "allowed_online": true },
+    { "id": "beanie", "name": "Beanie", "sprite_index": 3, "motion": true, "scale": 0.66, "y": 10.4, "bob": 0.75, "tilt": 6.0, "drag": 0.35, "allowed_online": true },
+    { "id": "top_hat", "name": "Top Hat", "sprite_index": 4, "motion": false, "scale": 0.72, "y": 10.8, "bob": 0.0, "tilt": 0.0, "drag": 0.0, "allowed_online": true },
+    { "id": "visor", "name": "Visor", "sprite_index": 5, "motion": true, "scale": 0.62, "y": 9.6, "bob": 0.35, "tilt": 4.0, "drag": 0.20, "allowed_online": true }
+  ]
+}
+```
+
+The current bundled `assets/hats.png` SHA-256 is:
+
+```text
+3bbc38cdc3b540ea337e75a4800d84c47c5c199e456cfca5312c1bf662ca0245
+```
+
+If `hats.png` changes, update the manifest SHA before deploying it. The client treats HTTPS plus the manifest-provided SHA-256 as the first server authority. A later hardening pass should replace this with a true signed manifest, for example `manifest.sig` verified against a public key pinned in the client.
+
+Interop exposed by the hats mod:
+
+```lua
+local api = mod.interop.require("official_cosmetics:api", ">=1.0.0 <2.0.0")
+local ok, status = api.validate_for_online()
+local local_profile = api.get_online_profile()
+api.set_match_profile("p1", local_profile)
+api.set_match_profile("p2", remote_profile)
+```
+
+`get_online_profile()` returns one online profile independent of local Player 1 / Player 2 menu slots. The online hub should map that profile onto whichever match slot the local client controls, and should send only IDs, colors, manifest URL, and SHA-256 to the other client.
+
 ## Online Integration Plan
 
 Before match start, both clients should exchange cosmetic metadata:

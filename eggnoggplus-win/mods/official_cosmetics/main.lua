@@ -18,6 +18,7 @@ local HAT_CELL_H = 32
 local BUNDLED_HATS_SHA256 = "3bbc38cdc3b540ea337e75a4800d84c47c5c199e456cfca5312c1bf662ca0245"
 
 local selected_player = storage.get("selected_player", "p1")
+local online_color_source = storage.get("online_color_source", "p1")
 local profile = {
   p1 = {
     hat = storage.get("p1_hat", "none"),
@@ -482,8 +483,19 @@ local function player_index_from_id(player_id)
   return player_id == "p2" and 1 or 0
 end
 
+local function online_color_source_id()
+  online_color_source = online_color_source == "p2" and "p2" or "p1"
+  return online_color_source
+end
+
+local function toggle_online_color_source()
+  online_color_source = online_color_source_id() == "p1" and "p2" or "p1"
+  storage.set("online_color_source", online_color_source)
+end
+
 local function selected_player_colours(player_id)
-  local player_index = player_index_from_id(player_id)
+  local source_id = player_id == "online" and online_color_source_id() or (player_id == "p2" and "p2" or "p1")
+  local player_index = player_index_from_id(source_id)
   local skin
   local clothing
 
@@ -496,13 +508,22 @@ local function selected_player_colours(player_id)
   end
 
   return rgba_or_fallback(skin, fallback_skin),
-         rgba_or_fallback(clothing, fallback_clothing[player_id] or fallback_clothing.p1)
+         rgba_or_fallback(clothing, fallback_clothing[source_id] or fallback_clothing.p1)
 end
 
-profile.p1.hat = valid_hat_id(profile.p1.hat)
-profile.p2.hat = valid_hat_id(profile.p2.hat)
-profile.online.hat = valid_hat_id(profile.online.hat)
+local function clamped_saved_hat_id(player_id)
+  local current = profile[player_id] and profile[player_id].hat or "none"
+  local stored = storage.get(player_id .. "_hat", current)
+  local stored_id = valid_hat_id(stored)
+  if stored_id ~= "none" then return stored_id end
+  return valid_hat_id(current)
+end
+
+profile.p1.hat = clamped_saved_hat_id("p1")
+profile.p2.hat = clamped_saved_hat_id("p2")
+profile.online.hat = clamped_saved_hat_id("online")
 selected_player = (selected_player == "p2" or selected_player == "online") and selected_player or "p1"
+online_color_source = online_color_source == "p2" and "p2" or "p1"
 
 local function profile_id(id)
   if id == "p2" then return "p2" end
@@ -532,6 +553,7 @@ local cosmetics_net = {
   pending = nil,
   revision = nil,
   checked_at = 0.0,
+  required_sha256 = nil,
 }
 
 local function resolve_cosmetic_url(url)
@@ -574,9 +596,9 @@ local function clone_default_hats()
 end
 
 local function clamp_profiles_to_catalog()
-  profile.p1.hat = valid_hat_id(profile.p1.hat)
-  profile.p2.hat = valid_hat_id(profile.p2.hat)
-  profile.online.hat = valid_hat_id(profile.online.hat)
+  profile.p1.hat = clamped_saved_hat_id("p1")
+  profile.p2.hat = clamped_saved_hat_id("p2")
+  profile.online.hat = clamped_saved_hat_id("online")
   for _, match_profile in pairs(match_profiles) do
     match_profile.hat = valid_hat_id(match_profile.hat)
   end
@@ -712,6 +734,10 @@ local function finish_manifest_fetch(body)
     schedule_cosmetics_retry("manifest rejected: " .. tostring(manifest_err), 60.0)
     return
   end
+  if cosmetics_net.required_sha256 and pending.asset_sha256 ~= cosmetics_net.required_sha256 then
+    schedule_cosmetics_retry("manifest hats checksum does not match online profile", 60.0)
+    return
+  end
 
   local handle, err = mod.http.get(pending.asset_url)
   if not handle then
@@ -754,6 +780,7 @@ local function finish_asset_fetch(body)
   cosmetics_net.verified = true
   cosmetics_net.checked_at = os.clock()
   cosmetics_net.retry_at = os.clock() + 900.0
+  cosmetics_net.required_sha256 = nil
   cosmetics_net.manifest_handle = nil
   cosmetics_net.asset_handle = nil
   cosmetics_net.pending = nil
@@ -805,6 +832,50 @@ local function verify_current_remote_asset()
   return true
 end
 
+local function request_hat_asset_sha(expected_sha)
+  expected_sha = lower_sha256(expected_sha)
+  if not expected_sha or expected_sha == hat_asset_sha256 then return true end
+
+  cosmetics_net.required_sha256 = expected_sha
+  if cosmetics_net.status ~= "fetch_manifest" and cosmetics_net.status ~= "fetch_asset" then
+    cosmetics_net.status = "error"
+    cosmetics_net.message = "fetching missing official hats"
+    cosmetics_net.retry_at = 0.0
+    start_manifest_fetch(true)
+  end
+  return false
+end
+
+local function json_escape_string(value)
+  value = tostring(value or "")
+  local escaped = value:gsub('[%z\1-\31\\"]', function(c)
+    if c == '"' then return '\\"' end
+    if c == "\\" then return "\\\\" end
+    if c == "\b" then return "\\b" end
+    if c == "\f" then return "\\f" end
+    if c == "\n" then return "\\n" end
+    if c == "\r" then return "\\r" end
+    if c == "\t" then return "\\t" end
+    return string.format("\\u%04x", c:byte())
+  end)
+  return '"' .. escaped .. '"'
+end
+
+local function json_number(value, fallback)
+  local n = tonumber(value) or fallback or 0.0
+  n = clamp(n, 0.0, 1.0)
+  return string.format("%.4f", n)
+end
+
+local function json_rgba_array(rgba, fallback)
+  rgba = rgba_or_fallback(rgba, fallback or fallback_skin)
+  return "[" ..
+    json_number(rgba[1], 1.0) .. "," ..
+    json_number(rgba[2], 1.0) .. "," ..
+    json_number(rgba[3], 1.0) .. "," ..
+    json_number(rgba[4], 1.0) .. "]"
+end
+
 local function build_online_profile()
   local skin_tint, clothing_tint = selected_player_colours("online")
   return {
@@ -813,10 +884,46 @@ local function build_online_profile()
     hats_sha256 = hat_asset_sha256,
     verified = cosmetics_net.verified,
     hat = valid_online_hat_id(profile.online.hat),
+    color_source = online_color_source_id(),
     colors = {
       skin_rgba = clone_table(skin_tint),
       clothing_rgba = clone_table(clothing_tint),
     },
+  }
+end
+
+local function build_online_profile_json()
+  local data = build_online_profile()
+  return "{" ..
+    '"schema":1,' ..
+    '"manifest_url":' .. json_escape_string(data.manifest_url) .. "," ..
+    '"hats_sha256":' .. json_escape_string(data.hats_sha256) .. "," ..
+    '"verified":' .. (data.verified and "true" or "false") .. "," ..
+    '"hat":' .. json_escape_string(data.hat) .. "," ..
+    '"color_source":' .. json_escape_string(data.color_source) .. "," ..
+    '"colors":{' ..
+      '"skin_rgba":' .. json_rgba_array(data.colors.skin_rgba, fallback_skin) .. "," ..
+      '"clothing_rgba":' .. json_rgba_array(data.colors.clothing_rgba, fallback_clothing.p1) ..
+    "}" ..
+  "}"
+end
+
+local function normalize_rgba(value, fallback)
+  local rgba = rgba_or_fallback(value, fallback)
+  return {
+    clamp(tonumber(rgba[1]) or fallback[1], 0.0, 1.0),
+    clamp(tonumber(rgba[2]) or fallback[2], 0.0, 1.0),
+    clamp(tonumber(rgba[3]) or fallback[3], 0.0, 1.0),
+    clamp(tonumber(rgba[4]) or fallback[4], 0.0, 1.0),
+  }
+end
+
+local function normalize_profile_colors(data)
+  local colors = type(data) == "table" and data.colors or nil
+  if type(colors) ~= "table" then return nil end
+  return {
+    skin_rgba = normalize_rgba(colors.skin_rgba, fallback_skin),
+    clothing_rgba = normalize_rgba(colors.clothing_rgba, fallback_clothing.p1),
   }
 end
 
@@ -834,15 +941,34 @@ local function apply_match_profile(slot, data)
   hat_id = valid_online_hat_id(hat_id)
 
   local incoming_sha = lower_sha256(data.hats_sha256 or data.asset_sha256 or data.sha256)
-  if incoming_sha and incoming_sha ~= hat_asset_sha256 then
-    hat_id = "none"
+  if incoming_sha and not request_hat_asset_sha(incoming_sha) then
+    return false
   end
 
   match_profiles[slot] = {
     hat = hat_id,
     hats_sha256 = incoming_sha,
+    colors = normalize_profile_colors(data),
   }
   return true
+end
+
+local function apply_match_profile_json(slot, profile_json)
+  if type(profile_json) ~= "string" or profile_json == "" then return false end
+  local data = json_decode(profile_json)
+  if type(data) ~= "table" then return false end
+  return apply_match_profile(slot, data)
+end
+
+local function apply_match_colours()
+  if not game.set_player_render_colors and not game.set_player_render_colours then return end
+  local setter = game.set_player_render_colors or game.set_player_render_colours
+  for slot, match_profile in pairs(match_profiles) do
+    if type(match_profile) == "table" and type(match_profile.colors) == "table" then
+      local player_index = player_index_from_id(slot)
+      setter(player_index, match_profile.colors.skin_rgba, match_profile.colors.clothing_rgba)
+    end
+  end
 end
 
 local function gameplay_hat_for(slot)
@@ -851,6 +977,61 @@ local function gameplay_hat_for(slot)
     return valid_hat_id(match_profile.hat)
   end
   return profile[slot] and valid_hat_id(profile[slot].hat) or "none"
+end
+
+local online_sync_state = {
+  active = false,
+  last_local_json = nil,
+  last_remote_revision = nil,
+}
+
+local function slot_from_player_index(index)
+  return tonumber(index) == 1 and "p2" or "p1"
+end
+
+local function sync_online_profiles()
+  local online = mod.online
+  if not online or not online.status then return end
+
+  local status = online.status()
+  if type(status) ~= "table" or not status.active then
+    if online_sync_state.active then
+      match_profiles = {}
+      online_sync_state.active = false
+      online_sync_state.last_local_json = nil
+      online_sync_state.last_remote_revision = nil
+    end
+    return
+  end
+
+  online_sync_state.active = true
+  local local_slot = slot_from_player_index(status.local_player)
+  local remote_slot = slot_from_player_index(status.remote_player)
+
+  local local_profile = build_online_profile()
+  apply_match_profile(local_slot, local_profile)
+
+  if online.set_cosmetic_profile then
+    local local_json = build_online_profile_json()
+    if local_json ~= online_sync_state.last_local_json then
+      local ok = online.set_cosmetic_profile(local_json)
+      if ok then online_sync_state.last_local_json = local_json end
+    end
+  end
+
+  if online.remote_cosmetic_profile then
+    local remote_json, revision = online.remote_cosmetic_profile()
+    if remote_json and revision ~= online_sync_state.last_remote_revision then
+      if apply_match_profile_json(remote_slot, remote_json) then
+        online_sync_state.last_remote_revision = revision
+        if online.mark_cosmetic_profile_applied then
+          online.mark_cosmetic_profile_applied(revision)
+        end
+      end
+    end
+  end
+
+  apply_match_colours()
 end
 
 local function ensure_assets()
@@ -875,6 +1056,13 @@ local function ensure_assets()
         hat_sheet = info
       else
         asset_error = err
+        if hat_asset_id == REMOTE_HAT_ASSET_ID then
+          cosmetics_net.verified = false
+          cosmetics_net.status = "error"
+          cosmetics_net.message = "cached hats missing; fetching official hats"
+          cosmetics_net.retry_at = 0.0
+          start_manifest_fetch(true)
+        end
         return false
       end
     end
@@ -1521,6 +1709,13 @@ local function draw_hats_state()
   ui.border(margin + 18, top + 100, left_w - 36, panel_h - 150, { line_w = 1, color = {0.20, 0.23, 0.27, 1.0} })
   draw_preview_player(preview_cx, preview_cy, body_scale, selected_player)
 
+  if selected_player == "online" then
+    local color_label = online_color_source_id() == "p2" and "COLORS: P2" or "COLORS: P1"
+    if ui.button_at("official_cosmetics_online_color_source", color_label, margin + 24, bottom - 70, 132, 28) then
+      toggle_online_color_source()
+    end
+  end
+
   local active_hat = hat_by_id[profile[selected_player].hat] or hat_by_id.none
   ui.text_at("Hat: " .. active_hat.name, margin + 24, bottom - 34, 0.82, 0.82, 0.85, 0.88)
 
@@ -1654,6 +1849,18 @@ end
 
 mod.on_frame(function()
   poll_cosmetics_server()
+  sync_online_profiles()
   draw_main_button()
   draw_gameplay_hats()
 end)
+
+mod.on_tick(function()
+  poll_cosmetics_server()
+  sync_online_profiles()
+end)
+
+if mod.on_tick_post then
+  mod.on_tick_post(function()
+    sync_online_profiles()
+  end)
+end

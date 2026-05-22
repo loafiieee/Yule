@@ -69,10 +69,15 @@ size_t ggpo_ext_game_state_size(void) {
 
 int ggpo_ext_save_game_state(void* dst, size_t dst_len, size_t* out_len, uint32_t* out_checksum, char* err, size_t err_cap) {
     uint32_t checksum = 0;
+    size_t saved_len = 0;
 
-    if (!lua_manager_game_state_save(dst, dst_len, out_len, err, err_cap)) {
+    if (!lua_manager_game_state_save(dst, dst_len, &saved_len, err, err_cap)) {
         return 0;
     }
+    if (!lua_manager_game_state_canonicalize_rollback(dst, saved_len, err, err_cap)) {
+        return 0;
+    }
+    if (out_len) *out_len = saved_len;
     if (out_checksum) {
         if (!lua_manager_game_state_rollback_checksum(&checksum, err, err_cap)) {
             return 0;

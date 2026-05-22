@@ -16,6 +16,7 @@
 #include "hooks.h"
 #include "font_ext.h"
 #include "texture_ext.h"
+#include "ggpo_net.h"
 
 static lua_State *L = NULL;
 
@@ -521,6 +522,7 @@ struct LoadedMod {
 
     LuaRefList on_frame;
     LuaRefList on_tick;
+    LuaRefList on_tick_post;
     LuaRefList on_event;
 
     // Fired once per state entry, after the engine's button list is stable.
@@ -2916,6 +2918,7 @@ static unsigned int mod_diag_estimate_memory_bytes(const LoadedMod* mod) {
     bytes += (unsigned long long)sizeof(*mod);
     bytes += (unsigned long long)mod->on_frame.cap * (unsigned long long)sizeof(int);
     bytes += (unsigned long long)mod->on_tick.cap * (unsigned long long)sizeof(int);
+    bytes += (unsigned long long)mod->on_tick_post.cap * (unsigned long long)sizeof(int);
     bytes += (unsigned long long)mod->on_event.cap * (unsigned long long)sizeof(int);
     bytes += (unsigned long long)mod->on_layout_cap * (unsigned long long)sizeof(LayoutHandler);
     bytes += (unsigned long long)mod->ui_hitbox_cap * (unsigned long long)sizeof(UiHitBox);
@@ -5711,6 +5714,15 @@ static int lua_mod_on_tick(lua_State *Ls) {
     return 0;
 }
 
+static int lua_mod_on_tick_post(lua_State *Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    luaL_checktype(Ls, 1, LUA_TFUNCTION);
+    lua_pushvalue(Ls, 1);
+    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    reflist_push(&mod->on_tick_post, ref);
+    return 0;
+}
+
 static int lua_mod_on_event(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     luaL_checktype(Ls, 1, LUA_TFUNCTION);
@@ -7553,6 +7565,73 @@ static int lua_game_player_colour(lua_State* Ls) {
     return 1;
 }
 
+static int lua_read_rgba_arg(lua_State* Ls, int idx, float out[4]) {
+    int any = 0;
+    idx = lua_absindex_compat(Ls, idx);
+    if (!lua_istable(Ls, idx) || !out) return 0;
+
+    for (int i = 0; i < 4; i++) {
+        lua_rawgeti(Ls, idx, i + 1);
+        if (lua_isnumber(Ls, -1)) {
+            float v = (float)lua_tonumber(Ls, -1);
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            out[i] = v;
+            any = 1;
+        }
+        lua_pop(Ls, 1);
+    }
+
+    const char* keys[4] = {"r", "g", "b", "a"};
+    for (int i = 0; i < 4; i++) {
+        lua_getfield(Ls, idx, keys[i]);
+        if (lua_isnumber(Ls, -1)) {
+            float v = (float)lua_tonumber(Ls, -1);
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            out[i] = v;
+            any = 1;
+        }
+        lua_pop(Ls, 1);
+    }
+    return any;
+}
+
+static int lua_game_set_player_render_colours(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1) & 1;
+    uintptr_t player_ptr = game_get_player_ptr(player_index);
+    float skin[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float clothing[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    uint8_t thing_slot = 0;
+
+    if (!player_ptr || !ptr_writable((void*)player_ptr, PLAYER_SIZE)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "player pointer unavailable");
+        return 2;
+    }
+
+    memcpy(skin, (const void*)(player_ptr + PLAYER_OFS_RENDER_RGBA), sizeof(skin));
+    memcpy(clothing, (const void*)(player_ptr + PLAYER_OFS_RENDER_RGBA + sizeof(skin)), sizeof(clothing));
+    (void)lua_read_rgba_arg(Ls, 2, skin);
+    (void)lua_read_rgba_arg(Ls, 3, clothing);
+    memcpy((void*)(player_ptr + PLAYER_OFS_RENDER_RGBA), skin, sizeof(skin));
+    memcpy((void*)(player_ptr + PLAYER_OFS_RENDER_RGBA + sizeof(skin)), clothing, sizeof(clothing));
+
+    thing_slot = *(uint8_t*)(player_ptr + PLAYER_OFS_THING_SLOT);
+    if (p_things && thing_slot < 128u) {
+        uint8_t* thing = p_things + ((size_t)thing_slot * THING_SIZE);
+        if ((uintptr_t)thing != player_ptr &&
+            ptr_writable(thing, THING_SIZE) &&
+            thing[THING_OFS_TYPE] == THING_TYPE_PLAYER) {
+            memcpy(thing + PLAYER_OFS_RENDER_RGBA, skin, sizeof(skin));
+            memcpy(thing + PLAYER_OFS_RENDER_RGBA + sizeof(skin), clothing, sizeof(clothing));
+        }
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
 static int lua_game_state_checksum(lua_State* Ls) {
     uint32_t crc = 0;
     char err[128];
@@ -9093,6 +9172,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
     lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_colour");
     lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_color");
+    lua_pushcfunction(Ls, lua_game_set_player_render_colours);                         lua_setfield(Ls, -2, "set_player_render_colours");
+    lua_pushcfunction(Ls, lua_game_set_player_render_colours);                         lua_setfield(Ls, -2, "set_player_render_colors");
     lua_pushcfunction(Ls, lua_game_state_checksum);                                    lua_setfield(Ls, -2, "state_checksum");
     lua_pushcfunction(Ls, lua_game_full_state_blob);                                   lua_setfield(Ls, -2, "full_state_blob");
     lua_pushcfunction(Ls, lua_game_apply_full_state_blob);                             lua_setfield(Ls, -2, "apply_full_state_blob");
@@ -9115,6 +9196,63 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     /* map selector (online mod) */
     lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
     lua_pushcfunction(Ls, lua_game_get_map_selector); lua_setfield(Ls, -2, "get_map_selector");
+}
+
+static int lua_online_status(lua_State* Ls) {
+    lua_newtable(Ls);
+    lua_pushboolean(Ls, ggpo_net_active()); lua_setfield(Ls, -2, "active");
+    lua_pushboolean(Ls, ggpo_net_connected()); lua_setfield(Ls, -2, "connected");
+    lua_pushstring(Ls, ggpo_net_mode_name()); lua_setfield(Ls, -2, "mode");
+    lua_pushinteger(Ls, ggpo_net_local_player()); lua_setfield(Ls, -2, "local_player");
+    lua_pushinteger(Ls, ggpo_net_remote_player()); lua_setfield(Ls, -2, "remote_player");
+    lua_pushboolean(Ls, ggpo_net_state_synced()); lua_setfield(Ls, -2, "state_synced");
+    lua_pushboolean(Ls, ggpo_net_remote_state_synced()); lua_setfield(Ls, -2, "remote_state_synced");
+    lua_pushboolean(Ls, ggpo_net_start_state_loaded()); lua_setfield(Ls, -2, "start_state_loaded");
+    lua_pushinteger(Ls, ggpo_net_local_cosmetic_profile_revision()); lua_setfield(Ls, -2, "local_cosmetic_revision");
+    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_profile_revision()); lua_setfield(Ls, -2, "remote_cosmetic_revision");
+    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_profile_applied_revision()); lua_setfield(Ls, -2, "remote_cosmetic_applied_revision");
+    return 1;
+}
+
+static int lua_online_set_cosmetic_profile(lua_State* Ls) {
+    size_t len = 0;
+    const char* profile = luaL_checklstring(Ls, 1, &len);
+    if (!ggpo_net_set_local_cosmetic_profile(profile, len)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "cosmetic profile must be %d bytes or less", GGPO_NET_COSMETIC_PROFILE_BYTES);
+        return 2;
+    }
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_online_remote_cosmetic_profile(lua_State* Ls) {
+    size_t len = 0;
+    uint32_t revision = 0;
+    const char* profile = ggpo_net_remote_cosmetic_profile(&len, &revision);
+    if (!profile || len == 0) {
+        lua_pushnil(Ls);
+        lua_pushinteger(Ls, revision);
+        return 2;
+    }
+    lua_pushlstring(Ls, profile, len);
+    lua_pushinteger(Ls, revision);
+    return 2;
+}
+
+static int lua_online_mark_cosmetic_profile_applied(lua_State* Ls) {
+    uint32_t revision = (uint32_t)luaL_checkinteger(Ls, 1);
+    ggpo_net_mark_remote_cosmetic_profile_applied(revision);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static void push_online_api_table(lua_State* Ls) {
+    lua_newtable(Ls);
+    lua_pushcfunction(Ls, lua_online_status); lua_setfield(Ls, -2, "status");
+    lua_pushcfunction(Ls, lua_online_set_cosmetic_profile); lua_setfield(Ls, -2, "set_cosmetic_profile");
+    lua_pushcfunction(Ls, lua_online_remote_cosmetic_profile); lua_setfield(Ls, -2, "remote_cosmetic_profile");
+    lua_pushcfunction(Ls, lua_online_mark_cosmetic_profile_applied); lua_setfield(Ls, -2, "mark_cosmetic_profile_applied");
 }
 
 static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -9481,6 +9619,7 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_unload, 1); lua_setfield(Ls, -2, "on_unload");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_frame,  1); lua_setfield(Ls, -2, "on_frame");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_tick,   1); lua_setfield(Ls, -2, "on_tick");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_tick_post, 1); lua_setfield(Ls, -2, "on_tick_post");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_event,  1); lua_setfield(Ls, -2, "on_event");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_mod_on_layout, 1); lua_setfield(Ls, -2, "on_layout");
 
@@ -9531,6 +9670,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     // Non-blocking TCP networking (online mod).
     push_net_api_table(Ls);
     lua_setfield(Ls, -2, "net");
+
+    // GGPO UDP prototype status/profile bridge.
+    push_online_api_table(Ls);
+    lua_setfield(Ls, -2, "online");
 
     // HTTPS-capable async HTTP GET (WinHTTP).
     push_http_api_table(Ls);
@@ -10514,6 +10657,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
 
     reflist_clear(L, &mod->on_frame);
     reflist_clear(L, &mod->on_tick);
+    reflist_clear(L, &mod->on_tick_post);
     reflist_clear(L, &mod->on_event);
     mod_ui_free(mod);
 
@@ -11550,7 +11694,34 @@ void lua_manager_on_tick(void) {
 }
 
 void lua_manager_on_tick_post(void) {
-    (void)0;
+    if (!L) return;
+
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled) continue;
+        int* refs = NULL;
+        int ref_count = 0;
+        if (!reflist_snapshot(&mod->on_tick_post, &refs, &ref_count)) {
+            log_mod(mod, "ERROR", "on_tick_post dispatch snapshot failed: out of memory");
+            mod->error_count++;
+            continue;
+        }
+
+        for (int i = 0; i < ref_count; i++) {
+            double started_ms = perf_now_ms();
+            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
+            if (lua_pcall(L, 0, 0, 0) != 0) {
+                const char* err = lua_tostring(L, -1);
+                char buf[512];
+                snprintf(buf, sizeof(buf), "on_tick_post error: %s", err ? err : "(unknown)");
+                log_mod(mod, "ERROR", buf);
+                lua_pop(L, 1);
+                mod->error_count++;
+            }
+            mod_perf_counter_record(&mod->perf_tick, perf_now_ms() - started_ms);
+        }
+        free(refs);
+    }
 }
 
 void lua_manager_on_frame() {

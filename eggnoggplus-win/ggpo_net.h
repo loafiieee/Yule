@@ -12,6 +12,7 @@ extern "C" {
 #define GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT 220
 #define GGPO_NET_MAX_PREDICTION_LIMIT 220
 #define GGPO_NET_SIM_MAX_DELAY_TICKS 120
+#define GGPO_NET_COSMETIC_PROFILE_BYTES 768
 
 typedef enum GgpoNetMode {
     GGPO_NET_MODE_NONE = 0,
@@ -59,6 +60,16 @@ uint32_t ggpo_net_remote_build_id(void);
 uint32_t ggpo_net_remote_exe_id(void);
 uint32_t ggpo_net_remote_dll_id(void);
 int ggpo_net_build_mismatch(void);
+
+int ggpo_net_set_local_cosmetic_profile(const char* profile, size_t profile_len);
+const char* ggpo_net_remote_cosmetic_profile(size_t* out_len, uint32_t* out_revision);
+void ggpo_net_mark_remote_cosmetic_profile_applied(uint32_t revision);
+uint32_t ggpo_net_local_cosmetic_profile_revision(void);
+uint32_t ggpo_net_remote_cosmetic_profile_revision(void);
+uint32_t ggpo_net_remote_cosmetic_profile_applied_revision(void);
+int ggpo_net_start_state_loaded(void);
+int ggpo_net_state_synced(void);
+int ggpo_net_remote_state_synced(void);
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);

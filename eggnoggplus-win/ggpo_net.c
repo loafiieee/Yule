@@ -16,7 +16,7 @@
 #include "lua_manager.h"
 
 #define GGPO_NET_MAGIC 0x50474E45u
-#define GGPO_NET_VERSION 5u
+#define GGPO_NET_VERSION 6u
 #define GGPO_NET_HISTORY_FRAMES 512
 #define GGPO_NET_PACKET_INPUTS 64
 #define GGPO_NET_PACKET_CHECKSUMS 32
@@ -30,6 +30,7 @@
 #define GGPO_NET_RESYNC_REQUEST_INTERVAL_TICKS 30
 #define GGPO_NET_STATE_CHUNK_BYTES 900
 #define GGPO_NET_SIM_QUEUE_PACKETS 512
+#define GGPO_NET_COSMETIC_SYNC_WAIT_TICKS 300
 
 #define GGPO_NET_PACKET_HELLO 1u
 #define GGPO_NET_PACKET_INPUT 2u
@@ -37,6 +38,7 @@
 #define GGPO_NET_PACKET_STATE_CHUNK 4u
 #define GGPO_NET_PACKET_STATE_ACK   5u
 #define GGPO_NET_PACKET_RESYNC_REQUEST 6u
+#define GGPO_NET_PACKET_COSMETICS 7u
 
 #define GGPO_NET_STATE_FLAG_CORRECTION 1u
 #define GGPO_NET_STATE_FLAG_DELTA      2u
@@ -120,14 +122,31 @@ typedef struct GgpoNetStateChunkPacket {
     uint32_t chunk_size;
     uint8_t data[GGPO_NET_STATE_CHUNK_BYTES];
 } GgpoNetStateChunkPacket;
+
+typedef struct GgpoNetCosmeticPacket {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t type;
+    uint32_t session_id;
+    uint32_t sender_player;
+    uint32_t build_id;
+    uint32_t exe_id;
+    uint32_t dll_id;
+    uint32_t profile_revision;
+    uint32_t profile_len;
+    char profile[GGPO_NET_COSMETIC_PROFILE_BYTES];
+} GgpoNetCosmeticPacket;
 #pragma pack(pop)
+
+#define GGPO_NET_MAX_PACKET_BYTES \
+    ((sizeof(GgpoNetStateChunkPacket) > sizeof(GgpoNetCosmeticPacket)) ? sizeof(GgpoNetStateChunkPacket) : sizeof(GgpoNetCosmeticPacket))
 
 typedef struct GgpoNetQueuedPacket {
     int valid;
     uint32_t send_tick;
     int len;
     struct sockaddr_in addr;
-    uint8_t bytes[sizeof(GgpoNetStateChunkPacket)];
+    uint8_t bytes[GGPO_NET_MAX_PACKET_BYTES];
 } GgpoNetQueuedPacket;
 
 typedef struct GgpoNetSession {
@@ -257,6 +276,16 @@ typedef struct GgpoNetSession {
     uint32_t remote_dll_id;
     int has_remote_fingerprint;
     int warned_fingerprint_mismatch;
+    char local_cosmetic_profile[GGPO_NET_COSMETIC_PROFILE_BYTES];
+    uint32_t local_cosmetic_profile_len;
+    uint32_t local_cosmetic_profile_revision;
+    uint32_t last_cosmetic_profile_send_tick;
+    char remote_cosmetic_profile[GGPO_NET_COSMETIC_PROFILE_BYTES];
+    uint32_t remote_cosmetic_profile_len;
+    uint32_t remote_cosmetic_profile_revision;
+    uint32_t remote_cosmetic_profile_applied_revision;
+    uint32_t cosmetic_wait_start_tick;
+    int cosmetic_wait_cap_announced;
 } GgpoNetSession;
 
 static GgpoNetSession g_net;
@@ -591,7 +620,7 @@ static void ggpo_net_flush_sim_queue(void) {
 
 static int ggpo_net_send_bytes(const void* data, int len, const struct sockaddr_in* addr, int simulate) {
     uint32_t delay = 0;
-    if (!data || len <= 0 || len > (int)sizeof(GgpoNetStateChunkPacket) || !addr) return 0;
+    if (!data || len <= 0 || len > (int)GGPO_NET_MAX_PACKET_BYTES || !addr) return 0;
 
     if (simulate && g_net.sim_loss_percent > 0u) {
         if (ggpo_net_rand_range(100u) < g_net.sim_loss_percent) {
@@ -946,6 +975,79 @@ static int ggpo_net_send_packet(uint16_t type) {
     if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
     ggpo_net_fill_packet(&p, type);
     return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, type != GGPO_NET_PACKET_BYE);
+}
+
+static int ggpo_net_send_cosmetic_profile(void) {
+    GgpoNetCosmeticPacket p;
+    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (g_net.local_cosmetic_profile_len == 0u ||
+        g_net.local_cosmetic_profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) {
+        return 0;
+    }
+
+    memset(&p, 0, sizeof(p));
+    p.magic = GGPO_NET_MAGIC;
+    p.version = GGPO_NET_VERSION;
+    p.type = GGPO_NET_PACKET_COSMETICS;
+    p.session_id = g_net.session_id;
+    p.sender_player = (uint32_t)g_net.local_player;
+    p.build_id = g_net.local_build_id;
+    p.exe_id = g_net.local_exe_id;
+    p.dll_id = g_net.local_dll_id;
+    p.profile_revision = g_net.local_cosmetic_profile_revision;
+    p.profile_len = g_net.local_cosmetic_profile_len;
+    memcpy(p.profile, g_net.local_cosmetic_profile, g_net.local_cosmetic_profile_len);
+    g_net.last_cosmetic_profile_send_tick = g_net.service_tick;
+    return ggpo_net_send_bytes(&p,
+                               (int)(offsetof(GgpoNetCosmeticPacket, profile) + p.profile_len),
+                               &g_net.peer_addr,
+                               1);
+}
+
+static void ggpo_net_send_cosmetic_profile_periodic(void) {
+    if (!g_net.active || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
+    if (g_net.local_cosmetic_profile_len == 0u) return;
+    if (g_net.last_cosmetic_profile_send_tick != 0u &&
+        g_net.service_tick - g_net.last_cosmetic_profile_send_tick < 30u) {
+        return;
+    }
+    (void)ggpo_net_send_cosmetic_profile();
+}
+
+static int ggpo_net_cosmetic_profiles_ready(void) {
+    if (g_net.local_cosmetic_profile_len == 0u) return 0;
+    if (g_net.remote_cosmetic_profile_len == 0u || g_net.remote_cosmetic_profile_revision == 0u) return 0;
+    if (g_net.remote_cosmetic_profile_applied_revision != g_net.remote_cosmetic_profile_revision) return 0;
+    return 1;
+}
+
+static int ggpo_net_wait_for_cosmetic_profiles(uint32_t* out_checksum) {
+    if (ggpo_net_cosmetic_profiles_ready()) {
+        g_net.cosmetic_wait_start_tick = 0u;
+        g_net.cosmetic_wait_cap_announced = 0;
+        return 0;
+    }
+
+    if (g_net.cosmetic_wait_start_tick == 0u) {
+        g_net.cosmetic_wait_start_tick = ggpo_net_now_tick();
+    }
+    ggpo_net_send_cosmetic_profile_periodic();
+
+    if (g_net.service_tick - g_net.cosmetic_wait_start_tick < GGPO_NET_COSMETIC_SYNC_WAIT_TICKS) {
+        if (out_checksum) *out_checksum = g_net.last_checksum;
+        return 1;
+    }
+
+    if (!g_net.cosmetic_wait_cap_announced) {
+        LOG_WARN("ggpo.net: cosmetic profile sync wait exceeded %u ticks; starting without confirmed cosmetics local_bytes=%u remote_bytes=%u remote_rev=%u applied_rev=%u",
+                 (unsigned int)GGPO_NET_COSMETIC_SYNC_WAIT_TICKS,
+                 (unsigned int)g_net.local_cosmetic_profile_len,
+                 (unsigned int)g_net.remote_cosmetic_profile_len,
+                 (unsigned int)g_net.remote_cosmetic_profile_revision,
+                 (unsigned int)g_net.remote_cosmetic_profile_applied_revision);
+        g_net.cosmetic_wait_cap_announced = 1;
+    }
+    return 0;
 }
 
 static int ggpo_net_send_state_ack(void) {
@@ -1401,6 +1503,58 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     ggpo_net_reset_recv_state();
 }
 
+static void ggpo_net_handle_cosmetic_packet(const GgpoNetCosmeticPacket* p, int got_len, const struct sockaddr_in* from) {
+    if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
+    if (p->type != GGPO_NET_PACKET_COSMETICS) return;
+    if (p->sender_player > 1u || (int)p->sender_player == g_net.local_player) return;
+    if (p->profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) return;
+    if (got_len < (int)(offsetof(GgpoNetCosmeticPacket, profile) + p->profile_len)) return;
+
+    if (!g_net.has_peer_addr) {
+        g_net.peer_addr = *from;
+        g_net.has_peer_addr = 1;
+        g_net.remote_port = ntohs(from->sin_port);
+    } else if (!ggpo_net_addr_equal(&g_net.peer_addr, from)) {
+        return;
+    }
+    if (!ggpo_net_accept_remote_session(p->session_id)) {
+        return;
+    }
+
+    ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
+    g_net.remote_player = (int)p->sender_player;
+    g_net.last_rx_tick = g_net.service_tick;
+    g_net.packets_received++;
+
+    if (!g_net.connected) {
+        g_net.connected = 1;
+        LOG_INFO("ggpo.net: connected mode=%s local_player=%d remote_player=%d peer_port=%u",
+                 ggpo_net_mode_name(),
+                 g_net.local_player,
+                 g_net.remote_player,
+                 (unsigned int)ntohs(g_net.peer_addr.sin_port));
+    }
+
+    if (p->profile_revision != g_net.remote_cosmetic_profile_revision ||
+        p->profile_len != g_net.remote_cosmetic_profile_len ||
+        memcmp(g_net.remote_cosmetic_profile, p->profile, p->profile_len) != 0) {
+        memset(g_net.remote_cosmetic_profile, 0, sizeof(g_net.remote_cosmetic_profile));
+        if (p->profile_len > 0u) {
+            memcpy(g_net.remote_cosmetic_profile, p->profile, p->profile_len);
+        }
+        g_net.remote_cosmetic_profile_len = p->profile_len;
+        g_net.remote_cosmetic_profile_revision = p->profile_revision ? p->profile_revision : (g_net.remote_cosmetic_profile_revision + 1u);
+        if (g_net.remote_cosmetic_profile_revision == 0u) g_net.remote_cosmetic_profile_revision = 1u;
+        if (g_net.remote_cosmetic_profile_applied_revision != g_net.remote_cosmetic_profile_revision) {
+            g_net.remote_cosmetic_profile_applied_revision = 0u;
+        }
+        LOG_INFO("ggpo.net: remote cosmetic profile updated player=%u rev=%u bytes=%u",
+                 (unsigned int)p->sender_player,
+                 (unsigned int)g_net.remote_cosmetic_profile_revision,
+                 (unsigned int)p->profile_len);
+    }
+}
+
 static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr_in* from) {
     if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
     if (p->sender_player > 1u || (int)p->sender_player == g_net.local_player) return;
@@ -1538,7 +1692,8 @@ static void ggpo_net_poll_socket(void) {
         union {
             GgpoNetPacket normal;
             GgpoNetStateChunkPacket state_chunk;
-            uint8_t bytes[sizeof(GgpoNetStateChunkPacket)];
+            GgpoNetCosmeticPacket cosmetics;
+            uint8_t bytes[GGPO_NET_MAX_PACKET_BYTES];
         } packet;
         const GgpoNetPacketPrefix* prefix = (const GgpoNetPacketPrefix*)packet.bytes;
         struct sockaddr_in from;
@@ -1554,6 +1709,10 @@ static void ggpo_net_poll_socket(void) {
         if (prefix->type == GGPO_NET_PACKET_STATE_CHUNK) {
             if (got >= (int)offsetof(GgpoNetStateChunkPacket, data)) {
                 ggpo_net_handle_state_chunk(&packet.state_chunk, got, &from);
+            }
+        } else if (prefix->type == GGPO_NET_PACKET_COSMETICS) {
+            if (got >= (int)offsetof(GgpoNetCosmeticPacket, profile)) {
+                ggpo_net_handle_cosmetic_packet(&packet.cosmetics, got, &from);
             }
         } else if (got >= (int)offsetof(GgpoNetPacket, inputs)) {
             ggpo_net_handle_packet(&packet.normal, &from);
@@ -1955,6 +2114,65 @@ int ggpo_net_build_mismatch(void) {
             g_net.local_dll_id != g_net.remote_dll_id) ? 1 : 0;
 }
 
+int ggpo_net_set_local_cosmetic_profile(const char* profile, size_t profile_len) {
+    if (!profile) profile_len = 0;
+    if (profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) return 0;
+    if (profile_len == g_net.local_cosmetic_profile_len &&
+        (profile_len == 0 || memcmp(g_net.local_cosmetic_profile, profile, profile_len) == 0)) {
+        return 1;
+    }
+
+    memset(g_net.local_cosmetic_profile, 0, sizeof(g_net.local_cosmetic_profile));
+    if (profile_len > 0) {
+        memcpy(g_net.local_cosmetic_profile, profile, profile_len);
+    }
+    g_net.local_cosmetic_profile_len = (uint32_t)profile_len;
+    g_net.local_cosmetic_profile_revision++;
+    if (g_net.local_cosmetic_profile_revision == 0u) g_net.local_cosmetic_profile_revision = 1u;
+    g_net.last_cosmetic_profile_send_tick = 0u;
+    if (g_net.active && g_net.has_peer_addr) {
+        (void)ggpo_net_send_cosmetic_profile();
+    }
+    return 1;
+}
+
+const char* ggpo_net_remote_cosmetic_profile(size_t* out_len, uint32_t* out_revision) {
+    if (out_len) *out_len = (size_t)g_net.remote_cosmetic_profile_len;
+    if (out_revision) *out_revision = g_net.remote_cosmetic_profile_revision;
+    if (g_net.remote_cosmetic_profile_len == 0u) return NULL;
+    return g_net.remote_cosmetic_profile;
+}
+
+void ggpo_net_mark_remote_cosmetic_profile_applied(uint32_t revision) {
+    if (revision != 0u && revision == g_net.remote_cosmetic_profile_revision) {
+        g_net.remote_cosmetic_profile_applied_revision = revision;
+    }
+}
+
+uint32_t ggpo_net_local_cosmetic_profile_revision(void) {
+    return g_net.local_cosmetic_profile_revision;
+}
+
+uint32_t ggpo_net_remote_cosmetic_profile_revision(void) {
+    return g_net.remote_cosmetic_profile_revision;
+}
+
+uint32_t ggpo_net_remote_cosmetic_profile_applied_revision(void) {
+    return g_net.remote_cosmetic_profile_applied_revision;
+}
+
+int ggpo_net_start_state_loaded(void) {
+    return g_net.start_state_loaded ? 1 : 0;
+}
+
+int ggpo_net_state_synced(void) {
+    return g_net.state_synced ? 1 : 0;
+}
+
+int ggpo_net_remote_state_synced(void) {
+    return g_net.remote_state_synced ? 1 : 0;
+}
+
 void ggpo_net_stop(void) {
     if (g_net.sock != INVALID_SOCKET && g_net.sock != 0) {
         if (g_net.has_peer_addr) (void)ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
@@ -2152,6 +2370,7 @@ int ggpo_net_advance(uint32_t raw_p0,
     }
 
     (void)ggpo_net_send_packet(g_net.connected ? GGPO_NET_PACKET_INPUT : GGPO_NET_PACKET_HELLO);
+    ggpo_net_send_cosmetic_profile_periodic();
     ggpo_net_send_state_sync_burst();
     ggpo_net_send_correction_burst();
 
@@ -2207,6 +2426,12 @@ int ggpo_net_advance(uint32_t raw_p0,
         return 1;
     }
 
+    if (g_net.frame == 0u && !g_net.start_state_loaded) {
+        if (ggpo_net_wait_for_cosmetic_profiles(out_checksum)) {
+            return 1;
+        }
+    }
+
     if (!ggpo_net_load_start_state_if_ready(err, err_cap)) {
         return 0;
     }
@@ -2217,6 +2442,7 @@ int ggpo_net_advance(uint32_t raw_p0,
         (void)ggpo_net_queue_local_input(input_frame, sampled_cmd);
     }
     (void)ggpo_net_send_packet(GGPO_NET_PACKET_INPUT);
+    ggpo_net_send_cosmetic_profile_periodic();
 
     if (g_net.frame == 0) {
         uint32_t tmp_remote = 0;

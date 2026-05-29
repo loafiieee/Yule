@@ -13,6 +13,11 @@ local REMOTE_HAT_ASSET_ID = "official_hats_remote"
 local LOCAL_HAT_PATH = "assets/hats.png"
 local CACHE_DIR = "cache"
 local CACHE_HAT_PATH = CACHE_DIR .. "/hats.png"
+local CHARACTER_MANIFEST_PATH = "characters/manifest.json"
+local CHARACTER_CACHE_DIR = CACHE_DIR .. "/characters"
+local CHARACTER_TARGET_W = 16
+local CHARACTER_TARGET_H = 16
+local CHARACTER_MAX_BYTES = 1048576
 local HAT_CELL_W = 32
 local HAT_CELL_H = 32
 local BUNDLED_HATS_SHA256 = "3bbc38cdc3b540ea337e75a4800d84c47c5c199e456cfca5312c1bf662ca0245"
@@ -22,12 +27,15 @@ local online_color_source = storage.get("online_color_source", "p1")
 local profile = {
   p1 = {
     hat = storage.get("p1_hat", "none"),
+    character = storage.get("p1_character", "default"),
   },
   p2 = {
     hat = storage.get("p2_hat", "none"),
+    character = storage.get("p2_character", "default"),
   },
   online = {
     hat = storage.get("online_hat", storage.get("p1_hat", "none")),
+    character = storage.get("online_character", storage.get("p1_character", "default")),
   },
 }
 
@@ -116,6 +124,27 @@ local hats = {
 }
 
 local hat_by_id = {}
+local characters = {
+  {
+    id = "default",
+    name = "Default",
+    builtin = true,
+    color = {0.16, 0.18, 0.21, 1.0},
+  },
+}
+local character_by_id = { default = characters[1] }
+local remote_characters_by_sha = {}
+local remote_asset_revision_applied = nil
+local valid_character_id
+local custom_hat_follow_offset
+local custom_sword_idle_offset
+local character_render_hidden = {}
+local character_choice_state = {}
+local character_import = {
+  defs = {},
+  message = nil,
+  message_until = 0.0,
+}
 
 local function clone_table(t)
   if type(t) ~= "table" then return t end
@@ -159,6 +188,35 @@ local function read_binary_file(rel_path)
   return data
 end
 
+function character_import.read_abs(path)
+  local f, err = io.open(path, "rb")
+  if not f then return nil, err or "open failed" end
+  local data = f:read("*a")
+  f:close()
+  return data
+end
+
+function character_import.dirname(path)
+  path = tostring(path or ""):gsub("\\", "/")
+  return path:match("^(.*)/[^/]*$") or ""
+end
+
+function character_import.join(base, rel)
+  base = tostring(base or ""):gsub("\\", "/")
+  rel = tostring(rel or ""):gsub("\\", "/")
+  if base:sub(-1) == "/" then return base .. rel end
+  return base .. "/" .. rel
+end
+
+function character_import.ext(path)
+  return tostring(path or ""):match("%.([%w]+)$")
+end
+
+function character_import.set_message(message)
+  character_import.message = tostring(message or "")
+  character_import.message_until = os.clock() + 5.0
+end
+
 local function ensure_cache_dir()
   if not mod.get_path then return false, "mod.get_path unavailable" end
   local dir = mod.get_path(CACHE_DIR)
@@ -168,8 +226,25 @@ local function ensure_cache_dir()
   return true
 end
 
-local function write_binary_file(rel_path, data)
+local function ensure_cache_subdir(rel_dir)
   local ok, err = ensure_cache_dir()
+  if not ok then return false, err end
+  if not mod.get_path then return false, "mod.get_path unavailable" end
+  local dir = mod.get_path(rel_dir)
+  dir = tostring(dir or ""):gsub('"', "")
+  if dir == "" then return false, "cache path unavailable" end
+  os.execute('mkdir "' .. dir .. '" >nul 2>nul')
+  return true
+end
+
+local function write_binary_file(rel_path, data)
+  local rel_dir = tostring(rel_path or ""):match("^(.*)/[^/]+$")
+  local ok, err
+  if rel_dir and rel_dir ~= "" then
+    ok, err = ensure_cache_subdir(rel_dir)
+  else
+    ok, err = ensure_cache_dir()
+  end
   if not ok then return false, err end
   local path = mod.get_path(rel_path)
   local f, open_err = io.open(path, "wb")
@@ -511,6 +586,55 @@ local function selected_player_colours(player_id)
          rgba_or_fallback(clothing, fallback_clothing[source_id] or fallback_clothing.p1)
 end
 
+local online_colour_restore = nil
+local colour_indices_applied = false
+
+local function player_colour_index_getter()
+  return game.player_color_index or game.player_colour_index
+end
+
+local function player_colour_index_setter()
+  return game.set_player_color_index or game.set_player_colour_index
+end
+
+local function player_colour_getter()
+  return game.player_color or game.player_colour
+end
+
+local function player_render_colour_setter()
+  return game.set_player_render_colors or game.set_player_render_colours
+end
+
+local function refresh_player_render_colours(player_index)
+  local colour_getter = player_colour_getter()
+  local render_setter = player_render_colour_setter()
+  if not colour_getter or not render_setter then return end
+  local skin = colour_getter(player_index, 0)
+  local clothing = colour_getter(player_index, 1)
+  render_setter(player_index, skin, clothing)
+end
+
+local function read_player_colour_indices(player_id)
+  local source_id = player_id == "p2" and "p2" or "p1"
+  local getter = player_colour_index_getter()
+  local player_index = player_index_from_id(source_id)
+  if getter then
+    return {
+      skin = math.floor(tonumber(getter(player_index, 0)) or 0),
+      clothing = math.floor(tonumber(getter(player_index, 1)) or 0),
+    }
+  end
+  return { skin = 0, clothing = 0 }
+end
+
+local function selected_player_colour_indices(player_id)
+  local source_id = player_id == "online" and online_color_source_id() or (player_id == "p2" and "p2" or "p1")
+  if online_colour_restore and online_colour_restore[source_id] then
+    return clone_table(online_colour_restore[source_id])
+  end
+  return read_player_colour_indices(source_id)
+end
+
 local function clamped_saved_hat_id(player_id)
   local current = profile[player_id] and profile[player_id].hat or "none"
   local stored = storage.get(player_id .. "_hat", current)
@@ -536,6 +660,13 @@ local function save_hat(player_id, hat_id)
   hat_id = valid_hat_id(hat_id)
   profile[player_id].hat = hat_id
   storage.set(player_id .. "_hat", hat_id)
+end
+
+local function save_character(player_id, character_id)
+  player_id = profile_id(player_id)
+  character_id = valid_character_id(character_id)
+  profile[player_id].character = character_id
+  storage.set(player_id .. "_character", character_id)
 end
 
 local function set_selected_player(player_id)
@@ -587,6 +718,264 @@ local function clean_name(value, fallback)
   return value ~= "" and value or "Hat"
 end
 
+local function clean_rel_path(value)
+  if type(value) ~= "string" then return nil end
+  local path = value:gsub("\\", "/"):gsub("[%c]", "")
+  if path == "" or #path > 180 then return nil end
+  if path:sub(1, 1) == "/" or path:match("^%a:") or path:find("%.%.", 1, true) then return nil end
+  return path
+end
+
+local function rebuild_character_index()
+  character_by_id = {}
+  for i = 1, #characters do
+    character_by_id[characters[i].id] = characters[i]
+  end
+end
+
+function valid_character_id(id)
+  return character_by_id[id] and id or "default"
+end
+
+local function character_asset_id(prefix, id, sha)
+  local clean = clean_id(id) or "custom"
+  local suffix = lower_sha256(sha or "") or string.rep("0", 64)
+  return prefix .. clean .. "_" .. suffix:sub(1, 12)
+end
+
+local function normalize_frame_list(value)
+  local frames = {}
+  if type(value) ~= "table" then return frames end
+  for i = 1, #value do
+    local frame = tonumber(value[i])
+    if frame then
+      frames[#frames + 1] = clamp(math.floor(frame), 0, 4095)
+      if #frames >= 240 then break end
+    end
+  end
+  return frames
+end
+
+local function normalize_frame_sequence(value)
+  if type(value) ~= "table" then return {}, nil end
+
+  if type(value.choose) == "table" then
+    local choices = {}
+    for i = 1, #value.choose do
+      local entry = value.choose[i]
+      local frames
+      if type(entry) == "table" then
+        frames = normalize_frame_list(entry)
+      else
+        local frame = tonumber(entry)
+        frames = frame and {clamp(math.floor(frame), 0, 4095)} or {}
+      end
+      if #frames > 0 then
+        choices[#choices + 1] = frames
+        if #choices >= 64 then break end
+      end
+    end
+    if #choices > 0 then return choices[1], choices end
+    return {}, nil
+  end
+
+  return normalize_frame_list(value), nil
+end
+
+local function normalize_animations(src)
+  local animations = {}
+  local default_fps = clamp(tonumber(src.fps or src.frame_rate) or 10.0, 1.0, 60.0)
+  local source_anims = type(src.animations) == "table" and src.animations or nil
+  if source_anims then
+    for name, anim in pairs(source_anims) do
+      local clean_anim = clean_id(tostring(name or ""))
+      if clean_anim and type(anim) == "table" then
+        local frames, choices = normalize_frame_sequence(anim.frames or anim)
+        if #frames > 0 then
+          animations[clean_anim] = {
+            frames = frames,
+            choices = choices,
+            fps = clamp(tonumber(anim.fps or anim.frame_rate) or default_fps, 1.0, 60.0),
+            loop = anim.loop ~= false,
+          }
+        end
+      end
+    end
+  end
+  if not animations.idle then
+    local frames, choices = normalize_frame_sequence(src.frames)
+    animations.idle = {
+      frames = #frames > 0 and frames or {0},
+      choices = choices,
+      fps = default_fps,
+      loop = true,
+    }
+  end
+  return animations
+end
+
+local function normalize_frame_map(src, animations)
+  local out = {}
+  local frame_map = type(src.frame_map) == "table" and src.frame_map or nil
+  if not frame_map then return out end
+  for frame, anim in pairs(frame_map) do
+    local frame_index = tonumber(frame)
+    local anim_id = clean_id(tostring(anim or ""))
+    if frame_index and anim_id and animations[anim_id] then
+      out[tostring(math.floor(frame_index))] = anim_id
+    end
+  end
+  return out
+end
+
+local function normalize_hat_anchor(src)
+  local input = type(src.hat_anchor) == "table" and src.hat_anchor or nil
+  if not input and type(src.head_anchor) == "table" then input = src.head_anchor end
+  if not input then return nil end
+
+  local out = {
+    x = clamp(tonumber(input.x) or 0.0, -16.0, 16.0),
+    y = clamp(tonumber(input.y) or 0.0, -16.0, 16.0),
+    bob_x = clamp(tonumber(input.bob_x or input.idle_bob_x) or 0.0, -8.0, 8.0),
+    bob_y = clamp(tonumber(input.bob_y or input.idle_bob_y) or 0.0, -8.0, 8.0),
+    fps = clamp(tonumber(input.fps) or 12.0, 1.0, 60.0),
+    phase = tonumber(input.phase) or 0.0,
+  }
+
+  for _, name in ipairs({"idle", "run", "walk", "jump", "fall", "duck", "crouch", "prone", "stun", "dead", "eggnogg"}) do
+    local motion = type(input[name]) == "table" and input[name] or nil
+    if motion then
+      out[name] = {
+        x = clamp(tonumber(motion.x) or 0.0, -16.0, 16.0),
+        y = clamp(tonumber(motion.y) or 0.0, -16.0, 16.0),
+        bob_x = clamp(tonumber(motion.bob_x) or 0.0, -8.0, 8.0),
+        bob_y = clamp(tonumber(motion.bob_y) or 0.0, -8.0, 8.0),
+        fps = clamp(tonumber(motion.fps) or out.fps, 1.0, 60.0),
+        phase = tonumber(motion.phase) or out.phase,
+      }
+    end
+  end
+
+  return out
+end
+
+local function normalize_sword_anchor(src)
+  local input = type(src.sword_anchor) == "table" and src.sword_anchor or nil
+  if not input and type(src.sword_idle) == "table" then input = src.sword_idle end
+  if not input then return nil end
+  return normalize_hat_anchor({ hat_anchor = input })
+end
+
+local function normalize_character_definition(src, source, cached_path)
+  if type(src) ~= "table" then return nil, "character is not an object" end
+  local id = clean_id(src.id)
+  if not id or id == "default" then return nil, "invalid character id" end
+  local sheet_path = cached_path or clean_rel_path(src.sheet or src.spritesheet or src.path)
+  if not sheet_path then return nil, "missing character sheet" end
+
+  local cell_w = clamp(math.floor(tonumber(src.cell_w or src.frame_w or src.cellWidth) or 16), 1, 512)
+  local cell_h = clamp(math.floor(tonumber(src.cell_h or src.frame_h or src.cellHeight) or 16), 1, 512)
+  local target_w = clamp(tonumber(src.target_w or src.width or CHARACTER_TARGET_W) or CHARACTER_TARGET_W, 4.0, 32.0)
+  local target_h = clamp(tonumber(src.target_h or src.height or CHARACTER_TARGET_H) or CHARACTER_TARGET_H, 4.0, 32.0)
+  local padding = clamp(math.floor(tonumber(src.padding) or 0), 0, 64)
+  local sheet_sha = lower_sha256(src.sheet_sha256 or src.sha256 or src.asset_sha256)
+  local sheet_data = nil
+
+  if source == "local" then
+    sheet_data = read_binary_file(sheet_path)
+    if not sheet_data then return nil, "missing character sheet" end
+    if #sheet_data > CHARACTER_MAX_BYTES then return nil, "character sheet is too large" end
+    sheet_sha = sha256_hex(sheet_data)
+  elseif not sheet_sha then
+    return nil, "remote character missing sheet checksum"
+  end
+  if not sheet_sha then return nil, "character sheet checksum unavailable" end
+
+  local animations = normalize_animations(src)
+  return {
+    id = id,
+    name = clean_name(src.name, id),
+    sheet = sheet_path,
+    sheet_sha256 = sheet_sha,
+    sheet_bytes = sheet_data,
+    source = source or "local",
+    asset_id = character_asset_id(source == "remote" and "remote_character_" or "character_", id, sheet_sha),
+    cell_w = cell_w,
+    cell_h = cell_h,
+    padding = padding,
+    target_w = target_w,
+    target_h = target_h,
+    offset_x = clamp(tonumber(src.offset_x or src.x) or 0.0, -16.0, 16.0),
+    offset_y = clamp(tonumber(src.offset_y or src.y) or 0.0, -16.0, 16.0),
+    fps = clamp(tonumber(src.fps or src.frame_rate) or 10.0, 1.0, 60.0),
+    animations = animations,
+    frame_map = normalize_frame_map(src, animations),
+    hat_anchor = normalize_hat_anchor(src),
+    sword_anchor = normalize_sword_anchor(src),
+    allowed_online = src.allowed_online ~= false,
+    color = {0.14, 0.18, 0.24, 1.0},
+  }
+end
+
+local function add_or_replace_character(character)
+  if not character or not character.id then return false end
+  for i = 1, #characters do
+    if characters[i].id == character.id then
+      characters[i] = character
+      rebuild_character_index()
+      return true
+    end
+  end
+  characters[#characters + 1] = character
+  rebuild_character_index()
+  return true
+end
+
+local function load_character_catalog()
+  characters = { characters[1] }
+  rebuild_character_index()
+  character_import.defs = {}
+
+  local body = read_binary_file(CHARACTER_MANIFEST_PATH)
+  if body then
+    local manifest = json_decode(body)
+    if type(manifest) == "table" and math.floor(tonumber(manifest.schema) or 0) == 1 then
+      local list = type(manifest.characters) == "table" and manifest.characters or {}
+      for i = 1, #list do
+        local character = normalize_character_definition(list[i], "local")
+        if character then
+          add_or_replace_character(character)
+        end
+      end
+    end
+  end
+
+  local imported_body = storage.get("imported_characters_json", "")
+  local imported_manifest = type(imported_body) == "string" and json_decode(imported_body) or nil
+  local imported_list = type(imported_manifest) == "table" and type(imported_manifest.characters) == "table" and imported_manifest.characters or {}
+  for i = 1, #imported_list do
+    local character = normalize_character_definition(imported_list[i], "local")
+    if character then
+      add_or_replace_character(character)
+      character_import.defs[#character_import.defs + 1] = clone_table(imported_list[i])
+    end
+  end
+  return true
+end
+
+local function clamped_saved_character_id(player_id)
+  local current = profile[player_id] and profile[player_id].character or "default"
+  local stored = storage.get(player_id .. "_character", current)
+  local stored_id = valid_character_id(stored)
+  if stored_id ~= "default" then return stored_id end
+  return valid_character_id(current)
+end
+
+load_character_catalog()
+profile.p1.character = clamped_saved_character_id("p1")
+profile.p2.character = clamped_saved_character_id("p2")
+profile.online.character = clamped_saved_character_id("online")
+
 local function clone_default_hats()
   local cloned = {}
   for i = 1, #default_hats do
@@ -599,8 +988,12 @@ local function clamp_profiles_to_catalog()
   profile.p1.hat = clamped_saved_hat_id("p1")
   profile.p2.hat = clamped_saved_hat_id("p2")
   profile.online.hat = clamped_saved_hat_id("online")
+  profile.p1.character = clamped_saved_character_id("p1")
+  profile.p2.character = clamped_saved_character_id("p2")
+  profile.online.character = clamped_saved_character_id("online")
   for _, match_profile in pairs(match_profiles) do
     match_profile.hat = valid_hat_id(match_profile.hat)
+    match_profile.character = valid_character_id(match_profile.character)
   end
 end
 
@@ -683,6 +1076,19 @@ local function apply_verified_catalog(pending)
   cosmetics_net.revision = pending.revision
 end
 
+local function mark_catalog_verified(pending, message)
+  apply_verified_catalog(pending)
+  cosmetics_net.status = "verified"
+  cosmetics_net.message = message or "official hats verified"
+  cosmetics_net.verified = true
+  cosmetics_net.checked_at = os.clock()
+  cosmetics_net.retry_at = os.clock() + 900.0
+  cosmetics_net.required_sha256 = nil
+  cosmetics_net.manifest_handle = nil
+  cosmetics_net.asset_handle = nil
+  cosmetics_net.pending = nil
+end
+
 local function schedule_cosmetics_retry(message, delay)
   cosmetics_net.status = "error"
   cosmetics_net.message = message or "official hats check failed"
@@ -722,6 +1128,19 @@ local function start_manifest_fetch(force)
   return true
 end
 
+local function cached_asset_matches(expected_sha)
+  expected_sha = lower_sha256(expected_sha)
+  if not expected_sha then return false, "missing expected checksum" end
+
+  local data, read_err = read_binary_file(CACHE_HAT_PATH)
+  if not data then return false, "cached hats missing: " .. tostring(read_err or "open failed") end
+
+  local actual_sha, sha_err = sha256_hex(data)
+  if not actual_sha then return false, "checksum unavailable: " .. tostring(sha_err) end
+  if actual_sha ~= expected_sha then return false, "cached hats checksum mismatch" end
+  return true
+end
+
 local function finish_manifest_fetch(body)
   local manifest, parse_err = json_decode(body)
   if not manifest then
@@ -736,6 +1155,11 @@ local function finish_manifest_fetch(body)
   end
   if cosmetics_net.required_sha256 and pending.asset_sha256 ~= cosmetics_net.required_sha256 then
     schedule_cosmetics_retry("manifest hats checksum does not match online profile", 60.0)
+    return
+  end
+
+  if cached_asset_matches(pending.asset_sha256) then
+    mark_catalog_verified(pending, "official hats verified from cache")
     return
   end
 
@@ -774,16 +1198,7 @@ local function finish_asset_fetch(body)
     return
   end
 
-  apply_verified_catalog(pending)
-  cosmetics_net.status = "verified"
-  cosmetics_net.message = "official hats verified"
-  cosmetics_net.verified = true
-  cosmetics_net.checked_at = os.clock()
-  cosmetics_net.retry_at = os.clock() + 900.0
-  cosmetics_net.required_sha256 = nil
-  cosmetics_net.manifest_handle = nil
-  cosmetics_net.asset_handle = nil
-  cosmetics_net.pending = nil
+  mark_catalog_verified(pending, "official hats verified")
 end
 
 local function poll_cosmetics_server()
@@ -867,6 +1282,79 @@ local function json_number(value, fallback)
   return string.format("%.4f", n)
 end
 
+local function json_integer(value, fallback)
+  return tostring(math.floor(tonumber(value) or fallback or 0))
+end
+
+local function sorted_keys(t)
+  local keys = {}
+  if type(t) ~= "table" then return keys end
+  for k in pairs(t) do
+    keys[#keys + 1] = tostring(k)
+  end
+  table.sort(keys)
+  return keys
+end
+
+local function json_number_raw(value, fallback)
+  local n = tonumber(value) or fallback or 0.0
+  return string.format("%.4f", n)
+end
+
+local function json_frame_array(frames)
+  local out = {}
+  frames = type(frames) == "table" and frames or {}
+  for i = 1, #frames do
+    out[#out + 1] = json_integer(frames[i], 0)
+  end
+  return "[" .. table.concat(out, ",") .. "]"
+end
+
+local function json_animation_frames(anim)
+  if type(anim) == "table" and type(anim.choices) == "table" and #anim.choices > 0 then
+    local out = {}
+    for i = 1, #anim.choices do
+      local frames = anim.choices[i]
+      if type(frames) == "table" and #frames == 1 then
+        out[#out + 1] = json_integer(frames[1], 0)
+      else
+        out[#out + 1] = json_frame_array(frames)
+      end
+    end
+    return '{"choose":[' .. table.concat(out, ",") .. "]}"
+  end
+  return json_frame_array(anim and anim.frames)
+end
+
+local function json_hat_anchor(anchor)
+  if type(anchor) ~= "table" then return "null" end
+
+  local parts = {
+    '"x":' .. json_number_raw(anchor.x, 0.0),
+    '"y":' .. json_number_raw(anchor.y, 0.0),
+    '"bob_x":' .. json_number_raw(anchor.bob_x, 0.0),
+    '"bob_y":' .. json_number_raw(anchor.bob_y, 0.0),
+    '"fps":' .. json_number_raw(anchor.fps, 12.0),
+    '"phase":' .. json_number_raw(anchor.phase, 0.0),
+  }
+
+  for _, name in ipairs(sorted_keys(anchor)) do
+    local motion = anchor[name]
+    if type(motion) == "table" then
+      parts[#parts + 1] = json_escape_string(name) .. ":{" ..
+        '"x":' .. json_number_raw(motion.x, 0.0) .. "," ..
+        '"y":' .. json_number_raw(motion.y, 0.0) .. "," ..
+        '"bob_x":' .. json_number_raw(motion.bob_x, 0.0) .. "," ..
+        '"bob_y":' .. json_number_raw(motion.bob_y, 0.0) .. "," ..
+        '"fps":' .. json_number_raw(motion.fps, anchor.fps or 12.0) .. "," ..
+        '"phase":' .. json_number_raw(motion.phase, anchor.phase or 0.0) ..
+      "}"
+    end
+  end
+
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
 local function json_rgba_array(rgba, fallback)
   rgba = rgba_or_fallback(rgba, fallback or fallback_skin)
   return "[" ..
@@ -877,19 +1365,62 @@ local function json_rgba_array(rgba, fallback)
 end
 
 local function build_online_profile()
-  local skin_tint, clothing_tint = selected_player_colours("online")
+  local colour_indices = selected_player_colour_indices("online")
+  local character = character_by_id[valid_character_id(profile.online.character)]
   return {
     schema = 1,
     manifest_url = MANIFEST_URL,
     hats_sha256 = hat_asset_sha256,
     verified = cosmetics_net.verified,
     hat = valid_online_hat_id(profile.online.hat),
+    character = character and not character.builtin and character.allowed_online ~= false and character or nil,
     color_source = online_color_source_id(),
-    colors = {
-      skin_rgba = clone_table(skin_tint),
-      clothing_rgba = clone_table(clothing_tint),
-    },
+    color_indices = colour_indices,
   }
+end
+
+local function character_meta_json(character)
+  if not character or character.builtin then
+    return '{"id":"default"}'
+  end
+
+  local anim_parts = {}
+  for _, name in ipairs(sorted_keys(character.animations)) do
+    local anim = character.animations[name]
+    if anim and anim.frames and #anim.frames > 0 then
+      anim_parts[#anim_parts + 1] = json_escape_string(name) .. ":{" ..
+        '"frames":' .. json_animation_frames(anim) .. "," ..
+        '"fps":' .. json_number_raw(anim.fps, character.fps or 10.0) .. "," ..
+        '"loop":' .. (anim.loop ~= false and "true" or "false") ..
+      "}"
+    end
+  end
+
+  local map_parts = {}
+  for _, frame in ipairs(sorted_keys(character.frame_map)) do
+    local anim_id = character.frame_map[frame]
+    if anim_id then
+      map_parts[#map_parts + 1] = json_escape_string(frame) .. ":" .. json_escape_string(anim_id)
+    end
+  end
+
+  return "{" ..
+    '"id":' .. json_escape_string(character.id) .. "," ..
+    '"name":' .. json_escape_string(character.name) .. "," ..
+    '"sheet_sha256":' .. json_escape_string(character.sheet_sha256) .. "," ..
+    '"cell_w":' .. json_integer(character.cell_w, 16) .. "," ..
+    '"cell_h":' .. json_integer(character.cell_h, 16) .. "," ..
+    '"padding":' .. json_integer(character.padding, 0) .. "," ..
+    '"target_w":' .. json_number_raw(character.target_w, CHARACTER_TARGET_W) .. "," ..
+    '"target_h":' .. json_number_raw(character.target_h, CHARACTER_TARGET_H) .. "," ..
+    '"offset_x":' .. json_number_raw(character.offset_x, 0.0) .. "," ..
+    '"offset_y":' .. json_number_raw(character.offset_y, 0.0) .. "," ..
+    '"fps":' .. json_number_raw(character.fps, 10.0) .. "," ..
+    '"animations":{' .. table.concat(anim_parts, ",") .. "}," ..
+    '"frame_map":{' .. table.concat(map_parts, ",") .. "}," ..
+    '"hat_anchor":' .. json_hat_anchor(character.hat_anchor) .. "," ..
+    '"sword_anchor":' .. json_hat_anchor(character.sword_anchor) ..
+  "}"
 end
 
 local function build_online_profile_json()
@@ -900,12 +1431,192 @@ local function build_online_profile_json()
     '"hats_sha256":' .. json_escape_string(data.hats_sha256) .. "," ..
     '"verified":' .. (data.verified and "true" or "false") .. "," ..
     '"hat":' .. json_escape_string(data.hat) .. "," ..
+    '"character":' .. character_meta_json(data.character) .. "," ..
     '"color_source":' .. json_escape_string(data.color_source) .. "," ..
-    '"colors":{' ..
-      '"skin_rgba":' .. json_rgba_array(data.colors.skin_rgba, fallback_skin) .. "," ..
-      '"clothing_rgba":' .. json_rgba_array(data.colors.clothing_rgba, fallback_clothing.p1) ..
+    '"color_indices":{' ..
+      '"skin":' .. json_integer(data.color_indices and data.color_indices.skin, 0) .. "," ..
+      '"clothing":' .. json_integer(data.color_indices and data.color_indices.clothing, 0) ..
     "}" ..
   "}"
+end
+
+function character_import.definition_json(character)
+  if not character or character.builtin then return nil end
+
+  local anim_parts = {}
+  for _, name in ipairs(sorted_keys(character.animations)) do
+    local anim = character.animations[name]
+    if anim and anim.frames and #anim.frames > 0 then
+      anim_parts[#anim_parts + 1] = json_escape_string(name) .. ":{" ..
+        '"frames":' .. json_animation_frames(anim) .. "," ..
+        '"fps":' .. json_number_raw(anim.fps, character.fps or 10.0) .. "," ..
+        '"loop":' .. (anim.loop ~= false and "true" or "false") ..
+      "}"
+    end
+  end
+
+  local map_parts = {}
+  for _, frame in ipairs(sorted_keys(character.frame_map)) do
+    local anim_id = character.frame_map[frame]
+    if anim_id then
+      map_parts[#map_parts + 1] = json_escape_string(frame) .. ":" .. json_escape_string(anim_id)
+    end
+  end
+
+  return "{" ..
+    '"id":' .. json_escape_string(character.id) .. "," ..
+    '"name":' .. json_escape_string(character.name) .. "," ..
+    '"sheet":' .. json_escape_string(character.sheet) .. "," ..
+    '"sheet_sha256":' .. json_escape_string(character.sheet_sha256) .. "," ..
+    '"cell_w":' .. json_integer(character.cell_w, 16) .. "," ..
+    '"cell_h":' .. json_integer(character.cell_h, 16) .. "," ..
+    '"padding":' .. json_integer(character.padding, 0) .. "," ..
+    '"target_w":' .. json_number_raw(character.target_w, CHARACTER_TARGET_W) .. "," ..
+    '"target_h":' .. json_number_raw(character.target_h, CHARACTER_TARGET_H) .. "," ..
+    '"offset_x":' .. json_number_raw(character.offset_x, 0.0) .. "," ..
+    '"offset_y":' .. json_number_raw(character.offset_y, 0.0) .. "," ..
+    '"fps":' .. json_number_raw(character.fps, 10.0) .. "," ..
+    '"animations":{' .. table.concat(anim_parts, ",") .. "}," ..
+    '"frame_map":{' .. table.concat(map_parts, ",") .. "}," ..
+    '"hat_anchor":' .. json_hat_anchor(character.hat_anchor) .. "," ..
+    '"sword_anchor":' .. json_hat_anchor(character.sword_anchor) ..
+  "}"
+end
+
+function character_import.save()
+  local parts = {}
+  for i = 1, #character_import.defs do
+    local json = character_import.definition_json(character_import.defs[i])
+    if json then parts[#parts + 1] = json end
+  end
+  storage.set("imported_characters_json", '{"schema":1,"characters":[' .. table.concat(parts, ",") .. "]}")
+end
+
+function character_import.remember(character)
+  local stored = clone_table(character)
+  stored.sheet_bytes = nil
+  stored.sheet_info = nil
+  stored.asset_error = nil
+  stored.last_asset_try = nil
+  stored.source = nil
+  stored.asset_id = nil
+  local replaced = false
+  for i = 1, #character_import.defs do
+    if character_import.defs[i].id == stored.id then
+      character_import.defs[i] = stored
+      replaced = true
+      break
+    end
+  end
+  if not replaced then
+    character_import.defs[#character_import.defs + 1] = stored
+  end
+  character_import.save()
+end
+
+function character_import.import_json(json_path)
+  local package_dir = character_import.dirname(json_path)
+  local body, read_err = character_import.read_abs(json_path)
+  if not body then return false, "could not read character.json: " .. tostring(read_err) end
+  local src, parse_err = json_decode(body)
+  if type(src) ~= "table" then return false, "character.json parse failed: " .. tostring(parse_err) end
+
+  local sheet_rel = clean_rel_path(src.sheet or src.spritesheet or src.path)
+  if not sheet_rel then return false, "character.json needs a relative sheet path" end
+  local sheet_data, sheet_err = character_import.read_abs(character_import.join(package_dir, sheet_rel))
+  if not sheet_data then return false, "could not read sheet: " .. tostring(sheet_err) end
+  if #sheet_data > CHARACTER_MAX_BYTES then return false, "sheet is larger than 1 MiB" end
+
+  local sha = sha256_hex(sheet_data)
+  if not sha then return false, "could not checksum sheet" end
+  local cache_path = CHARACTER_CACHE_DIR .. "/" .. sha .. ".png"
+  local ok, write_err = write_binary_file(cache_path, sheet_data)
+  if not ok then return false, "could not cache sheet: " .. tostring(write_err) end
+
+  local imported = clone_table(src)
+  imported.sheet = cache_path
+  imported.sheet_sha256 = sha
+  imported.id = clean_id(imported.id) or ("custom_" .. sha:sub(1, 12))
+  imported.name = clean_name(imported.name, imported.id)
+
+  local character, err = normalize_character_definition(imported, "local")
+  if not character then return false, tostring(err or "invalid character") end
+  add_or_replace_character(character)
+  character_import.remember(character)
+  save_character(selected_player, character.id)
+  return true, "imported " .. character.name
+end
+
+function character_import.import_folder(folder_path)
+  local fs = mod.fs
+  if not fs or not fs.find_file then
+    return false, "file picker API unavailable"
+  end
+  local json_path = fs.find_file(folder_path, "character.json")
+  if type(json_path) ~= "string" then
+    return false, "package needs character.json"
+  end
+  return character_import.import_json(json_path)
+end
+
+function character_import.ps_quote(value)
+  return "'" .. tostring(value or ""):gsub("'", "''") .. "'"
+end
+
+function character_import.import_zip(zip_path)
+  if not mod.get_path then return false, "mod.get_path unavailable" end
+  local stamp = tostring(math.floor(os.clock() * 1000)) .. "_" .. tostring(math.random(1000, 9999))
+  local rel_dir = CACHE_DIR .. "/character_import_" .. stamp
+  local abs_dir = mod.get_path(rel_dir)
+  local ok, mkdir_err = ensure_cache_subdir(rel_dir)
+  if not ok then return false, tostring(mkdir_err) end
+
+  local command = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force -LiteralPath ' ..
+                  character_import.ps_quote(zip_path) .. ' -DestinationPath ' .. character_import.ps_quote(abs_dir) .. '"'
+  local result = os.execute(command)
+  if result ~= true and result ~= 0 then
+    return false, "zip extraction failed"
+  end
+  return character_import.import_folder(abs_dir)
+end
+
+function character_import.import_file(file_path)
+  local ext = character_import.ext(file_path)
+  if ext and ext:lower() == "zip" then
+    return character_import.import_zip(file_path)
+  end
+  if ext and ext:lower() == "json" then
+    return character_import.import_json(file_path)
+  end
+  return false, "select a .zip package or character.json"
+end
+
+function character_import.choose_folder()
+  if not mod.fs or not mod.fs.pick_folder then
+    character_import.set_message("folder picker unavailable")
+    return
+  end
+  local folder = mod.fs.pick_folder("Import character folder")
+  if type(folder) ~= "string" then
+    character_import.set_message("import cancelled")
+    return
+  end
+  local ok, message = character_import.import_folder(folder)
+  character_import.set_message(message)
+end
+
+function character_import.choose_file()
+  if not mod.fs or not mod.fs.pick_character_file then
+    character_import.set_message("file picker unavailable")
+    return
+  end
+  local path = mod.fs.pick_character_file("Import character zip or json")
+  if type(path) ~= "string" then
+    character_import.set_message("import cancelled")
+    return
+  end
+  local ok, message = character_import.import_file(path)
+  character_import.set_message(message)
 end
 
 local function normalize_rgba(value, fallback)
@@ -927,6 +1638,94 @@ local function normalize_profile_colors(data)
   }
 end
 
+local function normalize_profile_colour_indices(data)
+  if type(data) ~= "table" then return nil end
+  local indices = type(data.color_indices) == "table" and data.color_indices or data
+  local skin = tonumber(indices.skin or indices.skin_index or indices[1])
+  local clothing = tonumber(indices.clothing or indices.clothing_index or indices[2])
+  if not skin or not clothing then return nil end
+  return {
+    skin = math.floor(skin),
+    clothing = math.floor(clothing),
+  }
+end
+
+local function remote_character_cache_path(sha)
+  return CHARACTER_CACHE_DIR .. "/" .. tostring(sha or "") .. ".png"
+end
+
+local function cached_character_asset_matches(sha)
+  sha = lower_sha256(sha)
+  if not sha then return false end
+  local data = read_binary_file(remote_character_cache_path(sha))
+  if not data then return false end
+  local actual = sha256_hex(data)
+  return actual == sha
+end
+
+local function poll_remote_character_asset(expected_sha)
+  expected_sha = lower_sha256(expected_sha)
+  local online = mod.online
+  if not expected_sha or not online or not online.remote_cosmetic_asset then return false end
+
+  local asset_id, data, revision = online.remote_cosmetic_asset()
+  if type(asset_id) ~= "string" or type(data) ~= "string" then return false end
+  if lower_sha256(asset_id) ~= expected_sha then return false end
+  if #data > CHARACTER_MAX_BYTES then return false end
+
+  local actual = sha256_hex(data)
+  if actual ~= expected_sha then return false end
+  local ok = write_binary_file(remote_character_cache_path(expected_sha), data)
+  if not ok then return false end
+  if online.mark_cosmetic_asset_applied and revision and remote_asset_revision_applied ~= revision then
+    online.mark_cosmetic_asset_applied(revision)
+    remote_asset_revision_applied = revision
+  end
+  return true
+end
+
+local function incoming_character_meta(data)
+  if type(data) ~= "table" then return nil end
+  local character = data.character or data.char
+  if type(data.cosmetics) == "table" and data.cosmetics.character then
+    character = data.cosmetics.character
+  end
+  if type(character) ~= "table" then return nil end
+  if character.id == "default" or character.id == "none" then return nil end
+  return character
+end
+
+local function ensure_character_from_profile_meta(meta)
+  if type(meta) ~= "table" then return "default", true end
+  local sha = lower_sha256(meta.sheet_sha256 or meta.sha256 or meta.asset_sha256)
+  if not sha then return "default", true end
+
+  local local_id = valid_character_id(meta.id)
+  local local_character = character_by_id[local_id]
+  if local_character and not local_character.builtin and local_character.sheet_sha256 == sha then
+    return local_id, true
+  end
+
+  if not cached_character_asset_matches(sha) and not poll_remote_character_asset(sha) then
+    return nil, false
+  end
+
+  local existing_id = remote_characters_by_sha[sha]
+  if existing_id and character_by_id[existing_id] then
+    return existing_id, true
+  end
+
+  local remote_meta = clone_table(meta)
+  remote_meta.id = "remote_" .. sha:sub(1, 12)
+  remote_meta.sheet_sha256 = sha
+  local character = normalize_character_definition(remote_meta, "remote", remote_character_cache_path(sha))
+  if not character then return nil, false end
+  character.color = {0.18, 0.14, 0.20, 1.0}
+  add_or_replace_character(character)
+  remote_characters_by_sha[sha] = character.id
+  return character.id, true
+end
+
 local function apply_match_profile(slot, data)
   slot = profile_id(slot)
   if type(data) ~= "table" then
@@ -945,10 +1744,19 @@ local function apply_match_profile(slot, data)
     return false
   end
 
+  local character_id = "default"
+  local character_meta = incoming_character_meta(data)
+  if character_meta then
+    local ok
+    character_id, ok = ensure_character_from_profile_meta(character_meta)
+    if not ok then return false end
+  end
+
   match_profiles[slot] = {
     hat = hat_id,
+    character = valid_character_id(character_id),
     hats_sha256 = incoming_sha,
-    colors = normalize_profile_colors(data),
+    color_indices = normalize_profile_colour_indices(data),
   }
   return true
 end
@@ -960,13 +1768,42 @@ local function apply_match_profile_json(slot, profile_json)
   return apply_match_profile(slot, data)
 end
 
-local function apply_match_colours()
-  if not game.set_player_render_colors and not game.set_player_render_colours then return end
-  local setter = game.set_player_render_colors or game.set_player_render_colours
-  for slot, match_profile in pairs(match_profiles) do
-    if type(match_profile) == "table" and type(match_profile.colors) == "table" then
+local function capture_online_colour_restore()
+  if online_colour_restore then return end
+  online_colour_restore = {
+    p1 = read_player_colour_indices("p1"),
+    p2 = read_player_colour_indices("p2"),
+  }
+end
+
+local function restore_match_colour_indices()
+  local setter = player_colour_index_setter()
+  if setter and online_colour_restore then
+    for _, slot in ipairs({"p1", "p2"}) do
       local player_index = player_index_from_id(slot)
-      setter(player_index, match_profile.colors.skin_rgba, match_profile.colors.clothing_rgba)
+      local indices = online_colour_restore[slot]
+      if indices then
+        setter(player_index, 0, indices.skin)
+        setter(player_index, 1, indices.clothing)
+        refresh_player_render_colours(player_index)
+      end
+    end
+  end
+  online_colour_restore = nil
+  colour_indices_applied = false
+end
+
+local function apply_match_colour_indices()
+  local setter = player_colour_index_setter()
+  if not setter then return end
+  capture_online_colour_restore()
+  for slot, match_profile in pairs(match_profiles) do
+    if type(match_profile) == "table" and type(match_profile.color_indices) == "table" then
+      local player_index = player_index_from_id(slot)
+      setter(player_index, 0, match_profile.color_indices.skin)
+      setter(player_index, 1, match_profile.color_indices.clothing)
+      refresh_player_render_colours(player_index)
+      colour_indices_applied = true
     end
   end
 end
@@ -979,14 +1816,118 @@ local function gameplay_hat_for(slot)
   return profile[slot] and valid_hat_id(profile[slot].hat) or "none"
 end
 
+local function gameplay_character_for(slot)
+  local match_profile = match_profiles[slot]
+  if match_profile and match_profile.character then
+    return valid_character_id(match_profile.character)
+  end
+  return profile[slot] and valid_character_id(profile[slot].character) or "default"
+end
+
+local function should_skip_gameplay_cosmetic_overlays()
+  local state_name = ui.state_name()
+  return state_name == STATE or
+         state_name == "options" or
+         state_name == "options_paused" or
+         state_name == "mods"
+end
+
+local function set_player_vanilla_visible(slot, visible)
+  local player_index = player_index_from_id(slot)
+  local body_setter = game.set_player_body_hidden
+  if not body_setter then return false end
+
+  body_setter(player_index, not visible)
+  if visible then
+    refresh_player_render_colours(player_index)
+    character_render_hidden[slot] = false
+    return true
+  end
+
+  refresh_player_render_colours(player_index)
+  character_render_hidden[slot] = true
+  return true
+end
+
+local function set_sword_idle_offset(slot, x, y)
+  local setter = game.set_player_sword_idle_offset
+  if not setter then return end
+  setter(player_index_from_id(slot), tonumber(x) or 0.0, tonumber(y) or 0.0)
+end
+
+local function apply_character_render_visibility()
+  if should_skip_gameplay_cosmetic_overlays() then
+    for _, slot in ipairs({"p1", "p2"}) do
+      set_sword_idle_offset(slot, 0.0, 0.0)
+      if character_render_hidden[slot] then
+        set_player_vanilla_visible(slot, true)
+      end
+    end
+    return
+  end
+
+  local snap = nil
+  local tick = nil
+  if game.set_player_sword_idle_offset and game.snapshot then
+    snap = game.snapshot(0, false)
+    if snap and not snap.error then
+      tick = snap.native_tick or snap.tick
+    end
+  end
+
+  for _, slot in ipairs({"p1", "p2"}) do
+    local character = character_by_id[gameplay_character_for(slot)]
+    local hide_vanilla = character and not character.builtin and character.sheet_info
+    if hide_vanilla then
+      set_player_vanilla_visible(slot, false)
+      if custom_sword_idle_offset then
+        local player = snap and (slot == "p2" and snap.enemy or snap.player) or nil
+        local x, y = custom_sword_idle_offset(character, player, { owner_slot = slot, tick = tick or os.clock() * 60.0 })
+        set_sword_idle_offset(slot, x, y)
+      else
+        set_sword_idle_offset(slot, 0.0, 0.0)
+      end
+    elseif character_render_hidden[slot] then
+      set_player_vanilla_visible(slot, true)
+      set_sword_idle_offset(slot, 0.0, 0.0)
+    else
+      set_sword_idle_offset(slot, 0.0, 0.0)
+    end
+  end
+end
+
 local online_sync_state = {
   active = false,
   last_local_json = nil,
   last_remote_revision = nil,
+  last_asset_id = nil,
+  asset_check_started = false,
 }
 
 local function slot_from_player_index(index)
   return tonumber(index) == 1 and "p2" or "p1"
+end
+
+local function online_is_active()
+  local online = mod.online
+  if not online or not online.status then return false end
+  local status = online.status()
+  return type(status) == "table" and status.active and true or false
+end
+
+local function sync_local_character_asset()
+  local online = mod.online
+  if not online or not online.set_cosmetic_asset then return end
+  local character = character_by_id[valid_character_id(profile.online.character)]
+  if character and not character.builtin and character.allowed_online ~= false and character.sheet_sha256 and character.sheet_bytes then
+    if online_sync_state.last_asset_id ~= character.sheet_sha256 then
+      local ok = online.set_cosmetic_asset(character.sheet_sha256, character.sheet_bytes)
+      if ok then online_sync_state.last_asset_id = character.sheet_sha256 end
+    end
+  elseif online_sync_state.last_asset_id ~= "" then
+    online.set_cosmetic_asset("", "")
+    online_sync_state.last_asset_id = ""
+  end
 end
 
 local function sync_online_profiles()
@@ -996,18 +1937,27 @@ local function sync_online_profiles()
   local status = online.status()
   if type(status) ~= "table" or not status.active then
     if online_sync_state.active then
+      restore_match_colour_indices()
       match_profiles = {}
+      apply_character_render_visibility()
       online_sync_state.active = false
       online_sync_state.last_local_json = nil
       online_sync_state.last_remote_revision = nil
+      online_sync_state.last_asset_id = nil
+      online_sync_state.asset_check_started = false
     end
     return
   end
 
   online_sync_state.active = true
+  if not online_sync_state.asset_check_started then
+    start_manifest_fetch(true)
+    online_sync_state.asset_check_started = true
+  end
   local local_slot = slot_from_player_index(status.local_player)
   local remote_slot = slot_from_player_index(status.remote_player)
 
+  sync_local_character_asset()
   local local_profile = build_online_profile()
   apply_match_profile(local_slot, local_profile)
 
@@ -1030,8 +1980,6 @@ local function sync_online_profiles()
       end
     end
   end
-
-  apply_match_colours()
 end
 
 local function ensure_assets()
@@ -1056,13 +2004,11 @@ local function ensure_assets()
         hat_sheet = info
       else
         asset_error = err
-        if hat_asset_id == REMOTE_HAT_ASSET_ID then
-          cosmetics_net.verified = false
-          cosmetics_net.status = "error"
-          cosmetics_net.message = "cached hats missing; fetching official hats"
-          cosmetics_net.retry_at = 0.0
-          start_manifest_fetch(true)
-        end
+        cosmetics_net.verified = false
+        cosmetics_net.status = "error"
+        cosmetics_net.message = "hats missing; fetching official hats"
+        cosmetics_net.retry_at = 0.0
+        start_manifest_fetch(true)
         return false
       end
     end
@@ -1450,7 +2396,8 @@ local function clamp_pose_for_anim(player, x, y, low_pose)
     y = math.max(y, low_pose and 8.2 or 7.6)
   end
 
-  return x, y
+  local facing = tonumber(player.facing) or 1
+  return x * (facing < 0 and -1 or 1), y
 end
 
 local function reset_follow_if_detached(key)
@@ -1538,7 +2485,13 @@ local function draw_hat(hat_id, player, opts)
   local flip = facing < 0 and -1 or 1
   local vx = tonumber(player.vx) or 0
   local vy = tonumber(player.vy) or 0
-  local follow_x, follow_y = head_follow_offset(player, opts)
+  local follow_x, follow_y
+  if custom_hat_follow_offset then
+    follow_x, follow_y = custom_hat_follow_offset(player, opts)
+  end
+  if follow_x == nil then
+    follow_x, follow_y = head_follow_offset(player, opts)
+  end
   local idle_follow = is_idle_follow(player)
   local dead_pose = not opts.screen and is_dead_pose(player)
   local eggnogg_pose = not opts.screen and is_eggnogg_pose(player)
@@ -1601,6 +2554,242 @@ local function draw_hat(hat_id, player, opts)
   })
 end
 
+local function ensure_character_asset(character)
+  if not character or character.builtin then return false end
+  if character.sheet_info then return true end
+  local now = os.clock()
+  if character.last_asset_try and now - character.last_asset_try < 0.35 then
+    return false
+  end
+  character.last_asset_try = now
+
+  local sheet, err = mod.assets.load_spritesheet(character.asset_id, character.sheet, {
+    cell_w = character.cell_w,
+    cell_h = character.cell_h,
+    padding = character.padding or 0,
+  })
+  if sheet then
+    character.sheet_info = sheet
+    character.asset_error = nil
+    return true
+  end
+
+  local info = mod.assets.info and mod.assets.info(character.asset_id) or nil
+  if info and info.base_id then
+    character.sheet_info = info
+    character.asset_error = nil
+    return true
+  end
+  character.asset_error = err
+  return false
+end
+
+local function character_has_anim(character, name)
+  return character and character.animations and character.animations[name] and true or false
+end
+
+local function character_animation_for_player(character, player)
+  local frame = math.floor(tonumber(player.sprite_index or player.sprite_frame) or 0)
+  local mapped = character.frame_map and character.frame_map[tostring(frame)] or nil
+  if mapped and character_has_anim(character, mapped) then return mapped end
+
+  if is_eggnogg_pose(player) and character_has_anim(character, "eggnogg") then return "eggnogg" end
+  if is_dead_pose(player) and character_has_anim(character, "dead") then return "dead" end
+
+  local anim_ptr = math.floor(tonumber(player.anim_ptr) or 0)
+  local state_id = math.floor(tonumber(player.state_id) or 0)
+  if (anim_ptr == anim_ptrs.stun or state_id == 4) and character_has_anim(character, "stun") then
+    return "stun"
+  end
+  if duck_pose_anchor(player, frame) then
+    if prone_pose_frames[frame] and character_has_anim(character, "prone") then return "prone" end
+    if character_has_anim(character, "duck") then return "duck" end
+    if character_has_anim(character, "crouch") then return "crouch" end
+  end
+
+  local vx = math.abs(tonumber(player.vx) or 0.0)
+  local vy = tonumber(player.vy) or 0.0
+  if not player.grounded then
+    if vy < -0.15 and character_has_anim(character, "jump") then return "jump" end
+    if vy >= -0.15 and character_has_anim(character, "fall") then return "fall" end
+  end
+  if vx > 0.35 then
+    if character_has_anim(character, "run") then return "run" end
+    if character_has_anim(character, "walk") then return "walk" end
+  end
+  return character_has_anim(character, "idle") and "idle" or next(character.animations)
+end
+
+function custom_hat_follow_offset(player, opts)
+  opts = opts or {}
+  local owner_slot = opts.owner_slot
+  local profile_slot = owner_slot and profile[owner_slot] or nil
+  if not profile_slot then return nil end
+
+  local character_id = opts.screen and profile_slot.character or gameplay_character_for(owner_slot)
+  local character = character_by_id[valid_character_id(character_id)]
+  if not character or character.builtin then return nil end
+
+  local anchor = character.hat_anchor or {}
+  local anim_name = character_animation_for_player(character, player) or "idle"
+  local motion = type(anchor[anim_name]) == "table" and anchor[anim_name] or nil
+  local x = tonumber(anchor.x) or 0.0
+  local y = tonumber(anchor.y) or 0.0
+
+  if motion then
+    x = x + (tonumber(motion.x) or 0.0)
+    y = y + (tonumber(motion.y) or 0.0)
+  end
+
+  local bob_x = tonumber((motion and motion.bob_x) or anchor.bob_x) or 0.0
+  local bob_y = tonumber((motion and motion.bob_y) or anchor.bob_y) or 0.0
+  if bob_x ~= 0.0 or bob_y ~= 0.0 then
+    local tick = tonumber(opts.tick) or os.clock() * 60.0
+    local fps = tonumber((motion and motion.fps) or anchor.fps) or 12.0
+    local phase = tonumber((motion and motion.phase) or anchor.phase) or 0.0
+    local wave = math.sin((tick / 60.0) * fps * math.pi * 2.0 + phase)
+    x = x + bob_x * wave
+    y = y + bob_y * wave
+  end
+
+  local facing = tonumber(player.facing) or 1
+  return x * (facing < 0 and -1 or 1), y
+end
+
+function custom_sword_idle_offset(character, player, opts)
+  opts = opts or {}
+  if not character or character.builtin then return 0.0, 0.0 end
+
+  local anchor = character.sword_anchor or {}
+  local anim_name = player and (character_animation_for_player(character, player) or "idle") or "idle"
+  local motion = type(anchor[anim_name]) == "table" and anchor[anim_name] or nil
+  local x = tonumber(anchor.x) or 0.0
+  local y = tonumber(anchor.y) or 0.0
+
+  if motion then
+    x = x + (tonumber(motion.x) or 0.0)
+    y = y + (tonumber(motion.y) or 0.0)
+  end
+
+  local bob_x = tonumber((motion and motion.bob_x) or anchor.bob_x) or 0.0
+  local bob_y = tonumber((motion and motion.bob_y) or anchor.bob_y) or 0.0
+  if bob_x ~= 0.0 or bob_y ~= 0.0 then
+    local tick = tonumber(opts.tick) or os.clock() * 60.0
+    local fps = tonumber((motion and motion.fps) or anchor.fps) or 12.0
+    local phase = tonumber((motion and motion.phase) or anchor.phase) or 0.0
+    local wave = math.sin((tick / 60.0) * fps * math.pi * 2.0 + phase)
+    x = x + bob_x * wave
+    y = y + bob_y * wave
+  end
+
+  local facing = tonumber(player and player.facing) or 1
+  return x * (facing < 0 and -1 or 1), y
+end
+
+local function chosen_animation_frames(character, anim_name, anim, player, opts)
+  if type(anim.choices) ~= "table" or #anim.choices == 0 then
+    return anim.frames
+  end
+
+  local owner = opts and opts.owner_slot or tostring(player and player.index or "?")
+  local key = owner .. ":" .. tostring(character.id)
+  local state = character_choice_state[key]
+  if not state or state.anim_name ~= anim_name then
+    local seed = math.floor(tonumber(opts and opts.tick) or os.clock() * 60.0)
+    seed = seed + math.floor((tonumber(player and player.x) or 0.0) * 17.0)
+    seed = seed + math.floor((tonumber(player and player.y) or 0.0) * 31.0)
+    seed = seed + #owner * 13 + #anim_name * 7
+    local index = (math.abs(seed) % #anim.choices) + 1
+    state = { anim_name = anim_name, choice = index }
+    character_choice_state[key] = state
+  end
+
+  return anim.choices[state.choice] or anim.frames
+end
+
+local function character_frame_for(character, player, opts)
+  local anim_name = character_animation_for_player(character, player)
+  local anim = character.animations and character.animations[anim_name] or nil
+  if not anim or not anim.frames or #anim.frames == 0 then return 0 end
+  local frames = chosen_animation_frames(character, anim_name, anim, player, opts)
+  if not frames or #frames == 0 then return 0 end
+  local tick = tonumber(opts and opts.tick) or os.clock() * 60.0
+  local fps = tonumber(anim.fps or character.fps) or 10.0
+  local index = math.floor((tick / 60.0) * fps)
+  if anim.loop == false then
+    index = math.min(index, #frames - 1)
+  else
+    index = index % #frames
+  end
+  return frames[index + 1] or frames[1] or 0
+end
+
+local function draw_custom_character(character_id, player, opts)
+  local character = character_by_id[valid_character_id(character_id)]
+  if not character or character.builtin or not player then return false end
+  if not ensure_character_asset(character) then return false end
+
+  local frame = character_frame_for(character, player, opts)
+  local sprite = mod.assets.sprite_id(character.asset_id, frame)
+  if not sprite then return false end
+
+  local facing = tonumber(player.facing) or 1
+  local draw_x
+  local draw_y
+  local scale_x
+  local scale_y
+
+  if opts and opts.screen then
+    local body_scale = tonumber(opts.body_scale) or 1.0
+    draw_x = (tonumber(opts.x) or 0.0) + (character.offset_x or 0.0) * body_scale
+    draw_y = (tonumber(opts.y) or 0.0) + (character.offset_y or 0.0) * body_scale
+    scale_x = body_scale * ((character.target_w or CHARACTER_TARGET_W) / character.cell_w)
+    scale_y = body_scale * ((character.target_h or CHARACTER_TARGET_H) / character.cell_h)
+  else
+    local sx, sy, world_scale = world_to_screen((tonumber(player.x) or 0.0) + (character.offset_x or 0.0),
+                                                (tonumber(player.y) or 0.0) + (character.offset_y or 0.0),
+                                                opts and opts.camera or nil)
+    draw_x = sx
+    draw_y = sy
+    scale_x = world_scale * ((character.target_w or CHARACTER_TARGET_W) / character.cell_w)
+    scale_y = world_scale * ((character.target_h or CHARACTER_TARGET_H) / character.cell_h)
+  end
+
+  return ui.draw_sprite(sprite, draw_x, draw_y, {
+    scale_x = scale_x,
+    scale_y = scale_y,
+    flip = facing < 0,
+    tint = {1.0, 1.0, 1.0, 1.0},
+  })
+end
+
+local function character_items()
+  local rendered = {}
+  for i = 1, #characters do
+    local character = characters[i]
+    local item = {
+      id = character.id,
+      label = character.name,
+      color = character.color,
+    }
+    if not character.builtin and ensure_character_asset(character) then
+      local idle = character.animations and character.animations.idle
+      local frame = idle and idle.frames and idle.frames[1] or 0
+      local sprite = mod.assets.sprite_id(character.asset_id, frame)
+      if sprite then
+        local fit = math.min(42.0 / character.cell_w, 44.0 / character.cell_h)
+        item.sprite = sprite
+        item.sprite_opts = {
+          scale_x = fit,
+          scale_y = fit,
+        }
+      end
+    end
+    rendered[#rendered + 1] = item
+  end
+  return rendered
+end
+
 local function draw_preview_player(cx, cy, body_scale, player_id)
   local clock = os.clock()
   local bounce = math.sin(clock * 3.2) * 2.0
@@ -1608,22 +2797,37 @@ local function draw_preview_player(cx, cy, body_scale, player_id)
   local base = ui.sprite_id and ui.sprite_id("sprites", frame)
   local clothing_layer = ui.sprite_id and ui.sprite_id("sprites", 128 + frame)
   local skin_tint, clothing_tint = selected_player_colours(player_id)
-
-  if base then
-    ui.draw_sprite(base, cx, cy + bounce, { scale = body_scale, tint = skin_tint })
-  end
-  if clothing_layer then
-    ui.draw_sprite(clothing_layer, cx, cy + bounce, { scale = body_scale, tint = clothing_tint })
-  end
-
-  draw_hat(profile[player_id].hat, {
+  local preview_player = {
     index = player_index_from_id(player_id),
     sprite_index = frame,
     facing = 1,
     vx = math.sin(clock * 2.1) * 0.8,
     vy = math.cos(clock * 2.5) * 0.5,
-  }, {
+    grounded = true,
+    state_id = 1,
+  }
+
+  local custom_drawn = draw_custom_character(profile[player_id].character, preview_player, {
     screen = true,
+    owner_slot = player_id,
+    x = cx,
+    y = cy + bounce,
+    body_scale = body_scale,
+    tick = clock * 60.0,
+  })
+
+  if not custom_drawn then
+    if base then
+      ui.draw_sprite(base, cx, cy + bounce, { scale = body_scale, tint = skin_tint })
+    end
+    if clothing_layer then
+      ui.draw_sprite(clothing_layer, cx, cy + bounce, { scale = body_scale, tint = clothing_tint })
+    end
+  end
+
+  draw_hat(profile[player_id].hat, preview_player, {
+    screen = true,
+    owner_slot = player_id,
     x = cx,
     y = cy + bounce,
     body_scale = body_scale,
@@ -1709,21 +2913,56 @@ local function draw_hats_state()
   ui.border(margin + 18, top + 100, left_w - 36, panel_h - 150, { line_w = 1, color = {0.20, 0.23, 0.27, 1.0} })
   draw_preview_player(preview_cx, preview_cy, body_scale, selected_player)
 
+  local import_y = bottom - 132
+  local import_button_w = math.max(96, (left_w - 58) * 0.5)
+  if ui.button_at("official_cosmetics_import_zip", "IMPORT ZIP", margin + 24, import_y, import_button_w, 28) then
+    character_import.choose_file()
+  end
+  if ui.button_at("official_cosmetics_import_folder", "IMPORT FOLDER", margin + 32 + import_button_w, import_y, import_button_w, 28) then
+    character_import.choose_folder()
+  end
+  if character_import.message and os.clock() < character_import.message_until then
+    ui.text_at(character_import.message, margin + 24, bottom - 104, 0.68, 0.78, 0.82, 0.86)
+  end
+
   if selected_player == "online" then
     local color_label = online_color_source_id() == "p2" and "COLORS: P2" or "COLORS: P1"
-    if ui.button_at("official_cosmetics_online_color_source", color_label, margin + 24, bottom - 70, 132, 28) then
+    if ui.button_at("official_cosmetics_online_color_source", color_label, margin + 24, bottom - 82, 132, 28) then
       toggle_online_color_source()
     end
   end
 
   local active_hat = hat_by_id[profile[selected_player].hat] or hat_by_id.none
+  local active_character = character_by_id[profile[selected_player].character] or character_by_id.default
+  ui.text_at("Character: " .. active_character.name, margin + 24, bottom - 56, 0.82, 0.82, 0.85, 0.88)
   ui.text_at("Hat: " .. active_hat.name, margin + 24, bottom - 34, 0.82, 0.82, 0.85, 0.88)
 
-  ui.text_at("HATS", right_x + 18, top + 31, 1.0, 0.94, 0.95, 0.96)
-  local grid_y = top + header_h + 18
   local cols = right_w > 620 and 4 or (right_w > 440 and 3 or 2)
   local cell_w = math.max(126, (right_w - 36 - (cols - 1) * 10) / cols)
-  local cell_h = 92
+  ui.text_at("CHARACTERS", right_x + 18, top + 31, 1.0, 0.94, 0.95, 0.96)
+  local character_grid_y = top + header_h + 18
+  local character_cell_h = 82
+  local new_character = select(1, ui.item_grid("official_cosmetics_characters_" .. selected_player,
+                                               character_items(),
+                                               profile[selected_player].character,
+                                               {
+                                                 x = right_x + 18,
+                                                 y = character_grid_y,
+                                                 cols = cols,
+                                                 cell_w = cell_w,
+                                                 cell_h = character_cell_h,
+                                                 gap = 10,
+                                                 text_scale = 0.70,
+                                               }))
+  if new_character ~= profile[selected_player].character then
+    save_character(selected_player, new_character)
+  end
+
+  local character_rows = math.max(1, math.ceil(#characters / cols))
+  local hats_title_y = character_grid_y + character_rows * character_cell_h + math.max(character_rows - 1, 0) * 10 + 36
+  ui.text_at("HATS", right_x + 18, hats_title_y, 1.0, 0.94, 0.95, 0.96)
+  local grid_y = hats_title_y + 18
+  local cell_h = 86
   local new_hat = select(1, ui.item_grid("official_cosmetics_hats_" .. selected_player,
                                          hat_items(),
                                          profile[selected_player].hat,
@@ -1743,12 +2982,36 @@ local function draw_hats_state()
   ui.end_overlay()
 end
 
+local function draw_gameplay_characters()
+  if should_skip_gameplay_cosmetic_overlays() then return end
+
+  local p1_character = gameplay_character_for("p1")
+  local p2_character = gameplay_character_for("p2")
+  if p1_character == "default" and p2_character == "default" then
+    return
+  end
+
+  local snap = game.snapshot(0, false)
+  if not snap or snap.error or not snap.player then return end
+  local cam = game.camera and game.camera() or nil
+  local tick = snap.native_tick or snap.tick or os.clock() * 60.0
+
+  ui.begin_overlay()
+  if snap.player then
+    draw_custom_character(p1_character, snap.player, { camera = cam, tick = tick, owner_slot = "p1" })
+  end
+  if snap.enemy then
+    draw_custom_character(p2_character, snap.enemy, { camera = cam, tick = tick, owner_slot = "p2" })
+  end
+  ui.end_overlay()
+end
+
 local function draw_gameplay_hats()
-  local state_name = ui.state_name()
-  if state_name == STATE or
-     state_name == "options" or
-     state_name == "options_paused" or
-     state_name == "mods" then
+  if should_skip_gameplay_cosmetic_overlays() then return end
+
+  local p1_hat = gameplay_hat_for("p1")
+  local p2_hat = gameplay_hat_for("p2")
+  if p1_hat == "none" and p2_hat == "none" then
     return
   end
   if not ensure_assets() then return end
@@ -1756,17 +3019,19 @@ local function draw_gameplay_hats()
   local snap = game.snapshot(0, false)
   if not snap or snap.error or not snap.player then return end
   local cam = game.camera and game.camera() or nil
+  local tick = snap.native_tick or snap.tick or os.clock() * 60.0
+  local online = online_is_active()
 
   ui.begin_overlay()
   local p0 = snap.player
   local p1 = snap.enemy
   if p0 then
-    local opts = { camera = cam, tick = snap.native_tick or snap.tick or os.clock() * 60.0 }
-    draw_hat(gameplay_hat_for("p1"), p0, opts)
+    local opts = { camera = cam, tick = tick, online = online, owner_slot = "p1" }
+    draw_hat(p1_hat, p0, opts)
   end
   if p1 then
-    local opts = { camera = cam, tick = snap.native_tick or snap.tick or os.clock() * 60.0 }
-    draw_hat(gameplay_hat_for("p2"), p1, opts)
+    local opts = { camera = cam, tick = tick, online = online, owner_slot = "p2" }
+    draw_hat(p2_hat, p1, opts)
   end
   ui.end_overlay()
 end
@@ -1803,6 +3068,8 @@ if mod.interop and mod.interop.provide then
         verified = cosmetics_net.verified,
         manifest_url = MANIFEST_URL,
         hats_sha256 = hat_asset_sha256,
+        characters = #characters,
+        online_character = valid_character_id(profile.online.character),
         revision = cosmetics_net.revision,
       }
     end,
@@ -1817,6 +3084,7 @@ if mod.interop and mod.interop.provide then
         verified = cosmetics_net.verified,
         manifest_url = MANIFEST_URL,
         hats_sha256 = hat_asset_sha256,
+        online_character = valid_character_id(profile.online.character),
       }
     end,
     get_online_profile = build_online_profile,
@@ -1847,20 +3115,28 @@ else
   ui.create_state(STATE)
 end
 
+start_manifest_fetch(true)
+
 mod.on_frame(function()
   poll_cosmetics_server()
   sync_online_profiles()
+  apply_character_render_visibility()
   draw_main_button()
+  draw_gameplay_characters()
   draw_gameplay_hats()
 end)
 
 mod.on_tick(function()
-  poll_cosmetics_server()
-  sync_online_profiles()
+  if online_is_active() then
+    poll_cosmetics_server()
+    sync_online_profiles()
+    apply_match_colour_indices()
+  elseif colour_indices_applied then
+    restore_match_colour_indices()
+  end
+  apply_character_render_visibility()
 end)
 
-if mod.on_tick_post then
-  mod.on_tick_post(function()
-    sync_online_profiles()
-  end)
-end
+mod.on_tick_post(function()
+  apply_character_render_visibility()
+end)

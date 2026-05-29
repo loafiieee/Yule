@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "characters": [
+    {
+      "id": "example_knight",
+      "name": "Example Knight",
+      "sheet": "characters/example_character.png",
+      "cell_w": 64,
+      "cell_h": 64,
+      "target_w": 16,
+      "target_h": 16,
+      "fps": 12,
+      "animations": {
+        "idle": {
+          "frames": [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+            10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            20, 21, 22, 23, 24, 25, 26, 27, 28, 29
+          ],
+          "fps": 18
+        },
+        "run": { "frames": [30, 31, 32, 33, 34, 35, 36, 37], "fps": 16 },
+        "jump": { "frames": [38], "fps": 1 },
+        "fall": { "frames": [39], "fps": 1 },
+        "duck": { "frames": [40], "fps": 1 },
+        "prone": { "frames": [41], "fps": 1 },
+        "stun": { "frames": [42, 43], "fps": 8 },
+        "dead": { "frames": { "choose": [44, 45, 46] }, "fps": 1 },
+        "eggnogg": { "frames": [45, 46, 47], "fps": 8 }
+      },
+      "frame_map": {
+        "35": "stun",
+        "36": "stun"
+      },
+      "hat_anchor": {
+        "x": 0,
+        "y": 0,
+        "idle": { "bob_x": 0, "bob_y": 0 },
+        "run": { "bob_y": 0.35, "fps": 16 },
+        "duck": { "y": 4.0 },
+        "prone": { "y": 7.0 },
+        "stun": { "y": 5.5 },
+        "dead": { "y": 7.0 },
+        "eggnogg": { "y": 4.0 }
+      },
+      "sword_anchor": {
+        "x": 0,
+        "y": 0,
+        "idle": { "bob_x": 0, "bob_y": 0 },
+        "run": { "bob_x": 0, "bob_y": 0 }
+      }
+    }
+  ]
+}

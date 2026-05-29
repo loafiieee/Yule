@@ -71,6 +71,12 @@ void hooks_block_next_game_tick(int block);
 int hooks_simulate_game_ticks(int count, int arg0);
 int hooks_advance_game_tick(int arg0, int run_framework_tick);
 
+int hooks_player_colour_index(int player_index, int clothing);
+int hooks_set_player_colour_index(int player_index, int clothing, int colour_index);
+void hooks_set_player_body_hidden(int player_index, int hidden);
+int hooks_player_body_hidden(int player_index);
+void hooks_set_player_sword_idle_offset(int player_index, float x, float y);
+
 #define HOOKS_RNG_TRACE_CAPACITY 512u
 
 typedef struct HooksRngTraceEvent {

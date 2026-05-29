@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <winhttp.h>
+#include <commdlg.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -5415,7 +5417,7 @@ static void full_state_zero_player_render_colours(FullStateBlobHeader* hdr) {
     }
 }
 
-static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, char* err, size_t err_cap) {
+static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len, int zero_render_colours, char* err, size_t err_cap) {
     FullStateBlobHeader* hdr = (FullStateBlobHeader*)blob;
 
     if (!full_state_validate_blob_header(blob, blob_len, NULL, err, err_cap)) {
@@ -5437,9 +5439,35 @@ static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, ch
     full_state_zero_transient_range(hdr, ADDR_PLAYER_ARRAY, sizeof(uintptr_t) * 2u);
     full_state_zero_transient_range(hdr, ADDR_CONTROLLER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_LOSER, sizeof(uintptr_t));
-    full_state_zero_player_render_colours(hdr);
+    if (zero_render_colours) {
+        full_state_zero_player_render_colours(hdr);
+        hdr->crowd_sound_last_tick = 0;
+        hdr->chant_step = 0;
+        hdr->chant_timer = 0;
+        hdr->crowd_timer = 0;
+        hdr->game_do_lerp_colours = 0;
+        hdr->waterfall_count = 0;
+        hdr->lerp_time = 0;
+        hdr->score_shudder0 = 0;
+        hdr->score_shudder1 = 0;
+        hdr->camera_x = 0.0f;
+        hdr->camera_y = 0.0f;
+        hdr->camera_shake = 0.0f;
+        hdr->camera_shake_decay = 0.0f;
+        hdr->game_w = 0.0f;
+        hdr->game_h = 0.0f;
+        memset(hdr->particle_state, 0, sizeof(hdr->particle_state));
+    }
 
     return 1;
+}
+
+static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, char* err, size_t err_cap) {
+    return full_state_canonicalize_rollback_blob_ex(blob, blob_len, 0, err, err_cap);
+}
+
+static int full_state_canonicalize_rollback_checksum_blob(void* blob, size_t blob_len, char* err, size_t err_cap) {
+    return full_state_canonicalize_rollback_blob_ex(blob, blob_len, 1, err, err_cap);
 }
 
 static int game_get_room_dims(int* out_room_w, int* out_room_h) {
@@ -7565,6 +7593,21 @@ static int lua_game_player_colour(lua_State* Ls) {
     return 1;
 }
 
+static int lua_game_player_colour_index(lua_State* Ls) {
+    int player_index = (int)luaL_optinteger(Ls, 1, 0);
+    int clothing = (int)luaL_optinteger(Ls, 2, 0);
+    lua_pushinteger(Ls, hooks_player_colour_index(player_index, clothing ? 1 : 0));
+    return 1;
+}
+
+static int lua_game_set_player_colour_index(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1);
+    int clothing = (int)luaL_checkinteger(Ls, 2);
+    int colour_index = (int)luaL_checkinteger(Ls, 3);
+    lua_pushinteger(Ls, hooks_set_player_colour_index(player_index, clothing ? 1 : 0, colour_index));
+    return 1;
+}
+
 static int lua_read_rgba_arg(lua_State* Ls, int idx, float out[4]) {
     int any = 0;
     idx = lua_absindex_compat(Ls, idx);
@@ -7628,6 +7671,29 @@ static int lua_game_set_player_render_colours(lua_State* Ls) {
         }
     }
 
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_set_player_body_hidden(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1) & 1;
+    int hidden = lua_toboolean(Ls, 2) ? 1 : 0;
+    hooks_set_player_body_hidden(player_index, hidden);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_player_body_hidden(lua_State* Ls) {
+    int player_index = (int)luaL_optinteger(Ls, 1, 0) & 1;
+    lua_pushboolean(Ls, hooks_player_body_hidden(player_index) != 0);
+    return 1;
+}
+
+static int lua_game_set_player_sword_idle_offset(lua_State* Ls) {
+    int player_index = (int)luaL_checkinteger(Ls, 1) & 1;
+    float x = (float)luaL_optnumber(Ls, 2, 0.0);
+    float y = (float)luaL_optnumber(Ls, 3, 0.0);
+    hooks_set_player_sword_idle_offset(player_index, x, y);
     lua_pushboolean(Ls, 1);
     return 1;
 }
@@ -9172,8 +9238,15 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
     lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_colour");
     lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_color");
+    lua_pushcfunction(Ls, lua_game_player_colour_index);                               lua_setfield(Ls, -2, "player_colour_index");
+    lua_pushcfunction(Ls, lua_game_player_colour_index);                               lua_setfield(Ls, -2, "player_color_index");
+    lua_pushcfunction(Ls, lua_game_set_player_colour_index);                           lua_setfield(Ls, -2, "set_player_colour_index");
+    lua_pushcfunction(Ls, lua_game_set_player_colour_index);                           lua_setfield(Ls, -2, "set_player_color_index");
     lua_pushcfunction(Ls, lua_game_set_player_render_colours);                         lua_setfield(Ls, -2, "set_player_render_colours");
     lua_pushcfunction(Ls, lua_game_set_player_render_colours);                         lua_setfield(Ls, -2, "set_player_render_colors");
+    lua_pushcfunction(Ls, lua_game_set_player_body_hidden);                             lua_setfield(Ls, -2, "set_player_body_hidden");
+    lua_pushcfunction(Ls, lua_game_player_body_hidden);                                 lua_setfield(Ls, -2, "player_body_hidden");
+    lua_pushcfunction(Ls, lua_game_set_player_sword_idle_offset);                       lua_setfield(Ls, -2, "set_player_sword_idle_offset");
     lua_pushcfunction(Ls, lua_game_state_checksum);                                    lua_setfield(Ls, -2, "state_checksum");
     lua_pushcfunction(Ls, lua_game_full_state_blob);                                   lua_setfield(Ls, -2, "full_state_blob");
     lua_pushcfunction(Ls, lua_game_apply_full_state_blob);                             lua_setfield(Ls, -2, "apply_full_state_blob");
@@ -9211,6 +9284,9 @@ static int lua_online_status(lua_State* Ls) {
     lua_pushinteger(Ls, ggpo_net_local_cosmetic_profile_revision()); lua_setfield(Ls, -2, "local_cosmetic_revision");
     lua_pushinteger(Ls, ggpo_net_remote_cosmetic_profile_revision()); lua_setfield(Ls, -2, "remote_cosmetic_revision");
     lua_pushinteger(Ls, ggpo_net_remote_cosmetic_profile_applied_revision()); lua_setfield(Ls, -2, "remote_cosmetic_applied_revision");
+    lua_pushinteger(Ls, ggpo_net_local_cosmetic_asset_revision()); lua_setfield(Ls, -2, "local_cosmetic_asset_revision");
+    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_asset_revision()); lua_setfield(Ls, -2, "remote_cosmetic_asset_revision");
+    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_asset_applied_revision()); lua_setfield(Ls, -2, "remote_cosmetic_asset_applied_revision");
     return 1;
 }
 
@@ -9247,12 +9323,158 @@ static int lua_online_mark_cosmetic_profile_applied(lua_State* Ls) {
     return 1;
 }
 
+static int lua_online_set_cosmetic_asset(lua_State* Ls) {
+    size_t id_len = 0;
+    size_t data_len = 0;
+    const char* asset_id = luaL_optlstring(Ls, 1, "", &id_len);
+    const char* data = luaL_optlstring(Ls, 2, "", &data_len);
+    if (id_len == 0 || data_len == 0) {
+        lua_pushboolean(Ls, ggpo_net_set_local_cosmetic_asset(NULL, NULL, 0));
+        return 1;
+    }
+    if (!ggpo_net_set_local_cosmetic_asset(asset_id, data, data_len)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "cosmetic asset must be %d bytes or less and have a short id", GGPO_NET_COSMETIC_ASSET_MAX_BYTES);
+        return 2;
+    }
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_online_remote_cosmetic_asset(lua_State* Ls) {
+    const char* asset_id = NULL;
+    size_t len = 0;
+    uint32_t revision = 0;
+    const void* data = ggpo_net_remote_cosmetic_asset(&asset_id, &len, &revision);
+    if (!data || len == 0) {
+        lua_pushnil(Ls);
+        lua_pushnil(Ls);
+        lua_pushinteger(Ls, revision);
+        return 3;
+    }
+    lua_pushstring(Ls, asset_id ? asset_id : "");
+    lua_pushlstring(Ls, (const char*)data, len);
+    lua_pushinteger(Ls, revision);
+    return 3;
+}
+
+static int lua_online_mark_cosmetic_asset_applied(lua_State* Ls) {
+    uint32_t revision = (uint32_t)luaL_checkinteger(Ls, 1);
+    ggpo_net_mark_remote_cosmetic_asset_applied(revision);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
 static void push_online_api_table(lua_State* Ls) {
     lua_newtable(Ls);
     lua_pushcfunction(Ls, lua_online_status); lua_setfield(Ls, -2, "status");
     lua_pushcfunction(Ls, lua_online_set_cosmetic_profile); lua_setfield(Ls, -2, "set_cosmetic_profile");
     lua_pushcfunction(Ls, lua_online_remote_cosmetic_profile); lua_setfield(Ls, -2, "remote_cosmetic_profile");
     lua_pushcfunction(Ls, lua_online_mark_cosmetic_profile_applied); lua_setfield(Ls, -2, "mark_cosmetic_profile_applied");
+    lua_pushcfunction(Ls, lua_online_set_cosmetic_asset); lua_setfield(Ls, -2, "set_cosmetic_asset");
+    lua_pushcfunction(Ls, lua_online_remote_cosmetic_asset); lua_setfield(Ls, -2, "remote_cosmetic_asset");
+    lua_pushcfunction(Ls, lua_online_mark_cosmetic_asset_applied); lua_setfield(Ls, -2, "mark_cosmetic_asset_applied");
+}
+
+static int lua_fs_pick_character_file(lua_State* Ls) {
+    const char* title = luaL_optstring(Ls, 1, "Import character package");
+    char path[MAX_PATH];
+    OPENFILENAMEA ofn;
+    memset(path, 0, sizeof(path));
+    memset(&ofn, 0, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = sizeof(path);
+    ofn.lpstrTitle = title;
+    ofn.lpstrFilter =
+        "Character Packages (*.zip;*.json)\0*.zip;*.json\0"
+        "ZIP Files (*.zip)\0*.zip\0"
+        "JSON Files (*.json)\0*.json\0"
+        "All Files (*.*)\0*.*\0\0";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameA(&ofn)) {
+        lua_pushstring(Ls, path);
+        return 1;
+    }
+    lua_pushnil(Ls);
+    lua_pushstring(Ls, "cancelled");
+    return 2;
+}
+
+static int lua_fs_pick_folder(lua_State* Ls) {
+    const char* title = luaL_optstring(Ls, 1, "Import character folder");
+    char path[MAX_PATH];
+    BROWSEINFOA bi;
+    LPITEMIDLIST pidl;
+    memset(path, 0, sizeof(path));
+    memset(&bi, 0, sizeof(bi));
+    bi.lpszTitle = title;
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    pidl = SHBrowseForFolderA(&bi);
+    if (pidl) {
+        int ok = SHGetPathFromIDListA(pidl, path);
+        CoTaskMemFree(pidl);
+        if (ok && path[0]) {
+            lua_pushstring(Ls, path);
+            return 1;
+        }
+    }
+    lua_pushnil(Ls);
+    lua_pushstring(Ls, "cancelled");
+    return 2;
+}
+
+static int fs_find_file_recursive(const char* dir, const char* name, char* out, size_t out_cap, int depth) {
+    char pattern[MAX_PATH];
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    size_t dir_len;
+    if (!dir || !name || !out || out_cap == 0 || depth > 12) return 0;
+    dir_len = strlen(dir);
+    if (dir_len == 0 || dir_len + 3 >= sizeof(pattern)) return 0;
+    snprintf(pattern, sizeof(pattern), "%s%s*", dir, (dir[dir_len - 1] == '\\' || dir[dir_len - 1] == '/') ? "" : "\\");
+    h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        char child[MAX_PATH];
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        if (dir_len + strlen(fd.cFileName) + 2 >= sizeof(child)) continue;
+        snprintf(child, sizeof(child), "%s%s%s", dir, (dir[dir_len - 1] == '\\' || dir[dir_len - 1] == '/') ? "" : "\\", fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (fs_find_file_recursive(child, name, out, out_cap, depth + 1)) {
+                FindClose(h);
+                return 1;
+            }
+        } else if (_stricmp(fd.cFileName, name) == 0) {
+            snprintf(out, out_cap, "%s", child);
+            FindClose(h);
+            return 1;
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return 0;
+}
+
+static int lua_fs_find_file(lua_State* Ls) {
+    const char* root = luaL_checkstring(Ls, 1);
+    const char* name = luaL_optstring(Ls, 2, "character.json");
+    char out[MAX_PATH];
+    out[0] = '\0';
+    if (fs_find_file_recursive(root, name, out, sizeof(out), 0)) {
+        lua_pushstring(Ls, out);
+        return 1;
+    }
+    lua_pushnil(Ls);
+    lua_pushstring(Ls, "not found");
+    return 2;
+}
+
+static void push_fs_api_table(lua_State* Ls) {
+    lua_newtable(Ls);
+    lua_pushcfunction(Ls, lua_fs_pick_character_file); lua_setfield(Ls, -2, "pick_character_file");
+    lua_pushcfunction(Ls, lua_fs_pick_folder); lua_setfield(Ls, -2, "pick_folder");
+    lua_pushcfunction(Ls, lua_fs_find_file); lua_setfield(Ls, -2, "find_file");
 }
 
 static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -9674,6 +9896,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     // GGPO UDP prototype status/profile bridge.
     push_online_api_table(Ls);
     lua_setfield(Ls, -2, "online");
+
+    // Local file/folder pickers for user-selected import packages.
+    push_fs_api_table(Ls);
+    lua_setfield(Ls, -2, "fs");
 
     // HTTPS-capable async HTTP GET (WinHTTP).
     push_http_api_table(Ls);
@@ -12408,7 +12634,7 @@ int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_
         free(blob);
         return 0;
     }
-    if (!full_state_canonicalize_rollback_blob(blob, blob_len, err, err_cap)) {
+    if (!full_state_canonicalize_rollback_checksum_blob(blob, blob_len, err, err_cap)) {
         free(blob);
         return 0;
     }

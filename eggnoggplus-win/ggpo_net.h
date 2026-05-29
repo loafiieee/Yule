@@ -12,7 +12,9 @@ extern "C" {
 #define GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT 220
 #define GGPO_NET_MAX_PREDICTION_LIMIT 220
 #define GGPO_NET_SIM_MAX_DELAY_TICKS 120
-#define GGPO_NET_COSMETIC_PROFILE_BYTES 768
+#define GGPO_NET_COSMETIC_PROFILE_BYTES 2048
+#define GGPO_NET_COSMETIC_ASSET_ID_BYTES 65
+#define GGPO_NET_COSMETIC_ASSET_MAX_BYTES 1048576
 
 typedef enum GgpoNetMode {
     GGPO_NET_MODE_NONE = 0,
@@ -67,6 +69,12 @@ void ggpo_net_mark_remote_cosmetic_profile_applied(uint32_t revision);
 uint32_t ggpo_net_local_cosmetic_profile_revision(void);
 uint32_t ggpo_net_remote_cosmetic_profile_revision(void);
 uint32_t ggpo_net_remote_cosmetic_profile_applied_revision(void);
+int ggpo_net_set_local_cosmetic_asset(const char* asset_id, const void* data, size_t data_len);
+const void* ggpo_net_remote_cosmetic_asset(const char** out_id, size_t* out_len, uint32_t* out_revision);
+void ggpo_net_mark_remote_cosmetic_asset_applied(uint32_t revision);
+uint32_t ggpo_net_local_cosmetic_asset_revision(void);
+uint32_t ggpo_net_remote_cosmetic_asset_revision(void);
+uint32_t ggpo_net_remote_cosmetic_asset_applied_revision(void);
 int ggpo_net_start_state_loaded(void);
 int ggpo_net_state_synced(void);
 int ggpo_net_remote_state_synced(void);
@@ -87,6 +95,7 @@ uint32_t ggpo_net_frame_count(void);
 uint32_t ggpo_net_remote_frame_count(void);
 uint32_t ggpo_net_last_checksum(void);
 size_t ggpo_net_state_size(void);
+int ggpo_net_catchup_pending(void);
 uint32_t ggpo_net_prediction_count(void);
 uint32_t ggpo_net_rollback_count(void);
 uint32_t ggpo_net_packets_sent(void);

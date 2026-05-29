@@ -107,6 +107,7 @@ extern void SDL_free(void* mem);
 #define ADDR_BTN_PLAYER_FILTER        0x4325C0u
 #define ADDR_PLOT_TEXT                0x4304E0u
 #define ADDR_PLOT_TEXT_SET_SHADOW     0x430390u
+#define ADDR_TURTLE_TRANS             0x409210u
 #define ADDR_TURTLE_SET_ANGLE         0x409000u
 #define ADDR_TURTLE_SET_POS_UNSCALED  0x409040u
 #define ADDR_TURTLE_SET_SCALE         0x409080u
@@ -132,6 +133,8 @@ extern void SDL_free(void* mem);
 #define ADDR_GAME_PLAYER_COLOUR       0x4207C0u
 #define ADDR_GAME_INC_PLAYER_COLOUR_EX 0x420E30u
 #define ADDR_ANGLE_COLOUR             0x4180F0u
+#define ADDR_DRAW_PLAYER_BODY         0x41BDD0u
+#define ADDR_PLAYER_ARRAY             0x542058u
 #define ADDR_LAYER                    0x55A33Cu
 #define ADDR_TURTLE_R                 0x448110u
 #define ADDR_TURTLE_G                 0x448114u
@@ -273,6 +276,7 @@ typedef void  (__cdecl *fn_button_set_layout_t)(float, float);
 typedef int   (__cdecl *fn_btn_player_filter_t)(void* btn, int event_code);
 typedef void  (__cdecl *fn_plot_text_t)(const char*, int);
 typedef void  (__cdecl *fn_plot_text_set_shadow_t)(float, float, float, float);
+typedef void  (__cdecl *fn_turtle_trans_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
 typedef void  (__cdecl *fn_turtle_set_pos_unscaled_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_scale_t)(double, double);
@@ -309,6 +313,7 @@ static fn_button_set_layout_t        p_button_set_layout = (fn_button_set_layout
 static fn_btn_player_filter_t        p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
 static fn_plot_text_t                p_plot_text = (fn_plot_text_t)(uintptr_t)ADDR_PLOT_TEXT;
 static fn_plot_text_set_shadow_t     p_plot_text_set_shadow = (fn_plot_text_set_shadow_t)(uintptr_t)ADDR_PLOT_TEXT_SET_SHADOW;
+static fn_turtle_trans_t             p_turtle_trans = (fn_turtle_trans_t)(uintptr_t)ADDR_TURTLE_TRANS;
 static fn_turtle_set_angle_t         p_turtle_set_angle = (fn_turtle_set_angle_t)(uintptr_t)ADDR_TURTLE_SET_ANGLE;
 static fn_turtle_set_pos_unscaled_t  p_turtle_set_pos_unscaled = (fn_turtle_set_pos_unscaled_t)(uintptr_t)ADDR_TURTLE_SET_POS_UNSCALED;
 static fn_turtle_set_scale_t         p_turtle_set_scale = (fn_turtle_set_scale_t)(uintptr_t)ADDR_TURTLE_SET_SCALE;
@@ -341,6 +346,7 @@ static fn_game_player_colour_t       p_game_player_colour_trampoline = NULL;
 static fn_game_inc_player_colour_ex_t p_game_inc_player_colour_ex = (fn_game_inc_player_colour_ex_t)(uintptr_t)ADDR_GAME_INC_PLAYER_COLOUR_EX;
 static fn_game_inc_player_colour_ex_t p_game_inc_player_colour_ex_trampoline = NULL;
 static fn_angle_colour_t             p_angle_colour = (fn_angle_colour_t)(uintptr_t)ADDR_ANGLE_COLOUR;
+static uintptr_t*                    p_player_slots = (uintptr_t*)(uintptr_t)ADDR_PLAYER_ARRAY;
 static volatile int* g_layer = (volatile int*)(uintptr_t)ADDR_LAYER;
 static volatile uint32_t* g_mad_ticks = (volatile uint32_t*)(uintptr_t)ADDR_MAD_TICKS;
 static volatile uint32_t* g_game_ticks = (volatile uint32_t*)(uintptr_t)ADDR_GAME_TICKS;
@@ -362,6 +368,11 @@ void* g_hooks_rng_rnd_trampoline = NULL;
 void* g_hooks_rng_frnd_trampoline = NULL;
 void* g_hooks_rng_rnd5050_trampoline = NULL;
 void* g_hooks_rng_rndsign_trampoline = NULL;
+void* g_draw_player_body_trampoline = NULL;
+void* g_sprite_batch_plot_trampoline = NULL;
+void* g_turtle_trans_trampoline = NULL;
+static volatile int g_player_body_hidden[2] = {0, 0};
+static volatile float g_player_sword_idle_offset[2][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}};
 
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
@@ -377,6 +388,9 @@ static Detour g_game_player_colour_index_detour;
 static Detour g_game_set_player_colour_index_detour;
 static Detour g_game_player_colour_detour;
 static Detour g_game_inc_player_colour_ex_detour;
+static Detour g_draw_player_body_detour;
+static Detour g_sprite_batch_plot_detour;
+static Detour g_turtle_trans_detour;
 static Detour g_rng_mrand_detour;
 static Detour g_rng_rnd_detour;
 static Detour g_rng_frnd_detour;
@@ -875,6 +889,148 @@ static int __cdecl hooked_game_set_player_colour_index(uint32_t player_index, in
     if (g_player_clr_index) g_player_clr_index[slot] = wrapped;
     return wrapped;
 }
+
+int hooks_player_colour_index(int player_index, int clothing) {
+    int slot = hooks_player_colour_slot((uint32_t)player_index, clothing);
+    return g_player_clr_index ? g_player_clr_index[slot] : 0;
+}
+
+int hooks_set_player_colour_index(int player_index, int clothing, int colour_index) {
+    int slot = hooks_player_colour_slot((uint32_t)player_index, clothing);
+    int wrapped = hooks_wrap_player_colour_index(colour_index);
+    if (g_player_clr_index) g_player_clr_index[slot] = wrapped;
+    return wrapped;
+}
+
+void hooks_set_player_body_hidden(int player_index, int hidden) {
+    g_player_body_hidden[player_index & 1] = hidden ? 1 : 0;
+}
+
+int hooks_player_body_hidden(int player_index) {
+    return g_player_body_hidden[player_index & 1] ? 1 : 0;
+}
+
+void hooks_set_player_sword_idle_offset(int player_index, float x, float y) {
+    int slot = player_index & 1;
+    if (x < -16.0f) x = -16.0f;
+    if (x > 16.0f) x = 16.0f;
+    if (y < -16.0f) y = -16.0f;
+    if (y > 16.0f) y = 16.0f;
+    g_player_sword_idle_offset[slot][0] = x;
+    g_player_sword_idle_offset[slot][1] = y;
+}
+
+static int hooks_player_index_for_ptr(uintptr_t player_ptr) {
+    if (!player_ptr || !p_player_slots) return -1;
+    if ((uintptr_t)p_player_slots[0] == player_ptr) return 0;
+    if ((uintptr_t)p_player_slots[1] == player_ptr) return 1;
+    return -1;
+}
+
+int __cdecl hooks_should_skip_draw_player_body(uintptr_t player_ptr) {
+    int slot = hooks_player_index_for_ptr(player_ptr);
+    return slot >= 0 ? hooks_player_body_hidden(slot) : 0;
+}
+
+static int hooks_is_player_body_sprite_call(uintptr_t return_addr) {
+    switch ((uint32_t)return_addr) {
+        case 0x41C1FFu: /* draw_player_swordfight arm */
+        case 0x41CA71u: /* draw_things thrown/grabbed arm */
+        case 0x41CCF4u: /* draw_things pose arm skin */
+        case 0x41CD5Bu: /* draw_things pose arm clothing */
+        case 0x41CE2Eu: /* draw_things secondary arm */
+        case 0x41CF1Bu: /* draw_things prone/duck arm */
+        case 0x41D053u: /* draw_things flipped secondary arm */
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+int __cdecl hooks_should_skip_sprite_batch_plot(uintptr_t return_addr, uintptr_t player_ptr, int sprite) {
+    (void)sprite;
+    if (!hooks_is_player_body_sprite_call(return_addr)) return 0;
+    return hooks_should_skip_draw_player_body(player_ptr);
+}
+
+static int hooks_is_player_sword_idle_trans_call(uintptr_t return_addr) {
+    return return_addr == 0x41C02Eu || return_addr == 0x41CF9Fu;
+}
+
+int __cdecl hooks_prepare_turtle_trans(uintptr_t return_addr, uintptr_t player_ptr, double* x, double* y) {
+    int slot;
+    if (!x || !y || !hooks_is_player_sword_idle_trans_call(return_addr)) return 0;
+    slot = hooks_player_index_for_ptr(player_ptr);
+    if (slot < 0 || !hooks_player_body_hidden(slot)) return 0;
+    *x = (double)g_player_sword_idle_offset[slot][0];
+    *y = (double)g_player_sword_idle_offset[slot][1];
+    return 1;
+}
+
+#ifdef HOOKS_INTELLISENSE
+static void hooked_draw_player_body(void) { }
+static void hooked_sprite_batch_plot(void) { }
+static void hooked_turtle_trans(void) { }
+#else
+static void __attribute__((naked)) hooked_draw_player_body(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "pushl %eax\n\t"
+        "call _hooks_should_skip_draw_player_body\n\t"
+        "addl $4, %esp\n\t"
+        "testl %eax, %eax\n\t"
+        "jnz 1f\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_draw_player_body_trampoline\n\t"
+        "1:\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "ret\n\t"
+    );
+}
+
+static void __attribute__((naked)) hooked_sprite_batch_plot(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 40(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl %ebx\n\t"
+        "movl 44(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "call _hooks_should_skip_sprite_batch_plot\n\t"
+        "addl $12, %esp\n\t"
+        "testl %eax, %eax\n\t"
+        "jnz 1f\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_sprite_batch_plot_trampoline\n\t"
+        "1:\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "ret\n\t"
+    );
+}
+
+static void __attribute__((naked)) hooked_turtle_trans(void) {
+    __asm__ __volatile__(
+        "pushal\n\t"
+        "movl %esp, %edx\n\t"
+        "leal 44(%edx), %eax\n\t"
+        "pushl %eax\n\t"
+        "leal 36(%edx), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl %ebx\n\t"
+        "pushl 32(%edx)\n\t"
+        "call _hooks_prepare_turtle_trans\n\t"
+        "addl $16, %esp\n\t"
+        "popal\n\t"
+        "jmp *_g_turtle_trans_trampoline\n\t"
+    );
+}
+#endif
 
 static void __cdecl hooked_game_player_colour(float* out, uint32_t player_index, int clothing) {
     int player = (int)(player_index & 1u);
@@ -7039,23 +7195,30 @@ static void __cdecl hooked_game_update(int arg0) {
         uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
         uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
         uint32_t checksum = 0;
-        int advanced = 0;
+        int advanced_any = 0;
+        int steps = 0;
         char err[512];
         char out[CONSOLE_LINE_TEXT];
-        if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
-            snprintf(out,
-                     sizeof(out),
-                     "ggpo.net: failed (%s)",
-                     err[0] ? err : "see log");
-            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
-            LOG_ERROR("ggpo.net: failed (%s)", err[0] ? err : "unknown error");
-            ggpo_net_stop();
-            lua_manager_on_tick_post();
-            hooks_finish_game_tick();
-            return;
-        }
+        do {
+            int advanced = 0;
+            if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
+                snprintf(out,
+                         sizeof(out),
+                         "ggpo.net: failed (%s)",
+                         err[0] ? err : "see log");
+                console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+                LOG_ERROR("ggpo.net: failed (%s)", err[0] ? err : "unknown error");
+                ggpo_net_stop();
+                lua_manager_on_tick_post();
+                hooks_finish_game_tick();
+                return;
+            }
+            if (!advanced) break;
+            advanced_any = 1;
+            steps++;
+        } while (steps < 4 && ggpo_net_catchup_pending());
         lua_manager_on_tick_post();
-        if (!advanced) {
+        if (!advanced_any) {
             hooks_finish_game_tick();
         }
         return;
@@ -7223,6 +7386,44 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour game_inc_player_colour_ex (main menu colour buttons keep vanilla wrap)");
     } else {
         p_game_inc_player_colour_ex_trampoline = (fn_game_inc_player_colour_ex_t)g_game_inc_player_colour_ex_detour.trampoline;
+    }
+
+    // draw_player_body starts with:
+    //   push ebp
+    //   mov ecx, 0x18
+    // Patch 6 bytes so custom character overlays can hide only the vanilla
+    // body layers without making the player's sword inherit transparent tints.
+    if (!install_detour(&g_draw_player_body_detour,
+                        (void*)(uintptr_t)ADDR_DRAW_PLAYER_BODY,
+                        (void*)&hooked_draw_player_body,
+                        6)) {
+        LOG_WARN("hooks_init: failed to detour draw_player_body (custom characters will draw over vanilla bodies)");
+    } else {
+        g_draw_player_body_trampoline = g_draw_player_body_detour.trampoline;
+    }
+
+    // A few sword/pose paths draw the vanilla arm directly with sprite_batch_plot
+    // instead of going through draw_player_body. Filter only those return sites
+    // for custom-character slots, leaving the sword's misc sprites visible.
+    if (!install_detour(&g_sprite_batch_plot_detour,
+                        (void*)(uintptr_t)ADDR_SPRITE_BATCH_PLOT,
+                        (void*)&hooked_sprite_batch_plot,
+                        6)) {
+        LOG_WARN("hooks_init: failed to detour sprite_batch_plot (custom characters may show vanilla arm layers)");
+    } else {
+        g_sprite_batch_plot_trampoline = g_sprite_batch_plot_detour.trampoline;
+    }
+
+    // turtle_trans begins with two 4-byte double loads. For custom characters,
+    // replace the vanilla swordfight idle sway with a Lua-supplied per-player
+    // offset so the sword can match the custom body animation instead.
+    if (!install_detour(&g_turtle_trans_detour,
+                        (void*)(uintptr_t)ADDR_TURTLE_TRANS,
+                        (void*)&hooked_turtle_trans,
+                        8)) {
+        LOG_WARN("hooks_init: failed to detour turtle_trans (custom sword idle offsets disabled)");
+    } else {
+        g_turtle_trans_trampoline = g_turtle_trans_detour.trampoline;
     }
 
     // mapgen_init starts with `sub esp, 0x2c` (3 bytes) followed by a 6-byte

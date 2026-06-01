@@ -14,6 +14,7 @@ local LOCAL_HAT_PATH = "assets/hats.png"
 local CACHE_DIR = "cache"
 local CACHE_HAT_PATH = CACHE_DIR .. "/hats.png"
 local CHARACTER_MANIFEST_PATH = "characters/manifest.json"
+local CHARACTER_PACK_PATHS = { "characters/knight/character.json" }
 local CHARACTER_CACHE_DIR = CACHE_DIR .. "/characters"
 local CHARACTER_TARGET_W = 16
 local CHARACTER_TARGET_H = 16
@@ -740,6 +741,9 @@ end
 local function character_asset_id(prefix, id, sha)
   local clean = clean_id(id) or "custom"
   local suffix = lower_sha256(sha or "") or string.rep("0", 64)
+  local max_clean = 63 - #prefix - 1 - 12
+  if max_clean < 8 then max_clean = 8 end
+  clean = clean:sub(1, max_clean)
   return prefix .. clean .. "_" .. suffix:sub(1, 12)
 end
 
@@ -828,42 +832,97 @@ local function normalize_frame_map(src, animations)
   return out
 end
 
-local function normalize_hat_anchor(src)
-  local input = type(src.hat_anchor) == "table" and src.hat_anchor or nil
-  if not input and type(src.head_anchor) == "table" then input = src.head_anchor end
-  if not input then return nil end
+character_import.anchor_anim_names = {"idle", "run", "walk", "jump", "fall", "duck", "crouch", "prone", "stun", "dead", "eggnogg"}
 
-  local out = {
+function character_import.normalize_anchor_frame_entry(value)
+  if type(value) ~= "table" then return nil end
+  local x = tonumber(value.x or value[1]) or 0.0
+  local y = tonumber(value.y or value[2]) or 0.0
+  return {
+    x = clamp(x, -16.0, 16.0),
+    y = clamp(y, -16.0, 16.0),
+    bob_x = clamp(tonumber(value.bob_x) or 0.0, -8.0, 8.0),
+    bob_y = clamp(tonumber(value.bob_y) or 0.0, -8.0, 8.0),
+  }
+end
+
+function character_import.normalize_anchor_frame_list(value)
+  if type(value) ~= "table" or #value == 0 then return nil end
+  local frames = {}
+  for i = 1, #value do
+    local frame = character_import.normalize_anchor_frame_entry(value[i])
+    if frame then
+      frames[#frames + 1] = frame
+      if #frames >= 240 then break end
+    end
+  end
+  return #frames > 0 and frames or nil
+end
+
+function character_import.normalize_anchor_frame_map(value)
+  if type(value) ~= "table" or #value > 0 then return nil end
+  local out = {}
+  local count = 0
+  for frame, entry in pairs(value) do
+    local frame_index = tonumber(frame)
+    local motion = character_import.normalize_anchor_frame_entry(entry)
+    if frame_index and motion then
+      out[tostring(math.floor(frame_index))] = motion
+      count = count + 1
+      if count >= 240 then break end
+    end
+  end
+  return count > 0 and out or nil
+end
+
+function character_import.normalize_anchor_motion(input, fallback)
+  fallback = fallback or {}
+  if type(input) ~= "table" then return nil end
+
+  local frames = character_import.normalize_anchor_frame_list(input.frames or input.frame_offsets or input.offsets)
+  local frame_map = character_import.normalize_anchor_frame_map(input.frame_map or input.by_frame or input.frames_by_index)
+  if not frame_map and type(input.frames) == "table" then
+    frame_map = character_import.normalize_anchor_frame_map(input.frames)
+  end
+
+  return {
     x = clamp(tonumber(input.x) or 0.0, -16.0, 16.0),
     y = clamp(tonumber(input.y) or 0.0, -16.0, 16.0),
     bob_x = clamp(tonumber(input.bob_x or input.idle_bob_x) or 0.0, -8.0, 8.0),
     bob_y = clamp(tonumber(input.bob_y or input.idle_bob_y) or 0.0, -8.0, 8.0),
-    fps = clamp(tonumber(input.fps) or 12.0, 1.0, 60.0),
-    phase = tonumber(input.phase) or 0.0,
+    fps = clamp(tonumber(input.fps) or fallback.fps or 12.0, 1.0, 60.0),
+    phase = tonumber(input.phase) or fallback.phase or 0.0,
+    frames = frames,
+    frame_map = frame_map,
   }
+end
 
-  for _, name in ipairs({"idle", "run", "walk", "jump", "fall", "duck", "crouch", "prone", "stun", "dead", "eggnogg"}) do
-    local motion = type(input[name]) == "table" and input[name] or nil
+function character_import.normalize_anchor_table(input)
+  if type(input) ~= "table" then return nil end
+
+  local out = character_import.normalize_anchor_motion(input, { fps = 12.0, phase = 0.0 })
+  if not out then return nil end
+
+  for _, name in ipairs(character_import.anchor_anim_names) do
+    local motion = character_import.normalize_anchor_motion(input[name], out)
     if motion then
-      out[name] = {
-        x = clamp(tonumber(motion.x) or 0.0, -16.0, 16.0),
-        y = clamp(tonumber(motion.y) or 0.0, -16.0, 16.0),
-        bob_x = clamp(tonumber(motion.bob_x) or 0.0, -8.0, 8.0),
-        bob_y = clamp(tonumber(motion.bob_y) or 0.0, -8.0, 8.0),
-        fps = clamp(tonumber(motion.fps) or out.fps, 1.0, 60.0),
-        phase = tonumber(motion.phase) or out.phase,
-      }
+      out[name] = motion
     end
   end
 
   return out
 end
 
-local function normalize_sword_anchor(src)
+function character_import.normalize_hat_anchor(src)
+  local input = type(src.hat_anchor) == "table" and src.hat_anchor or nil
+  if not input and type(src.head_anchor) == "table" then input = src.head_anchor end
+  return character_import.normalize_anchor_table(input)
+end
+
+function character_import.normalize_sword_anchor(src)
   local input = type(src.sword_anchor) == "table" and src.sword_anchor or nil
   if not input and type(src.sword_idle) == "table" then input = src.sword_idle end
-  if not input then return nil end
-  return normalize_hat_anchor({ hat_anchor = input })
+  return character_import.normalize_anchor_table(input)
 end
 
 local function normalize_character_definition(src, source, cached_path)
@@ -910,11 +969,30 @@ local function normalize_character_definition(src, source, cached_path)
     fps = clamp(tonumber(src.fps or src.frame_rate) or 10.0, 1.0, 60.0),
     animations = animations,
     frame_map = normalize_frame_map(src, animations),
-    hat_anchor = normalize_hat_anchor(src),
-    sword_anchor = normalize_sword_anchor(src),
+    hat_anchor = character_import.normalize_hat_anchor(src),
+    sword_anchor = character_import.normalize_sword_anchor(src),
     allowed_online = src.allowed_online ~= false,
     color = {0.14, 0.18, 0.24, 1.0},
   }
+end
+
+local function character_entries_from_document(src)
+  if type(src) ~= "table" then return {} end
+  if type(src.characters) == "table" then return src.characters end
+  return { src }
+end
+
+local function character_entry_with_sheet_base(src, base_dir)
+  if type(src) ~= "table" then return src end
+  if type(base_dir) ~= "string" or base_dir == "" then return src end
+  local sheet_rel = clean_rel_path(src.sheet or src.spritesheet or src.path)
+  if not sheet_rel then return src end
+
+  local out = clone_table(src)
+  out.sheet = character_import.join(base_dir, sheet_rel)
+  out.spritesheet = nil
+  out.path = nil
+  return out
 end
 
 local function add_or_replace_character(character)
@@ -940,7 +1018,7 @@ local function load_character_catalog()
   if body then
     local manifest = json_decode(body)
     if type(manifest) == "table" and math.floor(tonumber(manifest.schema) or 0) == 1 then
-      local list = type(manifest.characters) == "table" and manifest.characters or {}
+      local list = character_entries_from_document(manifest)
       for i = 1, #list do
         local character = normalize_character_definition(list[i], "local")
         if character then
@@ -950,9 +1028,24 @@ local function load_character_catalog()
     end
   end
 
+  for p = 1, #CHARACTER_PACK_PATHS do
+    local bundled_json = CHARACTER_PACK_PATHS[p]
+    local bundled_body = read_binary_file(bundled_json)
+    local bundled_manifest = type(bundled_body) == "string" and json_decode(bundled_body) or nil
+    local bundled_base = character_import.dirname(bundled_json)
+    local list = character_entries_from_document(bundled_manifest)
+    for i = 1, #list do
+      local src = character_entry_with_sheet_base(list[i], bundled_base)
+      local character = normalize_character_definition(src, "local")
+      if character then
+        add_or_replace_character(character)
+      end
+    end
+  end
+
   local imported_body = storage.get("imported_characters_json", "")
   local imported_manifest = type(imported_body) == "string" and json_decode(imported_body) or nil
-  local imported_list = type(imported_manifest) == "table" and type(imported_manifest.characters) == "table" and imported_manifest.characters or {}
+  local imported_list = character_entries_from_document(imported_manifest)
   for i = 1, #imported_list do
     local character = normalize_character_definition(imported_list[i], "local")
     if character then
@@ -1326,7 +1419,54 @@ local function json_animation_frames(anim)
   return json_frame_array(anim and anim.frames)
 end
 
-local function json_hat_anchor(anchor)
+function character_import.json_anchor_frame_entry(frame)
+  if type(frame) ~= "table" then return "null" end
+  return "{" ..
+    '"x":' .. json_number_raw(frame.x, 0.0) .. "," ..
+    '"y":' .. json_number_raw(frame.y, 0.0) .. "," ..
+    '"bob_x":' .. json_number_raw(frame.bob_x, 0.0) .. "," ..
+    '"bob_y":' .. json_number_raw(frame.bob_y, 0.0) ..
+  "}"
+end
+
+function character_import.json_anchor_frames(frames)
+  if type(frames) ~= "table" or #frames == 0 then return nil end
+  local parts = {}
+  for i = 1, #frames do
+    parts[#parts + 1] = character_import.json_anchor_frame_entry(frames[i])
+  end
+  return "[" .. table.concat(parts, ",") .. "]"
+end
+
+function character_import.json_anchor_frame_map(frame_map)
+  if type(frame_map) ~= "table" then return nil end
+  local parts = {}
+  for _, frame in ipairs(sorted_keys(frame_map)) do
+    parts[#parts + 1] = json_escape_string(frame) .. ":" .. character_import.json_anchor_frame_entry(frame_map[frame])
+  end
+  if #parts == 0 then return nil end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+function character_import.json_anchor_motion(anchor, fallback)
+  if type(anchor) ~= "table" then return "null" end
+  fallback = fallback or {}
+  local parts = {
+    '"x":' .. json_number_raw(anchor.x, 0.0),
+    '"y":' .. json_number_raw(anchor.y, 0.0),
+    '"bob_x":' .. json_number_raw(anchor.bob_x, 0.0),
+    '"bob_y":' .. json_number_raw(anchor.bob_y, 0.0),
+    '"fps":' .. json_number_raw(anchor.fps, fallback.fps or 12.0),
+    '"phase":' .. json_number_raw(anchor.phase, fallback.phase or 0.0),
+  }
+  local frames = character_import.json_anchor_frames(anchor.frames)
+  if frames then parts[#parts + 1] = '"frames":' .. frames end
+  local frame_map = character_import.json_anchor_frame_map(anchor.frame_map)
+  if frame_map then parts[#parts + 1] = '"frame_map":' .. frame_map end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+function character_import.json_hat_anchor(anchor)
   if type(anchor) ~= "table" then return "null" end
 
   local parts = {
@@ -1337,18 +1477,19 @@ local function json_hat_anchor(anchor)
     '"fps":' .. json_number_raw(anchor.fps, 12.0),
     '"phase":' .. json_number_raw(anchor.phase, 0.0),
   }
+  local frames = character_import.json_anchor_frames(anchor.frames)
+  if frames then parts[#parts + 1] = '"frames":' .. frames end
+  local frame_map = character_import.json_anchor_frame_map(anchor.frame_map)
+  if frame_map then parts[#parts + 1] = '"frame_map":' .. frame_map end
 
   for _, name in ipairs(sorted_keys(anchor)) do
     local motion = anchor[name]
-    if type(motion) == "table" then
-      parts[#parts + 1] = json_escape_string(name) .. ":{" ..
-        '"x":' .. json_number_raw(motion.x, 0.0) .. "," ..
-        '"y":' .. json_number_raw(motion.y, 0.0) .. "," ..
-        '"bob_x":' .. json_number_raw(motion.bob_x, 0.0) .. "," ..
-        '"bob_y":' .. json_number_raw(motion.bob_y, 0.0) .. "," ..
-        '"fps":' .. json_number_raw(motion.fps, anchor.fps or 12.0) .. "," ..
-        '"phase":' .. json_number_raw(motion.phase, anchor.phase or 0.0) ..
-      "}"
+    if type(motion) == "table" and
+       name ~= "frames" and name ~= "frame_map" and
+       name ~= "x" and name ~= "y" and
+       name ~= "bob_x" and name ~= "bob_y" and
+       name ~= "fps" and name ~= "phase" then
+      parts[#parts + 1] = json_escape_string(name) .. ":" .. character_import.json_anchor_motion(motion, anchor)
     end
   end
 
@@ -1418,8 +1559,8 @@ local function character_meta_json(character)
     '"fps":' .. json_number_raw(character.fps, 10.0) .. "," ..
     '"animations":{' .. table.concat(anim_parts, ",") .. "}," ..
     '"frame_map":{' .. table.concat(map_parts, ",") .. "}," ..
-    '"hat_anchor":' .. json_hat_anchor(character.hat_anchor) .. "," ..
-    '"sword_anchor":' .. json_hat_anchor(character.sword_anchor) ..
+    '"hat_anchor":' .. character_import.json_hat_anchor(character.hat_anchor) .. "," ..
+    '"sword_anchor":' .. character_import.json_hat_anchor(character.sword_anchor) ..
   "}"
 end
 
@@ -1478,8 +1619,8 @@ function character_import.definition_json(character)
     '"fps":' .. json_number_raw(character.fps, 10.0) .. "," ..
     '"animations":{' .. table.concat(anim_parts, ",") .. "}," ..
     '"frame_map":{' .. table.concat(map_parts, ",") .. "}," ..
-    '"hat_anchor":' .. json_hat_anchor(character.hat_anchor) .. "," ..
-    '"sword_anchor":' .. json_hat_anchor(character.sword_anchor) ..
+    '"hat_anchor":' .. character_import.json_hat_anchor(character.hat_anchor) .. "," ..
+    '"sword_anchor":' .. character_import.json_hat_anchor(character.sword_anchor) ..
   "}"
 end
 
@@ -1520,6 +1661,9 @@ function character_import.import_json(json_path)
   if not body then return false, "could not read character.json: " .. tostring(read_err) end
   local src, parse_err = json_decode(body)
   if type(src) ~= "table" then return false, "character.json parse failed: " .. tostring(parse_err) end
+  local entries = character_entries_from_document(src)
+  src = entries[1]
+  if type(src) ~= "table" then return false, "character.json does not define a character" end
 
   local sheet_rel = clean_rel_path(src.sheet or src.spritesheet or src.path)
   if not sheet_rel then return false, "character.json needs a relative sheet path" end
@@ -2620,49 +2764,33 @@ local function character_animation_for_player(character, player)
   return character_has_anim(character, "idle") and "idle" or next(character.animations)
 end
 
-function custom_hat_follow_offset(player, opts)
-  opts = opts or {}
-  local owner_slot = opts.owner_slot
-  local profile_slot = owner_slot and profile[owner_slot] or nil
-  if not profile_slot then return nil end
+local character_frame_context
 
-  local character_id = opts.screen and profile_slot.character or gameplay_character_for(owner_slot)
-  local character = character_by_id[valid_character_id(character_id)]
-  if not character or character.builtin then return nil end
-
-  local anchor = character.hat_anchor or {}
-  local anim_name = character_animation_for_player(character, player) or "idle"
-  local motion = type(anchor[anim_name]) == "table" and anchor[anim_name] or nil
-  local x = tonumber(anchor.x) or 0.0
-  local y = tonumber(anchor.y) or 0.0
-
-  if motion then
-    x = x + (tonumber(motion.x) or 0.0)
-    y = y + (tonumber(motion.y) or 0.0)
+function character_import.anchor_frame_motion(anchor, motion, context)
+  if not context then return nil end
+  local index = math.floor(tonumber(context.frame_index) or 0)
+  local frame = context.frame
+  if motion and type(motion.frames) == "table" and #motion.frames > 0 and index > 0 then
+    return motion.frames[((index - 1) % #motion.frames) + 1]
   end
-
-  local bob_x = tonumber((motion and motion.bob_x) or anchor.bob_x) or 0.0
-  local bob_y = tonumber((motion and motion.bob_y) or anchor.bob_y) or 0.0
-  if bob_x ~= 0.0 or bob_y ~= 0.0 then
-    local tick = tonumber(opts.tick) or os.clock() * 60.0
-    local fps = tonumber((motion and motion.fps) or anchor.fps) or 12.0
-    local phase = tonumber((motion and motion.phase) or anchor.phase) or 0.0
-    local wave = math.sin((tick / 60.0) * fps * math.pi * 2.0 + phase)
-    x = x + bob_x * wave
-    y = y + bob_y * wave
+  if motion and type(motion.frame_map) == "table" and frame ~= nil then
+    return motion.frame_map[tostring(frame)]
   end
-
-  local facing = tonumber(player.facing) or 1
-  return x * (facing < 0 and -1 or 1), y
+  if anchor and type(anchor.frames) == "table" and #anchor.frames > 0 and index > 0 then
+    return anchor.frames[((index - 1) % #anchor.frames) + 1]
+  end
+  if anchor and type(anchor.frame_map) == "table" and frame ~= nil then
+    return anchor.frame_map[tostring(frame)]
+  end
+  return nil
 end
 
-function custom_sword_idle_offset(character, player, opts)
-  opts = opts or {}
-  if not character or character.builtin then return 0.0, 0.0 end
-
-  local anchor = character.sword_anchor or {}
-  local anim_name = player and (character_animation_for_player(character, player) or "idle") or "idle"
+function character_import.anchor_offset_for_player(character, anchor, player, opts)
+  if type(anchor) ~= "table" then return nil end
+  local context = character_frame_context and character_frame_context(character, player, opts) or nil
+  local anim_name = context and context.anim_name or (player and character_animation_for_player(character, player)) or "idle"
   local motion = type(anchor[anim_name]) == "table" and anchor[anim_name] or nil
+  local frame_motion = character_import.anchor_frame_motion(anchor, motion, context)
   local x = tonumber(anchor.x) or 0.0
   local y = tonumber(anchor.y) or 0.0
 
@@ -2670,11 +2798,19 @@ function custom_sword_idle_offset(character, player, opts)
     x = x + (tonumber(motion.x) or 0.0)
     y = y + (tonumber(motion.y) or 0.0)
   end
+  if frame_motion then
+    x = x + (tonumber(frame_motion.x) or 0.0)
+    y = y + (tonumber(frame_motion.y) or 0.0)
+  end
 
-  local bob_x = tonumber((motion and motion.bob_x) or anchor.bob_x) or 0.0
-  local bob_y = tonumber((motion and motion.bob_y) or anchor.bob_y) or 0.0
+  local bob_x = (tonumber(anchor.bob_x) or 0.0) +
+                (tonumber(motion and motion.bob_x) or 0.0) +
+                (tonumber(frame_motion and frame_motion.bob_x) or 0.0)
+  local bob_y = (tonumber(anchor.bob_y) or 0.0) +
+                (tonumber(motion and motion.bob_y) or 0.0) +
+                (tonumber(frame_motion and frame_motion.bob_y) or 0.0)
   if bob_x ~= 0.0 or bob_y ~= 0.0 then
-    local tick = tonumber(opts.tick) or os.clock() * 60.0
+    local tick = tonumber(opts and opts.tick) or os.clock() * 60.0
     local fps = tonumber((motion and motion.fps) or anchor.fps) or 12.0
     local phase = tonumber((motion and motion.phase) or anchor.phase) or 0.0
     local wave = math.sin((tick / 60.0) * fps * math.pi * 2.0 + phase)
@@ -2684,6 +2820,25 @@ function custom_sword_idle_offset(character, player, opts)
 
   local facing = tonumber(player and player.facing) or 1
   return x * (facing < 0 and -1 or 1), y
+end
+
+function custom_hat_follow_offset(player, opts)
+  opts = opts or {}
+  local owner_slot = opts.owner_slot
+  local profile_slot = owner_slot and profile[owner_slot] or nil
+  if not profile_slot then return nil end
+
+  local character_id = opts.screen and profile_slot.character or gameplay_character_for(owner_slot)
+  local character = character_by_id[valid_character_id(character_id)]
+  if not character or character.builtin then return nil end
+  return character_import.anchor_offset_for_player(character, character.hat_anchor, player, opts)
+end
+
+function custom_sword_idle_offset(character, player, opts)
+  opts = opts or {}
+  if not character or character.builtin then return 0.0, 0.0 end
+  local x, y = character_import.anchor_offset_for_player(character, character.sword_anchor, player, opts)
+  return x or 0.0, y or 0.0
 end
 
 local function chosen_animation_frames(character, anim_name, anim, player, opts)
@@ -2707,12 +2862,16 @@ local function chosen_animation_frames(character, anim_name, anim, player, opts)
   return anim.choices[state.choice] or anim.frames
 end
 
-local function character_frame_for(character, player, opts)
+character_frame_context = function(character, player, opts)
   local anim_name = character_animation_for_player(character, player)
   local anim = character.animations and character.animations[anim_name] or nil
-  if not anim or not anim.frames or #anim.frames == 0 then return 0 end
+  if not anim or not anim.frames or #anim.frames == 0 then
+    return { anim_name = anim_name or "idle", frame = 0, frame_index = 1, anim = anim, frames = {0} }
+  end
   local frames = chosen_animation_frames(character, anim_name, anim, player, opts)
-  if not frames or #frames == 0 then return 0 end
+  if not frames or #frames == 0 then
+    return { anim_name = anim_name or "idle", frame = 0, frame_index = 1, anim = anim, frames = {0} }
+  end
   local tick = tonumber(opts and opts.tick) or os.clock() * 60.0
   local fps = tonumber(anim.fps or character.fps) or 10.0
   local index = math.floor((tick / 60.0) * fps)
@@ -2721,7 +2880,19 @@ local function character_frame_for(character, player, opts)
   else
     index = index % #frames
   end
-  return frames[index + 1] or frames[1] or 0
+  local frame_index = index + 1
+  return {
+    anim_name = anim_name or "idle",
+    frame = frames[frame_index] or frames[1] or 0,
+    frame_index = frame_index,
+    anim = anim,
+    frames = frames,
+  }
+end
+
+local function character_frame_for(character, player, opts)
+  local context = character_frame_context(character, player, opts)
+  return context and context.frame or 0
 end
 
 local function draw_custom_character(character_id, player, opts)

@@ -37,14 +37,31 @@ Example `character.json`:
     "x": 0,
     "y": 0,
     "idle": { "bob_x": 0, "bob_y": 0 },
-    "run": { "bob_y": 0.35, "fps": 16 },
+    "run": {
+      "bob_y": 0.35,
+      "fps": 16,
+      "frames": [
+        { "x": 0.0, "y": 0.0 },
+        { "x": 0.2, "y": -0.2 },
+        { "x": 0.0, "y": 0.0 },
+        { "x": -0.2, "y": 0.2 }
+      ]
+    },
     "duck": { "y": 4 },
     "prone": { "y": 7 }
   },
   "sword_anchor": {
     "x": 0,
     "y": 0,
-    "idle": { "bob_x": 0, "bob_y": 0 }
+    "idle": { "bob_x": 0, "bob_y": 0 },
+    "run": {
+      "frames": [
+        { "x": 0.0, "y": 0.0 },
+        { "x": 0.3, "y": -0.2 },
+        { "x": 0.0, "y": 0.0 },
+        { "x": -0.3, "y": 0.2 }
+      ]
+    }
   }
 }
 ```
@@ -53,6 +70,8 @@ Fields:
 
 - For bundled `manifest.json` entries, `sheet` is relative to this mod folder.
 - For import packages, `sheet` is relative to the folder containing `character.json`.
+- Sheet paths must be relative paths like `"example_character.png"` or `"subfolder/example_character.png"`. Do not start them with `/`, a drive letter, or `..`.
+- `character.json` can be either one character object or `{ "schema": 1, "characters": [ ... ] }`; the import button uses the first character in the list.
 - `cell_w` and `cell_h` are the source frame size in the PNG.
 - `target_w` and `target_h` are the in-game size. Keep them at `16` by default so the art stays aligned to the normal hitbox.
 - `animations` can use any number of frames. A 30-frame idle animation is valid.
@@ -60,5 +79,7 @@ Fields:
 - `frame_map` is optional. It maps vanilla sprite frame numbers to one of your custom animation names for special poses.
 - `hat_anchor` is optional. Custom characters default to a still hat anchor instead of vanilla idle bob. Use `x`/`y` for base adjustment, and per-animation entries like `idle`, `run`, `duck`, or `prone` for pose offsets or `bob_x`/`bob_y` motion.
 - `sword_anchor` is optional and uses the same shape as `hat_anchor`. Custom characters default to no vanilla sword idle sway; use this to add character-specific sword bob if the art needs it.
+- `hat_anchor` and `sword_anchor` entries can include `frames`. Frame entries are additive offsets matched to the current custom animation frame, so the first `run.frames` entry is used with the first run animation frame, the second with the second frame, and so on. They wrap if there are fewer anchor frames than animation frames.
+- Anchors can also use `"frame_map": { "30": { "x": 0, "y": -1 } }` to target a specific spritesheet frame number.
 - Custom sheets are capped at 1 MiB for online transfer.
 - Frames draw as the visible replacement layer over the normal player, so keep the body area opaque wherever the vanilla body should be covered.

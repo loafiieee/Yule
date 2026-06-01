@@ -1,106 +1,56 @@
-[12:48:47] [INFO] Mod framework initializing...
-[12:48:47] [INFO] Mod framework API version: 1
-[12:48:47] [INFO] Scanning mods/ folder...
-[12:48:47] [INFO] Loading mod: official_cosmetics (Official Cosmetics) v0.1.0 by Eggnogg+
-[12:48:47] [INFO]   Server-ready hats cosmetics browser and renderer.
-[12:48:47] [INFO] CUSTOM STATE: registered (official_cosmetics_hats)
-[12:48:47] [INFO] Loaded mod: official_cosmetics
-[12:48:47] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[12:48:47] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[12:48:47] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[12:48:47] [INFO] [mod:crash] enabled=false
-[12:48:47] [INFO] Loaded mod: crash
-[12:48:47] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[12:48:47] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[12:48:47] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[12:48:47] [INFO] [mod:poc_speedhack] enabled=false
-[12:48:47] [INFO] [mod:poc_speedhack] speed=1
-[12:48:47] [INFO] Loaded mod: poc_speedhack
-[12:48:47] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[12:48:47] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[12:48:47] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[12:48:47] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[12:48:47] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[12:48:47] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[12:48:47] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[12:48:47] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[12:48:47] [INFO] Loaded mod: texture_pack_test
-[12:48:47] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[12:48:47] [INFO] [maps] scanning maps/ for custom maps
-[12:48:47] [INFO] [maps][example_map] scanning folder: maps\example_map
-[12:48:47] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[12:48:47] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[12:48:47] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[12:48:47] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[12:48:47] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[12:48:47] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
-[12:48:48] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[12:48:48] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
-[12:48:48] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[12:48:48] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[12:48:48] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[12:48:48] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[12:48:48] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[12:48:48] [INFO] hooks_init: custom MODS menu ready
-[12:48:48] [INFO] [maps][example_map] applying custom map for selector index 5
-[12:48:48] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
-[12:48:48] [INFO] mod.assets: packed official_cosmetics:official_hats_remote base=704 count=1
-[12:48:48] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
-[12:48:48] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
-[12:48:48] [INFO] mod.assets: packed official_cosmetics:official_hats_remote base=704 count=1
-[12:48:48] [INFO] mod.assets: packed official_cosmetics:character_example_knight_09594381e694 base=705 count=48
-[12:48:48] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
-[12:48:53] [INFO] ggpo.net: local build fingerprint build=AF3C0E96 exe=632C561E dll=F70E4C1B correction=on
-[12:48:53] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 max_advantage=20 max_prediction=24 state_size=144296 checksum=495124039
-[12:48:53] [INFO] ggpo.net: [12:48:54] [INFO] ggpo.net: local build fingerprint build=AF3C0E96 exe=632C561E dll=F70E[12:48:54] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=62089
-[12:48:54] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=495124039 remote_checksum=2997218472
-[12:48:54] [INFO] ggpo.net: waiting for host state sync local[12:48:54] [INFO] ggpo.net:[12:48:55] [INFO] ggpo.net: remote state sync ack received
-[12:49:00] [WARN] ggpo.net: cosmetic profile sync wait exceeded 300 ticks; starting without confirmed cosmetics local_bytes=287 remote_bytes=0 remote_rev=0 applied_rev=0
-[12:49:00] [INFO] ggpo.net: start state loaded checksum=495124039 input_delay=1
-[12:49:00] [INFO] ggpo.net: waiting for remote frame 0 input
-[12:49:00] [WARN] ggpo.net: peer requested correction request_frame=1 remote_frame=1 last_corr_frame=0 ack_id=0 total=1
-[12:49:00] [WARN] ggpo.net: host correction queued id=1 frame=2 checksum=1722293663 chunks=47/161 mode=delta reason=peer resync request
-[12:49:00] [INFO] ggpo.net: correction ack received id=1 checksum=1722293663 frame=2
-[12:49:03] [INFO] MODS: entering mods menu
-[12:49:05] [ERROR] ggpo.net: recoverable desync frame=200 local=4236753717 remote=3325336271 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=201 remote_frame=225 corr_id=1 corr_frame=2 applied_id=0
-[12:49:05] [WARN] ggpo.net: host correction queued id=2 frame=201 checksum=2372371829 chunks=116/161 mode=delta reason=confirmed frame checksum mismatch
-[12:49:05] [INFO] ggpo.net: correction ack received id=2 checksum=2372371829 frame=201
-[12:49:07] [INFO] [maps][example_map] applying custom map for selector index 5
-[12:49:11] [INFO] CUSTOM STATE: enter (official_cosmetics_hats)
-[12:49:12] [INFO] CUSTOM STATE: leave (official_cosmetics_hats)
-[12:49:12] [INFO] [maps][example_map] applying custom map for selector index 5
-[12:49:14] [ERROR] ggpo.net: recoverable desync frame=228 local=2846702364 remote=3620037857 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=229 remote_frame=348 corr_id=2 corr_frame=201 applied_id=0
-[12:49:14] [WARN] ggpo.net: host correction queued id=3 frame=229 checksum=968864630 chunks=136/161 mode=delta reason=confirmed frame checksum mismatch
-[12:49:14] [INFO] ggpo.net: correction ack received id=3 checksum=968864630 frame=229
-[12:49:17] [WARN] ggpo.net: peer requested correction request_frame=366 remote_frame=366 last_corr_frame=229 ack_id=3 total=2
-[12:49:17] [WARN] ggpo.net: host correction queued id=4 frame=372 checksum=2561384015 chunks=93/161 mode=delta reason=peer resync request
-[12:49:18] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=367 current=391
-[12:49:18] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=367 current=391)
-[12:49:19] [INFO] ggpo.net: correction ack received id=4 checksum=2561384015 frame=372
-[12:49:20] [INFO] ggpo.net: stopped from F6 after 478 frame(s), checksum=3593662668 tx=8846 rx=1432 pred=357 rb=0 adv_stall=56 pred_stall=60 desync=2
-[12:49:26] [INFO] ggpo.net: local build fingerprint build=AF3C0E96 exe=632C561E dll=F70E4C1B correction=on
-[12:49:26] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 max_advantage=20 max_prediction=24 state_size=144296 checksum=569716605
-[12:49:26] [INFO] ggpo.net: hosting from F6 udp=47777 player=0 delay=1 adv=20 predcap=24 corr=on state_size=144296
-[12:49:26] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=63409
-[12:49:26] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=569716605 remote_checksum=3950229193
-[12:49:26] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
-[12:49:26] [INFO] ggpo.net: remote state sync ack received
-[12:49:31] [WARN] ggpo.net: cosmetic profile sync wait exceeded 300 ticks; starting without confirmed cosmetics local_bytes=0 remote_bytes=0 remote_rev=0 applied_rev=0
-[12:49:31] [INFO] ggpo.net: start state loaded checksum=569716605 input_delay=1
-[12:49:31] [INFO] ggpo.net: waiting for remote frame 0 input
-[12:49:31] [WARN] ggpo.net: peer requested correction request_frame=1 remote_frame=1 last_corr_frame=0 ack_id=0 total=1
-[12:49:31] [WARN] ggpo.net: host correction queued id=1 frame=2 checksum=1262663395 chunks=71/161 mode=delta reason=peer resync request
-[12:49:32] [INFO] ggpo.net: correction ack received id=1 checksum=1262663395 frame=2
-[12:49:47] [INFO] [mod:crash] Unloaded
-[12:49:47] [INFO] [mod:poc_speedhack] Unloaded
-[12:49:47] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
-te_rev=0 applied_rev=0
-[12:49:31] [INFO] ggpo.net: start state loaded checksum=569716605 input_delay=1
-[12:49:31] [INFO] ggpo.net: waiting for remote frame 0 input
-[12:49:31] [ERROR] ggpo.net: recoverable desync frame=0 local=3616857766 remote=2898939928 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1 remote_frame=1 corr_id=0 corr_frame=0 applied_id=0
-[12:49:31] [WARN] ggpo.net: requested host correction frame=1 request_frame=1 reason=confirmed frame checksum mismatch total=1
-[12:49:31] [INFO] ggpo.net: receiving correction delta state id=1 frame=2 size=144296 checksum=1262663395 chunks=71/161
-[12:49:32] [WARN] ggpo.net: correction applied id=1 frame=2 checksum=1262663395 chunks=71/71 mode=delta total=1 dup=57
-[12:49:48] [INFO] [mod:crash] Unloaded
-[12:49:48] [INFO] [mod:poc_speedhack] Unloaded
-[12:49:48] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[20:01:38] [INFO] Mod framework initializing...
+[20:01:38] [INFO] Mod framework API version: 1
+[20:01:38] [INFO] Scanning mods/ folder...
+[20:01:38] [INFO] Loading mod: official_cosmetics (Official Cosmetics) v0.1.0 by Eggnogg+
+[20:01:38] [INFO]   Server-ready hats cosmetics browser and renderer.
+[20:01:38] [INFO] CUSTOM STATE: registered (official_cosmetics_hats)
+[20:01:38] [INFO] Loaded mod: official_cosmetics
+[20:01:38] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[20:01:38] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[20:01:38] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[20:01:38] [INFO] [mod:crash] enabled=true
+[20:01:38] [INFO] Loaded mod: crash
+[20:01:38] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[20:01:38] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[20:01:38] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[20:01:38] [INFO] [mod:poc_speedhack] enabled=false
+[20:01:38] [INFO] [mod:poc_speedhack] speed=1
+[20:01:38] [INFO] Loaded mod: poc_speedhack
+[20:01:38] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[20:01:38] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[20:01:38] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[20:01:38] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[20:01:38] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[20:01:38] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[20:01:38] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[20:01:38] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[20:01:38] [INFO] Loaded mod: texture_pack_test
+[20:01:38] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[20:01:38] [INFO] [maps] scanning maps/ for custom maps
+[20:01:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:01:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:01:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:01:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:01:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:01:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:01:38] [WARN] [maps][example_map] [data.json][rooms.mid_3.appearance] warning: primary and mirror define duplicate explicit colours
+[20:01:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:01:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=5 final_rooms=9 mode=swords
+[20:01:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:01:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:01:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:01:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[20:01:38] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[20:01:38] [INFO] hooks_init: custom MODS menu ready
+[20:01:39] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
+[20:01:39] [INFO] mod.assets: packed official_cosmetics:official_hats_remote base=704 count=1
+[20:01:39] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
+[20:01:39] [INFO] Asset hot reload: rebuilding atlases (mod asset spritesheet registered)
+[20:01:39] [INFO] mod.assets: packed official_cosmetics:official_hats_remote base=704 count=1
+[20:01:39] [INFO] mod.assets: packed official_cosmetics:character_example_knight_b55425fc7331 base=705 count=48
+[20:01:39] [INFO] Asset hot reload: atlas rebuild complete (load_gfx=0)
+[20:01:40] [INFO] CUSTOM STATE: enter (official_cosmetics_hats)
+[20:01:44] [INFO] CUSTOM STATE: leave (official_cosmetics_hats)
+[20:02:59] [INFO] [mod:crash] Unloaded
+[20:02:59] [INFO] [mod:poc_speedhack] Unloaded
+[20:02:59] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

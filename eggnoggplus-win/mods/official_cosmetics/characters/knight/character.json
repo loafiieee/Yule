@@ -4,7 +4,7 @@
     {
       "id": "example_knight",
       "name": "Example Knight",
-      "sheet": "characters/example_character.png",
+      "sheet": "example_character.png",
       "cell_w": 64,
       "cell_h": 64,
       "target_w": 16,
@@ -34,9 +34,15 @@
       },
       "hat_anchor": {
         "x": 0,
-        "y": 0,
+        "y": 4,
         "idle": { "bob_x": 0, "bob_y": 0 },
-        "run": { "bob_y": 0.35, "fps": 16 },
+        "run": {
+          "bob_y": 0,
+          "fps": 16,
+          "frames": [
+            { "x": 0.0, "y": 0.0 }
+          ]
+        },
         "duck": { "y": 4.0 },
         "prone": { "y": 7.0 },
         "stun": { "y": 5.5 },
@@ -46,8 +52,30 @@
       "sword_anchor": {
         "x": 0,
         "y": 0,
-        "idle": { "bob_x": 0, "bob_y": 0 },
-        "run": { "bob_x": 0, "bob_y": 0 }
+        "idle": {
+          "bob_x": 0,
+          "bob_y": 0,
+          "frames": [
+            { "x": 0.0, "y": 0.0 },
+            { "x": 0.0, "y": -0.1 },
+            { "x": 0.0, "y": -0.2 },
+            { "x": 0.0, "y": -0.1 }
+          ]
+        },
+        "run": {
+          "bob_x": 0,
+          "bob_y": 0,
+          "frames": [
+            { "x": 0.0, "y": 0.0 },
+            { "x": 0.2, "y": -0.2 },
+            { "x": 0.3, "y": -0.3 },
+            { "x": 0.2, "y": -0.1 },
+            { "x": 0.0, "y": 0.0 },
+            { "x": -0.2, "y": 0.2 },
+            { "x": -0.3, "y": 0.3 },
+            { "x": -0.2, "y": 0.1 }
+          ]
+        }
       }
     }
   ]

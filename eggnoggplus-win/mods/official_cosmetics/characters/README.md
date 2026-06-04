@@ -18,6 +18,10 @@ Example `character.json`:
   "target_w": 16,
   "target_h": 16,
   "fps": 12,
+  "color_masks": {
+    "skin": ["#FFFFFF"],
+    "clothing": ["#FF00FF", "#AA00AA"]
+  },
   "animations": {
     "idle": { "frames": [0, 1, 2, 3, 4, 5], "fps": 10 },
     "run": { "frames": [6, 7, 8, 9, 10, 11], "fps": 14 },
@@ -77,6 +81,8 @@ Fields:
 - `animations` can use any number of frames. A 30-frame idle animation is valid.
 - `frames` can also use a random choice object. Use `"frames": { "choose": [18, 19, 20] }` to pick one still frame, or `"frames": { "choose": [[18, 19], [20, 21, 22]] }` to pick one random animation group.
 - `frame_map` is optional. It maps vanilla sprite frame numbers to one of your custom animation names for special poses.
+- `color_masks` is optional. List exact source colors that should be replaced with the selected player colors. `skin` pixels draw with the player's skin color; `clothing` pixels draw with the player's clothing/armor color. Colors are exact `#RRGGBB` matches, so anti-aliased edge colors must be listed too if you want them tinted.
+- Aliases accepted for `color_masks` are `colour_masks`, `tint_masks`, `palette`, `recolor`, and `recolour`. `clothes`, `armor`, and `armour` are accepted as aliases for `clothing`.
 - `hat_anchor` is optional. Custom characters default to a still hat anchor instead of vanilla idle bob. Use `x`/`y` for base adjustment, and per-animation entries like `idle`, `run`, `duck`, or `prone` for pose offsets or `bob_x`/`bob_y` motion.
 - `sword_anchor` is optional and uses the same shape as `hat_anchor`. Custom characters default to no vanilla sword idle sway; use this to add character-specific sword bob if the art needs it.
 - `hat_anchor` and `sword_anchor` entries can include `frames`. Frame entries are additive offsets matched to the current custom animation frame, so the first `run.frames` entry is used with the first run animation frame, the second with the second frame, and so on. They wrap if there are fewer anchor frames than animation frames.

@@ -9,6 +9,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <wchar.h>
+#include <winhttp.h>
 
 #include <GL/gl.h>
 #ifdef __has_include
@@ -103,6 +105,8 @@ extern void SDL_free(void* mem);
 #define ADDR_SPRITE_BATCH_DRAW        0x405A90u
 #define ADDR_ATLAS_UPLOAD             0x401480u
 #define ADDR_MENU_BUTTON_LINK         0x433950u
+#define ADDR_BUTTON_GET              0x415D00u
+#define ADDR_BUTTON_COUNT            0x416890u
 #define ADDR_BUTTON_SET_LAYOUT        0x415F80u
 #define ADDR_BTN_PLAYER_FILTER        0x4325C0u
 #define ADDR_PLOT_TEXT                0x4304E0u
@@ -169,6 +173,14 @@ extern void SDL_free(void* mem);
 #define MODS_BTN_GRID_X      1.0f
 #define MODS_BTN_GRID_Y      0.0f
 
+#define BTN_OFS_CENTER_X          0x10
+#define BTN_OFS_CENTER_Y          0x14
+#define BTN_OFS_WIDTH             0x20
+#define BTN_OFS_HEIGHT            0x24
+#define BTN_OFS_LABEL_PTR         0xC8
+#define BTN_OFS_LINK_PTR          0xE0
+#define BTN_OFS_ACTION_PTR        0xE4
+
 #define SDLK_BACKSPACE      8
 #define SDLK_TAB            9
 #define SDLK_RETURN        13
@@ -213,6 +225,96 @@ typedef struct HookCustomState {
     void* return_state;
     GameState state;
 } HookCustomState;
+
+#define ONLINE_CONFIG_PATH          "online.cfg"
+#define ONLINE_DEFAULT_SERVER_URL   "http://127.0.0.1:47778"
+#define ONLINE_DEFAULT_LISTEN_HOST  "127.0.0.1"
+#define ONLINE_DEFAULT_LISTEN_PORT  47777
+#define ONLINE_INITIAL_ELO          1000
+#define ONLINE_HTTP_RESPONSE_MAX    16384
+#define ONLINE_HTTP_BODY_MAX        2048
+#define ONLINE_HIT_MAX              24
+
+typedef enum OnlineHubField {
+    ONLINE_FIELD_USERNAME = 0,
+    ONLINE_FIELD_PASSWORD,
+    ONLINE_FIELD_SERVER_URL,
+    ONLINE_FIELD_LISTEN_HOST,
+    ONLINE_FIELD_LISTEN_PORT,
+    ONLINE_FIELD_COUNT,
+} OnlineHubField;
+
+typedef enum OnlineHubAction {
+    ONLINE_ACTION_NONE = 0,
+    ONLINE_ACTION_LOGIN,
+    ONLINE_ACTION_REGISTER,
+    ONLINE_ACTION_QUEUE_CASUAL,
+    ONLINE_ACTION_QUEUE_RANKED,
+    ONLINE_ACTION_CANCEL_QUEUE,
+    ONLINE_ACTION_SAVE_SETTINGS,
+    ONLINE_ACTION_BACK,
+} OnlineHubAction;
+
+typedef enum OnlineRequestType {
+    ONLINE_REQ_NONE = 0,
+    ONLINE_REQ_LOGIN,
+    ONLINE_REQ_REGISTER,
+    ONLINE_REQ_JOIN_CASUAL,
+    ONLINE_REQ_JOIN_RANKED,
+    ONLINE_REQ_CANCEL,
+    ONLINE_REQ_STATUS,
+    ONLINE_REQ_PROFILE,
+} OnlineRequestType;
+
+typedef struct OnlineHubHit {
+    float x;
+    float y;
+    float w;
+    float h;
+    int field;
+    int action;
+} OnlineHubHit;
+
+typedef struct OnlineHttpSlot {
+    volatile LONG done;
+    HANDLE thread;
+    int in_use;
+    int type;
+    DWORD status_code;
+    char url[512];
+    char body[ONLINE_HTTP_BODY_MAX];
+    char response[ONLINE_HTTP_RESPONSE_MAX];
+    char error[256];
+} OnlineHttpSlot;
+
+typedef struct OnlineHubState {
+    int initialized;
+    int focused_field;
+    int logged_in;
+    int queueing;
+    int match_started;
+    int elo;
+    int listen_port;
+    uint32_t tick;
+    uint32_t last_status_tick;
+    char server_url[256];
+    char username[32];
+    char password[64];
+    char token[128];
+    char listen_host[128];
+    char queue[16];
+    char status[32];
+    char message[256];
+    char match_id[64];
+    char role[16];
+    char opponent[32];
+    char peer_host[128];
+    int peer_port;
+    int player;
+    OnlineHubHit hits[ONLINE_HIT_MAX];
+    int hit_count;
+    OnlineHttpSlot request;
+} OnlineHubState;
 
 typedef enum RowKind {
     ROW_NONE = 0,
@@ -272,6 +374,8 @@ typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite, int flip, int layer)
 typedef void  (__cdecl *fn_sprite_batch_draw_t)(int atlas);
 typedef int   (__cdecl *fn_atlas_upload_t)(int atlas, int arg2, int format);
 typedef void* (__cdecl *fn_menu_button_link_t)(float, float, const char*, void*);
+typedef void* (__cdecl *fn_button_get_t)(int);
+typedef int   (__cdecl *fn_button_count_t)(void);
 typedef void  (__cdecl *fn_button_set_layout_t)(float, float);
 typedef int   (__cdecl *fn_btn_player_filter_t)(void* btn, int event_code);
 typedef void  (__cdecl *fn_plot_text_t)(const char*, int);
@@ -309,6 +413,8 @@ static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprit
 static fn_sprite_batch_plot_t        p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
 static fn_atlas_upload_t             p_atlas_upload = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
 static fn_menu_button_link_t         p_menu_button_link = (fn_menu_button_link_t)(uintptr_t)ADDR_MENU_BUTTON_LINK;
+static fn_button_get_t               p_button_get = (fn_button_get_t)(uintptr_t)ADDR_BUTTON_GET;
+static fn_button_count_t             p_button_count = (fn_button_count_t)(uintptr_t)ADDR_BUTTON_COUNT;
 static fn_button_set_layout_t        p_button_set_layout = (fn_button_set_layout_t)(uintptr_t)ADDR_BUTTON_SET_LAYOUT;
 static fn_btn_player_filter_t        p_btn_player_filter = (fn_btn_player_filter_t)(uintptr_t)ADDR_BTN_PLAYER_FILTER;
 static fn_plot_text_t                p_plot_text = (fn_plot_text_t)(uintptr_t)ADDR_PLOT_TEXT;
@@ -610,6 +716,9 @@ static void mods_cursor_tick(void) {
 
 static void* g_mods_return_state = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
 static HookCustomState g_custom_states[MAX_CUSTOM_STATES];
+static OnlineHubState g_online_hub;
+static void* g_online_main_menu_state_seen = NULL;
+static void* g_online_hub_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
 
 static void __cdecl console_enter(void);
 static void __cdecl console_update(void);
@@ -652,6 +761,10 @@ static void queue_ggpo_selftest(int frames, const char* source);
 static void toggle_ggpo_loopback(const char* source);
 static void console_run_ggpo_local(const char* arg);
 static void toggle_ggpo_local(const char* source);
+static void start_ggpo_net_host(uint16_t port, const char* source);
+static void start_ggpo_net_join(const char* host, uint16_t remote_port, uint16_t local_port, const char* source);
+static void online_hub_poll(void);
+static void online_hub_ensure_main_button(void);
 
 static GameState g_mods_state = {
     mods_enter,
@@ -1110,6 +1223,523 @@ static void format_bytes_compact(unsigned int bytes, char* out, size_t out_sz) {
         snprintf(out, out_sz, "%.1fKB", (double)bytes / 1024.0);
     } else {
         snprintf(out, out_sz, "%uB", bytes);
+    }
+}
+
+static void online_hub_set_message(const char* msg) {
+    safe_copy(g_online_hub.message, sizeof(g_online_hub.message), msg ? msg : "");
+}
+
+static char* online_trim(char* s) {
+    char* end;
+    if (!s) return s;
+    while (*s && isspace((unsigned char)*s)) s++;
+    end = s + strlen(s);
+    while (end > s && isspace((unsigned char)end[-1])) {
+        *--end = '\0';
+    }
+    return s;
+}
+
+static int online_parse_int(const char* s, int fallback) {
+    char* end = NULL;
+    long v;
+    if (!s || !s[0]) return fallback;
+    v = strtol(s, &end, 10);
+    if (!end || *online_trim(end) != '\0') return fallback;
+    if (v < 0 || v > 65535) return fallback;
+    return (int)v;
+}
+
+static void online_hub_defaults(void) {
+    memset(&g_online_hub, 0, sizeof(g_online_hub));
+    g_online_hub.initialized = 1;
+    g_online_hub.focused_field = ONLINE_FIELD_USERNAME;
+    g_online_hub.listen_port = ONLINE_DEFAULT_LISTEN_PORT;
+    safe_copy(g_online_hub.server_url, sizeof(g_online_hub.server_url), ONLINE_DEFAULT_SERVER_URL);
+    safe_copy(g_online_hub.listen_host, sizeof(g_online_hub.listen_host), ONLINE_DEFAULT_LISTEN_HOST);
+    safe_copy(g_online_hub.status, sizeof(g_online_hub.status), "idle");
+    safe_copy(g_online_hub.message, sizeof(g_online_hub.message), "Log in, then join casual or ranked queue.");
+}
+
+static void online_hub_load_config(void) {
+    FILE* f;
+    char line[512];
+    if (!g_online_hub.initialized) {
+        online_hub_defaults();
+    }
+    f = fopen(ONLINE_CONFIG_PATH, "rb");
+    if (!f) return;
+    while (fgets(line, sizeof(line), f)) {
+        char* eq;
+        char* key;
+        char* val;
+        console_strip_crlf(line);
+        eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        key = online_trim(line);
+        val = online_trim(eq + 1);
+        if (_stricmp(key, "server_url") == 0) safe_copy(g_online_hub.server_url, sizeof(g_online_hub.server_url), val);
+        else if (_stricmp(key, "username") == 0) safe_copy(g_online_hub.username, sizeof(g_online_hub.username), val);
+        else if (_stricmp(key, "listen_host") == 0) safe_copy(g_online_hub.listen_host, sizeof(g_online_hub.listen_host), val);
+        else if (_stricmp(key, "listen_port") == 0) g_online_hub.listen_port = online_parse_int(val, ONLINE_DEFAULT_LISTEN_PORT);
+    }
+    fclose(f);
+}
+
+static void online_hub_save_config(void) {
+    FILE* f = fopen(ONLINE_CONFIG_PATH, "wb");
+    if (!f) {
+        online_hub_set_message("Could not save online.cfg");
+        return;
+    }
+    fprintf(f, "server_url=%s\n", g_online_hub.server_url);
+    fprintf(f, "username=%s\n", g_online_hub.username);
+    fprintf(f, "listen_host=%s\n", g_online_hub.listen_host);
+    fprintf(f, "listen_port=%d\n", g_online_hub.listen_port);
+    fclose(f);
+}
+
+static void online_json_escape(char* dst, size_t dst_sz, const char* src) {
+    size_t di = 0;
+    if (!dst || dst_sz == 0) return;
+    if (!src) src = "";
+    for (size_t si = 0; src[si] && di + 2 < dst_sz; si++) {
+        unsigned char ch = (unsigned char)src[si];
+        if (ch == '"' || ch == '\\') {
+            if (di + 2 >= dst_sz) break;
+            dst[di++] = '\\';
+            dst[di++] = (char)ch;
+        } else if (ch >= 32 && ch < 127) {
+            dst[di++] = (char)ch;
+        }
+    }
+    dst[di] = '\0';
+}
+
+static const char* online_json_find_key(const char* json, const char* key) {
+    char needle[96];
+    const char* p;
+    if (!json || !key || !key[0]) return NULL;
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    p = strstr(json, needle);
+    if (!p) return NULL;
+    p += strlen(needle);
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p != ':') return NULL;
+    p++;
+    while (*p && isspace((unsigned char)*p)) p++;
+    return p;
+}
+
+static int online_json_get_string(const char* json, const char* key, char* out, size_t out_sz) {
+    const char* p = online_json_find_key(json, key);
+    size_t oi = 0;
+    if (!out || out_sz == 0) return 0;
+    out[0] = '\0';
+    if (!p || *p != '"') return 0;
+    p++;
+    while (*p && *p != '"' && oi + 1 < out_sz) {
+        if (*p == '\\' && p[1]) {
+            p++;
+            out[oi++] = *p++;
+        } else {
+            out[oi++] = *p++;
+        }
+    }
+    out[oi] = '\0';
+    return 1;
+}
+
+static int online_json_get_int(const char* json, const char* key, int fallback) {
+    const char* p = online_json_find_key(json, key);
+    char* end = NULL;
+    long v;
+    if (!p) return fallback;
+    v = strtol(p, &end, 10);
+    if (end == p) return fallback;
+    return (int)v;
+}
+
+static int online_json_get_bool(const char* json, const char* key, int fallback) {
+    const char* p = online_json_find_key(json, key);
+    if (!p) return fallback;
+    if (strncmp(p, "true", 4) == 0) return 1;
+    if (strncmp(p, "false", 5) == 0) return 0;
+    return fallback;
+}
+
+static void online_make_url(char* out, size_t out_sz, const char* path) {
+    size_t len;
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    snprintf(out, out_sz, "%s", g_online_hub.server_url[0] ? g_online_hub.server_url : ONLINE_DEFAULT_SERVER_URL);
+    len = strlen(out);
+    while (len > 0 && out[len - 1] == '/') out[--len] = '\0';
+    snprintf(out + len, out_sz - len, "%s", path ? path : "");
+}
+
+static int online_utf8_to_wide(const char* src, wchar_t* dst, int dst_count) {
+    int n;
+    if (!dst || dst_count <= 0) return 0;
+    dst[0] = 0;
+    if (!src) src = "";
+    n = MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, dst_count);
+    if (n <= 0) {
+        n = MultiByteToWideChar(CP_ACP, 0, src, -1, dst, dst_count);
+    }
+    if (n <= 0) {
+        dst[0] = 0;
+        return 0;
+    }
+    dst[dst_count - 1] = 0;
+    return 1;
+}
+
+static DWORD WINAPI online_http_worker_thread(LPVOID param) {
+    OnlineHttpSlot* slot = (OnlineHttpSlot*)param;
+    wchar_t wide_url[512];
+    wchar_t host[256];
+    wchar_t path[512];
+    URL_COMPONENTSW uc;
+    HINTERNET session = NULL;
+    HINTERNET conn = NULL;
+    HINTERNET req = NULL;
+    DWORD flags = 0;
+    DWORD timeout_ms = 8000;
+    DWORD status = 0;
+    DWORD status_len = sizeof(status);
+    DWORD total = 0;
+    int ok = 0;
+
+    if (!slot) return 0;
+    slot->response[0] = '\0';
+    slot->error[0] = '\0';
+    slot->status_code = 0;
+
+    if (!online_utf8_to_wide(slot->url, wide_url, (int)(sizeof(wide_url) / sizeof(wide_url[0])))) {
+        safe_copy(slot->error, sizeof(slot->error), "bad URL encoding");
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    memset(&uc, 0, sizeof(uc));
+    memset(host, 0, sizeof(host));
+    memset(path, 0, sizeof(path));
+    uc.dwStructSize = sizeof(uc);
+    uc.lpszHostName = host;
+    uc.dwHostNameLength = (DWORD)(sizeof(host) / sizeof(host[0]));
+    uc.lpszUrlPath = path;
+    uc.dwUrlPathLength = (DWORD)(sizeof(path) / sizeof(path[0]));
+
+    if (!WinHttpCrackUrl(wide_url, 0, 0, &uc)) {
+        snprintf(slot->error, sizeof(slot->error), "bad URL (%lu)", GetLastError());
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+
+    if (uc.nScheme == INTERNET_SCHEME_HTTPS) flags |= WINHTTP_FLAG_SECURE;
+    session = WinHttpOpen(L"EggnoggPlusOnline/1.0",
+                          WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                          WINHTTP_NO_PROXY_NAME,
+                          WINHTTP_NO_PROXY_BYPASS,
+                          0);
+    if (!session) {
+        snprintf(slot->error, sizeof(slot->error), "WinHttpOpen failed %lu", GetLastError());
+        InterlockedExchange(&slot->done, -1);
+        return 0;
+    }
+    WinHttpSetOption(session, WINHTTP_OPTION_CONNECT_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
+    WinHttpSetOption(session, WINHTTP_OPTION_RECEIVE_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
+    WinHttpSetOption(session, WINHTTP_OPTION_SEND_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
+    WinHttpSetOption(session, WINHTTP_OPTION_RESOLVE_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
+
+    conn = WinHttpConnect(session, host, uc.nPort, 0);
+    if (!conn) {
+        snprintf(slot->error, sizeof(slot->error), "WinHttpConnect failed %lu", GetLastError());
+        goto done;
+    }
+    req = WinHttpOpenRequest(conn,
+                             L"POST",
+                             path[0] ? path : L"/",
+                             NULL,
+                             WINHTTP_NO_REFERER,
+                             WINHTTP_DEFAULT_ACCEPT_TYPES,
+                             flags);
+    if (!req) {
+        snprintf(slot->error, sizeof(slot->error), "WinHttpOpenRequest failed %lu", GetLastError());
+        goto done;
+    }
+
+    if (!WinHttpSendRequest(req,
+                            L"Content-Type: application/json\r\n",
+                            32,
+                            slot->body,
+                            (DWORD)strlen(slot->body),
+                            (DWORD)strlen(slot->body),
+                            0) ||
+        !WinHttpReceiveResponse(req, NULL)) {
+        snprintf(slot->error, sizeof(slot->error), "request failed %lu", GetLastError());
+        goto done;
+    }
+
+    (void)WinHttpQueryHeaders(req,
+                              WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                              WINHTTP_HEADER_NAME_BY_INDEX,
+                              &status,
+                              &status_len,
+                              WINHTTP_NO_HEADER_INDEX);
+    slot->status_code = status;
+
+    while (total + 1 < ONLINE_HTTP_RESPONSE_MAX) {
+        DWORD avail = 0;
+        DWORD read = 0;
+        DWORD want;
+        if (!WinHttpQueryDataAvailable(req, &avail)) {
+            snprintf(slot->error, sizeof(slot->error), "read failed %lu", GetLastError());
+            goto done;
+        }
+        if (avail == 0) break;
+        want = avail;
+        if (want > ONLINE_HTTP_RESPONSE_MAX - total - 1) want = ONLINE_HTTP_RESPONSE_MAX - total - 1;
+        if (!WinHttpReadData(req, slot->response + total, want, &read)) {
+            snprintf(slot->error, sizeof(slot->error), "read failed %lu", GetLastError());
+            goto done;
+        }
+        if (read == 0) break;
+        total += read;
+    }
+    slot->response[total] = '\0';
+    ok = 1;
+
+done:
+    if (req) WinHttpCloseHandle(req);
+    if (conn) WinHttpCloseHandle(conn);
+    if (session) WinHttpCloseHandle(session);
+    InterlockedExchange(&slot->done, ok ? 1 : -1);
+    return 0;
+}
+
+static int online_http_busy(void) {
+    return g_online_hub.request.in_use && InterlockedCompareExchange(&g_online_hub.request.done, 0, 0) == 0;
+}
+
+static int online_http_start(int type, const char* path, const char* body) {
+    OnlineHttpSlot* slot = &g_online_hub.request;
+    if (online_http_busy()) {
+        online_hub_set_message("Online request already running.");
+        return 0;
+    }
+    if (slot->thread) {
+        CloseHandle(slot->thread);
+        slot->thread = NULL;
+    }
+    memset(slot, 0, sizeof(*slot));
+    slot->in_use = 1;
+    slot->type = type;
+    slot->done = 0;
+    online_make_url(slot->url, sizeof(slot->url), path);
+    safe_copy(slot->body, sizeof(slot->body), body ? body : "{}");
+    slot->thread = CreateThread(NULL, 0, online_http_worker_thread, slot, 0, NULL);
+    if (!slot->thread) {
+        slot->in_use = 0;
+        online_hub_set_message("CreateThread failed for online request.");
+        return 0;
+    }
+    return 1;
+}
+
+static int online_require_login(void) {
+    if (!g_online_hub.logged_in || !g_online_hub.token[0]) {
+        online_hub_set_message("Log in first.");
+        return 0;
+    }
+    return 1;
+}
+
+static void online_request_login(int create_account) {
+    char user[96], pass[160], body[512];
+    online_json_escape(user, sizeof(user), g_online_hub.username);
+    online_json_escape(pass, sizeof(pass), g_online_hub.password);
+    if (!g_online_hub.username[0] || !g_online_hub.password[0]) {
+        online_hub_set_message("Enter username and password first.");
+        return;
+    }
+    snprintf(body, sizeof(body), "{\"username\":\"%s\",\"password\":\"%s\"}", user, pass);
+    if (online_http_start(create_account ? ONLINE_REQ_REGISTER : ONLINE_REQ_LOGIN,
+                          create_account ? "/api/register" : "/api/login",
+                          body)) {
+        online_hub_set_message(create_account ? "Creating account..." : "Logging in...");
+    }
+}
+
+static void online_request_queue(const char* queue) {
+    char token[192], host[192], q[32], body[640];
+    if (!online_require_login()) return;
+    online_json_escape(token, sizeof(token), g_online_hub.token);
+    online_json_escape(host, sizeof(host), g_online_hub.listen_host);
+    online_json_escape(q, sizeof(q), queue);
+    if (!g_online_hub.listen_host[0] || g_online_hub.listen_port <= 0) {
+        online_hub_set_message("Set P2P host and UDP port first.");
+        return;
+    }
+    snprintf(body,
+             sizeof(body),
+             "{\"token\":\"%s\",\"queue\":\"%s\",\"listen_host\":\"%s\",\"listen_port\":%d}",
+             token,
+             q,
+             host,
+             g_online_hub.listen_port);
+    if (online_http_start((_stricmp(queue, "ranked") == 0) ? ONLINE_REQ_JOIN_RANKED : ONLINE_REQ_JOIN_CASUAL,
+                          "/api/queue/join",
+                          body)) {
+        snprintf(g_online_hub.message, sizeof(g_online_hub.message), "Joining %s queue...", queue);
+    }
+}
+
+static void online_request_token_endpoint(int type, const char* path, const char* label) {
+    char token[192], body[320];
+    if (!online_require_login()) return;
+    online_json_escape(token, sizeof(token), g_online_hub.token);
+    snprintf(body, sizeof(body), "{\"token\":\"%s\"}", token);
+    if (online_http_start(type, path, body)) {
+        online_hub_set_message(label);
+    }
+}
+
+static void online_hub_start_match_if_ready(void) {
+    if (!g_online_hub.match_id[0] || g_online_hub.match_started) return;
+    if (_stricmp(g_online_hub.role, "host") == 0) {
+        start_ggpo_net_host((uint16_t)g_online_hub.listen_port, "online hub");
+        g_online_hub.match_started = 1;
+        online_hub_set_message("Match found. Hosting P2P gameplay...");
+    } else if (_stricmp(g_online_hub.role, "join") == 0) {
+        start_ggpo_net_join(g_online_hub.peer_host,
+                            (uint16_t)g_online_hub.peer_port,
+                            0,
+                            "online hub");
+        g_online_hub.match_started = 1;
+        online_hub_set_message("Match found. Joining P2P gameplay...");
+    }
+}
+
+static void online_hub_apply_status(const char* json) {
+    char status[32];
+    if (online_json_get_string(json, "username", g_online_hub.username, sizeof(g_online_hub.username))) {
+        /* saved below */
+    }
+    g_online_hub.elo = online_json_get_int(json, "elo", g_online_hub.elo);
+    if (!online_json_get_string(json, "status", status, sizeof(status))) {
+        safe_copy(status, sizeof(status), "idle");
+    }
+    safe_copy(g_online_hub.status, sizeof(g_online_hub.status), status);
+    if (_stricmp(status, "queued") == 0) {
+        int pos = online_json_get_int(json, "position", 0);
+        int queued = online_json_get_int(json, "queued_count", 0);
+        g_online_hub.queueing = 1;
+        g_online_hub.match_id[0] = '\0';
+        g_online_hub.match_started = 0;
+        online_json_get_string(json, "queue", g_online_hub.queue, sizeof(g_online_hub.queue));
+        snprintf(g_online_hub.message,
+                 sizeof(g_online_hub.message),
+                 "Queued for %s. Position %d/%d.",
+                 g_online_hub.queue[0] ? g_online_hub.queue : "?",
+                 pos,
+                 queued);
+    } else if (_stricmp(status, "matched") == 0) {
+        g_online_hub.queueing = 0;
+        online_json_get_string(json, "match_id", g_online_hub.match_id, sizeof(g_online_hub.match_id));
+        online_json_get_string(json, "queue", g_online_hub.queue, sizeof(g_online_hub.queue));
+        online_json_get_string(json, "opponent", g_online_hub.opponent, sizeof(g_online_hub.opponent));
+        online_json_get_string(json, "role", g_online_hub.role, sizeof(g_online_hub.role));
+        online_json_get_string(json, "peer_host", g_online_hub.peer_host, sizeof(g_online_hub.peer_host));
+        g_online_hub.peer_port = online_json_get_int(json, "peer_port", 0);
+        g_online_hub.player = online_json_get_int(json, "player", -1);
+        snprintf(g_online_hub.message,
+                 sizeof(g_online_hub.message),
+                 "Matched vs %s as %s.",
+                 g_online_hub.opponent[0] ? g_online_hub.opponent : "opponent",
+                 g_online_hub.role[0] ? g_online_hub.role : "?");
+        online_hub_start_match_if_ready();
+    } else {
+        g_online_hub.queueing = 0;
+        g_online_hub.queue[0] = '\0';
+        g_online_hub.match_id[0] = '\0';
+        g_online_hub.match_started = 0;
+        if (g_online_hub.logged_in) {
+            online_hub_set_message("Logged in. Choose casual or ranked queue.");
+        }
+    }
+    online_hub_save_config();
+}
+
+static void online_hub_finish_request(void) {
+    OnlineHttpSlot* slot = &g_online_hub.request;
+    LONG done;
+    char err[256];
+    int ok;
+    if (!slot->in_use) return;
+    done = InterlockedCompareExchange(&slot->done, 0, 0);
+    if (done == 0) return;
+    if (slot->thread) {
+        CloseHandle(slot->thread);
+        slot->thread = NULL;
+    }
+    slot->in_use = 0;
+    if (done < 0) {
+        snprintf(g_online_hub.message,
+                 sizeof(g_online_hub.message),
+                 "Server request failed: %s",
+                 slot->error[0] ? slot->error : "network error");
+        return;
+    }
+    ok = online_json_get_bool(slot->response, "ok", 0);
+    if (!ok) {
+        if (!online_json_get_string(slot->response, "error", err, sizeof(err))) {
+            snprintf(err, sizeof(err), "HTTP %lu", (unsigned long)slot->status_code);
+        }
+        snprintf(g_online_hub.message, sizeof(g_online_hub.message), "Server: %s", err);
+        return;
+    }
+
+    switch (slot->type) {
+        case ONLINE_REQ_LOGIN:
+        case ONLINE_REQ_REGISTER:
+            if (online_json_get_string(slot->response, "token", g_online_hub.token, sizeof(g_online_hub.token))) {
+                g_online_hub.logged_in = 1;
+                g_online_hub.elo = online_json_get_int(slot->response, "elo", ONLINE_INITIAL_ELO);
+                online_json_get_string(slot->response, "username", g_online_hub.username, sizeof(g_online_hub.username));
+                online_hub_save_config();
+                snprintf(g_online_hub.message,
+                         sizeof(g_online_hub.message),
+                         "Logged in as %s. Elo %d.",
+                         g_online_hub.username,
+                         g_online_hub.elo);
+            } else {
+                online_hub_set_message("Login response missing token.");
+            }
+            break;
+        case ONLINE_REQ_JOIN_CASUAL:
+        case ONLINE_REQ_JOIN_RANKED:
+        case ONLINE_REQ_STATUS:
+        case ONLINE_REQ_CANCEL:
+        case ONLINE_REQ_PROFILE:
+            online_hub_apply_status(slot->response);
+            break;
+        default:
+            break;
+    }
+}
+
+static void online_hub_poll(void) {
+    g_online_hub.tick++;
+    online_hub_finish_request();
+    if (g_online_hub.queueing &&
+        !online_http_busy() &&
+        g_online_hub.tick - g_online_hub.last_status_tick >= 60) {
+        g_online_hub.last_status_tick = g_online_hub.tick;
+        online_request_token_endpoint(ONLINE_REQ_STATUS, "/api/queue/status", "Checking queue...");
     }
 }
 
@@ -6682,23 +7312,391 @@ const char* hooks_custom_state_active_name(void) {
     return slot ? slot->name : NULL;
 }
 
-/* Legacy online hub helpers kept as thin wrappers around the generic API. */
-static void __cdecl online_hub_enter(void) { custom_state_enter(); }
-static void __cdecl online_hub_update(void) { custom_state_update(); }
-static void __cdecl online_hub_render(void) { custom_state_render(); }
-static void __cdecl online_hub_leave(void) { custom_state_leave(); }
+static void online_hub_clear_hits(void) {
+    g_online_hub.hit_count = 0;
+}
+
+static void online_hub_add_hit(float x, float y, float w, float h, int field, int action) {
+    OnlineHubHit* hit;
+    if (g_online_hub.hit_count >= ONLINE_HIT_MAX) return;
+    hit = &g_online_hub.hits[g_online_hub.hit_count++];
+    hit->x = x;
+    hit->y = y;
+    hit->w = w;
+    hit->h = h;
+    hit->field = field;
+    hit->action = action;
+}
+
+static int online_hub_hit_at(int x, int y, int* out_field, int* out_action) {
+    for (int i = g_online_hub.hit_count - 1; i >= 0; i--) {
+        OnlineHubHit* hit = &g_online_hub.hits[i];
+        if ((float)x >= hit->x && (float)x <= hit->x + hit->w &&
+            (float)y >= hit->y && (float)y <= hit->y + hit->h) {
+            if (out_field) *out_field = hit->field;
+            if (out_action) *out_action = hit->action;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static char* online_hub_field_ptr(int field, size_t* out_sz) {
+    switch (field) {
+        case ONLINE_FIELD_USERNAME:
+            if (out_sz) *out_sz = sizeof(g_online_hub.username);
+            return g_online_hub.username;
+        case ONLINE_FIELD_PASSWORD:
+            if (out_sz) *out_sz = sizeof(g_online_hub.password);
+            return g_online_hub.password;
+        case ONLINE_FIELD_SERVER_URL:
+            if (out_sz) *out_sz = sizeof(g_online_hub.server_url);
+            return g_online_hub.server_url;
+        case ONLINE_FIELD_LISTEN_HOST:
+            if (out_sz) *out_sz = sizeof(g_online_hub.listen_host);
+            return g_online_hub.listen_host;
+        case ONLINE_FIELD_LISTEN_PORT:
+            if (out_sz) *out_sz = 0;
+            return NULL;
+        default:
+            if (out_sz) *out_sz = 0;
+            return NULL;
+    }
+}
+
+static void online_hub_port_to_text(char* out, size_t out_sz) {
+    snprintf(out, out_sz, "%d", g_online_hub.listen_port > 0 ? g_online_hub.listen_port : ONLINE_DEFAULT_LISTEN_PORT);
+}
+
+static void online_hub_set_port_from_text(const char* text) {
+    g_online_hub.listen_port = online_parse_int(text, g_online_hub.listen_port > 0 ? g_online_hub.listen_port : ONLINE_DEFAULT_LISTEN_PORT);
+}
+
+static void online_hub_append_text(const char* text) {
+    size_t cap = 0;
+    char* field;
+    if (!text || !text[0]) return;
+    if (g_online_hub.focused_field == ONLINE_FIELD_LISTEN_PORT) {
+        char tmp[16];
+        size_t len;
+        online_hub_port_to_text(tmp, sizeof(tmp));
+        len = strlen(tmp);
+        for (const char* p = text; *p && len + 1 < sizeof(tmp); p++) {
+            if (*p >= '0' && *p <= '9') tmp[len++] = *p;
+        }
+        tmp[len] = '\0';
+        online_hub_set_port_from_text(tmp);
+        return;
+    }
+    field = online_hub_field_ptr(g_online_hub.focused_field, &cap);
+    if (field && cap > 0) {
+        size_t len = strlen(field);
+        for (const char* p = text; *p && len + 1 < cap; p++) {
+            unsigned char ch = (unsigned char)*p;
+            if (ch >= 32 && ch < 127) field[len++] = (char)ch;
+        }
+        field[len] = '\0';
+    }
+}
+
+static void online_hub_backspace(void) {
+    size_t cap = 0;
+    char* field;
+    if (g_online_hub.focused_field == ONLINE_FIELD_LISTEN_PORT) {
+        char tmp[16];
+        size_t len;
+        online_hub_port_to_text(tmp, sizeof(tmp));
+        len = strlen(tmp);
+        if (len > 0) tmp[len - 1] = '\0';
+        online_hub_set_port_from_text(tmp);
+        return;
+    }
+    field = online_hub_field_ptr(g_online_hub.focused_field, &cap);
+    if (field && field[0]) {
+        size_t len = strlen(field);
+        field[len - 1] = '\0';
+    }
+}
+
+static void online_hub_run_action(int action) {
+    switch (action) {
+        case ONLINE_ACTION_LOGIN:
+            online_request_login(0);
+            break;
+        case ONLINE_ACTION_REGISTER:
+            online_request_login(1);
+            break;
+        case ONLINE_ACTION_QUEUE_CASUAL:
+            online_request_queue("casual");
+            break;
+        case ONLINE_ACTION_QUEUE_RANKED:
+            online_request_queue("ranked");
+            break;
+        case ONLINE_ACTION_CANCEL_QUEUE:
+            online_request_token_endpoint(ONLINE_REQ_CANCEL, "/api/queue/cancel", "Cancelling queue...");
+            break;
+        case ONLINE_ACTION_SAVE_SETTINGS:
+            online_hub_save_config();
+            online_hub_set_message("Online settings saved.");
+            break;
+        case ONLINE_ACTION_BACK:
+            hooks_leave_online_hub();
+            break;
+        default:
+            break;
+    }
+}
+
+static void online_hub_draw_button(float x, float y, float w, float h, const char* label, int action, int enabled) {
+    float br = enabled ? 0.14f : 0.08f;
+    float bg = enabled ? 0.20f : 0.09f;
+    float bb = enabled ? 0.28f : 0.10f;
+    hooks_ui_fill_rect(x, y, w, h, br, bg, bb, 0.88f);
+    hooks_ui_stroke_rect(x, y, w, h, 2.0f * g_ui_scale,
+                         enabled ? 0.46f : 0.20f,
+                         enabled ? 0.70f : 0.24f,
+                         enabled ? 0.86f : 0.28f,
+                         0.95f);
+    draw_text_centered_scaled(x + w * 0.5f, y + (h * 0.5f) - (5.0f * g_ui_scale),
+                              g_ui_scale * 0.95f,
+                              enabled ? 0.92f : 0.46f,
+                              enabled ? 0.96f : 0.50f,
+                              enabled ? 1.00f : 0.54f,
+                              label);
+    if (enabled) online_hub_add_hit(x, y, w, h, -1, action);
+}
+
+static void online_hub_draw_field(float x, float y, float w, float h, const char* label, int field) {
+    char value[256];
+    int focused = (g_online_hub.focused_field == field);
+    value[0] = '\0';
+    if (field == ONLINE_FIELD_PASSWORD) {
+        int n = (int)strlen(g_online_hub.password);
+        if (n > 40) n = 40;
+        build_repeat(value, sizeof(value), '*', n);
+    } else if (field == ONLINE_FIELD_LISTEN_PORT) {
+        online_hub_port_to_text(value, sizeof(value));
+    } else {
+        size_t cap = 0;
+        char* ptr = online_hub_field_ptr(field, &cap);
+        safe_copy(value, sizeof(value), ptr ? ptr : "");
+    }
+
+    draw_text_scaled(x, y - (17.0f * g_ui_scale), g_ui_scale * 0.72f, 0.62f, 0.72f, 0.84f, label);
+    hooks_ui_fill_rect(x, y, w, h, focused ? 0.10f : 0.06f, focused ? 0.16f : 0.08f, focused ? 0.22f : 0.10f, 0.92f);
+    hooks_ui_stroke_rect(x, y, w, h, focused ? 2.0f * g_ui_scale : 1.0f * g_ui_scale,
+                         focused ? 0.72f : 0.28f,
+                         focused ? 0.84f : 0.36f,
+                         focused ? 0.96f : 0.46f,
+                         0.95f);
+    draw_text_scaled(x + (10.0f * g_ui_scale), y + (h * 0.5f) - (5.0f * g_ui_scale),
+                     g_ui_scale * 0.82f, 0.88f, 0.92f, 0.96f, value[0] ? value : " ");
+    online_hub_add_hit(x, y, w, h, field, ONLINE_ACTION_NONE);
+}
+
+static void __cdecl online_hub_enter(void) {
+    void* last = p_state_last ? p_state_last() : (void*)(uintptr_t)ADDR_MAIN_STATE;
+    if (!g_online_hub.initialized) online_hub_load_config();
+    g_online_hub_return_state = last;
+    if (!g_online_hub_return_state || g_online_hub_return_state == (void*)&g_online_hub_state) {
+        g_online_hub_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    g_online_hub.hit_count = 0;
+    capture_clear();
+    LOG_INFO("ONLINE: entering hub");
+}
+
+static void __cdecl online_hub_update(void) {
+    online_hub_poll();
+    lua_manager_on_tick();
+    lua_manager_on_tick_post();
+    hooks_finish_game_tick();
+}
+
+static void __cdecl online_hub_render(void) {
+    float w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    float ui = calc_ui_scale();
+    float panel_w;
+    float panel_x;
+    float panel_y;
+    float row_h;
+    float gap;
+    float field_w;
+    float left_x;
+    float right_x;
+    char line[256];
+
+    g_ui_scale = ui;
+    online_hub_clear_hits();
+
+    mods_restore_render_state();
+    console_draw_background((int)w, (int)h);
+    hooks_ui_fill_rect(0.0f, 0.0f, w, h, 0.02f, 0.025f, 0.03f, 0.40f);
+
+    panel_w = w - (160.0f * ui);
+    if (panel_w > 980.0f * ui) panel_w = 980.0f * ui;
+    if (panel_w < 560.0f) panel_w = w - (32.0f * ui);
+    panel_x = (w - panel_w) * 0.5f;
+    panel_y = 72.0f * ui;
+    row_h = 42.0f * ui;
+    gap = 18.0f * ui;
+    field_w = (panel_w - gap) * 0.5f;
+    left_x = panel_x;
+    right_x = panel_x + field_w + gap;
+
+    hooks_ui_fill_rect(panel_x - (22.0f * ui), panel_y - (28.0f * ui),
+                       panel_w + (44.0f * ui), h - panel_y - (54.0f * ui),
+                       0.035f, 0.045f, 0.055f, 0.88f);
+    hooks_ui_stroke_rect(panel_x - (22.0f * ui), panel_y - (28.0f * ui),
+                         panel_w + (44.0f * ui), h - panel_y - (54.0f * ui),
+                         2.0f * ui, 0.22f, 0.34f, 0.42f, 0.95f);
+
+    draw_text_scaled(panel_x, panel_y - (6.0f * ui), ui * 1.28f, 0.92f, 0.96f, 1.00f, "ONLINE HUB");
+    if (g_online_hub.logged_in) {
+        snprintf(line, sizeof(line), "%s   Elo %d", g_online_hub.username, g_online_hub.elo);
+    } else {
+        snprintf(line, sizeof(line), "Not logged in");
+    }
+    draw_text_right_scaled(panel_x + panel_w, panel_y - (2.0f * ui), ui * 0.86f, 0.66f, 0.76f, 0.86f, line);
+
+    panel_y += 52.0f * ui;
+    online_hub_draw_field(left_x, panel_y, field_w, row_h, "Username", ONLINE_FIELD_USERNAME);
+    online_hub_draw_field(right_x, panel_y, field_w, row_h, "Password", ONLINE_FIELD_PASSWORD);
+
+    panel_y += row_h + (30.0f * ui);
+    online_hub_draw_field(left_x, panel_y, panel_w, row_h, "Server URL", ONLINE_FIELD_SERVER_URL);
+
+    panel_y += row_h + (30.0f * ui);
+    online_hub_draw_field(left_x, panel_y, field_w, row_h, "P2P Advertise Host", ONLINE_FIELD_LISTEN_HOST);
+    online_hub_draw_field(right_x, panel_y, field_w, row_h, "P2P UDP Port", ONLINE_FIELD_LISTEN_PORT);
+
+    panel_y += row_h + (30.0f * ui);
+    {
+        float bw = (panel_w - (3.0f * gap)) * 0.25f;
+        online_hub_draw_button(left_x, panel_y, bw, row_h, "LOGIN", ONLINE_ACTION_LOGIN, !online_http_busy());
+        online_hub_draw_button(left_x + (bw + gap), panel_y, bw, row_h, "REGISTER", ONLINE_ACTION_REGISTER, !online_http_busy());
+        online_hub_draw_button(left_x + (bw + gap) * 2.0f, panel_y, bw, row_h, "SAVE", ONLINE_ACTION_SAVE_SETTINGS, 1);
+        online_hub_draw_button(left_x + (bw + gap) * 3.0f, panel_y, bw, row_h, "BACK", ONLINE_ACTION_BACK, 1);
+    }
+
+    panel_y += row_h + (28.0f * ui);
+    {
+        float bw = (panel_w - (2.0f * gap)) / 3.0f;
+        int can_queue = g_online_hub.logged_in && !online_http_busy() && !g_online_hub.queueing && !g_online_hub.match_started;
+        online_hub_draw_button(left_x, panel_y, bw, row_h, "CASUAL QUEUE", ONLINE_ACTION_QUEUE_CASUAL, can_queue);
+        online_hub_draw_button(left_x + bw + gap, panel_y, bw, row_h, "RANKED QUEUE", ONLINE_ACTION_QUEUE_RANKED, can_queue);
+        online_hub_draw_button(left_x + (bw + gap) * 2.0f, panel_y, bw, row_h, "CANCEL", ONLINE_ACTION_CANCEL_QUEUE,
+                               g_online_hub.logged_in && !online_http_busy() && g_online_hub.queueing);
+    }
+
+    panel_y += row_h + (34.0f * ui);
+    snprintf(line,
+             sizeof(line),
+             "Status: %s%s%s",
+             g_online_hub.status[0] ? g_online_hub.status : "idle",
+             g_online_hub.queue[0] ? " / " : "",
+             g_online_hub.queue[0] ? g_online_hub.queue : "");
+    draw_text_scaled(left_x, panel_y, ui * 0.90f, 0.72f, 0.84f, 0.92f, line);
+    panel_y += 28.0f * ui;
+    draw_text_scaled(left_x, panel_y, ui * 0.84f, 0.88f, 0.90f, 0.76f,
+                     g_online_hub.message[0] ? g_online_hub.message : " ");
+    if (g_online_hub.match_id[0]) {
+        panel_y += 28.0f * ui;
+        snprintf(line,
+                 sizeof(line),
+                 "Match %s  opponent=%s  role=%s  peer=%s:%d",
+                 g_online_hub.match_id,
+                 g_online_hub.opponent[0] ? g_online_hub.opponent : "?",
+                 g_online_hub.role[0] ? g_online_hub.role : "?",
+                 g_online_hub.peer_host[0] ? g_online_hub.peer_host : "?",
+                 g_online_hub.peer_port);
+        draw_text_scaled(left_x, panel_y, ui * 0.72f, 0.58f, 0.70f, 0.80f, line);
+    }
+
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+    mods_restore_render_state();
+}
+
+static void __cdecl online_hub_leave(void) {
+    online_hub_save_config();
+    mods_restore_render_state();
+    LOG_INFO("ONLINE: leaving hub");
+}
 
 void hooks_enter_online_hub(void) {
-    hooks_enter_custom_state("online_hub");
+    if (p_state_switch) p_state_switch((void*)&g_online_hub_state);
 }
 
 void hooks_leave_online_hub(void) {
-    hooks_leave_custom_state();
+    if (p_state_switch) {
+        void* target = g_online_hub_return_state ? g_online_hub_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
+        if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+        p_state_switch(target);
+    }
 }
 
 int hooks_online_hub_active(void) {
-    const char* name = hooks_custom_state_active_name();
-    return (name && _stricmp(name, "online_hub") == 0) ? 1 : 0;
+    return (p_state_current && p_state_current() == (void*)&g_online_hub_state) ? 1 : 0;
+}
+
+int hooks_online_hub_textinput(const char* text) {
+    if (!hooks_online_hub_active()) return 0;
+    online_hub_append_text(text);
+    return 1;
+}
+
+int hooks_online_hub_keydown(int sym, int scancode, int mod) {
+    (void)scancode;
+    (void)mod;
+    if (!hooks_online_hub_active()) return 0;
+    if (sym == SDLK_ESCAPE) {
+        hooks_leave_online_hub();
+        return 1;
+    }
+    if (sym == SDLK_TAB) {
+        g_online_hub.focused_field = (g_online_hub.focused_field + 1) % ONLINE_FIELD_COUNT;
+        return 1;
+    }
+    if (sym == SDLK_RETURN) {
+        online_request_login(0);
+        return 1;
+    }
+    if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
+        online_hub_backspace();
+        return 1;
+    }
+    return 1;
+}
+
+int hooks_online_hub_mousebutton(int x, int y, int button, int down) {
+    int field = -1;
+    int action = ONLINE_ACTION_NONE;
+    if (!hooks_online_hub_active()) return 0;
+    if (!down || button != 1) return 1;
+    if (online_hub_hit_at(x, y, &field, &action)) {
+        if (field >= 0) {
+            g_online_hub.focused_field = field;
+        }
+        if (action != ONLINE_ACTION_NONE) {
+            online_hub_run_action(action);
+        }
+    }
+    return 1;
+}
+
+int hooks_online_hub_control_action(int action) {
+    if (!hooks_online_hub_active()) return 0;
+    if (action == 6) {
+        hooks_leave_online_hub();
+        return 1;
+    }
+    if (action == 5) {
+        online_request_login(0);
+        return 1;
+    }
+    return 1;
 }
 
 static void __cdecl mods_entry_enter(void) {
@@ -6817,6 +7815,71 @@ static void add_mods_button_to_options(void) {
     }
 }
 
+static void* online_find_button_by_label(const char* label) {
+    int count;
+    if (!label || !label[0] || !p_button_count || !p_button_get) return NULL;
+    count = p_button_count();
+    if (count <= 0 || count > 300) return NULL;
+    for (int i = 0; i < count; i++) {
+        void* btn = p_button_get(i);
+        const char* txt;
+        if (!btn) continue;
+        if (IsBadReadPtr((uint8_t*)btn + BTN_OFS_LABEL_PTR, (SIZE_T)sizeof(void*))) continue;
+        txt = *(const char**)((uint8_t*)btn + BTN_OFS_LABEL_PTR);
+        if (!txt || IsBadStringPtrA(txt, 128)) continue;
+        if (_stricmp(txt, label) == 0) return btn;
+    }
+    return NULL;
+}
+
+static void online_hub_ensure_main_button(void) {
+    void* state_ptr = p_state_current ? p_state_current() : NULL;
+    void* start_btn;
+    void* online_btn;
+    float sx;
+    float sy;
+    float sh;
+
+    if (state_ptr != (void*)(uintptr_t)ADDR_MAIN_STATE &&
+        state_ptr != (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+        g_online_main_menu_state_seen = NULL;
+        return;
+    }
+    if (g_online_main_menu_state_seen == state_ptr && online_find_button_by_label("ONLINE")) return;
+    g_online_main_menu_state_seen = state_ptr;
+
+    start_btn = online_find_button_by_label("START");
+    if (!start_btn) start_btn = online_find_button_by_label("PLAY");
+    if (!start_btn) return;
+
+    online_btn = online_find_button_by_label("ONLINE");
+    if (!online_btn) {
+        if (p_button_set_layout) p_button_set_layout(3.0f, 6.0f);
+        if (p_menu_button_link) {
+            online_btn = p_menu_button_link(1.0f, 5.15f, "ONLINE", (void*)&g_online_hub_state);
+        }
+    }
+    if (!online_btn) return;
+
+    if (IsBadReadPtr((uint8_t*)start_btn + BTN_OFS_HEIGHT, sizeof(float)) ||
+        IsBadWritePtr((uint8_t*)start_btn + BTN_OFS_CENTER_Y, sizeof(float)) ||
+        IsBadWritePtr((uint8_t*)online_btn + BTN_OFS_CENTER_Y, sizeof(float)) ||
+        IsBadWritePtr((uint8_t*)online_btn + BTN_OFS_CENTER_X, sizeof(float))) {
+        return;
+    }
+
+    sx = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_X);
+    sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
+    sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
+    if (sh <= 1.0f || sh > 300.0f) sh = 54.0f * calc_ui_scale();
+    *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y) = sy - (sh * 0.42f);
+    *(float*)((uint8_t*)online_btn + BTN_OFS_CENTER_X) = sx;
+    *(float*)((uint8_t*)online_btn + BTN_OFS_CENTER_Y) = sy + (sh * 0.64f);
+    if (!IsBadWritePtr((uint8_t*)online_btn + BTN_OFS_LINK_PTR, sizeof(void*))) {
+        *(void**)((uint8_t*)online_btn + BTN_OFS_LINK_PTR) = (void*)&g_online_hub_state;
+    }
+}
+
 static void __cdecl hooked_options_enter(void) {
     fn_void_void_t real_enter = p_options_enter_trampoline ? p_options_enter_trampoline : p_options_enter;
     real_enter();
@@ -6838,6 +7901,10 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
+    if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
+        state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+        online_hub_ensure_main_button();
+    }
     if (!is_game_state) {
         lua_manager_on_tick();
     }
@@ -7495,7 +8562,7 @@ void hooks_init(void) {
         p_synth_effect_whistling_trampoline = (fn_synth_callback_t)g_synth_effect_whistling_detour.trampoline;
     }
 
-    
+
 
 
 

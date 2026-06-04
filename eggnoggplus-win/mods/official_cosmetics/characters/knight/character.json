@@ -10,6 +10,10 @@
       "target_w": 16,
       "target_h": 16,
       "fps": 12,
+      "color_masks": {
+        "skin": ["#F4ECCD"],
+        "clothing": ["#FFFFFF"]
+      },
       "animations": {
         "idle": {
           "frames": [

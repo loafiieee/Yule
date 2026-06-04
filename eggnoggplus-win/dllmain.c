@@ -497,12 +497,16 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
+                    consumed = 1;
+                    break;
+                }
                 lua_manager_on_key_event(event->key.keysym.sym, 1);
                 consumed = lua_manager_on_event("keydown",
                     event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
                 break;
             case SDL_KEYUP:
-                if (hooks_console_active()) {
+                if (hooks_console_active() || hooks_online_hub_active()) {
                     consumed = 1;
                     break;
                 }
@@ -516,6 +520,10 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_mousebutton(event->button.x, event->button.y, event->button.button, 1)) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousebuttondown",
                     0, 0, 0, event->button.x, event->button.y, event->button.button);
                 break;
@@ -525,11 +533,15 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_mousebutton(event->button.x, event->button.y, event->button.button, 0)) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousebuttonup",
                     0, 0, 0, event->button.x, event->button.y, event->button.button);
                 break;
             case SDL_MOUSEMOTION:
-                if (hooks_console_active()) {
+                if (hooks_console_active() || hooks_online_hub_active()) {
                     consumed = 1;
                     break;
                 }
@@ -547,6 +559,10 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             case SDL_TEXTINPUT: {
                 if (hooks_console_textinput(event->text.text)) {
+                    consumed = 1;
+                    break;
+                }
+                if (hooks_online_hub_textinput(event->text.text)) {
                     consumed = 1;
                     break;
                 }
@@ -579,6 +595,8 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                 } else if (hooks_console_active()) {
                     consumed = 1;
+                } else if (action && hooks_online_hub_control_action(action)) {
+                    consumed = 1;
                 } else if (action && hooks_mods_menu_control_action(action)) {
                     consumed = 1;
                 } else {
@@ -588,7 +606,7 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             }
             case SDL_CONTROLLERBUTTONUP:
-                if (hooks_console_active()) {
+                if (hooks_console_active() || hooks_online_hub_active()) {
                     consumed = 1;
                     break;
                 }
@@ -596,7 +614,7 @@ int SDL_PollEvent(SDL_Event* event) {
                     (int)event->cbutton.button, 0, 0, (int)event->cbutton.which, (int)event->cbutton.state, 0);
                 break;
             case SDL_JOYAXISMOTION:
-                if (hooks_console_active()) {
+                if (hooks_console_active() || hooks_online_hub_active()) {
                     consumed = 1;
                     break;
                 }
@@ -615,6 +633,8 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                 } else if (hooks_console_active()) {
                     consumed = 1;
+                } else if (action && hooks_online_hub_control_action(action)) {
+                    consumed = 1;
                 } else if (action && hooks_mods_menu_control_action(action)) {
                     consumed = 1;
                 } else {
@@ -624,7 +644,7 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             }
             case SDL_JOYBUTTONUP:
-                if (hooks_console_active()) {
+                if (hooks_console_active() || hooks_online_hub_active()) {
                     consumed = 1;
                     break;
                 }
@@ -640,6 +660,8 @@ int SDL_PollEvent(SDL_Event* event) {
                 if (action && hooks_console_control_action(action)) {
                     consumed = 1;
                 } else if (hooks_console_active()) {
+                    consumed = 1;
+                } else if (action && hooks_online_hub_control_action(action)) {
                     consumed = 1;
                 } else if (action && hooks_mods_menu_control_action(action)) {
                     consumed = 1;

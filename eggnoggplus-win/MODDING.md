@@ -475,6 +475,32 @@ mod.ui.draw_sprite(sprite, 400, 240, { scale = 1.0 })
   - Options: `cell_w`, `cell_h`, `padding`, `flags`, `force`.
   - Returns `{ id, path, full_path, base_id, count, cell_w, cell_h, padding, flags }`.
   - If the engine graphics atlas is not ready yet, the sheet is registered and the call returns `nil, err`; call again on a later frame or use `mod.assets.info(id)`.
+- `mod.assets.begin_batch() -> true | nil, err`
+- `mod.assets.end_batch() -> true | nil, err`
+- `mod.assets.cancel_batch() -> true | nil, err`
+  - Use a batch when registering several related sheets. While a batch is open, `load_spritesheet` records metadata without rebuilding the atlas. `end_batch` rebuilds once for the whole group.
+  - After `end_batch`, call `mod.assets.info(id)` or `mod.assets.sprite_id(id, index)` to fetch the packed `base_id`/sprite IDs.
+  - If a sheet registration fails before `end_batch`, call `cancel_batch`. If `end_batch` fails because the atlas is not ready, retry `end_batch` on a later frame.
+
+```lua
+local ok, err = mod.assets.begin_batch()
+if ok then
+  local base = mod.assets.load_spritesheet("body_base", "assets/body_base.png", { cell_w = 64, cell_h = 64 })
+  local skin = mod.assets.load_spritesheet("body_skin", "assets/body_skin.png", { cell_w = 64, cell_h = 64 })
+  local clothes = mod.assets.load_spritesheet("body_clothes", "assets/body_clothes.png", { cell_w = 64, cell_h = 64 })
+  if base and skin and clothes then
+    ok, err = mod.assets.end_batch()
+  else
+    ok = false
+    mod.assets.cancel_batch()
+  end
+  if ok then
+    local base_info = mod.assets.info("body_base")
+    local sprite = mod.assets.sprite_id("body_base", 0)
+  end
+end
+```
+
 - `mod.assets.sprite_id(id [,index=0]) -> sprite_id | nil, err`
 - `mod.assets.info([id]) -> sheet | nil` or a list of loaded sheets when `id` is omitted.
 

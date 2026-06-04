@@ -75,6 +75,8 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_TILES_ID                0x547B80u
 #define ADDR_SPRITES_ID              0x547B94u
 #define ADDR_GLYPHS_ID               0x547B98u
+#define ADDR_STBI_LOAD               0x4140A0u
+#define ADDR_STBI_IMAGE_FREE         0x411C80u
 
 // Built-in synth SFX entry points (reverse engineered from ghidra symbols).
 #define ADDR_SOUND_SWORD_CHING       0x425D70u
@@ -220,6 +222,8 @@ typedef void  (__cdecl *fn_atlas_exit_t)(void);
 typedef int   (__cdecl *fn_atlas_load_spritesheet_t)(int, int*, int, int, int, uint32_t, char*);
 typedef void  (__cdecl *fn_sprites_reset_t)(void);
 typedef int   (__cdecl *fn_load_gfx_t)(void);
+typedef unsigned char* (__cdecl *fn_stbi_load_t)(const char*, int*, int*, int*, int);
+typedef void  (__cdecl *fn_stbi_image_free_t)(void*);
 typedef void* (__cdecl *fn_sound_sword_ching_t)(float, float);
 typedef void  (__cdecl *fn_sound_noise_t)(float, int);
 typedef void  (__cdecl *fn_sound_thump_t)(float);
@@ -286,6 +290,8 @@ static fn_atlas_exit_t        p_atlas_exit        = (fn_atlas_exit_t)(uintptr_t)
 static fn_atlas_load_spritesheet_t p_atlas_load_spritesheet = (fn_atlas_load_spritesheet_t)(uintptr_t)ADDR_ATLAS_LOAD_SPRITESHEET;
 static fn_sprites_reset_t     p_sprites_reset     = (fn_sprites_reset_t)(uintptr_t)ADDR_SPRITES_RESET;
 static fn_load_gfx_t          p_load_gfx          = (fn_load_gfx_t)(uintptr_t)ADDR_LOAD_GFX;
+static fn_stbi_load_t         p_stbi_load         = (fn_stbi_load_t)(uintptr_t)ADDR_STBI_LOAD;
+static fn_stbi_image_free_t   p_stbi_image_free   = (fn_stbi_image_free_t)(uintptr_t)ADDR_STBI_IMAGE_FREE;
 static fn_sound_sword_ching_t p_sound_sword_ching = (fn_sound_sword_ching_t)(uintptr_t)ADDR_SOUND_SWORD_CHING;
 static fn_sound_noise_t      p_sound_noise      = (fn_sound_noise_t)(uintptr_t)ADDR_SOUND_NOISE;
 static fn_sound_thump_t      p_sound_thump      = (fn_sound_thump_t)(uintptr_t)ADDR_SOUND_THUMP;
@@ -452,6 +458,19 @@ typedef struct ModAssetSheet {
     uint32_t flags;
 } ModAssetSheet;
 
+#define MOD_COLOR_MASK_MAX_LAYERS 8
+#define MOD_COLOR_MASK_MAX_COLORS 128
+#define MOD_COLOR_MASK_MAX_PIXELS (2048u * 2048u)
+
+typedef struct ModColorMaskLayer {
+    char name[32];
+    uint32_t colors[MOD_COLOR_MASK_MAX_COLORS];
+    int color_count;
+    unsigned int matched_pixels;
+    char relpath[MAX_PATH];
+    char fullpath[MAX_PATH];
+} ModColorMaskLayer;
+
 typedef struct ModPerfCounter {
     unsigned int call_count;
     double total_ms;
@@ -596,6 +615,8 @@ struct LoadedMod {
     ModAssetSheet* asset_sheets;
     int asset_sheet_count;
     int asset_sheet_cap;
+    int asset_batch_depth;
+    int asset_batch_dirty;
 };
 
 
@@ -702,7 +723,9 @@ static int g_ui_mouse_pressed_right = 0;
 static int g_ui_default_custom_cursor_suppressed = 0;
 static int g_mod_asset_injection_active = 0;
 
-// Runtime hot-reload state (polled once per second from on_frame).
+// Runtime hot-reload state. Automatic polling is disabled by default because
+// generated mod cache assets can otherwise trigger reload loops during play.
+#define AUTO_HOT_RELOAD_ENABLED 0
 #define HOT_RELOAD_INTERVAL_MS 1000ULL
 static uint64_t g_hot_reload_signature = 0;
 static ULONGLONG g_hot_reload_next_poll_ms = 0;
@@ -2858,6 +2881,8 @@ static LoadedMod* mods_add(void) {
     m->asset_sheets = NULL;
     m->asset_sheet_count = 0;
     m->asset_sheet_cap = 0;
+    m->asset_batch_depth = 0;
+    m->asset_batch_dirty = 0;
     return m;
 }
 
@@ -3071,6 +3096,530 @@ static int mod_asset_resolve_path(LoadedMod* mod, const char* rel_path, char* ou
     return 1;
 }
 
+static int mod_asset_create_dir_recursive(const char* full_dir) {
+    char tmp[MAX_PATH];
+    size_t len;
+    char* p;
+
+    if (!full_dir || !full_dir[0]) return 0;
+    snprintf(tmp, sizeof(tmp), "%s", full_dir);
+    tmp[sizeof(tmp) - 1] = '\0';
+    audio_normalize_slashes(tmp);
+
+    len = strlen(tmp);
+    while (len > 0 && (tmp[len - 1] == '\\' || tmp[len - 1] == '/')) {
+        tmp[len - 1] = '\0';
+        len--;
+    }
+    if (len == 0) return 0;
+
+    for (p = tmp; *p; p++) {
+        if (*p != '\\' && *p != '/') continue;
+        if (p == tmp) continue;
+        if (p > tmp && p[-1] == ':') continue;
+        {
+            char old = *p;
+            *p = '\0';
+            if (tmp[0] && !CreateDirectoryA(tmp, NULL)) {
+                DWORD gle = GetLastError();
+                if (gle != ERROR_ALREADY_EXISTS) {
+                    *p = old;
+                    return 0;
+                }
+            }
+            *p = old;
+        }
+    }
+
+    if (!CreateDirectoryA(tmp, NULL)) {
+        DWORD gle = GetLastError();
+        if (gle != ERROR_ALREADY_EXISTS) return 0;
+    }
+    return 1;
+}
+
+static int mod_asset_resolve_output_dir(LoadedMod* mod, const char* rel_dir, char* full_dir, int full_dir_sz, char* err, int err_sz) {
+    if (!rel_dir || !rel_dir[0]) rel_dir = "cache/assets";
+    if (!mod_asset_rel_path_safe(rel_dir)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "output dir must be relative to the mod folder");
+        return 0;
+    }
+    if (!audio_resolve_mod_path(mod, rel_dir, full_dir, full_dir_sz)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "failed to resolve output dir");
+        return 0;
+    }
+    if (!mod_asset_create_dir_recursive(full_dir)) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "failed to create output dir: %s", rel_dir);
+        return 0;
+    }
+    return 1;
+}
+
+static void mod_asset_sanitize_key(const char* in, char* out, int out_sz) {
+    int oi = 0;
+    if (!out || out_sz <= 0) return;
+    out[0] = '\0';
+    if (!in || !in[0]) in = "asset";
+    for (const char* p = in; *p && oi < out_sz - 1; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (isalnum(c) || c == '_' || c == '-' || c == '.') {
+            out[oi++] = (char)c;
+        } else {
+            out[oi++] = '_';
+        }
+    }
+    while (oi > 0 && out[oi - 1] == '_') oi--;
+    if (oi == 0) {
+        snprintf(out, out_sz, "asset");
+    } else {
+        out[oi] = '\0';
+    }
+}
+
+static int mod_asset_hex_value(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
+static int mod_asset_parse_hex_color(const char* value, uint32_t* out_rgb) {
+    char hex[7];
+    int n = 0;
+    const char* p = value;
+
+    if (!value || !out_rgb) return 0;
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p == '#') p++;
+    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
+    while (*p && !isspace((unsigned char)*p)) {
+        if (n >= 6) return 0;
+        if (mod_asset_hex_value((unsigned char)*p) < 0) return 0;
+        hex[n++] = *p++;
+    }
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p) return 0;
+
+    if (n == 3) {
+        int r = mod_asset_hex_value((unsigned char)hex[0]);
+        int g = mod_asset_hex_value((unsigned char)hex[1]);
+        int b = mod_asset_hex_value((unsigned char)hex[2]);
+        *out_rgb = (uint32_t)((r << 20) | (r << 16) | (g << 12) | (g << 8) | (b << 4) | b);
+        return 1;
+    }
+    if (n == 6) {
+        int r = (mod_asset_hex_value((unsigned char)hex[0]) << 4) | mod_asset_hex_value((unsigned char)hex[1]);
+        int g = (mod_asset_hex_value((unsigned char)hex[2]) << 4) | mod_asset_hex_value((unsigned char)hex[3]);
+        int b = (mod_asset_hex_value((unsigned char)hex[4]) << 4) | mod_asset_hex_value((unsigned char)hex[5]);
+        *out_rgb = (uint32_t)((r << 16) | (g << 8) | b);
+        return 1;
+    }
+    return 0;
+}
+
+static int mod_asset_color_component_from_lua(lua_State* Ls, int table_index, const char* field, int array_index, int* out) {
+    double v = -1.0;
+    lua_getfield(Ls, table_index, field);
+    if (lua_isnumber(Ls, -1)) v = lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    if (v < 0.0) {
+        lua_rawgeti(Ls, table_index, array_index);
+        if (lua_isnumber(Ls, -1)) v = lua_tonumber(Ls, -1);
+        lua_pop(Ls, 1);
+    }
+    if (v < 0.0) return 0;
+    if (v <= 1.0) v *= 255.0;
+    if (v < 0.0) v = 0.0;
+    if (v > 255.0) v = 255.0;
+    *out = (int)(v + 0.5);
+    return 1;
+}
+
+static int mod_asset_parse_lua_color(lua_State* Ls, int value_index, uint32_t* out_rgb) {
+    if (lua_isnumber(Ls, value_index)) {
+        int value = (int)lua_tointeger(Ls, value_index);
+        if (value < 0) return 0;
+        *out_rgb = (uint32_t)value & 0x00FFFFFFu;
+        return 1;
+    }
+    if (lua_isstring(Ls, value_index)) {
+        return mod_asset_parse_hex_color(lua_tostring(Ls, value_index), out_rgb);
+    }
+    if (lua_istable(Ls, value_index)) {
+        int r = 0, g = 0, b = 0;
+        if (!mod_asset_color_component_from_lua(Ls, value_index, "r", 1, &r)) return 0;
+        if (!mod_asset_color_component_from_lua(Ls, value_index, "g", 2, &g)) return 0;
+        if (!mod_asset_color_component_from_lua(Ls, value_index, "b", 3, &b)) return 0;
+        *out_rgb = (uint32_t)((r << 16) | (g << 8) | b);
+        return 1;
+    }
+    return 0;
+}
+
+static int mod_asset_layer_add_color(ModColorMaskLayer* layer, uint32_t rgb) {
+    if (!layer) return 0;
+    for (int i = 0; i < layer->color_count; i++) {
+        if (layer->colors[i] == rgb) return 1;
+    }
+    if (layer->color_count >= MOD_COLOR_MASK_MAX_COLORS) return 0;
+    layer->colors[layer->color_count++] = rgb;
+    return 1;
+}
+
+static int mod_asset_parse_color_list(lua_State* Ls, int value_index, ModColorMaskLayer* layer, char* err, int err_sz) {
+    uint32_t rgb = 0;
+
+    if (!lua_istable(Ls, value_index)) {
+        if (!mod_asset_parse_lua_color(Ls, value_index, &rgb) || !mod_asset_layer_add_color(layer, rgb)) {
+            if (err && err_sz > 0) snprintf(err, err_sz, "invalid color mask value for %s", layer->name);
+            return 0;
+        }
+        return 1;
+    }
+
+    {
+        int colors_index = 0;
+        lua_getfield(Ls, value_index, "colors");
+        if (lua_istable(Ls, -1)) colors_index = lua_gettop(Ls);
+        if (!colors_index) {
+            lua_pop(Ls, 1);
+            lua_getfield(Ls, value_index, "colours");
+            if (lua_istable(Ls, -1)) colors_index = lua_gettop(Ls);
+        }
+        if (colors_index) {
+            int ok = mod_asset_parse_color_list(Ls, colors_index, layer, err, err_sz);
+            lua_pop(Ls, 1);
+            return ok;
+        }
+        lua_pop(Ls, 1);
+    }
+
+    {
+        size_t n = lua_objlen(Ls, value_index);
+        if (n == 0) {
+            if (mod_asset_parse_lua_color(Ls, value_index, &rgb) && mod_asset_layer_add_color(layer, rgb)) {
+                return 1;
+            }
+            if (err && err_sz > 0) snprintf(err, err_sz, "empty color mask list for %s", layer->name);
+            return 0;
+        }
+        for (size_t i = 1; i <= n; i++) {
+            lua_rawgeti(Ls, value_index, (int)i);
+            if (!mod_asset_parse_lua_color(Ls, -1, &rgb) || !mod_asset_layer_add_color(layer, rgb)) {
+                lua_pop(Ls, 1);
+                if (err && err_sz > 0) snprintf(err, err_sz, "invalid color mask entry for %s", layer->name);
+                return 0;
+            }
+            lua_pop(Ls, 1);
+        }
+    }
+
+    return 1;
+}
+
+static int mod_asset_layer_name_valid(const char* name) {
+    int len = 0;
+    if (!name || !name[0]) return 0;
+    for (const char* p = name; *p; p++, len++) {
+        unsigned char c = (unsigned char)*p;
+        if (len >= 31) return 0;
+        if (isalnum(c) || c == '_' || c == '-') continue;
+        return 0;
+    }
+    return len > 0;
+}
+
+static int mod_asset_rgb_in_layer(const ModColorMaskLayer* layer, uint32_t rgb) {
+    if (!layer) return 0;
+    for (int i = 0; i < layer->color_count; i++) {
+        if (layer->colors[i] == rgb) return 1;
+    }
+    return 0;
+}
+
+static int mod_assets_write_tga_rgba(const char* full_path, const uint8_t* rgba, int w, int h, char* err, int err_sz) {
+    FILE* f;
+    uint8_t header[18];
+    uint8_t* row;
+
+    if (!full_path || !rgba || w <= 0 || h <= 0) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "invalid generated image");
+        return 0;
+    }
+
+    f = fopen(full_path, "wb");
+    if (!f) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "failed to write %s", full_path);
+        return 0;
+    }
+
+    memset(header, 0, sizeof(header));
+    header[2] = 2; // uncompressed truecolor
+    header[12] = (uint8_t)(w & 0xFF);
+    header[13] = (uint8_t)((w >> 8) & 0xFF);
+    header[14] = (uint8_t)(h & 0xFF);
+    header[15] = (uint8_t)((h >> 8) & 0xFF);
+    header[16] = 32;
+    header[17] = 0x28; // 8 alpha bits, top-left origin
+    if (fwrite(header, 1, sizeof(header), f) != sizeof(header)) {
+        fclose(f);
+        if (err && err_sz > 0) snprintf(err, err_sz, "failed to write TGA header");
+        return 0;
+    }
+
+    row = (uint8_t*)malloc((size_t)w * 4u);
+    if (!row) {
+        fclose(f);
+        if (err && err_sz > 0) snprintf(err, err_sz, "out of memory writing TGA");
+        return 0;
+    }
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int si = (y * w + x) * 4;
+            int di = x * 4;
+            row[di + 0] = rgba[si + 2];
+            row[di + 1] = rgba[si + 1];
+            row[di + 2] = rgba[si + 0];
+            row[di + 3] = rgba[si + 3];
+        }
+        if (fwrite(row, 1, (size_t)w * 4u, f) != (size_t)w * 4u) {
+            free(row);
+            fclose(f);
+            if (err && err_sz > 0) snprintf(err, err_sz, "failed to write TGA pixels");
+            return 0;
+        }
+    }
+
+    free(row);
+    fclose(f);
+    return 1;
+}
+
+static int lua_assets_build_color_masks(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    const char* source_rel = luaL_checkstring(Ls, 1);
+    const char* out_dir = "cache/assets";
+    const char* key_in = "asset";
+    char key[96];
+    char source_full[MAX_PATH];
+    char out_full_dir[MAX_PATH];
+    char err[256];
+    ModColorMaskLayer layers[MOD_COLOR_MASK_MAX_LAYERS];
+    int layer_count = 0;
+    int masks_index;
+    int w = 0;
+    int h = 0;
+    int comp = 0;
+    unsigned char* src = NULL;
+    uint8_t* base = NULL;
+    uint8_t* layer_pixels[MOD_COLOR_MASK_MAX_LAYERS];
+    size_t pixel_count;
+    size_t bytes;
+
+    memset(layers, 0, sizeof(layers));
+    memset(layer_pixels, 0, sizeof(layer_pixels));
+    err[0] = '\0';
+
+    if (!mod || !mod->enabled) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "mod is not active");
+        return 2;
+    }
+    if (!lua_istable(Ls, 2)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "build_color_masks expects an options table");
+        return 2;
+    }
+    if (!p_stbi_load || !p_stbi_image_free ||
+        IsBadCodePtr((FARPROC)(void*)p_stbi_load) ||
+        IsBadCodePtr((FARPROC)(void*)p_stbi_image_free)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "image decoder unavailable");
+        return 2;
+    }
+
+    lua_getfield(Ls, 2, "out_dir");
+    if (lua_isstring(Ls, -1)) out_dir = lua_tostring(Ls, -1);
+    lua_pop(Ls, 1);
+    lua_getfield(Ls, 2, "key");
+    if (lua_isstring(Ls, -1)) key_in = lua_tostring(Ls, -1);
+    lua_pop(Ls, 1);
+    mod_asset_sanitize_key(key_in, key, (int)sizeof(key));
+
+    lua_getfield(Ls, 2, "masks");
+    if (!lua_istable(Ls, -1)) {
+        lua_pop(Ls, 1);
+        lua_getfield(Ls, 2, "layers");
+    }
+    if (!lua_istable(Ls, -1)) {
+        lua_pop(Ls, 1);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "missing masks table");
+        return 2;
+    }
+    masks_index = lua_gettop(Ls);
+
+    lua_pushnil(Ls);
+    while (lua_next(Ls, masks_index) != 0) {
+        const char* name = lua_type(Ls, -2) == LUA_TSTRING ? lua_tostring(Ls, -2) : NULL;
+        if (name && name[0]) {
+            ModColorMaskLayer* layer;
+            if (layer_count >= MOD_COLOR_MASK_MAX_LAYERS) {
+                lua_pop(Ls, 2);
+                lua_pushnil(Ls);
+                lua_pushfstring(Ls, "too many color mask layers (max=%d)", MOD_COLOR_MASK_MAX_LAYERS);
+                return 2;
+            }
+            if (!mod_asset_layer_name_valid(name)) {
+                lua_pop(Ls, 2);
+                lua_pushnil(Ls);
+                lua_pushstring(Ls, "color mask layer names may only use letters, numbers, _, or -");
+                return 2;
+            }
+            layer = &layers[layer_count];
+            snprintf(layer->name, sizeof(layer->name), "%s", name);
+            if (!mod_asset_parse_color_list(Ls, lua_gettop(Ls), layer, err, (int)sizeof(err))) {
+                lua_pop(Ls, 2);
+                lua_pushnil(Ls);
+                lua_pushstring(Ls, err[0] ? err : "invalid color mask");
+                return 2;
+            }
+            if (layer->color_count > 0) layer_count++;
+        }
+        lua_pop(Ls, 1);
+    }
+    lua_pop(Ls, 1);
+
+    if (layer_count <= 0) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "no color mask colors supplied");
+        return 2;
+    }
+
+    if (!mod_asset_resolve_path(mod, source_rel, source_full, (int)sizeof(source_full), err, (int)sizeof(err)) ||
+        !mod_asset_resolve_output_dir(mod, out_dir, out_full_dir, (int)sizeof(out_full_dir), err, (int)sizeof(err))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err[0] ? err : "failed to resolve color mask paths");
+        return 2;
+    }
+
+    src = p_stbi_load(source_full, &w, &h, &comp, 4);
+    if (!src || w <= 0 || h <= 0) {
+        if (src) p_stbi_image_free(src);
+        lua_pushnil(Ls);
+        lua_pushfstring(Ls, "failed to decode spritesheet '%s'", source_rel);
+        return 2;
+    }
+    pixel_count = (size_t)w * (size_t)h;
+    if (pixel_count == 0 || pixel_count > MOD_COLOR_MASK_MAX_PIXELS) {
+        p_stbi_image_free(src);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "spritesheet is too large for color mask generation");
+        return 2;
+    }
+    bytes = pixel_count * 4u;
+
+    base = (uint8_t*)malloc(bytes);
+    if (!base) {
+        p_stbi_image_free(src);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "out of memory building base color mask");
+        return 2;
+    }
+    memcpy(base, src, bytes);
+
+    for (int li = 0; li < layer_count; li++) {
+        layer_pixels[li] = (uint8_t*)calloc(1, bytes);
+        if (!layer_pixels[li]) {
+            for (int j = 0; j < li; j++) free(layer_pixels[j]);
+            free(base);
+            p_stbi_image_free(src);
+            lua_pushnil(Ls);
+            lua_pushstring(Ls, "out of memory building color mask layers");
+            return 2;
+        }
+    }
+
+    for (size_t pi = 0; pi < pixel_count; pi++) {
+        size_t bi = pi * 4u;
+        uint8_t r = src[bi + 0];
+        uint8_t g = src[bi + 1];
+        uint8_t b = src[bi + 2];
+        uint8_t a = src[bi + 3];
+        uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+        if (a == 0) continue;
+        for (int li = 0; li < layer_count; li++) {
+            if (!mod_asset_rgb_in_layer(&layers[li], rgb)) continue;
+            base[bi + 0] = 0;
+            base[bi + 1] = 0;
+            base[bi + 2] = 0;
+            base[bi + 3] = 0;
+            layer_pixels[li][bi + 0] = 255;
+            layer_pixels[li][bi + 1] = 255;
+            layer_pixels[li][bi + 2] = 255;
+            layer_pixels[li][bi + 3] = a;
+            layers[li].matched_pixels++;
+            break;
+        }
+    }
+
+    {
+        char base_rel[MAX_PATH];
+        char base_full[MAX_PATH];
+        snprintf(base_rel, sizeof(base_rel), "%s/%s_base.tga", out_dir, key);
+        snprintf(base_full, sizeof(base_full), "%s\\%s_base.tga", out_full_dir, key);
+        audio_normalize_slashes(base_full);
+        if (!mod_assets_write_tga_rgba(base_full, base, w, h, err, (int)sizeof(err))) {
+            for (int li = 0; li < layer_count; li++) free(layer_pixels[li]);
+            free(base);
+            p_stbi_image_free(src);
+            lua_pushnil(Ls);
+            lua_pushstring(Ls, err[0] ? err : "failed to write base mask");
+            return 2;
+        }
+
+        for (int li = 0; li < layer_count; li++) {
+            snprintf(layers[li].relpath, sizeof(layers[li].relpath), "%s/%s_%s.tga", out_dir, key, layers[li].name);
+            snprintf(layers[li].fullpath, sizeof(layers[li].fullpath), "%s\\%s_%s.tga", out_full_dir, key, layers[li].name);
+            audio_normalize_slashes(layers[li].fullpath);
+            if (layers[li].matched_pixels > 0 &&
+                !mod_assets_write_tga_rgba(layers[li].fullpath, layer_pixels[li], w, h, err, (int)sizeof(err))) {
+                for (int j = 0; j < layer_count; j++) free(layer_pixels[j]);
+                free(base);
+                p_stbi_image_free(src);
+                lua_pushnil(Ls);
+                lua_pushstring(Ls, err[0] ? err : "failed to write color mask layer");
+                return 2;
+            }
+        }
+
+        lua_newtable(Ls);
+        lua_pushstring(Ls, base_rel); lua_setfield(Ls, -2, "base");
+        lua_pushinteger(Ls, w); lua_setfield(Ls, -2, "w");
+        lua_pushinteger(Ls, h); lua_setfield(Ls, -2, "h");
+        lua_newtable(Ls);
+        for (int li = 0; li < layer_count; li++) {
+            if (layers[li].matched_pixels > 0) {
+                lua_pushstring(Ls, layers[li].relpath);
+                lua_setfield(Ls, -2, layers[li].name);
+            }
+        }
+        lua_setfield(Ls, -2, "layers");
+        lua_newtable(Ls);
+        for (int li = 0; li < layer_count; li++) {
+            lua_pushinteger(Ls, (lua_Integer)layers[li].matched_pixels);
+            lua_setfield(Ls, -2, layers[li].name);
+        }
+        lua_setfield(Ls, -2, "counts");
+    }
+
+    for (int li = 0; li < layer_count; li++) free(layer_pixels[li]);
+    free(base);
+    p_stbi_image_free(src);
+    return 1;
+}
+
 static int mod_asset_sheet_find(const LoadedMod* mod, const char* id) {
     if (!mod || !id || !id[0]) return -1;
     for (int i = 0; i < mod->asset_sheet_count; i++) {
@@ -3097,6 +3646,8 @@ static void mod_asset_sheets_clear(LoadedMod* mod) {
     mod->asset_sheets = NULL;
     mod->asset_sheet_count = 0;
     mod->asset_sheet_cap = 0;
+    mod->asset_batch_depth = 0;
+    mod->asset_batch_dirty = 0;
 }
 
 static void lua_push_asset_sheet_info(lua_State* Ls, const ModAssetSheet* s) {
@@ -3186,8 +3737,29 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
                          loaded);
             }
         }
+        mod->asset_batch_dirty = 0;
     }
     g_mod_asset_injection_active = 0;
+}
+
+static int mod_assets_flush_batch(LoadedMod* mod, const char* reason, char* err, int err_sz) {
+    if (!mod) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "mod is not active");
+        return 0;
+    }
+    if (mod->asset_batch_depth > 0 || !mod->asset_batch_dirty) {
+        return 1;
+    }
+    if (!mod_assets_can_rebuild_now()) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "assets registered; waiting for graphics atlas rebuild");
+        return 0;
+    }
+    if (!reload_engine_gfx_atlases(reason && reason[0] ? reason : "mod asset spritesheet batch registered")) {
+        if (err && err_sz > 0) snprintf(err, err_sz, "assets registered, but atlas rebuild failed");
+        return 0;
+    }
+    mod->asset_batch_dirty = 0;
+    return 1;
 }
 
 static int lua_assets_load_spritesheet(lua_State* Ls) {
@@ -3274,6 +3846,12 @@ static int lua_assets_load_spritesheet(lua_State* Ls) {
     sheet->padding = padding;
     sheet->flags = flags;
 
+    if (mod->asset_batch_depth > 0) {
+        mod->asset_batch_dirty = 1;
+        lua_push_asset_sheet_info(Ls, sheet);
+        return 1;
+    }
+
     if (!mod_assets_can_rebuild_now()) {
         lua_pushnil(Ls);
         lua_pushstring(Ls, "asset registered; waiting for graphics atlas rebuild");
@@ -3293,6 +3871,55 @@ static int lua_assets_load_spritesheet(lua_State* Ls) {
     }
 
     lua_push_asset_sheet_info(Ls, sheet);
+    return 1;
+}
+
+static int lua_assets_begin_batch(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!mod || !mod->enabled) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "mod is not active");
+        return 2;
+    }
+    if (mod->asset_batch_depth < 32) {
+        mod->asset_batch_depth++;
+    }
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_assets_end_batch(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    char err[256];
+    err[0] = '\0';
+
+    if (!mod || !mod->enabled) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "mod is not active");
+        return 2;
+    }
+    if (mod->asset_batch_depth > 0) {
+        mod->asset_batch_depth--;
+    }
+    if (!mod_assets_flush_batch(mod, "mod asset spritesheet batch registered", err, (int)sizeof(err))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err[0] ? err : "asset batch flush failed");
+        return 2;
+    }
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_assets_cancel_batch(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!mod || !mod->enabled) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "mod is not active");
+        return 2;
+    }
+    mod->asset_batch_depth = 0;
+    mod->asset_batch_dirty = 0;
+    lua_pushboolean(Ls, 1);
     return 1;
 }
 
@@ -3343,6 +3970,10 @@ static int lua_assets_info(lua_State* Ls) {
 static void push_assets_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_load_spritesheet, 1); lua_setfield(Ls, -2, "load_spritesheet");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_begin_batch, 1); lua_setfield(Ls, -2, "begin_batch");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_end_batch, 1); lua_setfield(Ls, -2, "end_batch");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_cancel_batch, 1); lua_setfield(Ls, -2, "cancel_batch");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_build_color_masks, 1); lua_setfield(Ls, -2, "build_color_masks");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_sprite_id, 1);        lua_setfield(Ls, -2, "sprite_id");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_info, 1);             lua_setfield(Ls, -2, "info");
 }
@@ -11455,6 +12086,11 @@ static void hot_reload_scan_mod_dir(const char* full_dir, const char* rel_dir,
         snprintf(child_full, sizeof(child_full), "%s\\%s", full_dir, fd.cFileName);
         snprintf(child_rel, sizeof(child_rel), "%s\\%s", rel_dir, fd.cFileName);
 
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+            _stricmp(fd.cFileName, "cache") == 0) {
+            continue;
+        }
+
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
             hot_reload_should_ignore_path(child_full)) {
             continue;
@@ -11593,6 +12229,9 @@ static int reload_mod_runtime(const char* reason) {
 }
 
 static void hot_reload_poll(void) {
+#if !AUTO_HOT_RELOAD_ENABLED
+    return;
+#else
     int tex_reloaded = texture_ext_poll_hot_reload();
     int font_reloaded = font_ext_poll_hot_reload();
     if ((tex_reloaded + font_reloaded) > 0) {
@@ -11631,6 +12270,7 @@ static void hot_reload_poll(void) {
     } else {
         LOG_ERROR("Hot reload failed; will retry on next poll.");
     }
+#endif
 }
 
 // Global time-scale state (read by SDL time wrappers through exported API).

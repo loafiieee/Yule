@@ -1,0 +1,5 @@
+mods/*/cache/
+online.cfg
+online_server_data.json
+online_server_data.json.tmp
+online_server/__pycache__/

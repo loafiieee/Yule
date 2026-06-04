@@ -747,6 +747,109 @@ local function character_asset_id(prefix, id, sha)
   return prefix .. clean .. "_" .. suffix:sub(1, 12)
 end
 
+function character_import.normalize_hex_color(value)
+  if type(value) == "number" then
+    local n = clamp(math.floor(value), 0, 0xFFFFFF)
+    return string.format("#%06X", n)
+  end
+
+  if type(value) == "table" then
+    local r = tonumber(value.r or value[1])
+    local g = tonumber(value.g or value[2])
+    local b = tonumber(value.b or value[3])
+    if not r or not g or not b then return nil end
+    if r <= 1.0 and g <= 1.0 and b <= 1.0 then
+      r, g, b = r * 255.0, g * 255.0, b * 255.0
+    end
+    return string.format("#%02X%02X%02X",
+                         clamp(math.floor(r + 0.5), 0, 255),
+                         clamp(math.floor(g + 0.5), 0, 255),
+                         clamp(math.floor(b + 0.5), 0, 255))
+  end
+
+  if type(value) ~= "string" then return nil end
+  local hex = value:gsub("^%s+", ""):gsub("%s+$", "")
+  hex = hex:gsub("^#", ""):gsub("^0x", ""):gsub("^0X", "")
+  if #hex == 3 and hex:match("^[0-9a-fA-F]+$") then
+    hex = hex:sub(1, 1) .. hex:sub(1, 1) ..
+          hex:sub(2, 2) .. hex:sub(2, 2) ..
+          hex:sub(3, 3) .. hex:sub(3, 3)
+  end
+  if #hex ~= 6 or not hex:match("^[0-9a-fA-F]+$") then return nil end
+  return "#" .. hex:upper()
+end
+
+function character_import.append_mask_color(out, color)
+  color = character_import.normalize_hex_color(color)
+  if not color then return false end
+  for i = 1, #out do
+    if out[i] == color then return true end
+  end
+  if #out >= 128 then return false end
+  out[#out + 1] = color
+  return true
+end
+
+function character_import.append_mask_colors(out, value)
+  if value == nil then return end
+  if type(value) == "table" and (value.colors ~= nil or value.colours ~= nil) then
+    value = value.colors or value.colours
+  end
+  if type(value) == "table" and #value > 0 then
+    for i = 1, #value do
+      character_import.append_mask_colors(out, value[i])
+    end
+    return
+  end
+  character_import.append_mask_color(out, value)
+end
+
+function character_import.normalize_color_masks(src)
+  local input = type(src) == "table" and
+                (src.color_masks or src.colour_masks or src.tint_masks or
+                 src.palette or src.recolor or src.recolour) or nil
+  if type(input) ~= "table" then return nil end
+
+  local masks = {
+    skin = {},
+    clothing = {},
+  }
+
+  character_import.append_mask_colors(masks.skin, input.skin or input.body)
+  character_import.append_mask_colors(masks.clothing, input.clothing or input.clothes or input.armor or input.armour)
+
+  for i = 1, #input do
+    local entry = input[i]
+    if type(entry) == "table" then
+      local target = tostring(entry.target or entry.layer or entry.slot or ""):lower()
+      local colors = entry.colors or entry.colours or entry.color or entry.colour or entry.from
+      if target == "skin" or target == "body" then
+        character_import.append_mask_colors(masks.skin, colors)
+      elseif target == "clothing" or target == "clothes" or target == "armor" or target == "armour" then
+        character_import.append_mask_colors(masks.clothing, colors)
+      end
+    end
+  end
+
+  if #masks.skin == 0 then masks.skin = nil end
+  if #masks.clothing == 0 then masks.clothing = nil end
+  if not masks.skin and not masks.clothing then return nil end
+  return masks
+end
+
+function character_import.color_mask_key(masks)
+  if type(masks) ~= "table" then return nil end
+  local parts = {}
+  for _, layer in ipairs({"skin", "clothing"}) do
+    local colors = masks[layer]
+    if type(colors) == "table" and #colors > 0 then
+      parts[#parts + 1] = layer .. ":" .. table.concat(colors, ",")
+    end
+  end
+  if #parts == 0 then return nil end
+  return sha256_hex(table.concat(parts, ";")) or table.concat(parts, "_"):gsub("[^%w_%-%.]", "_"):sub(1, 64)
+end
+
 local function normalize_frame_list(value)
   local frames = {}
   if type(value) ~= "table" then return frames end
@@ -951,6 +1054,9 @@ local function normalize_character_definition(src, source, cached_path)
   if not sheet_sha then return nil, "character sheet checksum unavailable" end
 
   local animations = normalize_animations(src)
+  local color_masks = character_import.normalize_color_masks(src)
+  local color_mask_key = character_import.color_mask_key(color_masks)
+  local asset_key = color_mask_key and (sha256_hex(sheet_sha .. ":" .. color_mask_key) or sheet_sha) or sheet_sha
   return {
     id = id,
     name = clean_name(src.name, id),
@@ -958,7 +1064,8 @@ local function normalize_character_definition(src, source, cached_path)
     sheet_sha256 = sheet_sha,
     sheet_bytes = sheet_data,
     source = source or "local",
-    asset_id = character_asset_id(source == "remote" and "remote_character_" or "character_", id, sheet_sha),
+    asset_key = asset_key,
+    asset_id = character_asset_id(source == "remote" and "remote_character_" or "character_", id, asset_key),
     cell_w = cell_w,
     cell_h = cell_h,
     padding = padding,
@@ -971,6 +1078,8 @@ local function normalize_character_definition(src, source, cached_path)
     frame_map = normalize_frame_map(src, animations),
     hat_anchor = character_import.normalize_hat_anchor(src),
     sword_anchor = character_import.normalize_sword_anchor(src),
+    color_masks = color_masks,
+    color_mask_key = color_mask_key,
     allowed_online = src.allowed_online ~= false,
     color = {0.14, 0.18, 0.24, 1.0},
   }
@@ -1419,6 +1528,23 @@ local function json_animation_frames(anim)
   return json_frame_array(anim and anim.frames)
 end
 
+function character_import.json_color_masks(masks)
+  if type(masks) ~= "table" then return "null" end
+  local parts = {}
+  for _, layer in ipairs({"skin", "clothing"}) do
+    local colors = masks[layer]
+    if type(colors) == "table" and #colors > 0 then
+      local color_parts = {}
+      for i = 1, #colors do
+        color_parts[#color_parts + 1] = json_escape_string(colors[i])
+      end
+      parts[#parts + 1] = json_escape_string(layer) .. ":[" .. table.concat(color_parts, ",") .. "]"
+    end
+  end
+  if #parts == 0 then return "null" end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
 function character_import.json_anchor_frame_entry(frame)
   if type(frame) ~= "table" then return "null" end
   return "{" ..
@@ -1559,6 +1685,7 @@ local function character_meta_json(character)
     '"fps":' .. json_number_raw(character.fps, 10.0) .. "," ..
     '"animations":{' .. table.concat(anim_parts, ",") .. "}," ..
     '"frame_map":{' .. table.concat(map_parts, ",") .. "}," ..
+    '"color_masks":' .. character_import.json_color_masks(character.color_masks) .. "," ..
     '"hat_anchor":' .. character_import.json_hat_anchor(character.hat_anchor) .. "," ..
     '"sword_anchor":' .. character_import.json_hat_anchor(character.sword_anchor) ..
   "}"
@@ -1619,6 +1746,7 @@ function character_import.definition_json(character)
     '"fps":' .. json_number_raw(character.fps, 10.0) .. "," ..
     '"animations":{' .. table.concat(anim_parts, ",") .. "}," ..
     '"frame_map":{' .. table.concat(map_parts, ",") .. "}," ..
+    '"color_masks":' .. character_import.json_color_masks(character.color_masks) .. "," ..
     '"hat_anchor":' .. character_import.json_hat_anchor(character.hat_anchor) .. "," ..
     '"sword_anchor":' .. character_import.json_hat_anchor(character.sword_anchor) ..
   "}"
@@ -1637,6 +1765,9 @@ function character_import.remember(character)
   local stored = clone_table(character)
   stored.sheet_bytes = nil
   stored.sheet_info = nil
+  stored.color_layer_info = nil
+  stored.mask_paths = nil
+  stored.mask_error = nil
   stored.asset_error = nil
   stored.last_asset_try = nil
   stored.source = nil
@@ -1843,10 +1974,14 @@ local function ensure_character_from_profile_meta(meta)
   if type(meta) ~= "table" then return "default", true end
   local sha = lower_sha256(meta.sheet_sha256 or meta.sha256 or meta.asset_sha256)
   if not sha then return "default", true end
+  local incoming_masks = character_import.normalize_color_masks(meta)
+  local incoming_mask_key = character_import.color_mask_key(incoming_masks)
 
   local local_id = valid_character_id(meta.id)
   local local_character = character_by_id[local_id]
-  if local_character and not local_character.builtin and local_character.sheet_sha256 == sha then
+  if local_character and not local_character.builtin and
+     local_character.sheet_sha256 == sha and
+     local_character.color_mask_key == incoming_mask_key then
     return local_id, true
   end
 
@@ -1854,7 +1989,8 @@ local function ensure_character_from_profile_meta(meta)
     return nil, false
   end
 
-  local existing_id = remote_characters_by_sha[sha]
+  local remote_key = sha .. ":" .. tostring(incoming_mask_key or "")
+  local existing_id = remote_characters_by_sha[remote_key]
   if existing_id and character_by_id[existing_id] then
     return existing_id, true
   end
@@ -1866,7 +2002,7 @@ local function ensure_character_from_profile_meta(meta)
   if not character then return nil, false end
   character.color = {0.18, 0.14, 0.20, 1.0}
   add_or_replace_character(character)
-  remote_characters_by_sha[sha] = character.id
+  remote_characters_by_sha[remote_key] = character.id
   return character.id, true
 end
 
@@ -2707,15 +2843,111 @@ local function ensure_character_asset(character)
   end
   character.last_asset_try = now
 
-  local sheet, err = mod.assets.load_spritesheet(character.asset_id, character.sheet, {
+  local sheet_path = character.sheet
+  local mask_layers = nil
+
+  if character.color_masks then
+    if character.mask_paths then
+      mask_layers = character.mask_paths.layers
+      sheet_path = character.mask_paths.base or sheet_path
+    elseif mod.assets.build_color_masks then
+      local mask_key = tostring(character.asset_key or character.sheet_sha256 or character.id):sub(1, 32)
+      local paths, mask_err = mod.assets.build_color_masks(character.sheet, {
+        out_dir = CHARACTER_CACHE_DIR .. "/masks",
+        key = mask_key,
+        masks = character.color_masks,
+      })
+      if paths and paths.base then
+        character.mask_paths = paths
+        mask_layers = paths.layers
+        sheet_path = paths.base
+        character.mask_error = nil
+      else
+        character.mask_error = mask_err or "failed to build color masks"
+      end
+    else
+      character.mask_error = "mod.assets.build_color_masks unavailable"
+    end
+  end
+
+  local batch_started = false
+  if type(mask_layers) == "table" and mod.assets.begin_batch and mod.assets.end_batch then
+    local ok = mod.assets.begin_batch()
+    batch_started = ok and true or false
+  end
+
+  local sheet, err = mod.assets.load_spritesheet(character.asset_id, sheet_path, {
     cell_w = character.cell_w,
     cell_h = character.cell_h,
     padding = character.padding or 0,
   })
   if sheet then
-    character.sheet_info = sheet
-    character.asset_error = nil
-    return true
+    local layer_info = {}
+    local layer_ok = true
+    if type(mask_layers) == "table" then
+      for _, layer in ipairs({"skin", "clothing"}) do
+        local layer_path = mask_layers[layer]
+        if type(layer_path) == "string" then
+          local layer_asset_id = character_asset_id("character_" .. layer .. "_", character.id, character.asset_key or character.sheet_sha256)
+          local layer_sheet, layer_err = mod.assets.load_spritesheet(layer_asset_id, layer_path, {
+            cell_w = character.cell_w,
+            cell_h = character.cell_h,
+            padding = character.padding or 0,
+          })
+          if not layer_sheet then
+            layer_sheet = mod.assets.info and mod.assets.info(layer_asset_id) or nil
+          end
+          if layer_sheet and layer_sheet.base_id then
+            layer_info[layer] = {
+              asset_id = layer_asset_id,
+              sheet = layer_sheet,
+            }
+          else
+            character.asset_error = layer_err or ("failed to pack " .. layer .. " color mask")
+            layer_ok = false
+            break
+          end
+        end
+      end
+    end
+    if layer_ok then
+      if batch_started then
+        local batch_ok, batch_err = mod.assets.end_batch()
+        batch_started = false
+        if not batch_ok then
+          character.asset_error = batch_err or "failed to pack character assets"
+          return false
+        end
+        sheet = mod.assets.info and mod.assets.info(character.asset_id) or sheet
+        if not sheet or not sheet.count or sheet.count <= 0 then
+          character.asset_error = "failed to pack character spritesheet"
+          return false
+        end
+        for _, layer in ipairs({"skin", "clothing"}) do
+          local info_entry = layer_info[layer]
+          if info_entry then
+            local refreshed = mod.assets.info and mod.assets.info(info_entry.asset_id) or nil
+            if not refreshed or not refreshed.count or refreshed.count <= 0 then
+              character.asset_error = "failed to pack " .. layer .. " color mask"
+              return false
+            end
+            info_entry.sheet = refreshed
+          end
+        end
+      end
+      character.sheet_info = sheet
+      character.color_layer_info = layer_info
+      character.asset_error = nil
+      return true
+    end
+  end
+
+  if batch_started and mod.assets.cancel_batch then
+    mod.assets.cancel_batch()
+  end
+
+  if type(mask_layers) == "table" then
+    return false
   end
 
   local info = mod.assets.info and mod.assets.info(character.asset_id) or nil
@@ -2926,12 +3158,30 @@ local function draw_custom_character(character_id, player, opts)
     scale_y = world_scale * ((character.target_h or CHARACTER_TARGET_H) / character.cell_h)
   end
 
-  return ui.draw_sprite(sprite, draw_x, draw_y, {
+  local draw_opts = {
     scale_x = scale_x,
     scale_y = scale_y,
     flip = facing < 0,
     tint = {1.0, 1.0, 1.0, 1.0},
-  })
+  }
+
+  local drawn = ui.draw_sprite(sprite, draw_x, draw_y, draw_opts)
+  if drawn and character.color_layer_info then
+    local owner_slot = opts and opts.owner_slot or "p1"
+    local skin_tint, clothing_tint = selected_player_colours(owner_slot)
+    for _, layer in ipairs({"skin", "clothing"}) do
+      local layer_info = character.color_layer_info[layer]
+      if layer_info then
+        local layer_sprite = mod.assets.sprite_id(layer_info.asset_id, frame)
+        if layer_sprite then
+          local tint = layer == "skin" and skin_tint or clothing_tint
+          draw_opts.tint = tint
+          ui.draw_sprite(layer_sprite, draw_x, draw_y, draw_opts)
+        end
+      end
+    end
+  end
+  return drawn
 end
 
 local function character_items()

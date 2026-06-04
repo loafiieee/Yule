@@ -216,42 +216,16 @@ Recommended backend stack:
 
 This keeps the client simple, gives enough performance headroom for a relay, and avoids committing to a heavyweight service layout too early.
 
-## Current Online Hub / Server Pass
+## Online Hub / Server Status
 
-The repo now has a built-in online hub state and a standalone control server:
+The built-in online hub and standalone account/queue server have been removed for now. The remaining online code is the lower-level rollback and manual P2P debug harness:
 
-- `online_server/server.py`
-  - standard-library Python server
-  - account register/login
-  - session tokens
-  - public Elo storage
-  - private server-only MMR storage
-  - casual queue
-  - ranked queue using a hard private-MMR difference cap
-  - P2P match assignment
-  - match-result rating update endpoint
+- F6/F7 `ggpo.net` host/join
+- F2/F3/F4 rollback verification tools
+- game-state save/load/checksum support
+- local input prediction, rollback, and checksum logging
 
-- `hooks.c`
-  - adds an `ONLINE` button under the main menu `START`/play button
-  - moves `START` upward once when the vanilla main button list is ready
-  - implements a built-in `online_hub` state, not a mod
-  - supports login/register, server URL, P2P advertised host, P2P UDP port, casual queue, ranked queue, cancel, and settings save
-  - uses async WinHTTP POST requests so menu rendering is not blocked
-  - starts the existing `ggpo.net` UDP session when the server returns a match
-
-Current local server command:
-
-```powershell
-python online_server\server.py --host 0.0.0.0 --port 47778 --data online_server_data.json
-```
-
-Current local hub server URL:
-
-```text
-http://127.0.0.1:47778
-```
-
-The server still only does control-plane matchmaking. Gameplay remains the existing P2P UDP rollback harness.
+The next production pass should rebuild the hub and backend carefully around a deterministic match-start contract instead of layering queue/account UI directly into the current debug harness.
 
 ## Latency Tuning
 

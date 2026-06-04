@@ -1136,7 +1136,7 @@ static void ggpo_net_send_cosmetic_asset_periodic(void) {
 }
 
 static int ggpo_net_cosmetic_profiles_ready(void) {
-    if (g_net.local_cosmetic_profile_len == 0u) return 0;
+    if (g_net.local_cosmetic_profile_len == 0u) return 1;
     if (g_net.remote_cosmetic_profile_len == 0u || g_net.remote_cosmetic_profile_revision == 0u) return 0;
     if (g_net.remote_cosmetic_profile_applied_revision != g_net.remote_cosmetic_profile_revision) return 0;
     return 1;

@@ -1,7 +1,3 @@
-ggpo.net highping 140
-ggpo.net sim 1 100 120
-ggpo.net highping 50
-ggpo.net sim 1 50 50
 ggpo.net highping 50
 ggpo.net sim 1 50 50
 ggpo.net highping 140
@@ -62,3 +58,7 @@ cosmetics.reload
 state
 state.last
 help
+state main
+state.main
+state.switch main
+fi

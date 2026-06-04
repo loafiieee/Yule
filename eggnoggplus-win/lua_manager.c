@@ -9728,19 +9728,6 @@ static int lua_ui_leave_state(lua_State *L) {
     return 1;
 }
 
-/* Legacy online hub wrappers kept for older mods. */
-static int lua_ui_enter_online_hub(lua_State *L) {
-    (void)L;
-    hooks_enter_online_hub();
-    return 0;
-}
-
-static int lua_ui_leave_online_hub(lua_State *L) {
-    (void)L;
-    hooks_leave_online_hub();
-    return 0;
-}
-
 static int lua_ui_goto_main_menu(lua_State *L) {
     (void)L;
     if (!p_state_switch) {
@@ -9808,9 +9795,6 @@ lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_activate_ptr,
     lua_pushcfunction(Ls, lua_ui_enter_state);  lua_setfield(Ls, -2, "enter_state");
     lua_pushcfunction(Ls, lua_ui_leave_state);  lua_setfield(Ls, -2, "leave_state");
 
-    /* Legacy online hub state transitions. */
-    lua_pushcfunction(Ls, lua_ui_enter_online_hub); lua_setfield(Ls, -2, "enter_online_hub");
-    lua_pushcfunction(Ls, lua_ui_leave_online_hub); lua_setfield(Ls, -2, "leave_online_hub");
     lua_pushcfunction(Ls, lua_ui_goto_main_menu); lua_setfield(Ls, -2, "goto_main_menu");
 }
 

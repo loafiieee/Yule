@@ -47,15 +47,6 @@ void hooks_ui_stroke_rect(float x, float y, float w, float h, float line_w,
 void hooks_ui_draw_line(float x1, float y1, float x2, float y2, float line_w,
                         float r, float g, float b, float a);
 
-// Legacy online hub helpers (kept as thin wrappers).
-void hooks_enter_online_hub(void);
-void hooks_leave_online_hub(void);
-int  hooks_online_hub_active(void);
-int  hooks_online_hub_keydown(int sym, int scancode, int mod);
-int  hooks_online_hub_textinput(const char* text);
-int  hooks_online_hub_mousebutton(int x, int y, int button, int down);
-int  hooks_online_hub_control_action(int action);
-
 void hooks_set_input_override(int player_index, uint32_t cmd_mask, int frames, int replace);
 void hooks_clear_input_override(int player_index);
 int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_frames, int* out_replace);

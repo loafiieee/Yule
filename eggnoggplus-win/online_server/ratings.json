@@ -1,0 +1,16 @@
+{
+  "users": {
+    "loaf": {
+      "elo": 991,
+      "mmr": 988,
+      "sig": "e77c6fa51c058f392c1459e1a7880f30bba30e4bbac48f5f5e9856d6fb41ab32",
+      "updated_at": "2026-06-05T18:20:32.619Z"
+    },
+    "loaf2": {
+      "elo": 1009,
+      "mmr": 1012,
+      "sig": "443ba9797adc211c5c2412a00d15289d34d8865b93099b3ed197d364f2fba994",
+      "updated_at": "2026-06-05T18:20:32.619Z"
+    }
+  }
+}

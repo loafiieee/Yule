@@ -1,0 +1,22 @@
+{
+  "users": {
+    "loaf": {
+      "salt": "ae184c74832774155cf854f492b22f36",
+      "hash": "7a20c3ee8cb2d99cce3fe6a7789bfc7029dc15f8f5de2b4c27347f9c6629a915",
+      "friends": [
+        "loaf2"
+      ],
+      "friend_requests": [],
+      "created_at": "2026-06-05T00:28:31.184Z"
+    },
+    "loaf2": {
+      "salt": "0fae2e315fd4a17cc53025da5aca9ba5",
+      "hash": "591240ba60b09c6a47c6477133b9d6f4b0233bb58acc68b02fc3dd61f2bf32e9",
+      "friends": [
+        "loaf"
+      ],
+      "friend_requests": [],
+      "created_at": "2026-06-05T00:29:00.266Z"
+    }
+  }
+}

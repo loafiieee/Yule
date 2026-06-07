@@ -139,12 +139,39 @@ int lua_manager_console_eval_mod(const char* mod_id, const char* code, char* out
 int lua_manager_console_run_file(const char* path, char* out, int out_sz);
 
 // Native gameplay-state serialization API used by rollback/network code.
+#define LUA_ROLLBACK_SUMMARY_THING_SLOTS 16
+
+typedef struct LuaGameStateRollbackSummary {
+    uint32_t full_crc;
+    uint32_t header_crc;
+    uint32_t transient_crc;
+    uint32_t thing_info_crc;
+    uint32_t room_info_crc;
+    uint32_t particle_crc;
+    uint32_t players_crc;
+    uint32_t things_crc;
+    uint32_t tilemap_crc;
+    uint32_t active_room;
+    uint32_t native_game_ticks;
+    uint32_t rng_seed;
+    uint32_t seed;
+    uint32_t thing_count;
+    uint32_t map_selector;
+    uint32_t round_end_any;
+    uint32_t score_p0;
+    uint32_t score_p1;
+    uint32_t player0_crc;
+    uint32_t player1_crc;
+    uint32_t thing_slot_crc[LUA_ROLLBACK_SUMMARY_THING_SLOTS];
+} LuaGameStateRollbackSummary;
+
 size_t lua_manager_game_state_size(void);
 int lua_manager_game_state_save(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap);
 int lua_manager_game_state_load(const void* src, size_t src_len, char* err, size_t err_cap);
 int lua_manager_game_state_load_rollback(const void* src, size_t src_len, char* err, size_t err_cap);
 int lua_manager_game_state_checksum(uint32_t* out_crc, char* err, size_t err_cap);
 int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_t err_cap);
+int lua_manager_game_state_rollback_summary(LuaGameStateRollbackSummary* out_summary, char* err, size_t err_cap);
 int lua_manager_game_state_canonicalize_rollback(void* blob, size_t blob_len, char* err, size_t err_cap);
 const char* lua_manager_game_state_offset_name(size_t offset);
 int lua_manager_game_rng_seed(uint32_t* out_seed);

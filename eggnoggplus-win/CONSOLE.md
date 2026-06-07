@@ -36,7 +36,7 @@
 - `state`
 - `state.last`
 - `state.return [main|main_initial|options|options_paused|mods|mods_entry]`
-- `state.switch <main|main_initial|options|options_paused|mods|mods_entry|console|return>`
+- `state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>`
 - `sys.info`
 - `ui.size`
 - `time.scale [value|auto]`
@@ -69,6 +69,9 @@
 - `reload.mods`
 - `mods.reload` (alias)
 - `reload.assets`
+
+### Online hub
+- `online.hub`
 
 ### Lua execution
 - `lua <code>` (alias: `eval <code>`)
@@ -129,6 +132,7 @@
 - `input.override 0 0x10 30 0`
 - `input.override 1 0x4 -1 1`
 - `input.clear 1`
+- `online.hub`
 - `ggpo.net delay 2`
 - `ggpo.net advantage 20`
 - `ggpo.net predict 24`

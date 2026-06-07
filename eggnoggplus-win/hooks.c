@@ -49,9 +49,6 @@
 #define GL_PREVIOUS 0x8578
 #endif
 
-#ifndef SDLK_F9
-#define SDLK_F9 1073741880
-#endif
 #ifndef SDLK_F2
 #define SDLK_F2 1073741883
 #endif
@@ -61,11 +58,20 @@
 #ifndef SDLK_F4
 #define SDLK_F4 1073741885
 #endif
+#ifndef SDLK_F5
+#define SDLK_F5 1073741886
+#endif
 #ifndef SDLK_F6
 #define SDLK_F6 1073741887
 #endif
 #ifndef SDLK_F7
 #define SDLK_F7 1073741888
+#endif
+#ifndef SDLK_F9
+#define SDLK_F9 1073741890
+#endif
+#ifndef SDLK_F10
+#define SDLK_F10 1073741891
 #endif
 
 #include "hooks.h"
@@ -78,6 +84,7 @@
 #include "texture_ext.h"
 #include "custom_maps.h"
 #include "log.h"
+#include "net_ext.h"
 
 extern char* SDL_GetClipboardText(void);
 extern int SDL_SetClipboardText(const char* text);
@@ -95,6 +102,8 @@ extern void SDL_free(void* mem);
 #define ADDR_MAIN_DRAW              0x4331A0u
 #define ADDR_MENU_COMMON_RENDER       0x4334E0u
 #define ADDR_MAIN_BUTTONS_START       0x432FD0u
+#define ADDR_GAME_RESET               0x42F750u
+#define ADDR_GAME_START               0x42F760u
 #define ADDR_MAIN_CURSORS_RESET       0x431200u
 #define ADDR_MAIN_CURSOR_SPIN        0x4311E0u
 #define ADDR_MAIN_CURSOR_DATA        0x549140u
@@ -105,6 +114,7 @@ extern void SDL_free(void* mem);
 #define ADDR_MENU_BUTTON_LINK         0x433950u
 #define ADDR_BUTTON_GET              0x415D00u
 #define ADDR_BUTTON_COUNT            0x416890u
+#define ADDR_BUTTON_EX               0x416310u
 #define ADDR_BUTTON_SET_LAYOUT        0x415F80u
 #define ADDR_BTN_PLAYER_FILTER        0x4325C0u
 #define ADDR_PLOT_TEXT                0x4304E0u
@@ -121,8 +131,18 @@ extern void SDL_free(void* mem);
 #define ADDR_OPTIONS_STATE            0x448398u
 #define ADDR_OPTIONS_STATE_PAUSED     0x448388u
 #define ADDR_GAME_STATE               0x448220u
+#define ADDR_PAUSED                   0x549120u
 #define ADDR_MAIN_STATE               0x448350u
 #define ADDR_MAIN_STATE_INITIAL       0x448340u
+#define ADDR_PREGAME_STATE            0x4483A8u
+#define ADDR_GAME_OLD_ACTIVE_ROOM     0x448330u
+#define ADDR_RESUMED                  0x448334u
+#define ADDR_MAP_SELECTOR             0x55A2F4u
+#define ADDR_ROUND_END_ANY            0x55A304u
+#define ADDR_GAME_ACTIVE_ROOM         0x541E08u
+#define ADDR_WATERFALL_FX            0x541E44u
+#define ADDR_WATERFALL_COUNT         0x542038u
+#define ADDR_START_COUNTDOWN          0x542048u
 #define ADDR_OPTIONS_ENTER            0x4381F0u
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
 #define ADDR_MAIN_PLAYER_POLL_CMDS    0x433F90u
@@ -137,6 +157,10 @@ extern void SDL_free(void* mem);
 #define ADDR_ANGLE_COLOUR             0x4180F0u
 #define ADDR_DRAW_PLAYER_BODY         0x41BDD0u
 #define ADDR_PLAYER_ARRAY             0x542058u
+#define ADDR_CAMERA_X                 0x55A360u
+#define ADDR_CAMERA_Y                 0x55A364u
+#define ADDR_GAME_W                   0x55A394u
+#define ADDR_GAME_H                   0x55A324u
 #define ADDR_LAYER                    0x55A33Cu
 #define ADDR_TURTLE_R                 0x448110u
 #define ADDR_TURTLE_G                 0x448114u
@@ -145,8 +169,15 @@ extern void SDL_free(void* mem);
 #define ADDR_GAME_STARTED             0x54203Cu
 #define ADDR_PLAYER_CLR_INDEX         0x448320u
 #define ADDR_PLAYER_COLOURS           0x448240u
+#define ADDR_LEADER                   0x541E0Cu
+#define ADDR_LOSER                    0x542064u
+#define ADDR_END_COUNTDOWN            0x542044u
+#define ADDR_SCORE_TARGET             0x55A30Cu
+#define ADDR_SCORE_PLAYER0            0x55A314u
+#define ADDR_SCORE_PLAYER1            0x55A318u
 #define ADDR_GAME_TICKS               0x547BA0u
 #define ADDR_NATIVE_SYNTH_ENABLED     0x54C0CAu
+#define ADDR_SEED                     0x542074u
 #define ADDR_MRAND_SEED               0x496DA0u
 #define ADDR_MRAND                    0x405080u
 #define ADDR_RND                      0x4050B0u
@@ -155,6 +186,14 @@ extern void SDL_free(void* mem);
 #define ADDR_RNDSIGN                  0x4052C0u
 #define ADDR_RESPAWN_WARBLE           0x41BB70u
 #define ADDR_SYNTH_EFFECT_WHISTLING   0x41BBD0u
+#define ADDR_SYNTH_EFFECTS_INIT       0x408780u
+#define ADDR_SYN_ENABLE_RANGE         0x406F40u
+#define ADDR_SYNTH_ENGINE             0x5540E0u
+
+#define PLAYER_SIZE                   0x15Cu
+#define PLAYER_OFS_X                  0x24u
+#define PLAYER_OFS_Y                  0x28u
+#define PLAYER_OFS_ROOM               0x9Bu
 
 // Asset load hook used for moddable font glyph overlays.
 #define ADDR_RGBA_LOAD                0x4022A0u
@@ -178,6 +217,9 @@ extern void SDL_free(void* mem);
 #define BTN_OFS_LABEL_PTR         0xC8
 #define BTN_OFS_LINK_PTR          0xE0
 #define BTN_OFS_ACTION_PTR        0xE4
+#define BTN_OFS_NOLINK_FLAG       0xBD
+
+#define MAIN_START_ACTION_PTR     0x432440u
 
 #define SDLK_BACKSPACE      8
 #define SDLK_TAB            9
@@ -209,6 +251,18 @@ extern void SDL_free(void* mem);
 #define MAX_CUSTOM_STATES         16
 #define CUSTOM_STATE_NAME_MAX     64
 #define GGPO_SELFTEST_FRAMES_PER_TICK 2
+#define ONLINE_HUB_MAX_ROWS      160
+#define ONLINE_HUB_MAX_FRIENDS    32
+#define ONLINE_HUB_MAX_INBOX      32
+#define ONLINE_HUB_TEXT_MAX      128
+#define ONLINE_HUB_STATUS_MAX    256
+#define ONLINE_HUB_CFG_PATH      "mods\\online_hub.cfg"
+#define ONLINE_DEFAULT_SERVER_HOST "eggnogg.loafiieee.com"
+#define ONLINE_DEFAULT_SERVER_PORT 47778
+#define ONLINE_ABANDON_GRACE_TICKS 90
+#define ONLINE_MATCH_COUNTDOWN_FRAMES 150
+#define ONLINE_RESULT_TOAST_FRAMES 420
+#define ONLINE_CHALLENGE_TOAST_FADE_FRAMES 30
 
 typedef struct GameState {
     void (__cdecl *enter)(void);
@@ -256,6 +310,169 @@ typedef struct RowKey {
     int cfg_index;
 } RowKey;
 
+typedef enum OnlineHubTab {
+    ONLINE_TAB_PLAY = 0,
+    ONLINE_TAB_FRIENDS = 1,
+    ONLINE_TAB_SETTINGS = 2,
+    ONLINE_TAB_COUNT = 3,
+} OnlineHubTab;
+
+typedef enum OnlineHubRowKind {
+    ONLINE_ROW_NONE = 0,
+    ONLINE_ROW_INFO,
+    ONLINE_ROW_ACTION,
+    ONLINE_ROW_SETTING,
+    ONLINE_ROW_FRIEND,
+    ONLINE_ROW_FRIEND_REQUEST,
+    ONLINE_ROW_CHALLENGE,
+    ONLINE_ROW_BACK,
+} OnlineHubRowKind;
+
+typedef enum OnlineHubAction {
+    ONLINE_ACTION_NONE = 0,
+    ONLINE_ACTION_CONNECT,
+    ONLINE_ACTION_LOGIN,
+    ONLINE_ACTION_REGISTER,
+    ONLINE_ACTION_DISCONNECT_SERVER,
+    ONLINE_ACTION_QUEUE_CASUAL,
+    ONLINE_ACTION_QUEUE_COMPETITIVE,
+    ONLINE_ACTION_LEAVE_QUEUE,
+    ONLINE_ACTION_HOST,
+    ONLINE_ACTION_JOIN,
+    ONLINE_ACTION_STOP,
+    ONLINE_ACTION_ADD_FRIEND,
+    ONLINE_ACTION_CHALLENGE_FRIEND,
+    ONLINE_ACTION_ACCEPT_FRIEND,
+    ONLINE_ACTION_DECLINE_FRIEND,
+    ONLINE_ACTION_ACCEPT_CHALLENGE,
+    ONLINE_ACTION_DECLINE_CHALLENGE,
+    ONLINE_ACTION_REMOVE_FRIEND,
+    ONLINE_ACTION_BLOCK_FRIEND,
+    ONLINE_ACTION_SAVE_SETTINGS,
+} OnlineHubAction;
+
+typedef enum OnlineHubSetting {
+    ONLINE_SETTING_NONE = 0,
+    ONLINE_SETTING_USERNAME,
+    ONLINE_SETTING_PASSWORD,
+    ONLINE_SETTING_SERVER_HOST,
+    ONLINE_SETTING_SERVER_PORT,
+    ONLINE_SETTING_PEER_HOST,
+    ONLINE_SETTING_PEER_PORT,
+    ONLINE_SETTING_LOCAL_PORT,
+    ONLINE_SETTING_P2P_ENABLED,
+    ONLINE_SETTING_RELAY_FALLBACK,
+    ONLINE_SETTING_INPUT_DELAY,
+    ONLINE_SETTING_FRAME_ADVANTAGE,
+    ONLINE_SETTING_MAX_PREDICTION,
+    ONLINE_SETTING_CORRECTION,
+    ONLINE_SETTING_SIM_LOSS,
+    ONLINE_SETTING_SIM_MIN_DELAY,
+    ONLINE_SETTING_SIM_MAX_DELAY,
+    ONLINE_SETTING_CHALLENGE_NOTIFICATIONS,
+} OnlineHubSetting;
+
+typedef enum OnlineHubCaptureKind {
+    ONLINE_CAPTURE_NONE = 0,
+    ONLINE_CAPTURE_SETTING,
+    ONLINE_CAPTURE_ADD_FRIEND,
+} OnlineHubCaptureKind;
+
+typedef enum OnlineMatchResult {
+    ONLINE_MATCH_RESULT_NONE = 0,
+    ONLINE_MATCH_RESULT_WIN = 1,
+    ONLINE_MATCH_RESULT_LOSS = -1,
+    ONLINE_MATCH_RESULT_DRAW = 2,
+} OnlineMatchResult;
+
+typedef struct OnlineHubRow {
+    OnlineHubRowKind kind;
+    int selectable;
+    int id;
+    int aux;
+    char left[128];
+    char right[192];
+} OnlineHubRow;
+
+typedef struct OnlineFriend {
+    char name[48];
+    char host[ONLINE_HUB_TEXT_MAX];
+    uint16_t port;
+    int blocked;
+    int elo;
+    int online;
+} OnlineFriend;
+
+typedef struct OnlineFriendRequest {
+    char name[48];
+    int elo;
+} OnlineFriendRequest;
+
+typedef struct OnlineChallenge {
+    int id;
+    char from[48];
+    int elo;
+    int expires_in;
+} OnlineChallenge;
+
+typedef struct OnlineSentChallenge {
+    char username[48];
+    int id;
+    uint32_t expires_ms;
+} OnlineSentChallenge;
+
+typedef struct OnlineChallengeToast {
+    int active;
+    int age;
+    int id;
+    int elo;
+    uint32_t expires_ms;
+    char from[48];
+} OnlineChallengeToast;
+
+typedef struct OnlineHubConfig {
+    char username[48];
+    char password[96];
+    char server_host[ONLINE_HUB_TEXT_MAX];
+    uint16_t server_port;
+    char peer_host[ONLINE_HUB_TEXT_MAX];
+    uint16_t peer_port;
+    uint16_t local_port;
+    int p2p_enabled;
+    int relay_fallback;
+    int input_delay;
+    int max_frame_advantage;
+    int max_prediction;
+    int correction_enabled;
+    int sim_loss;
+    int sim_min_delay;
+    int sim_max_delay;
+    int challenge_notifications;
+} OnlineHubConfig;
+
+typedef struct OnlineLayout {
+    float w;
+    float h;
+    float ui;
+    float text_scale;
+    float panel_x;
+    float panel_y;
+    float panel_w;
+    float panel_h;
+    float header_h;
+    float footer_h;
+    float content_x;
+    float content_y;
+    float content_w;
+    float content_h;
+    float row_h;
+    float list_top;
+    float list_bottom;
+    float left_x;
+    float right_x;
+    float center_x;
+} OnlineLayout;
+
 typedef struct ConsoleLine {
     char text[CONSOLE_LINE_TEXT];
     float r;
@@ -282,6 +499,7 @@ typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite, int flip, int layer)
 typedef void  (__cdecl *fn_sprite_batch_draw_t)(int atlas);
 typedef int   (__cdecl *fn_atlas_upload_t)(int atlas, int arg2, int format);
 typedef void* (__cdecl *fn_menu_button_link_t)(float, float, const char*, void*);
+typedef void* (__cdecl *fn_button_ex_t)(float, float, uint32_t, const char*, int);
 typedef void* (__cdecl *fn_button_get_t)(int);
 typedef int   (__cdecl *fn_button_count_t)(void);
 typedef void  (__cdecl *fn_button_set_layout_t)(float, float);
@@ -301,6 +519,8 @@ typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 typedef int (__cdecl *fn_tile_action_t)(void*, int, int, int, int);
 typedef void (__cdecl *fn_colour_query_t)(float*);
 typedef int (__cdecl *fn_synth_callback_t)(void*);
+typedef void (__cdecl *fn_synth_effects_init_t)(int, int);
+typedef void (__cdecl *fn_syn_enable_range_t)(int, uint32_t, uint32_t, int);
 typedef int   (__cdecl *fn_game_player_colour_index_t)(uint32_t, int);
 typedef int   (__cdecl *fn_game_set_player_colour_index_t)(uint32_t, int, uint32_t);
 typedef void  (__cdecl *fn_game_player_colour_t)(float*, uint32_t, int);
@@ -315,12 +535,15 @@ static fn_game_update_t              p_game_update = (fn_game_update_t)(uintptr_
 static fn_void_void_t                p_main_draw = (fn_void_void_t)(uintptr_t)ADDR_MAIN_DRAW;
 static fn_void_void_t                p_menu_common_render = (fn_void_void_t)(uintptr_t)ADDR_MENU_COMMON_RENDER;
 static fn_void_void_t                p_main_buttons_start = (fn_void_void_t)(uintptr_t)ADDR_MAIN_BUTTONS_START;
+static fn_void_void_t                p_game_reset = (fn_void_void_t)(uintptr_t)ADDR_GAME_RESET;
+static fn_void_void_t                p_game_start = (fn_void_void_t)(uintptr_t)ADDR_GAME_START;
 static fn_main_cursors_reset_t       p_main_cursors_reset = (fn_main_cursors_reset_t)(uintptr_t)ADDR_MAIN_CURSORS_RESET;
 static fn_main_cursor_spin_t        p_main_cursor_spin = (fn_main_cursor_spin_t)(uintptr_t)ADDR_MAIN_CURSOR_SPIN;
 static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprite_batches_draw_t)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW;
 static fn_sprite_batch_plot_t        p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
 static fn_atlas_upload_t             p_atlas_upload = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
 static fn_menu_button_link_t         p_menu_button_link = (fn_menu_button_link_t)(uintptr_t)ADDR_MENU_BUTTON_LINK;
+static fn_button_ex_t                p_button_ex = (fn_button_ex_t)(uintptr_t)ADDR_BUTTON_EX;
 static fn_button_get_t               p_button_get = (fn_button_get_t)(uintptr_t)ADDR_BUTTON_GET;
 static fn_button_count_t             p_button_count = (fn_button_count_t)(uintptr_t)ADDR_BUTTON_COUNT;
 static fn_button_set_layout_t        p_button_set_layout = (fn_button_set_layout_t)(uintptr_t)ADDR_BUTTON_SET_LAYOUT;
@@ -367,15 +590,23 @@ static volatile uint32_t* g_game_ticks = (volatile uint32_t*)(uintptr_t)ADDR_GAM
 static volatile int* g_debug = (volatile int*)(uintptr_t)ADDR_DEBUG;
 static volatile int* g_debug_slowmo = (volatile int*)(uintptr_t)ADDR_DEBUG_SLOWMO;
 static volatile int* g_game_started = (volatile int*)(uintptr_t)ADDR_GAME_STARTED;
+static volatile int* g_native_paused = (volatile int*)(uintptr_t)ADDR_PAUSED;
+static volatile float* g_camera_x = (volatile float*)(uintptr_t)ADDR_CAMERA_X;
+static volatile float* g_camera_y = (volatile float*)(uintptr_t)ADDR_CAMERA_Y;
+static volatile float* g_game_w_native = (volatile float*)(uintptr_t)ADDR_GAME_W;
+static volatile float* g_game_h_native = (volatile float*)(uintptr_t)ADDR_GAME_H;
 static volatile int* g_player_clr_index = (volatile int*)(uintptr_t)ADDR_PLAYER_CLR_INDEX;
 static volatile float* g_player_colours = (volatile float*)(uintptr_t)ADDR_PLAYER_COLOURS;
 static volatile unsigned char* g_native_synth_enabled = (volatile unsigned char*)(uintptr_t)ADDR_NATIVE_SYNTH_ENABLED;
+static volatile uint32_t* g_native_seed = (volatile uint32_t*)(uintptr_t)ADDR_SEED;
 static volatile uint32_t* g_native_mrand_seed = (volatile uint32_t*)(uintptr_t)ADDR_MRAND_SEED;
 
 static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)ADDR_RGBA_LOAD;
 static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
 static fn_synth_callback_t           p_respawn_warble_trampoline = NULL;
 static fn_synth_callback_t           p_synth_effect_whistling_trampoline = NULL;
+static fn_synth_effects_init_t       p_synth_effects_init = (fn_synth_effects_init_t)(uintptr_t)ADDR_SYNTH_EFFECTS_INIT;
+static fn_syn_enable_range_t         p_syn_enable_range = (fn_syn_enable_range_t)(uintptr_t)ADDR_SYN_ENABLE_RANGE;
 
 void* g_hooks_rng_mrand_trampoline = NULL;
 void* g_hooks_rng_rnd_trampoline = NULL;
@@ -464,6 +695,7 @@ static volatile uint32_t g_last_raw_cmd[2] = { 0, 0 };
 static volatile uint32_t g_last_effective_cmd[2] = { 0, 0 };
 static volatile int g_raw_input_blocked[2] = { 0, 0 };
 static volatile int g_block_game_tick_once = 0;
+static volatile int g_allow_paused_game_tick = 0;
 static volatile int g_ggpo_selftest_pending = 0;
 static volatile int g_ggpo_selftest_frames = 0;
 
@@ -516,8 +748,19 @@ typedef struct ModsLayout {
 
 static int is_mods_state_active(void);
 static int is_console_state_active(void);
+static int is_online_result_state_active(void);
 static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override);
 static void hooks_finish_game_tick(void);
+static void online_sent_challenge_add(const char* username, int id, int expires_in);
+static void online_sent_challenge_remove(const char* username, int id);
+static void online_sent_challenge_prune(void);
+static int online_sent_challenge_pending(const char* username);
+static void online_challenge_toast_show(const char* from, int id, int elo, int expires_in);
+static void online_challenge_toast_clear(int id, const char* from);
+static void online_challenge_toast_render(void);
+static void online_challenge_toast_tick(void);
+static int online_challenge_toast_action_at(float x, float y);
+static int online_challenge_toast_activate(int action);
 
 static int hooks_consume_block_game_tick(void) {
     int block = (g_block_game_tick_once != 0);
@@ -623,6 +866,7 @@ static void mods_cursor_tick(void) {
 }
 
 static void* g_mods_return_state = (void*)(uintptr_t)ADDR_OPTIONS_STATE;
+static void* g_online_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
 static HookCustomState g_custom_states[MAX_CUSTOM_STATES];
 
 static void __cdecl console_enter(void);
@@ -634,6 +878,15 @@ static void __cdecl mods_enter(void);
 static void __cdecl mods_update(void);
 static void __cdecl mods_render(void);
 static void __cdecl mods_leave(void);
+static void __cdecl online_hub_enter(void);
+static void __cdecl online_hub_update(void);
+static void __cdecl online_hub_render(void);
+static void __cdecl online_hub_leave(void);
+static void __cdecl online_result_enter(void);
+static void __cdecl online_result_update(void);
+static void __cdecl online_result_render(void);
+static void __cdecl online_result_leave(void);
+static void online_result_render_overlay(const OnlineLayout* L);
 static void __cdecl custom_state_enter(void);
 static void __cdecl custom_state_update(void);
 static void __cdecl custom_state_render(void);
@@ -664,6 +917,19 @@ static void console_run_ggpo_local(const char* arg);
 static void toggle_ggpo_local(const char* source);
 static void start_ggpo_net_host(uint16_t port, const char* source);
 static void start_ggpo_net_join(const char* host, uint16_t remote_port, uint16_t local_port, const char* source);
+static void stop_ggpo_net(const char* source);
+static void online_hub_open(void);
+static void online_hub_set_status(const char* msg);
+static void online_hub_load(void);
+static void online_hub_save(void);
+static void online_hub_apply_net_settings(void);
+static void online_hub_rebuild_rows(void);
+static void online_hub_render_ui(void);
+static void online_server_update(void);
+static void online_server_disconnect(const char* reason);
+static void online_match_pump_launch(void);
+static void online_match_poll_completion(void);
+static void console_draw_background(float w, float h);
 
 static GameState g_mods_state = {
     mods_enter,
@@ -679,12 +945,142 @@ static GameState g_console_state = {
     console_leave,
 };
 
+static GameState g_online_hub_state = {
+    online_hub_enter,
+    online_hub_update,
+    online_hub_render,
+    online_hub_leave,
+};
+
+static GameState g_online_result_state = {
+    online_result_enter,
+    online_result_update,
+    online_result_render,
+    online_result_leave,
+};
+
 static GameState g_mods_entry_state = {
     mods_entry_enter,
     mods_entry_update,
     mods_entry_render,
     mods_entry_leave,
 };
+
+typedef enum OnlineServerState {
+    ONLINE_SERVER_DISCONNECTED = 0,
+    ONLINE_SERVER_CONNECTING,
+    ONLINE_SERVER_CONNECTED,
+} OnlineServerState;
+
+typedef struct OnlinePendingMatch {
+    int active;
+    int launch_stage;
+    int launch_delay_frames;
+    int launch_countdown_frames;
+    int p2p_started;
+    int match_id;
+    int role;
+    int selector;
+    int local_port;
+    int peer_port;
+    int input_delay;
+    unsigned int seed;
+    int competitive;
+    int queue_mode;
+    char p2p_role[12];
+    char peer_host[ONLINE_HUB_TEXT_MAX];
+    char opponent[48];
+    char map_key[128];
+    char map_label[128];
+} OnlinePendingMatch;
+
+typedef struct OnlineActiveMatch {
+    int active;
+    int match_id;
+    int local_player;
+    int competitive;
+    int queue_mode;
+    int result_reported;
+    int invalid_state_ticks;
+    OnlineMatchResult result;
+    char opponent[48];
+    char map_label[128];
+} OnlineActiveMatch;
+
+typedef struct OnlineResultScreen {
+    int active;
+    int selected;
+    int reported;
+    int server_confirmed;
+    int toast_age;
+    int toast_lifetime;
+    OnlineMatchResult result;
+    int competitive;
+    int queue_mode;
+    int elo_before;
+    int elo_after;
+    int elo_delta_valid;
+    char opponent[48];
+    char map_label[128];
+    char status[ONLINE_HUB_STATUS_MAX];
+} OnlineResultScreen;
+
+static OnlineHubConfig g_online_cfg;
+static OnlineFriend g_online_friends[ONLINE_HUB_MAX_FRIENDS];
+static int g_online_friend_count = 0;
+static OnlineFriendRequest g_online_requests[ONLINE_HUB_MAX_INBOX];
+static int g_online_request_count = 0;
+static OnlineChallenge g_online_challenges[ONLINE_HUB_MAX_INBOX];
+static int g_online_challenge_count = 0;
+static OnlineSentChallenge g_online_sent_challenges[ONLINE_HUB_MAX_INBOX];
+static int g_online_sent_challenge_count = 0;
+static int g_online_loaded = 0;
+static OnlineHubTab g_online_tab = ONLINE_TAB_PLAY;
+static OnlineHubRow g_online_rows[ONLINE_HUB_MAX_ROWS];
+static int g_online_row_count = 0;
+static int g_online_selected_row = -1;
+static int g_online_scroll_row = 0;
+static char g_online_status[ONLINE_HUB_STATUS_MAX];
+static int g_online_capture_active = 0;
+static OnlineHubCaptureKind g_online_capture_kind = ONLINE_CAPTURE_NONE;
+static int g_online_capture_target = 0;
+static char g_online_capture_buf[ONLINE_HUB_TEXT_MAX];
+static OnlineServerState g_online_server_state = ONLINE_SERVER_DISCONNECTED;
+static int g_online_server_slot = -1;
+static int g_online_authed = 0;
+static int g_online_register_after_connect = 0;
+static char g_online_recv_buf[65536];
+static size_t g_online_recv_len = 0;
+static int g_online_queue_mode = 0; /* 0 none, 1 casual, 2 competitive */
+static int g_online_public_elo = 1000;
+static int g_online_queue_casual_count = 0;
+static int g_online_queue_competitive_count = 0;
+static float g_online_mouse_x = BASE_UI_W * 0.5f;
+static float g_online_mouse_y = BASE_UI_H * 0.5f;
+static int g_online_context_active = 0;
+static int g_online_context_friend = -1;
+static float g_online_context_x = 0.0f;
+static float g_online_context_y = 0.0f;
+static int g_online_open_pending = 0;
+static void* g_online_pending_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+static OnlinePendingMatch g_online_pending_match;
+static OnlineActiveMatch g_online_active_match;
+static OnlineResultScreen g_online_result;
+static OnlineChallengeToast g_online_challenge_toast;
+static volatile int* g_hook_map_selector = (volatile int*)(uintptr_t)ADDR_MAP_SELECTOR;
+static volatile uintptr_t* g_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_LEADER;
+static volatile uintptr_t* g_game_loser = (volatile uintptr_t*)(uintptr_t)ADDR_LOSER;
+static volatile int* g_game_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
+static volatile int* g_game_start_countdown = (volatile int*)(uintptr_t)ADDR_START_COUNTDOWN;
+static volatile int* g_game_active_room = (volatile int*)(uintptr_t)ADDR_GAME_ACTIVE_ROOM;
+static volatile uintptr_t* g_game_waterfall_fx = (volatile uintptr_t*)(uintptr_t)ADDR_WATERFALL_FX;
+static volatile int* g_game_waterfall_count = (volatile int*)(uintptr_t)ADDR_WATERFALL_COUNT;
+static volatile int* g_game_old_active_room = (volatile int*)(uintptr_t)ADDR_GAME_OLD_ACTIVE_ROOM;
+static volatile int* g_game_resumed = (volatile int*)(uintptr_t)ADDR_RESUMED;
+static volatile int* g_game_round_end_any = (volatile int*)(uintptr_t)ADDR_ROUND_END_ANY;
+static volatile int* g_game_score_target = (volatile int*)(uintptr_t)ADDR_SCORE_TARGET;
+static volatile int* g_game_score_player0 = (volatile int*)(uintptr_t)ADDR_SCORE_PLAYER0;
+static volatile int* g_game_score_player1 = (volatile int*)(uintptr_t)ADDR_SCORE_PLAYER1;
 
 static int clampi(int v, int lo, int hi) {
     if (v < lo) return lo;
@@ -696,6 +1092,50 @@ static float clampf(float v, float lo, float hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+static void online_clear_waterfall_audio_state(const char* reason) {
+    uintptr_t fx = 0u;
+    int count = 0;
+    int changed = 0;
+
+    if (g_game_waterfall_fx && !IsBadReadPtr((const void*)g_game_waterfall_fx, sizeof(uintptr_t))) {
+        fx = *g_game_waterfall_fx;
+    }
+    if (g_game_waterfall_count && !IsBadReadPtr((const void*)g_game_waterfall_count, sizeof(int))) {
+        count = *g_game_waterfall_count;
+    }
+    if (fx && fx < UINTPTR_MAX - 0x2cu &&
+        !IsBadWritePtr((void*)(fx + 0x2cu), (SIZE_T)sizeof(uint32_t))) {
+        *(uint32_t*)(fx + 0x2cu) = 0u;
+        changed = 1;
+    }
+    if (g_game_waterfall_fx && !IsBadWritePtr((void*)g_game_waterfall_fx, (SIZE_T)sizeof(uintptr_t))) {
+        *g_game_waterfall_fx = 0u;
+        if (fx) changed = 1;
+    }
+    if (g_game_waterfall_count && !IsBadWritePtr((void*)g_game_waterfall_count, (SIZE_T)sizeof(int))) {
+        *g_game_waterfall_count = 0;
+        if (count) changed = 1;
+    }
+    if (changed) {
+        LOG_DEBUG("online.match: cleared waterfall audio state reason=%s fx=0x%08X count=%d",
+                  (reason && reason[0]) ? reason : "unknown",
+                  (unsigned int)fx,
+                  count);
+    }
+}
+
+static void online_reset_native_sound_state(const char* reason) {
+    online_clear_waterfall_audio_state(reason);
+    if (p_synth_effects_init && !IsBadCodePtr((FARPROC)(void*)p_synth_effects_init)) {
+        p_synth_effects_init(-1, -1);
+    }
+    if (p_syn_enable_range && !IsBadCodePtr((FARPROC)(void*)p_syn_enable_range)) {
+        p_syn_enable_range((int)ADDR_SYNTH_ENGINE, 0u, 0x100u, 0);
+    }
+    LOG_DEBUG("online.match: reset native synth sounds reason=%s",
+              (reason && reason[0]) ? reason : "unknown");
 }
 
 #define VANILLA_PLAYER_COLOUR_COUNT 14
@@ -1388,12 +1828,22 @@ static int is_console_state_active(void) {
     return p_state_current && (p_state_current() == (void*)&g_console_state);
 }
 
+static int is_online_hub_state_active(void) {
+    return p_state_current && (p_state_current() == (void*)&g_online_hub_state);
+}
+
+static int is_online_result_state_active(void) {
+    return p_state_current && (p_state_current() == (void*)&g_online_result_state);
+}
+
 static const char* state_name_from_ptr(void* st) {
     HookCustomState* custom;
     if (!st) return "none";
     if (st == (void*)&g_console_state) return "console";
     if (st == (void*)&g_mods_state) return "mods";
     if (st == (void*)&g_mods_entry_state) return "mods_entry";
+    if (st == (void*)&g_online_hub_state) return "online_hub";
+    if (st == (void*)&g_online_result_state) return "online_result";
     custom = find_custom_state_by_ptr(st);
     if (custom) return custom->name;
     if (st == (void*)(uintptr_t)ADDR_MAIN_STATE) return "main";
@@ -1456,13 +1906,20 @@ static void mods_restore_render_state(void) {
     else p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
 }
 
-static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
+static void draw_text_scaled_mode_alpha(float x, float y, float scale,
+                                        float r, float g, float b, float a,
+                                        const char* text, int mode) {
     if (!text || !p_plot_text) return;
     p_turtle_set_angle(0.0);
     p_turtle_set_scale((double)scale, (double)scale);
-    p_turtle_set_rgb(r, g, b);
+    if (p_turtle_set_rgba) p_turtle_set_rgba(r, g, b, a);
+    else p_turtle_set_rgb(r, g, b);
     p_turtle_set_pos_unscaled((double)x, (double)y);
     p_plot_text(text, mode);
+}
+
+static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
+    draw_text_scaled_mode_alpha(x, y, scale, r, g, b, 1.0f, text, mode);
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
@@ -2216,6 +2673,7 @@ static const char* k_console_commands[] = {
     "binds.list", "binds.find", "binds.set", "binds.clear",
     "profiles.list", "profiles.save", "profiles.load", "profiles.delete", "profiles.current",
     "reload.mods", "mods.reload", "reload.assets",
+    "online.hub",
     "ggpo.net",
     "log.level", "log.tail", "input.show", "input.override", "input.clear",
     "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
@@ -2745,7 +3203,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  state", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state.last", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state.return [main|main_initial|options|options_paused|mods|mods_entry]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  state.switch <main|main_initial|options|options_paused|mods|mods_entry|console|return>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  sys.info", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ui.size", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  time.scale [value|auto]", 0.87f, 0.87f, 0.87f);
@@ -2775,6 +3233,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  reload.mods", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  online.hub", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
@@ -2874,6 +3333,11 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("F6 hosts on 47777. F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
         return;
     }
+    if (_stricmp(t, "online.hub") == 0 || _stricmp(t, "online") == 0) {
+        console_push_line_rgb("online.hub: open the built-in online hub with Play, Friends, and Settings tabs.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("Play uses server login plus casual/competitive queues; Friends handles requests and challenges.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
     if (_stricmp(t, "reload.mods") == 0) {
         console_push_line_rgb("reload.mods: unload+reload all mods and refresh runtime.", 0.72f, 0.90f, 1.00f);
         return;
@@ -2884,7 +3348,7 @@ static void console_show_help(const char* topic) {
         return;
     }
     if (_stricmp(t, "state.switch") == 0) {
-        console_push_line_rgb("state.switch <name>: switch to main/main_initial/options/options_paused/mods/mods_entry/console/return.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("state.switch <name>: switch to main/main_initial/options/options_paused/mods/mods_entry/online/console/return.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "state.return") == 0) {
@@ -2966,6 +3430,7 @@ static void* console_state_ptr_from_name(const char* name, int allow_return_alia
     if (_stricmp(name, "options_paused") == 0) return (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED;
     if (_stricmp(name, "mods") == 0) return (void*)&g_mods_state;
     if (_stricmp(name, "mods_entry") == 0) return (void*)&g_mods_entry_state;
+    if (_stricmp(name, "online") == 0 || _stricmp(name, "online_hub") == 0) return (void*)&g_online_hub_state;
     if (_stricmp(name, "console") == 0) return (void*)&g_console_state;
     if (allow_return_alias && _stricmp(name, "return") == 0) return g_console_return_state;
     return NULL;
@@ -3015,7 +3480,7 @@ static void console_switch_state(const char* state_arg) {
     safe_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
     name = trim_ws(name_buf);
     if (!name || !name[0]) {
-        console_push_line_rgb("Usage: state.switch <main|main_initial|options|options_paused|mods|mods_entry|console|return>", 0.98f, 0.76f, 0.40f);
+        console_push_line_rgb("Usage: state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>", 0.98f, 0.76f, 0.40f);
         return;
     }
     if (!p_state_switch) {
@@ -3025,7 +3490,7 @@ static void console_switch_state(const char* state_arg) {
 
     target = console_state_ptr_from_name(name, 1);
     if (!target) {
-        console_push_line_rgb("Unknown state. Use: main/main_initial/options/options_paused/mods/mods_entry/console/return", 0.98f, 0.76f, 0.40f);
+        console_push_line_rgb("Unknown state. Use: main/main_initial/options/options_paused/mods/mods_entry/online/console/return", 0.98f, 0.76f, 0.40f);
         return;
     }
 
@@ -4055,6 +4520,7 @@ static void stop_ggpo_net(const char* source) {
         return;
     }
     ggpo_net_stop();
+    online_reset_native_sound_state(source ? source : "ggpo stop");
     snprintf(out,
              sizeof(out),
              "ggpo.net: stopped from %s after %u frame(s), checksum=%u tx=%u rx=%u pred=%u rb=%u adv_stall=%u pred_stall=%u desync=%u",
@@ -5164,6 +5630,10 @@ static void console_execute_input(void) {
         console_run_reload_mods();
     } else if (_stricmp(cmd, "reload.assets") == 0) {
         console_run_reload_assets();
+    } else if (_stricmp(cmd, "online.hub") == 0 || _stricmp(cmd, "online") == 0) {
+        online_hub_load();
+        console_close();
+        online_hub_open();
     } else if (_stricmp(cmd, "ggpo.roundtrip") == 0) {
         console_run_ggpo_roundtrip(arg);
     } else if (_stricmp(cmd, "ggpo.selftest") == 0) {
@@ -5238,6 +5708,3542 @@ static char keycode_to_char(int sym, int mod) {
         case '/': return shift ? '?' : '/';
         case '`': return shift ? '~' : '`';
         default: return 0;
+    }
+}
+
+static void online_hub_defaults(void) {
+    memset(&g_online_cfg, 0, sizeof(g_online_cfg));
+    safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), "Player");
+    g_online_cfg.password[0] = '\0';
+    safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
+    g_online_cfg.server_port = ONLINE_DEFAULT_SERVER_PORT;
+    safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
+    g_online_cfg.peer_port = GGPO_NET_DEFAULT_PORT;
+    g_online_cfg.local_port = 0;
+    g_online_cfg.p2p_enabled = 1;
+    g_online_cfg.relay_fallback = 1;
+    g_online_cfg.input_delay = (int)ggpo_net_input_delay();
+    g_online_cfg.max_frame_advantage = (int)ggpo_net_max_frame_advantage();
+    g_online_cfg.max_prediction = (int)ggpo_net_max_prediction();
+    g_online_cfg.correction_enabled = ggpo_net_correction_enabled() ? 1 : 0;
+    g_online_cfg.sim_loss = (int)ggpo_net_sim_loss_percent();
+    g_online_cfg.sim_min_delay = (int)ggpo_net_sim_delay_min_ticks();
+    g_online_cfg.sim_max_delay = (int)ggpo_net_sim_delay_max_ticks();
+    g_online_cfg.challenge_notifications = 1;
+}
+
+static int online_parse_long_range(const char* s, long lo, long hi, long* out) {
+    char* end = NULL;
+    long v;
+    if (!s || !s[0]) return 0;
+    v = strtol(s, &end, 0);
+    if (!end || *trim_ws(end) != '\0') return 0;
+    if (v < lo || v > hi) return 0;
+    if (out) *out = v;
+    return 1;
+}
+
+static void online_hub_set_status(const char* msg) {
+    safe_copy(g_online_status, sizeof(g_online_status), msg ? msg : "");
+    if (msg && msg[0]) {
+        LOG_INFO("online.hub: %s", msg);
+    }
+}
+
+static uint16_t online_u16_or_default(long value, uint16_t fallback) {
+    if (value < 0 || value > 65535) return fallback;
+    return (uint16_t)value;
+}
+
+static void online_hub_clamp_config(void) {
+    g_online_cfg.server_port = online_u16_or_default(g_online_cfg.server_port, ONLINE_DEFAULT_SERVER_PORT);
+    g_online_cfg.peer_port = online_u16_or_default(g_online_cfg.peer_port, GGPO_NET_DEFAULT_PORT);
+    g_online_cfg.input_delay = clampi(g_online_cfg.input_delay, 0, GGPO_NET_MAX_INPUT_DELAY);
+    g_online_cfg.max_frame_advantage = clampi(g_online_cfg.max_frame_advantage, 0, GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT);
+    g_online_cfg.max_prediction = clampi(g_online_cfg.max_prediction, 1, GGPO_NET_MAX_PREDICTION_LIMIT);
+    g_online_cfg.correction_enabled = g_online_cfg.correction_enabled ? 1 : 0;
+    g_online_cfg.p2p_enabled = 1;
+    g_online_cfg.relay_fallback = g_online_cfg.relay_fallback ? 1 : 0;
+    g_online_cfg.sim_loss = clampi(g_online_cfg.sim_loss, 0, 100);
+    g_online_cfg.sim_min_delay = clampi(g_online_cfg.sim_min_delay, 0, GGPO_NET_SIM_MAX_DELAY_TICKS);
+    g_online_cfg.sim_max_delay = clampi(g_online_cfg.sim_max_delay, 0, GGPO_NET_SIM_MAX_DELAY_TICKS);
+    g_online_cfg.challenge_notifications = g_online_cfg.challenge_notifications ? 1 : 0;
+    if (g_online_cfg.sim_max_delay < g_online_cfg.sim_min_delay) {
+        g_online_cfg.sim_max_delay = g_online_cfg.sim_min_delay;
+    }
+    if (!g_online_cfg.username[0]) safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), "Player");
+    if (!g_online_cfg.server_host[0]) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
+    if (!g_online_cfg.peer_host[0]) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
+}
+
+static void online_hub_add_friend(const char* name, const char* host, uint16_t port, int blocked) {
+    OnlineFriend* f;
+    if (!name || !name[0] || g_online_friend_count >= ONLINE_HUB_MAX_FRIENDS) return;
+    f = &g_online_friends[g_online_friend_count++];
+    memset(f, 0, sizeof(*f));
+    safe_copy(f->name, sizeof(f->name), name);
+    safe_copy(f->host, sizeof(f->host), (host && host[0]) ? host : g_online_cfg.peer_host);
+    f->port = port ? port : g_online_cfg.peer_port;
+    f->blocked = blocked ? 1 : 0;
+}
+
+static int online_hub_parse_host_port(const char* src, char* out_host, size_t host_sz, uint16_t* out_port, uint16_t fallback_port) {
+    char tmp[ONLINE_HUB_TEXT_MAX * 2];
+    char* s;
+    char* colon;
+    long port;
+    if (!src || !src[0] || !out_host || host_sz == 0) return 0;
+    safe_copy(tmp, sizeof(tmp), src);
+    s = trim_ws(tmp);
+    colon = strrchr(s, ':');
+    if (colon && colon[1]) {
+        *colon = '\0';
+        if (!online_parse_long_range(colon + 1, 0, 65535, &port)) return 0;
+        safe_copy(out_host, host_sz, trim_ws(s));
+        if (out_port) *out_port = (uint16_t)port;
+    } else {
+        safe_copy(out_host, host_sz, s);
+        if (out_port) *out_port = fallback_port;
+    }
+    return out_host[0] != '\0';
+}
+
+static int online_hub_add_friend_spec(const char* spec) {
+    char tmp[ONLINE_HUB_TEXT_MAX * 2];
+    char name[48];
+    char host[ONLINE_HUB_TEXT_MAX];
+    uint16_t port = g_online_cfg.peer_port;
+    char* s;
+    char* sep;
+    if (!spec || !spec[0]) return 0;
+    safe_copy(tmp, sizeof(tmp), spec);
+    s = trim_ws(tmp);
+    if (!s[0]) return 0;
+
+    sep = strchr(s, '@');
+    if (!sep) {
+        sep = s;
+        while (*sep && !isspace((unsigned char)*sep)) sep++;
+    }
+    if (!sep || !*sep) {
+        safe_copy(name, sizeof(name), s);
+        safe_copy(host, sizeof(host), g_online_cfg.peer_host);
+        port = g_online_cfg.peer_port;
+    } else {
+        *sep = '\0';
+        safe_copy(name, sizeof(name), trim_ws(s));
+        sep++;
+        while (*sep && isspace((unsigned char)*sep)) sep++;
+        if (!online_hub_parse_host_port(sep, host, sizeof(host), &port, g_online_cfg.peer_port)) {
+            return 0;
+        }
+    }
+    if (!name[0]) return 0;
+    online_hub_add_friend(name, host, port, 0);
+    return 1;
+}
+
+static void online_hub_load(void) {
+    FILE* f;
+    char line[512];
+    if (g_online_loaded) return;
+    g_online_loaded = 1;
+    online_hub_defaults();
+    g_online_friend_count = 0;
+    g_online_request_count = 0;
+    g_online_challenge_count = 0;
+
+    f = fopen(ONLINE_HUB_CFG_PATH, "r");
+    if (!f) {
+        online_hub_clamp_config();
+        return;
+    }
+
+    while (fgets(line, sizeof(line), f)) {
+        char* key;
+        char* value;
+        long parsed = 0;
+        console_strip_crlf(line);
+        key = trim_ws(line);
+        if (!key[0] || key[0] == '#') continue;
+        value = strchr(key, '=');
+        if (!value) continue;
+        *value++ = '\0';
+        key = trim_ws(key);
+        value = trim_ws(value);
+
+        if (_stricmp(key, "username") == 0) safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), value);
+        else if (_stricmp(key, "password") == 0) safe_copy(g_online_cfg.password, sizeof(g_online_cfg.password), value);
+        else if (_stricmp(key, "server_host") == 0) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), value);
+        else if (_stricmp(key, "server_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.server_port = (uint16_t)parsed;
+        else if (_stricmp(key, "peer_host") == 0) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), value);
+        else if (_stricmp(key, "peer_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.peer_port = (uint16_t)parsed;
+        else if (_stricmp(key, "local_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.local_port = (uint16_t)parsed;
+        else if (_stricmp(key, "p2p_enabled") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.p2p_enabled = (int)parsed;
+        else if (_stricmp(key, "relay_fallback") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.relay_fallback = (int)parsed;
+        else if (_stricmp(key, "input_delay") == 0 && online_parse_long_range(value, 0, GGPO_NET_MAX_INPUT_DELAY, &parsed)) g_online_cfg.input_delay = (int)parsed;
+        else if (_stricmp(key, "max_frame_advantage") == 0 && online_parse_long_range(value, 0, GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT, &parsed)) g_online_cfg.max_frame_advantage = (int)parsed;
+        else if (_stricmp(key, "max_prediction") == 0 && online_parse_long_range(value, 1, GGPO_NET_MAX_PREDICTION_LIMIT, &parsed)) g_online_cfg.max_prediction = (int)parsed;
+        else if (_stricmp(key, "correction_enabled") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.correction_enabled = (int)parsed;
+        else if (_stricmp(key, "sim_loss") == 0 && online_parse_long_range(value, 0, 100, &parsed)) g_online_cfg.sim_loss = (int)parsed;
+        else if (_stricmp(key, "sim_min_delay") == 0 && online_parse_long_range(value, 0, GGPO_NET_SIM_MAX_DELAY_TICKS, &parsed)) g_online_cfg.sim_min_delay = (int)parsed;
+        else if (_stricmp(key, "sim_max_delay") == 0 && online_parse_long_range(value, 0, GGPO_NET_SIM_MAX_DELAY_TICKS, &parsed)) g_online_cfg.sim_max_delay = (int)parsed;
+        else if (_stricmp(key, "challenge_notifications") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.challenge_notifications = (int)parsed;
+        else if (_stricmp(key, "friend") == 0) {
+            /* v1 local peer-address friends are ignored; friends now live on the server. */
+#if 0
+            char friend_buf[256];
+            char* p;
+            char* name;
+            char* host;
+            char* port_s;
+            char* blocked_s;
+            uint16_t port = GGPO_NET_DEFAULT_PORT;
+            int blocked = 0;
+            safe_copy(friend_buf, sizeof(friend_buf), value);
+            p = friend_buf;
+            name = p;
+            host = strchr(p, '|');
+            if (!host) continue;
+            *host++ = '\0';
+            port_s = strchr(host, '|');
+            if (!port_s) continue;
+            *port_s++ = '\0';
+            blocked_s = strchr(port_s, '|');
+            if (blocked_s) *blocked_s++ = '\0';
+            if (online_parse_long_range(port_s, 0, 65535, &parsed)) port = (uint16_t)parsed;
+            if (blocked_s && online_parse_long_range(blocked_s, 0, 1, &parsed)) blocked = (int)parsed;
+            online_hub_add_friend(trim_ws(name), trim_ws(host), port, blocked);
+#endif
+        }
+    }
+    fclose(f);
+    online_hub_clamp_config();
+    online_hub_apply_net_settings();
+}
+
+static void online_hub_save(void) {
+    FILE* f;
+    CreateDirectoryA("mods", NULL);
+    online_hub_clamp_config();
+    f = fopen(ONLINE_HUB_CFG_PATH, "w");
+    if (!f) {
+        online_hub_set_status("Could not save online settings.");
+        return;
+    }
+    fprintf(f, "# Eggnogg+ built-in online hub config v1\n");
+    fprintf(f, "username=%s\n", g_online_cfg.username);
+    fprintf(f, "password=%s\n", g_online_cfg.password);
+    fprintf(f, "server_host=%s\n", g_online_cfg.server_host);
+    fprintf(f, "server_port=%u\n", (unsigned int)g_online_cfg.server_port);
+    fprintf(f, "peer_host=%s\n", g_online_cfg.peer_host);
+    fprintf(f, "peer_port=%u\n", (unsigned int)g_online_cfg.peer_port);
+    fprintf(f, "local_port=%u\n", (unsigned int)g_online_cfg.local_port);
+    fprintf(f, "p2p_enabled=%d\n", g_online_cfg.p2p_enabled ? 1 : 0);
+    fprintf(f, "relay_fallback=%d\n", g_online_cfg.relay_fallback ? 1 : 0);
+    fprintf(f, "input_delay=%d\n", g_online_cfg.input_delay);
+    fprintf(f, "max_frame_advantage=%d\n", g_online_cfg.max_frame_advantage);
+    fprintf(f, "max_prediction=%d\n", g_online_cfg.max_prediction);
+    fprintf(f, "correction_enabled=%d\n", g_online_cfg.correction_enabled ? 1 : 0);
+    fprintf(f, "sim_loss=%d\n", g_online_cfg.sim_loss);
+    fprintf(f, "sim_min_delay=%d\n", g_online_cfg.sim_min_delay);
+    fprintf(f, "sim_max_delay=%d\n", g_online_cfg.sim_max_delay);
+    fprintf(f, "challenge_notifications=%d\n", g_online_cfg.challenge_notifications ? 1 : 0);
+    fclose(f);
+}
+
+static void online_hub_apply_net_settings(void) {
+    online_hub_clamp_config();
+    (void)ggpo_net_set_input_delay((uint32_t)g_online_cfg.input_delay);
+    (void)ggpo_net_set_max_frame_advantage((uint32_t)g_online_cfg.max_frame_advantage);
+    (void)ggpo_net_set_max_prediction((uint32_t)g_online_cfg.max_prediction);
+    (void)ggpo_net_set_correction_enabled(g_online_cfg.correction_enabled);
+    (void)ggpo_net_set_network_sim((uint32_t)g_online_cfg.sim_loss,
+                                   (uint32_t)g_online_cfg.sim_min_delay,
+                                   (uint32_t)g_online_cfg.sim_max_delay);
+}
+
+static const char* online_server_state_text(void) {
+    if (g_online_server_state == ONLINE_SERVER_CONNECTED) return g_online_authed ? "online" : "connected";
+    if (g_online_server_state == ONLINE_SERVER_CONNECTING) return "connecting";
+    return "offline";
+}
+
+static void online_json_escape(char* out, size_t out_sz, const char* s) {
+    size_t pos = 0;
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    for (; s && *s && pos + 1 < out_sz; s++) {
+        unsigned char ch = (unsigned char)*s;
+        const char* esc = NULL;
+        switch (ch) {
+            case '\\': esc = "\\\\"; break;
+            case '"': esc = "\\\""; break;
+            case '\n': esc = "\\n"; break;
+            case '\r': esc = "\\r"; break;
+            case '\t': esc = "\\t"; break;
+            default: break;
+        }
+        if (esc) {
+            size_t n = strlen(esc);
+            if (pos + n >= out_sz) break;
+            memcpy(out + pos, esc, n);
+            pos += n;
+        } else if (ch >= 0x20) {
+            out[pos++] = (char)ch;
+        }
+    }
+    out[pos] = '\0';
+}
+
+static const char* online_json_find_key(const char* json, const char* key) {
+    char needle[96];
+    const char* p;
+    if (!json || !key || !key[0]) return NULL;
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    p = strstr(json, needle);
+    if (!p) return NULL;
+    p += strlen(needle);
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p != ':') return NULL;
+    p++;
+    while (*p && isspace((unsigned char)*p)) p++;
+    return p;
+}
+
+static int online_json_get_string(const char* json, const char* key, char* out, size_t out_sz) {
+    const char* p = online_json_find_key(json, key);
+    size_t pos = 0;
+    if (!out || out_sz == 0) return 0;
+    out[0] = '\0';
+    if (!p || *p != '"') return 0;
+    p++;
+    while (*p && *p != '"' && pos + 1 < out_sz) {
+        if (*p == '\\' && p[1]) {
+            p++;
+            switch (*p) {
+                case 'n': out[pos++] = '\n'; break;
+                case 'r': out[pos++] = '\r'; break;
+                case 't': out[pos++] = '\t'; break;
+                default: out[pos++] = *p; break;
+            }
+            p++;
+        } else {
+            out[pos++] = *p++;
+        }
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
+static int online_json_get_int(const char* json, const char* key, int* out) {
+    const char* p = online_json_find_key(json, key);
+    char* end = NULL;
+    long value;
+    if (!p) return 0;
+    value = strtol(p, &end, 10);
+    if (end == p) return 0;
+    if (out) *out = (int)value;
+    return 1;
+}
+
+static int online_server_send_raw(const char* line) {
+    int len;
+    int sent;
+    if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0 || !line) return 0;
+    len = (int)strlen(line);
+    sent = net_send(g_online_server_slot, line, len);
+    if (sent < 0) {
+        online_server_disconnect("server send failed");
+        return 0;
+    }
+    return sent == len;
+}
+
+static void online_server_send_map_manifest(void) {
+    static char maps_json[49152];
+    static char line[53248];
+    char lan_host[64];
+    char lan_json[96];
+    int needed;
+    needed = custom_maps_build_manifest_json(maps_json, sizeof(maps_json));
+    if (needed >= (int)sizeof(maps_json)) {
+        online_hub_set_status("Map manifest too large; only part was sent.");
+    }
+    lan_host[0] = '\0';
+    lan_json[0] = '\0';
+    if (net_local_ipv4(lan_host, sizeof(lan_host)) && lan_host[0]) {
+        online_json_escape(lan_json, sizeof(lan_json), lan_host);
+    }
+    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"maps\":%s}\n",
+             (unsigned int)(g_online_cfg.local_port ? g_online_cfg.local_port : GGPO_NET_DEFAULT_PORT),
+             lan_json,
+             maps_json);
+    online_server_send_raw(line);
+}
+
+static void online_server_send_auth(int register_account) {
+    char user[128];
+    char pass[192];
+    char line[512];
+    online_json_escape(user, sizeof(user), g_online_cfg.username);
+    online_json_escape(pass, sizeof(pass), g_online_cfg.password);
+    snprintf(line, sizeof(line), "{\"type\":\"%s\",\"username\":\"%s\",\"password\":\"%s\"}\n",
+             register_account ? "register" : "login", user, pass);
+    online_server_send_raw(line);
+}
+
+static void online_server_disconnect(const char* reason) {
+    if (g_online_server_slot >= 0) net_close(g_online_server_slot);
+    g_online_server_slot = -1;
+    g_online_server_state = ONLINE_SERVER_DISCONNECTED;
+    g_online_authed = 0;
+    g_online_recv_len = 0;
+    g_online_queue_mode = 0;
+    if (reason && reason[0]) online_hub_set_status(reason);
+}
+
+static void online_server_connect(int register_account) {
+    online_hub_save();
+    online_server_disconnect(NULL);
+    if (!g_online_cfg.username[0] || !g_online_cfg.password[0]) {
+        online_hub_set_status("Enter username and password on Play.");
+        return;
+    }
+    g_online_server_slot = net_connect(g_online_cfg.server_host, g_online_cfg.server_port);
+    if (g_online_server_slot < 0) {
+        online_hub_set_status("Could not start server connection.");
+        return;
+    }
+    g_online_register_after_connect = register_account ? 1 : 0;
+    g_online_server_state = ONLINE_SERVER_CONNECTING;
+    online_hub_set_status("Connecting to online server...");
+}
+
+static void online_server_send_queue(const char* queue) {
+    char line[128];
+    if (!g_online_authed) {
+        online_hub_set_status("Log in before joining a queue.");
+        return;
+    }
+    snprintf(line, sizeof(line), "{\"type\":\"join_queue\",\"queue\":\"%s\"}\n", queue ? queue : "casual");
+    online_server_send_raw(line);
+    g_online_queue_mode = (queue && _stricmp(queue, "competitive") == 0) ? 2 : 1;
+    online_hub_set_status(g_online_queue_mode == 2 ? "Joining competitive queue..." : "Joining casual queue...");
+}
+
+static void online_server_leave_queue(void) {
+    online_server_send_raw("{\"type\":\"leave_queue\"}\n");
+    g_online_queue_mode = 0;
+    online_hub_set_status("Left queue.");
+}
+
+static void online_server_send_username_action(const char* type, const char* username) {
+    char user[128];
+    char line[256];
+    if (!g_online_authed) {
+        online_hub_set_status("Log in first.");
+        return;
+    }
+    online_json_escape(user, sizeof(user), username ? username : "");
+    snprintf(line, sizeof(line), "{\"type\":\"%s\",\"username\":\"%s\"}\n", type, user);
+    online_server_send_raw(line);
+}
+
+static void online_server_send_challenge_action(const char* type, int id, const char* username) {
+    char user[128];
+    char line[256];
+    if (!g_online_authed) {
+        online_hub_set_status("Log in first.");
+        return;
+    }
+    online_json_escape(user, sizeof(user), username ? username : "");
+    snprintf(line, sizeof(line), "{\"type\":\"%s\",\"id\":%d,\"username\":\"%s\"}\n", type, id, user);
+    online_server_send_raw(line);
+}
+
+static void online_server_send_match_end(OnlineMatchResult result) {
+    char line[192];
+    const char* text = "draw";
+    if (result == ONLINE_MATCH_RESULT_WIN) text = "win";
+    else if (result == ONLINE_MATCH_RESULT_LOSS) text = "loss";
+    if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
+    snprintf(line, sizeof(line), "{\"type\":\"match_end\",\"match_id\":%d,\"result\":\"%s\"}\n",
+             g_online_active_match.match_id,
+             text);
+    online_server_send_raw(line);
+}
+
+static void online_result_prepare(OnlineMatchResult result, const char* status) {
+    memset(&g_online_result, 0, sizeof(g_online_result));
+    g_online_result.active = 1;
+    g_online_result.selected = 0;
+    g_online_result.result = result;
+    g_online_result.toast_age = 0;
+    g_online_result.toast_lifetime = ONLINE_RESULT_TOAST_FRAMES;
+    g_online_result.reported = g_online_active_match.result_reported;
+    g_online_result.server_confirmed = 0;
+    g_online_result.competitive = g_online_active_match.competitive;
+    g_online_result.queue_mode = g_online_active_match.queue_mode;
+    g_online_result.elo_before = g_online_public_elo;
+    g_online_result.elo_after = g_online_public_elo;
+    safe_copy(g_online_result.opponent, sizeof(g_online_result.opponent), g_online_active_match.opponent);
+    safe_copy(g_online_result.map_label, sizeof(g_online_result.map_label), g_online_active_match.map_label);
+    safe_copy(g_online_result.status, sizeof(g_online_result.status), status ? status : "Waiting for server result...");
+}
+
+static void online_open_result_screen(void) {
+    g_online_queue_mode = 0;
+    g_online_capture_active = 0;
+    g_online_context_active = 0;
+}
+
+static void online_active_match_begin_from_pending(void) {
+    online_clear_waterfall_audio_state("match begin");
+    memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+    g_online_active_match.active = 1;
+    g_online_active_match.match_id = g_online_pending_match.match_id;
+    g_online_active_match.local_player = ggpo_net_local_player();
+    if (g_online_active_match.local_player < 0 || g_online_active_match.local_player > 1) {
+        g_online_active_match.local_player = clampi(g_online_pending_match.role, 0, 1);
+    }
+    g_online_active_match.competitive = g_online_pending_match.competitive;
+    g_online_active_match.queue_mode = g_online_pending_match.queue_mode;
+    safe_copy(g_online_active_match.opponent, sizeof(g_online_active_match.opponent), g_online_pending_match.opponent);
+    safe_copy(g_online_active_match.map_label, sizeof(g_online_active_match.map_label), g_online_pending_match.map_label);
+}
+
+static void online_finish_active_match(OnlineMatchResult result, const char* status, int send_report) {
+    if (!g_online_active_match.active) return;
+    online_reset_native_sound_state("match finish");
+    g_online_active_match.result = result;
+    if (send_report && !g_online_active_match.result_reported) {
+        g_online_active_match.result_reported = 1;
+        online_server_send_match_end(result);
+    }
+    if (ggpo_net_active()) stop_ggpo_net("online match complete");
+    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+    online_result_prepare(result, status);
+    online_open_result_screen();
+}
+
+static void online_clear_match_state(void) {
+    online_reset_native_sound_state("clear match state");
+    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+    memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+}
+
+static OnlineMatchResult online_match_result_from_text(const char* text) {
+    if (!text) return ONLINE_MATCH_RESULT_NONE;
+    if (_stricmp(text, "win") == 0) return ONLINE_MATCH_RESULT_WIN;
+    if (_stricmp(text, "loss") == 0) return ONLINE_MATCH_RESULT_LOSS;
+    if (_stricmp(text, "draw") == 0) return ONLINE_MATCH_RESULT_DRAW;
+    return ONLINE_MATCH_RESULT_NONE;
+}
+
+static int online_pending_match_is_host(void) {
+    if (_stricmp(g_online_pending_match.p2p_role, "host") == 0) return 1;
+    if (_stricmp(g_online_pending_match.p2p_role, "join") == 0) return 0;
+    return g_online_pending_match.role == 0;
+}
+
+static void online_normalize_pending_match_ports(void) {
+    if (online_pending_match_is_host()) {
+        if (g_online_pending_match.local_port <= 0) {
+            g_online_pending_match.local_port = GGPO_NET_DEFAULT_PORT;
+        }
+        if (!g_online_pending_match.p2p_role[0]) {
+            safe_copy(g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role), "host");
+        }
+        return;
+    }
+
+    if (g_online_pending_match.local_port != 0) {
+        LOG_WARN("online.hub: joiner local_port=%d from server; forcing F7-style automatic local UDP port",
+                 g_online_pending_match.local_port);
+    }
+    g_online_pending_match.local_port = 0;
+    if (!g_online_pending_match.p2p_role[0]) {
+        safe_copy(g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role), "join");
+    }
+}
+
+static void online_ensure_native_game_started(void) {
+    if (g_game_started && *g_game_started) return;
+    if (p_game_start) {
+        p_game_start();
+    } else if (g_game_started) {
+        *g_game_started = 1;
+    }
+}
+
+static void online_launch_pending_match_to_game(void) {
+    if (!g_online_pending_match.active) return;
+    online_clear_waterfall_audio_state("match launch");
+    if (g_hook_map_selector) {
+        *g_hook_map_selector = g_online_pending_match.selector;
+    }
+    if (g_online_pending_match.seed) {
+        (void)lua_manager_game_set_rng_seed(g_online_pending_match.seed);
+        if (g_native_seed) *g_native_seed = g_online_pending_match.seed;
+        if (g_native_mrand_seed) *g_native_mrand_seed = g_online_pending_match.seed;
+    }
+    memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+    if (p_game_reset) {
+        p_game_reset();
+    }
+    g_online_pending_match.launch_stage = 4;
+    g_online_pending_match.launch_delay_frames = 2;
+    g_online_pending_match.p2p_started = 0;
+    if (p_state_switch) {
+        p_state_switch((void*)(uintptr_t)ADDR_GAME_STATE);
+    }
+}
+
+static void online_server_begin_pending_match(const char* line) {
+    char text[128];
+    char queue[32];
+    int value = 0;
+    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+    g_online_pending_match.active = 1;
+    g_online_pending_match.launch_stage = 1;
+    g_online_pending_match.selector = 0;
+    g_online_pending_match.input_delay = g_online_cfg.input_delay;
+    g_online_pending_match.local_port = g_online_cfg.local_port;
+
+    if (online_json_get_int(line, "match_id", &value)) g_online_pending_match.match_id = value;
+    if (online_json_get_int(line, "role", &value)) g_online_pending_match.role = value;
+    if (online_json_get_int(line, "map_sel", &value)) g_online_pending_match.selector = value;
+    if (online_json_get_int(line, "local_port", &value)) g_online_pending_match.local_port = value;
+    if (online_json_get_int(line, "peer_port", &value)) g_online_pending_match.peer_port = value;
+    if (online_json_get_int(line, "input_delay", &value)) g_online_pending_match.input_delay = value;
+    if (online_json_get_int(line, "seed", &value)) g_online_pending_match.seed = (unsigned int)value;
+    online_json_get_string(line, "p2p_role", g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role));
+    online_json_get_string(line, "peer_host", g_online_pending_match.peer_host, sizeof(g_online_pending_match.peer_host));
+    online_json_get_string(line, "opponent", g_online_pending_match.opponent, sizeof(g_online_pending_match.opponent));
+    online_json_get_string(line, "map_key", g_online_pending_match.map_key, sizeof(g_online_pending_match.map_key));
+    online_json_get_string(line, "map_label", g_online_pending_match.map_label, sizeof(g_online_pending_match.map_label));
+    queue[0] = '\0';
+    online_json_get_string(line, "queue", queue, sizeof(queue));
+    if (_stricmp(queue, "competitive") == 0) {
+        g_online_pending_match.competitive = 1;
+        g_online_pending_match.queue_mode = 2;
+    } else if (_stricmp(queue, "casual") == 0) {
+        g_online_pending_match.queue_mode = 1;
+    }
+
+    if (g_online_pending_match.map_key[0]) {
+        int selector = 0;
+        if (custom_maps_selector_for_key(g_online_pending_match.map_key, &selector)) {
+            g_online_pending_match.selector = selector;
+        }
+    }
+    online_normalize_pending_match_ports();
+    online_hub_apply_net_settings();
+    (void)ggpo_net_set_input_delay((uint32_t)clampi(g_online_pending_match.input_delay, 0, GGPO_NET_MAX_INPUT_DELAY));
+    snprintf(text, sizeof(text), "Match found: %s on %s",
+             g_online_pending_match.opponent[0] ? g_online_pending_match.opponent : "opponent",
+             g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
+    online_hub_set_status(text);
+    g_online_pending_match.launch_countdown_frames = ONLINE_MATCH_COUNTDOWN_FRAMES;
+    g_online_pending_match.launch_stage = 0;
+    if (!is_online_hub_state_active()) {
+        online_hub_open();
+    }
+}
+
+static void online_server_handle_line(const char* line) {
+    char type[64];
+    char text[256];
+    int value = 0;
+    if (!online_json_get_string(line, "type", type, sizeof(type))) return;
+
+    if (_stricmp(type, "auth_ok") == 0) {
+        g_online_authed = 1;
+        if (online_json_get_string(line, "username", text, sizeof(text))) {
+            safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), text);
+        }
+        if (online_json_get_int(line, "elo", &value)) g_online_public_elo = value;
+        online_server_send_map_manifest();
+        online_hub_set_status("Logged in.");
+        online_hub_save();
+    } else if (_stricmp(type, "auth_fail") == 0) {
+        online_json_get_string(line, "reason", text, sizeof(text));
+        snprintf(g_online_status, sizeof(g_online_status), "Login failed: %s", text[0] ? text : "?");
+        g_online_authed = 0;
+    } else if (_stricmp(type, "error") == 0) {
+        online_json_get_string(line, "message", text, sizeof(text));
+        online_hub_set_status(text[0] ? text : "Server error.");
+    } else if (_stricmp(type, "queue_update") == 0) {
+        if (online_json_get_int(line, "casual", &value)) g_online_queue_casual_count = value;
+        if (online_json_get_int(line, "competitive", &value)) g_online_queue_competitive_count = value;
+    } else if (_stricmp(type, "queue_left") == 0) {
+        g_online_queue_mode = 0;
+    } else if (_stricmp(type, "friend_snapshot_begin") == 0) {
+        g_online_friend_count = 0;
+        g_online_request_count = 0;
+        g_online_challenge_count = 0;
+        g_online_context_active = 0;
+    } else if (_stricmp(type, "friend") == 0) {
+        if (g_online_friend_count < ONLINE_HUB_MAX_FRIENDS &&
+            online_json_get_string(line, "username", text, sizeof(text))) {
+            OnlineFriend* fr = &g_online_friends[g_online_friend_count++];
+            memset(fr, 0, sizeof(*fr));
+            safe_copy(fr->name, sizeof(fr->name), text);
+            if (online_json_get_int(line, "elo", &value)) fr->elo = value;
+            if (online_json_get_int(line, "online", &value)) fr->online = value ? 1 : 0;
+        }
+    } else if (_stricmp(type, "friend_request") == 0) {
+        if (g_online_request_count < ONLINE_HUB_MAX_INBOX &&
+            online_json_get_string(line, "from", text, sizeof(text))) {
+            OnlineFriendRequest* req = &g_online_requests[g_online_request_count++];
+            memset(req, 0, sizeof(*req));
+            safe_copy(req->name, sizeof(req->name), text);
+            if (online_json_get_int(line, "elo", &value)) req->elo = value;
+        }
+    } else if (_stricmp(type, "challenge") == 0) {
+        if (g_online_challenge_count < ONLINE_HUB_MAX_INBOX &&
+            online_json_get_string(line, "from", text, sizeof(text))) {
+            OnlineChallenge* ch = &g_online_challenges[g_online_challenge_count++];
+            memset(ch, 0, sizeof(*ch));
+            safe_copy(ch->from, sizeof(ch->from), text);
+            if (online_json_get_int(line, "id", &value)) ch->id = value;
+            if (online_json_get_int(line, "elo", &value)) ch->elo = value;
+            if (online_json_get_int(line, "expires_in", &value)) ch->expires_in = value;
+            online_challenge_toast_show(ch->from, ch->id, ch->elo, ch->expires_in);
+        }
+    } else if (_stricmp(type, "friend_request_sent") == 0) {
+        online_hub_set_status("Friend request sent.");
+    } else if (_stricmp(type, "challenge_sent") == 0) {
+        int id = 0;
+        int expires_in = 300;
+        text[0] = '\0';
+        online_json_get_string(line, "username", text, sizeof(text));
+        online_json_get_int(line, "id", &id);
+        online_json_get_int(line, "expires_in", &expires_in);
+        online_sent_challenge_add(text, id, expires_in);
+        online_hub_set_status("");
+    } else if (_stricmp(type, "challenge_accepted") == 0) {
+        int id = 0;
+        text[0] = '\0';
+        online_json_get_string(line, "username", text, sizeof(text));
+        online_json_get_int(line, "id", &id);
+        online_sent_challenge_remove(text, id);
+        online_challenge_toast_clear(id, text);
+    } else if (_stricmp(type, "challenge_declined") == 0) {
+        int id = 0;
+        text[0] = '\0';
+        online_json_get_string(line, "username", text, sizeof(text));
+        online_json_get_int(line, "id", &id);
+        online_sent_challenge_remove(text, id);
+        online_challenge_toast_clear(id, text);
+        online_hub_set_status("Challenge declined.");
+    } else if (_stricmp(type, "challenge_expired") == 0) {
+        int id = 0;
+        text[0] = '\0';
+        if (!online_json_get_string(line, "username", text, sizeof(text))) {
+            online_json_get_string(line, "from", text, sizeof(text));
+        }
+        online_json_get_int(line, "id", &id);
+        online_sent_challenge_remove(text, id);
+        online_challenge_toast_clear(id, text);
+        online_hub_set_status("Challenge expired.");
+    } else if (_stricmp(type, "rating_update") == 0) {
+        if (online_json_get_int(line, "elo", &value)) {
+            g_online_public_elo = value;
+            if (g_online_result.active) {
+                g_online_result.elo_after = value;
+                g_online_result.elo_delta_valid = 1;
+            }
+        }
+        if (g_online_result.active && online_json_get_int(line, "elo_before", &value)) {
+            g_online_result.elo_before = value;
+            g_online_result.elo_delta_valid = 1;
+        }
+    } else if (_stricmp(type, "match_found") == 0) {
+        g_online_queue_mode = 0;
+        online_server_begin_pending_match(line);
+        online_sent_challenge_remove(g_online_pending_match.opponent, 0);
+        online_challenge_toast_clear(0, g_online_pending_match.opponent);
+    } else if (_stricmp(type, "match_report_ack") == 0) {
+        if (g_online_result.active) {
+            safe_copy(g_online_result.status, sizeof(g_online_result.status), "Result reported; waiting for opponent.");
+        } else {
+            online_hub_set_status("Result reported; waiting for opponent.");
+        }
+    } else if (_stricmp(type, "match_result") == 0) {
+        OnlineMatchResult result;
+        int got_elo = 0;
+        int elo_value = 0;
+        int got_elo_before = 0;
+        int elo_before_value = 0;
+        if (ggpo_net_active()) stop_ggpo_net("online server result");
+        text[0] = '\0';
+        online_json_get_string(line, "result", text, sizeof(text));
+        result = online_match_result_from_text(text);
+        if (result == ONLINE_MATCH_RESULT_NONE) result = g_online_active_match.result;
+        if (result == ONLINE_MATCH_RESULT_NONE) result = ONLINE_MATCH_RESULT_DRAW;
+        if (online_json_get_int(line, "competitive", &value)) g_online_active_match.competitive = value ? 1 : 0;
+        if (online_json_get_int(line, "elo", &value)) {
+            got_elo = 1;
+            elo_value = value;
+        }
+        if (online_json_get_int(line, "elo_before", &value)) {
+            got_elo_before = 1;
+            elo_before_value = value;
+        }
+        if (!g_online_result.active) {
+            if (!g_online_active_match.active) {
+                g_online_active_match.active = 1;
+                g_online_active_match.queue_mode = 0;
+            }
+            online_result_prepare(result, "Match complete.");
+            online_open_result_screen();
+        }
+        g_online_result.result = result;
+        g_online_result.toast_age = 0;
+        if (g_online_result.toast_lifetime <= 0) g_online_result.toast_lifetime = ONLINE_RESULT_TOAST_FRAMES;
+        g_online_result.server_confirmed = 1;
+        g_online_result.reported = 1;
+        g_online_result.competitive = g_online_active_match.competitive;
+        if (got_elo_before) {
+            g_online_result.elo_before = elo_before_value;
+            g_online_result.elo_delta_valid = 1;
+        }
+        if (got_elo) {
+            g_online_public_elo = elo_value;
+            g_online_result.elo_after = elo_value;
+            g_online_result.elo_delta_valid = 1;
+        }
+        safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match complete.");
+        online_reset_native_sound_state("server match result");
+        memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+    } else if (_stricmp(type, "match_end") == 0) {
+        if (ggpo_net_active()) stop_ggpo_net("online server");
+        online_clear_match_state();
+        online_hub_set_status("Online match ended.");
+    }
+    if (is_online_hub_state_active() || is_online_result_state_active()) {
+        online_hub_rebuild_rows();
+    }
+}
+
+static void online_server_update(void) {
+    if (g_online_server_state == ONLINE_SERVER_CONNECTING) {
+        int r = net_check_connect(g_online_server_slot);
+        if (r == 1) {
+            g_online_server_state = ONLINE_SERVER_CONNECTED;
+            online_hub_set_status("Connected. Authenticating...");
+            online_server_send_auth(g_online_register_after_connect);
+        } else if (r < 0) {
+            online_server_disconnect("Server connection failed.");
+        }
+        return;
+    }
+    if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0) return;
+
+    while (1) {
+        char chunk[4096];
+        int got = net_recv(g_online_server_slot, chunk, (int)sizeof(chunk));
+        if (got < 0) {
+            online_server_disconnect("Server disconnected.");
+            return;
+        }
+        if (got == 0) break;
+        if (g_online_recv_len + (size_t)got >= sizeof(g_online_recv_buf)) {
+            g_online_recv_len = 0;
+            online_hub_set_status("Server message too large; dropped buffer.");
+            continue;
+        }
+        memcpy(g_online_recv_buf + g_online_recv_len, chunk, (size_t)got);
+        g_online_recv_len += (size_t)got;
+        g_online_recv_buf[g_online_recv_len] = '\0';
+
+        while (1) {
+            char* nl = memchr(g_online_recv_buf, '\n', g_online_recv_len);
+            size_t line_len;
+            size_t consumed;
+            char line[8192];
+            if (!nl) break;
+            line_len = (size_t)(nl - g_online_recv_buf);
+            consumed = line_len + 1;
+            if (line_len >= sizeof(line)) line_len = sizeof(line) - 1;
+            memcpy(line, g_online_recv_buf, line_len);
+            line[line_len] = '\0';
+            console_strip_crlf(line);
+            memmove(g_online_recv_buf, g_online_recv_buf + consumed, g_online_recv_len - consumed);
+            g_online_recv_len -= consumed;
+            g_online_recv_buf[g_online_recv_len] = '\0';
+            if (line[0]) online_server_handle_line(line);
+        }
+    }
+}
+
+static void online_sent_challenge_prune(void) {
+    uint32_t now_ms = (uint32_t)GetTickCount();
+    int out = 0;
+    for (int i = 0; i < g_online_sent_challenge_count; i++) {
+        OnlineSentChallenge* ch = &g_online_sent_challenges[i];
+        if (!ch->username[0]) continue;
+        if ((int32_t)(ch->expires_ms - now_ms) <= 0) continue;
+        if (out != i) g_online_sent_challenges[out] = *ch;
+        out++;
+    }
+    g_online_sent_challenge_count = out;
+}
+
+static int online_sent_challenge_index(const char* username, int id) {
+    if (id > 0) {
+        for (int i = 0; i < g_online_sent_challenge_count; i++) {
+            if (g_online_sent_challenges[i].id == id) return i;
+        }
+    }
+    if (!username || !username[0]) return -1;
+    for (int i = 0; i < g_online_sent_challenge_count; i++) {
+        if (_stricmp(g_online_sent_challenges[i].username, username) == 0) return i;
+    }
+    return -1;
+}
+
+static int online_sent_challenge_pending(const char* username) {
+    online_sent_challenge_prune();
+    return online_sent_challenge_index(username, 0) >= 0;
+}
+
+static void online_sent_challenge_add(const char* username, int id, int expires_in) {
+    int idx;
+    if (!username || !username[0]) return;
+    online_sent_challenge_prune();
+    idx = online_sent_challenge_index(username, id);
+    if (idx < 0) {
+        if (g_online_sent_challenge_count >= ONLINE_HUB_MAX_INBOX) return;
+        idx = g_online_sent_challenge_count++;
+        memset(&g_online_sent_challenges[idx], 0, sizeof(g_online_sent_challenges[idx]));
+    }
+    safe_copy(g_online_sent_challenges[idx].username, sizeof(g_online_sent_challenges[idx].username), username);
+    g_online_sent_challenges[idx].id = id;
+    if (expires_in <= 0) expires_in = 300;
+    g_online_sent_challenges[idx].expires_ms = (uint32_t)GetTickCount() + (uint32_t)expires_in * 1000u;
+}
+
+static void online_sent_challenge_remove(const char* username, int id) {
+    int idx;
+    online_sent_challenge_prune();
+    idx = online_sent_challenge_index(username, id);
+    if (idx < 0) return;
+    for (int i = idx; i + 1 < g_online_sent_challenge_count; i++) {
+        g_online_sent_challenges[i] = g_online_sent_challenges[i + 1];
+    }
+    g_online_sent_challenge_count--;
+    if (g_online_sent_challenge_count < 0) g_online_sent_challenge_count = 0;
+}
+
+static void online_rows_clear(void) {
+    g_online_row_count = 0;
+}
+
+static void online_rows_add(OnlineHubRowKind kind, int selectable, int id, int aux, const char* left, const char* right) {
+    OnlineHubRow* row;
+    if (g_online_row_count >= ONLINE_HUB_MAX_ROWS) return;
+    row = &g_online_rows[g_online_row_count++];
+    memset(row, 0, sizeof(*row));
+    row->kind = kind;
+    row->selectable = selectable;
+    row->id = id;
+    row->aux = aux;
+    safe_copy(row->left, sizeof(row->left), left ? left : "");
+    safe_copy(row->right, sizeof(row->right), right ? right : "");
+}
+
+static void online_format_bool(char* out, size_t out_sz, int enabled) {
+    safe_copy(out, out_sz, enabled ? "ON" : "OFF");
+}
+
+static void online_format_setting_value(OnlineHubSetting setting, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    switch (setting) {
+        case ONLINE_SETTING_USERNAME: snprintf(out, out_sz, "%s", g_online_cfg.username); break;
+        case ONLINE_SETTING_PASSWORD: snprintf(out, out_sz, "%s", g_online_cfg.password[0] ? "********" : ""); break;
+        case ONLINE_SETTING_SERVER_HOST: snprintf(out, out_sz, "%s:%u", g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port); break;
+        case ONLINE_SETTING_SERVER_PORT: snprintf(out, out_sz, "%u", (unsigned int)g_online_cfg.server_port); break;
+        case ONLINE_SETTING_PEER_HOST: snprintf(out, out_sz, "%s", g_online_cfg.peer_host); break;
+        case ONLINE_SETTING_PEER_PORT: snprintf(out, out_sz, "%u", (unsigned int)g_online_cfg.peer_port); break;
+        case ONLINE_SETTING_LOCAL_PORT:
+            if (g_online_cfg.local_port) snprintf(out, out_sz, "%u", (unsigned int)g_online_cfg.local_port);
+            else snprintf(out, out_sz, "Auto");
+            break;
+        case ONLINE_SETTING_P2P_ENABLED: online_format_bool(out, out_sz, g_online_cfg.p2p_enabled); break;
+        case ONLINE_SETTING_RELAY_FALLBACK: online_format_bool(out, out_sz, g_online_cfg.relay_fallback); break;
+        case ONLINE_SETTING_INPUT_DELAY: snprintf(out, out_sz, "%d", g_online_cfg.input_delay); break;
+        case ONLINE_SETTING_FRAME_ADVANTAGE: snprintf(out, out_sz, "%d", g_online_cfg.max_frame_advantage); break;
+        case ONLINE_SETTING_MAX_PREDICTION: snprintf(out, out_sz, "%d", g_online_cfg.max_prediction); break;
+        case ONLINE_SETTING_CORRECTION: online_format_bool(out, out_sz, g_online_cfg.correction_enabled); break;
+        case ONLINE_SETTING_SIM_LOSS: snprintf(out, out_sz, "%d%%", g_online_cfg.sim_loss); break;
+        case ONLINE_SETTING_SIM_MIN_DELAY: snprintf(out, out_sz, "%d", g_online_cfg.sim_min_delay); break;
+        case ONLINE_SETTING_SIM_MAX_DELAY: snprintf(out, out_sz, "%d", g_online_cfg.sim_max_delay); break;
+        case ONLINE_SETTING_CHALLENGE_NOTIFICATIONS: online_format_bool(out, out_sz, g_online_cfg.challenge_notifications); break;
+        default: out[0] = '\0'; break;
+    }
+}
+
+static int online_first_selectable(void) {
+    for (int i = 0; i < g_online_row_count; i++) {
+        if (g_online_rows[i].selectable) return i;
+    }
+    return -1;
+}
+
+static int online_last_selectable(void) {
+    for (int i = g_online_row_count - 1; i >= 0; i--) {
+        if (g_online_rows[i].selectable) return i;
+    }
+    return -1;
+}
+
+static int online_next_selectable(int start, int dir) {
+    int i = start;
+    while (1) {
+        i += dir;
+        if (i < 0 || i >= g_online_row_count) return -1;
+        if (g_online_rows[i].selectable) return i;
+    }
+}
+
+static float online_hub_ui_scale(void) {
+    float w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    float sx = w / BASE_UI_W;
+    float sy = h / BASE_UI_H;
+    float s = (sx < sy) ? sx : sy;
+    return clampf(s, 1.08f, 1.55f);
+}
+
+static void online_calc_layout(OnlineLayout* L) {
+    float margin;
+    if (!L) return;
+    memset(L, 0, sizeof(*L));
+    L->w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    L->h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    L->ui = online_hub_ui_scale();
+    L->text_scale = L->ui;
+    margin = 28.0f * L->ui;
+    L->panel_w = clampf(860.0f * L->ui, L->w * 0.72f, L->w - margin * 2.0f);
+    if (L->panel_w > L->w - margin * 2.0f) L->panel_w = L->w - margin * 2.0f;
+    L->panel_h = clampf(560.0f * L->ui, L->h * 0.60f, L->h - margin * 2.0f);
+    if (L->panel_h > L->h - margin * 2.0f) L->panel_h = L->h - margin * 2.0f;
+    if (L->panel_w < 360.0f) L->panel_w = L->w - 20.0f;
+    if (L->panel_h < 280.0f) L->panel_h = L->h - 20.0f;
+    L->panel_x = (L->w - L->panel_w) * 0.5f;
+    L->panel_y = (L->h - L->panel_h) * 0.5f;
+    L->header_h = 78.0f * L->ui;
+    L->footer_h = 50.0f * L->ui;
+    L->content_x = L->panel_x + 28.0f * L->ui;
+    L->content_y = L->panel_y + L->header_h + 28.0f * L->ui;
+    L->content_w = L->panel_w - 56.0f * L->ui;
+    L->content_h = L->panel_h - L->header_h - L->footer_h - 56.0f * L->ui;
+    L->row_h = 48.0f * L->ui;
+    if (L->row_h < 32.0f) L->row_h = 32.0f;
+    L->list_top = L->content_y;
+    L->list_bottom = L->panel_y + L->panel_h - L->footer_h - 20.0f * L->ui;
+    L->left_x = L->content_x + 18.0f * L->ui;
+    L->right_x = L->content_x + L->content_w - 18.0f * L->ui;
+    L->center_x = L->panel_x + L->panel_w * 0.5f;
+}
+
+static int online_visible_rows_capacity(void) {
+    OnlineLayout L;
+    int cap;
+    online_calc_layout(&L);
+    cap = (int)((L.list_bottom - L.list_top) / L.row_h);
+    if (cap < 4) cap = 4;
+    return cap;
+}
+
+static void online_ensure_scroll_visible(void) {
+    int cap = online_visible_rows_capacity();
+    int max_scroll = (g_online_row_count > cap) ? (g_online_row_count - cap) : 0;
+    int margin = (cap >= 8) ? 2 : 1;
+    if (g_online_selected_row < 0 || g_online_selected_row >= g_online_row_count) {
+        g_online_scroll_row = clampi(g_online_scroll_row, 0, max_scroll);
+        return;
+    }
+    if (g_online_selected_row < g_online_scroll_row + margin) {
+        g_online_scroll_row = g_online_selected_row - margin;
+    } else if (g_online_selected_row > g_online_scroll_row + cap - margin - 1) {
+        g_online_scroll_row = g_online_selected_row - (cap - margin - 1);
+    }
+    g_online_scroll_row = clampi(g_online_scroll_row, 0, max_scroll);
+}
+
+static void online_hub_rebuild_rows(void) {
+    OnlineHubRowKind keep_kind = ONLINE_ROW_NONE;
+    int keep_id = 0;
+    int keep_aux = 0;
+    if (!g_online_authed && g_online_tab != ONLINE_TAB_PLAY) {
+        g_online_tab = ONLINE_TAB_PLAY;
+    }
+    if (g_online_selected_row >= 0 && g_online_selected_row < g_online_row_count) {
+        keep_kind = g_online_rows[g_online_selected_row].kind;
+        keep_id = g_online_rows[g_online_selected_row].id;
+        keep_aux = g_online_rows[g_online_selected_row].aux;
+    }
+
+    online_rows_clear();
+    if (g_online_tab == ONLINE_TAB_PLAY) {
+        char line[192];
+        snprintf(line, sizeof(line), "%s  Elo %d",
+                 g_online_cfg.username[0] ? g_online_cfg.username : "not signed in",
+                 g_online_public_elo);
+        online_rows_add(ONLINE_ROW_INFO, 0, 0, 0, "Account", line);
+        if (!g_online_authed) {
+            char value[192];
+            online_format_setting_value(ONLINE_SETTING_USERNAME, value, sizeof(value));
+            online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_USERNAME, 0, "USERNAME", value);
+            online_format_setting_value(ONLINE_SETTING_PASSWORD, value, sizeof(value));
+            online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_PASSWORD, 0, "PASSWORD", value);
+            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_LOGIN, 0, "LOG IN", "");
+            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_REGISTER, 0, "REGISTER", "");
+        } else {
+            snprintf(line, sizeof(line), "%d waiting", g_online_queue_casual_count);
+            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_QUEUE_CASUAL, 0, "CASUAL QUEUE", line);
+            snprintf(line, sizeof(line), "%d waiting", g_online_queue_competitive_count);
+            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_QUEUE_COMPETITIVE, 0, "COMPETITIVE QUEUE", line);
+            if (g_online_queue_mode) {
+                online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_LEAVE_QUEUE, 0, "LEAVE QUEUE", g_online_queue_mode == 2 ? "competitive" : "casual");
+            }
+            if (ggpo_net_active()) {
+                online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_STOP, 0, "STOP SESSION", ggpo_net_mode_name());
+            }
+            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_DISCONNECT_SERVER, 0, "DISCONNECT", "");
+        }
+    } else if (g_online_tab == ONLINE_TAB_FRIENDS) {
+        online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_ADD_FRIEND, 0, "SEARCH USER", "username");
+        for (int i = 0; i < g_online_request_count; i++) {
+            online_rows_add(ONLINE_ROW_FRIEND_REQUEST, 1, i, 0, g_online_requests[i].name, "sent a friend request!");
+        }
+        for (int i = 0; i < g_online_challenge_count; i++) {
+            char right[96];
+            snprintf(right, sizeof(right), "sent a challenge!  %ds", g_online_challenges[i].expires_in);
+            online_rows_add(ONLINE_ROW_CHALLENGE, 1, i, 0, g_online_challenges[i].from, right);
+        }
+        for (int i = 0; i < g_online_friend_count; i++) {
+            OnlineFriend* fr = &g_online_friends[i];
+            if (!fr->online) continue;
+            online_rows_add(ONLINE_ROW_FRIEND, 1, i, 0, fr->name, "online");
+        }
+        for (int i = 0; i < g_online_friend_count; i++) {
+            OnlineFriend* fr = &g_online_friends[i];
+            if (fr->online) continue;
+            online_rows_add(ONLINE_ROW_FRIEND, 1, i, 0, fr->name, "offline");
+        }
+    } else if (g_online_tab == ONLINE_TAB_SETTINGS) {
+        struct SettingRow { OnlineHubSetting id; const char* label; } settings[] = {
+            { ONLINE_SETTING_SERVER_HOST, "Server Address" },
+            { ONLINE_SETTING_LOCAL_PORT, "P2P UDP Port" },
+            { ONLINE_SETTING_CHALLENGE_NOTIFICATIONS, "Challenge Notifications" },
+        };
+        online_rows_add(ONLINE_ROW_INFO, 0, 0, 0, "Settings", "server and P2P connection");
+        for (int i = 0; i < (int)(sizeof(settings) / sizeof(settings[0])); i++) {
+            char value[192];
+            online_format_setting_value(settings[i].id, value, sizeof(value));
+            online_rows_add(ONLINE_ROW_SETTING, 1, settings[i].id, 0, settings[i].label, value);
+        }
+        online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_SAVE_SETTINGS, 0, "Save Settings", ONLINE_HUB_CFG_PATH);
+    }
+
+    online_rows_add(ONLINE_ROW_BACK, 1, 0, 0, "BACK", "");
+
+    g_online_selected_row = -1;
+    for (int i = 0; i < g_online_row_count; i++) {
+        OnlineHubRow* row = &g_online_rows[i];
+        if (row->kind == keep_kind && row->id == keep_id && row->aux == keep_aux && row->selectable) {
+            g_online_selected_row = i;
+            break;
+        }
+    }
+    if (g_online_selected_row < 0) g_online_selected_row = online_first_selectable();
+    online_ensure_scroll_visible();
+}
+
+static int online_selected_friend_index(void) {
+    if (g_online_selected_row >= 0 && g_online_selected_row < g_online_row_count &&
+        g_online_rows[g_online_selected_row].kind == ONLINE_ROW_FRIEND) {
+        return g_online_rows[g_online_selected_row].id;
+    }
+    for (int i = 0; i < g_online_row_count; i++) {
+        if (g_online_rows[i].kind == ONLINE_ROW_FRIEND) return g_online_rows[i].id;
+    }
+    return -1;
+}
+
+static int online_selected_request_index(void) {
+    if (g_online_selected_row >= 0 && g_online_selected_row < g_online_row_count &&
+        g_online_rows[g_online_selected_row].kind == ONLINE_ROW_FRIEND_REQUEST) {
+        return g_online_rows[g_online_selected_row].id;
+    }
+    for (int i = 0; i < g_online_row_count; i++) {
+        if (g_online_rows[i].kind == ONLINE_ROW_FRIEND_REQUEST) return g_online_rows[i].id;
+    }
+    return -1;
+}
+
+static int online_selected_challenge_index(void) {
+    if (g_online_selected_row >= 0 && g_online_selected_row < g_online_row_count &&
+        g_online_rows[g_online_selected_row].kind == ONLINE_ROW_CHALLENGE) {
+        return g_online_rows[g_online_selected_row].id;
+    }
+    for (int i = 0; i < g_online_row_count; i++) {
+        if (g_online_rows[i].kind == ONLINE_ROW_CHALLENGE) return g_online_rows[i].id;
+    }
+    return -1;
+}
+
+static void online_remove_request_index(int idx) {
+    if (idx < 0 || idx >= g_online_request_count) return;
+    for (int i = idx; i + 1 < g_online_request_count; i++) {
+        g_online_requests[i] = g_online_requests[i + 1];
+    }
+    g_online_request_count--;
+    if (g_online_request_count < 0) g_online_request_count = 0;
+    online_hub_rebuild_rows();
+}
+
+static void online_remove_challenge_index(int idx) {
+    if (idx < 0 || idx >= g_online_challenge_count) return;
+    online_challenge_toast_clear(g_online_challenges[idx].id, g_online_challenges[idx].from);
+    for (int i = idx; i + 1 < g_online_challenge_count; i++) {
+        g_online_challenges[i] = g_online_challenges[i + 1];
+    }
+    g_online_challenge_count--;
+    if (g_online_challenge_count < 0) g_online_challenge_count = 0;
+    online_hub_rebuild_rows();
+}
+
+static void online_remove_friend_index(int idx) {
+    if (idx < 0 || idx >= g_online_friend_count) return;
+    for (int i = idx; i + 1 < g_online_friend_count; i++) {
+        g_online_friends[i] = g_online_friends[i + 1];
+    }
+    g_online_friend_count--;
+    if (g_online_friend_count < 0) g_online_friend_count = 0;
+    g_online_context_active = 0;
+    online_hub_rebuild_rows();
+}
+
+static void online_move_selection(int dir, int amount) {
+    int cur = g_online_selected_row;
+    if (cur < 0) return;
+    if (amount < 1) amount = 1;
+    for (int i = 0; i < amount; i++) {
+        int n = online_next_selectable(cur, dir);
+        if (n < 0) break;
+        cur = n;
+    }
+    g_online_selected_row = cur;
+    online_ensure_scroll_visible();
+}
+
+static void online_switch_tab(int delta) {
+    int tab = (int)g_online_tab + delta;
+    while (tab < 0) tab += ONLINE_TAB_COUNT;
+    while (tab >= ONLINE_TAB_COUNT) tab -= ONLINE_TAB_COUNT;
+    g_online_tab = (OnlineHubTab)tab;
+    g_online_selected_row = -1;
+    g_online_scroll_row = 0;
+    g_online_capture_active = 0;
+    g_online_context_active = 0;
+    online_hub_rebuild_rows();
+}
+
+static int online_setting_is_text(OnlineHubSetting setting) {
+    return setting == ONLINE_SETTING_USERNAME ||
+           setting == ONLINE_SETTING_PASSWORD ||
+           setting == ONLINE_SETTING_SERVER_HOST ||
+           setting == ONLINE_SETTING_LOCAL_PORT ||
+           setting == ONLINE_SETTING_PEER_HOST;
+}
+
+static void online_begin_setting_capture(OnlineHubSetting setting) {
+    if (!online_setting_is_text(setting)) return;
+    g_online_capture_active = 1;
+    g_online_capture_kind = ONLINE_CAPTURE_SETTING;
+    g_online_capture_target = setting;
+    switch (setting) {
+        case ONLINE_SETTING_USERNAME: safe_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.username); break;
+        case ONLINE_SETTING_PASSWORD: safe_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.password); break;
+        case ONLINE_SETTING_SERVER_HOST: online_format_setting_value(setting, g_online_capture_buf, sizeof(g_online_capture_buf)); break;
+        case ONLINE_SETTING_LOCAL_PORT: online_format_setting_value(setting, g_online_capture_buf, sizeof(g_online_capture_buf)); break;
+        case ONLINE_SETTING_PEER_HOST: safe_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.peer_host); break;
+        default: g_online_capture_buf[0] = '\0'; break;
+    }
+}
+
+static void online_begin_friend_capture(void) {
+    g_online_capture_active = 1;
+    g_online_capture_kind = ONLINE_CAPTURE_ADD_FRIEND;
+    g_online_capture_target = 0;
+    g_online_capture_buf[0] = '\0';
+    online_hub_set_status("Type a username, then Enter.");
+}
+
+static void online_commit_capture(void) {
+    if (!g_online_capture_active) return;
+    if (g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
+        switch ((OnlineHubSetting)g_online_capture_target) {
+            case ONLINE_SETTING_USERNAME: safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), trim_ws(g_online_capture_buf)); break;
+            case ONLINE_SETTING_PASSWORD: safe_copy(g_online_cfg.password, sizeof(g_online_cfg.password), trim_ws(g_online_capture_buf)); break;
+            case ONLINE_SETTING_SERVER_HOST: {
+                char host[ONLINE_HUB_TEXT_MAX];
+                uint16_t port = g_online_cfg.server_port ? g_online_cfg.server_port : ONLINE_DEFAULT_SERVER_PORT;
+                if (!online_hub_parse_host_port(trim_ws(g_online_capture_buf), host, sizeof(host), &port, ONLINE_DEFAULT_SERVER_PORT)) {
+                    online_hub_set_status("Enter server as host:port.");
+                    return;
+                }
+                safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), host);
+                g_online_cfg.server_port = port;
+            } break;
+            case ONLINE_SETTING_LOCAL_PORT: {
+                char* value = trim_ws(g_online_capture_buf);
+                long port = 0;
+                if (!value[0] || _stricmp(value, "auto") == 0) {
+                    g_online_cfg.local_port = 0;
+                } else if (online_parse_long_range(value, 0, 65535, &port)) {
+                    g_online_cfg.local_port = (uint16_t)port;
+                } else {
+                    online_hub_set_status("Enter a UDP port or Auto.");
+                    return;
+                }
+            } break;
+            case ONLINE_SETTING_PEER_HOST: safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), trim_ws(g_online_capture_buf)); break;
+            default: break;
+        }
+        online_hub_clamp_config();
+        online_hub_save();
+        online_hub_set_status("Settings saved.");
+    } else if (g_online_capture_kind == ONLINE_CAPTURE_ADD_FRIEND) {
+        char* name = trim_ws(g_online_capture_buf);
+        if (name && name[0]) online_server_send_username_action("friend_request", name);
+        else online_hub_set_status("Enter a username.");
+    }
+    g_online_capture_active = 0;
+    g_online_capture_kind = ONLINE_CAPTURE_NONE;
+    g_online_capture_target = 0;
+    g_online_capture_buf[0] = '\0';
+    online_hub_rebuild_rows();
+}
+
+static void online_cancel_capture(void) {
+    g_online_capture_active = 0;
+    g_online_capture_kind = ONLINE_CAPTURE_NONE;
+    g_online_capture_target = 0;
+    g_online_capture_buf[0] = '\0';
+    online_hub_rebuild_rows();
+}
+
+static void online_adjust_setting(OnlineHubSetting setting, int delta) {
+    if (delta == 0) delta = 1;
+    switch (setting) {
+        case ONLINE_SETTING_SERVER_PORT:
+            g_online_cfg.server_port = (uint16_t)clampi((int)g_online_cfg.server_port + delta, 0, 65535);
+            break;
+        case ONLINE_SETTING_PEER_PORT:
+            g_online_cfg.peer_port = (uint16_t)clampi((int)g_online_cfg.peer_port + delta, 0, 65535);
+            break;
+        case ONLINE_SETTING_LOCAL_PORT:
+            g_online_cfg.local_port = (uint16_t)clampi((int)g_online_cfg.local_port + delta, 0, 65535);
+            break;
+        case ONLINE_SETTING_P2P_ENABLED:
+            g_online_cfg.p2p_enabled = g_online_cfg.p2p_enabled ? 0 : 1;
+            break;
+        case ONLINE_SETTING_RELAY_FALLBACK:
+            g_online_cfg.relay_fallback = g_online_cfg.relay_fallback ? 0 : 1;
+            break;
+        case ONLINE_SETTING_INPUT_DELAY:
+            g_online_cfg.input_delay = clampi(g_online_cfg.input_delay + delta, 0, GGPO_NET_MAX_INPUT_DELAY);
+            break;
+        case ONLINE_SETTING_FRAME_ADVANTAGE:
+            g_online_cfg.max_frame_advantage = clampi(g_online_cfg.max_frame_advantage + delta, 0, GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT);
+            break;
+        case ONLINE_SETTING_MAX_PREDICTION:
+            g_online_cfg.max_prediction = clampi(g_online_cfg.max_prediction + delta, 1, GGPO_NET_MAX_PREDICTION_LIMIT);
+            break;
+        case ONLINE_SETTING_CORRECTION:
+            g_online_cfg.correction_enabled = g_online_cfg.correction_enabled ? 0 : 1;
+            break;
+        case ONLINE_SETTING_SIM_LOSS:
+            g_online_cfg.sim_loss = clampi(g_online_cfg.sim_loss + delta, 0, 100);
+            break;
+        case ONLINE_SETTING_SIM_MIN_DELAY:
+            g_online_cfg.sim_min_delay = clampi(g_online_cfg.sim_min_delay + delta, 0, GGPO_NET_SIM_MAX_DELAY_TICKS);
+            if (g_online_cfg.sim_max_delay < g_online_cfg.sim_min_delay) g_online_cfg.sim_max_delay = g_online_cfg.sim_min_delay;
+            break;
+        case ONLINE_SETTING_SIM_MAX_DELAY:
+            g_online_cfg.sim_max_delay = clampi(g_online_cfg.sim_max_delay + delta, 0, GGPO_NET_SIM_MAX_DELAY_TICKS);
+            if (g_online_cfg.sim_max_delay < g_online_cfg.sim_min_delay) g_online_cfg.sim_min_delay = g_online_cfg.sim_max_delay;
+            break;
+        case ONLINE_SETTING_CHALLENGE_NOTIFICATIONS:
+            g_online_cfg.challenge_notifications = g_online_cfg.challenge_notifications ? 0 : 1;
+            if (!g_online_cfg.challenge_notifications) {
+                memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
+            }
+            break;
+        default:
+            return;
+    }
+    online_hub_apply_net_settings();
+    online_hub_save();
+    online_hub_rebuild_rows();
+}
+
+static void online_start_host_from_hub(void) {
+    uint16_t port;
+    if (!g_online_cfg.p2p_enabled) {
+        online_hub_set_status("Direct P2P is required for online play.");
+        return;
+    }
+    if (ggpo_net_active()) {
+        online_hub_set_status("Stop the active online session first.");
+        return;
+    }
+    online_hub_apply_net_settings();
+    port = g_online_cfg.local_port ? g_online_cfg.local_port : GGPO_NET_DEFAULT_PORT;
+    start_ggpo_net_host(port, "online hub");
+    online_hub_set_status(ggpo_net_active() ? "Hosting P2P match. Give your peer the UDP port." : "Host failed; open console or log for details.");
+    online_hub_rebuild_rows();
+}
+
+static void online_start_join_from_hub(const char* host, uint16_t port) {
+    if (!g_online_cfg.p2p_enabled) {
+        online_hub_set_status("Direct P2P is required for online play.");
+        return;
+    }
+    if (ggpo_net_active()) {
+        online_hub_set_status("Stop the active online session first.");
+        return;
+    }
+    if (!host || !host[0]) {
+        online_hub_set_status("Peer address is empty.");
+        return;
+    }
+    online_hub_apply_net_settings();
+    start_ggpo_net_join(host, port ? port : GGPO_NET_DEFAULT_PORT, g_online_cfg.local_port, "online hub");
+    online_hub_set_status(ggpo_net_active() ? "Joining P2P match." : "Join failed; open console or log for details.");
+    online_hub_rebuild_rows();
+}
+
+static int online_try_send_friend_challenge(int idx) {
+    if (idx < 0 || idx >= g_online_friend_count) {
+        online_hub_set_status("Select a friend first.");
+        return 0;
+    }
+    if (!g_online_friends[idx].online) {
+        online_hub_set_status("Friend is offline.");
+        return 0;
+    }
+    if (online_sent_challenge_pending(g_online_friends[idx].name)) {
+        online_hub_set_status("");
+        return 0;
+    }
+    online_server_send_username_action("challenge", g_online_friends[idx].name);
+    return 1;
+}
+
+static void online_activate_action(OnlineHubAction action) {
+    switch (action) {
+        case ONLINE_ACTION_CONNECT:
+        case ONLINE_ACTION_LOGIN:
+            online_server_connect(0);
+            break;
+        case ONLINE_ACTION_REGISTER:
+            online_server_connect(1);
+            break;
+        case ONLINE_ACTION_DISCONNECT_SERVER:
+            online_server_disconnect("Disconnected from online server.");
+            break;
+        case ONLINE_ACTION_QUEUE_CASUAL:
+            online_server_send_queue("casual");
+            break;
+        case ONLINE_ACTION_QUEUE_COMPETITIVE:
+            online_server_send_queue("competitive");
+            break;
+        case ONLINE_ACTION_LEAVE_QUEUE:
+            online_server_leave_queue();
+            break;
+        case ONLINE_ACTION_HOST:
+            online_start_host_from_hub();
+            break;
+        case ONLINE_ACTION_JOIN:
+            online_start_join_from_hub(g_online_cfg.peer_host, g_online_cfg.peer_port);
+            break;
+        case ONLINE_ACTION_STOP:
+            if (ggpo_net_active()) {
+                stop_ggpo_net("online hub");
+                online_hub_set_status("Online session stopped.");
+                online_hub_rebuild_rows();
+            } else {
+                online_hub_set_status("No online session is active.");
+            }
+            break;
+        case ONLINE_ACTION_ADD_FRIEND:
+            online_begin_friend_capture();
+            break;
+        case ONLINE_ACTION_CHALLENGE_FRIEND: {
+            int idx = online_selected_friend_index();
+            online_try_send_friend_challenge(idx);
+        } break;
+        case ONLINE_ACTION_ACCEPT_FRIEND: {
+            int idx = online_selected_request_index();
+            if (idx < 0 || idx >= g_online_request_count) {
+                online_hub_set_status("Select a friend request first.");
+                break;
+            }
+            online_server_send_username_action("friend_accept", g_online_requests[idx].name);
+            online_remove_request_index(idx);
+        } break;
+        case ONLINE_ACTION_DECLINE_FRIEND: {
+            int idx = online_selected_request_index();
+            if (idx < 0 || idx >= g_online_request_count) {
+                online_hub_set_status("Select a friend request first.");
+                break;
+            }
+            online_server_send_username_action("friend_decline", g_online_requests[idx].name);
+            online_remove_request_index(idx);
+        } break;
+        case ONLINE_ACTION_ACCEPT_CHALLENGE: {
+            int idx = online_selected_challenge_index();
+            if (idx < 0 || idx >= g_online_challenge_count) {
+                online_hub_set_status("Select a challenge first.");
+                break;
+            }
+            online_server_send_challenge_action("challenge_accept", g_online_challenges[idx].id, g_online_challenges[idx].from);
+            online_remove_challenge_index(idx);
+        } break;
+        case ONLINE_ACTION_DECLINE_CHALLENGE: {
+            int idx = online_selected_challenge_index();
+            if (idx < 0 || idx >= g_online_challenge_count) {
+                online_hub_set_status("Select a challenge first.");
+                break;
+            }
+            online_server_send_challenge_action("challenge_decline", g_online_challenges[idx].id, g_online_challenges[idx].from);
+            online_remove_challenge_index(idx);
+        } break;
+        case ONLINE_ACTION_REMOVE_FRIEND: {
+            int idx = online_selected_friend_index();
+            if (idx < 0 || idx >= g_online_friend_count) {
+                online_hub_set_status("Select a friend first.");
+                break;
+            }
+            online_server_send_username_action("friend_remove", g_online_friends[idx].name);
+        } break;
+        case ONLINE_ACTION_BLOCK_FRIEND: {
+            int idx = online_selected_friend_index();
+            if (idx < 0 || idx >= g_online_friend_count) {
+                online_hub_set_status("Select a friend first.");
+                break;
+            }
+            g_online_friends[idx].blocked = g_online_friends[idx].blocked ? 0 : 1;
+            online_hub_save();
+            online_hub_set_status(g_online_friends[idx].blocked ? "Friend blocked." : "Friend unblocked.");
+            online_hub_rebuild_rows();
+        } break;
+        case ONLINE_ACTION_SAVE_SETTINGS:
+            online_hub_apply_net_settings();
+            online_hub_save();
+            online_hub_set_status("Settings saved and applied.");
+            online_hub_rebuild_rows();
+            break;
+        default:
+            break;
+    }
+}
+
+static void online_activate_selected(void) {
+    OnlineHubRow* row;
+    if (g_online_selected_row < 0 || g_online_selected_row >= g_online_row_count) return;
+    row = &g_online_rows[g_online_selected_row];
+    if (row->kind == ONLINE_ROW_BACK) {
+        if (p_state_switch) {
+            void* target = g_online_return_state ? g_online_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
+            if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+            p_state_switch(target);
+        }
+        return;
+    }
+    if (row->kind == ONLINE_ROW_ACTION) {
+        online_activate_action((OnlineHubAction)row->id);
+    } else if (row->kind == ONLINE_ROW_SETTING) {
+        OnlineHubSetting setting = (OnlineHubSetting)row->id;
+        if (online_setting_is_text(setting)) online_begin_setting_capture(setting);
+        else online_adjust_setting(setting, 1);
+    } else if (row->kind == ONLINE_ROW_FRIEND) {
+        int idx = row->id;
+        online_try_send_friend_challenge(idx);
+    } else if (row->kind == ONLINE_ROW_FRIEND_REQUEST) {
+        int idx = row->id;
+        if (idx >= 0 && idx < g_online_request_count) {
+            online_server_send_username_action("friend_accept", g_online_requests[idx].name);
+            online_remove_request_index(idx);
+        }
+    } else if (row->kind == ONLINE_ROW_CHALLENGE) {
+        int idx = row->id;
+        if (idx >= 0 && idx < g_online_challenge_count) {
+            online_server_send_challenge_action("challenge_accept", g_online_challenges[idx].id, g_online_challenges[idx].from);
+            online_remove_challenge_index(idx);
+        }
+    }
+}
+
+static int online_selected_decline(void) {
+    OnlineHubRow* row;
+    if (g_online_selected_row < 0 || g_online_selected_row >= g_online_row_count) return 0;
+    row = &g_online_rows[g_online_selected_row];
+    if (row->kind == ONLINE_ROW_FRIEND_REQUEST) {
+        int idx = row->id;
+        if (idx >= 0 && idx < g_online_request_count) {
+            online_server_send_username_action("friend_decline", g_online_requests[idx].name);
+            online_remove_request_index(idx);
+            return 1;
+        }
+    } else if (row->kind == ONLINE_ROW_CHALLENGE) {
+        int idx = row->id;
+        if (idx >= 0 && idx < g_online_challenge_count) {
+            online_server_send_challenge_action("challenge_decline", g_online_challenges[idx].id, g_online_challenges[idx].from);
+            online_remove_challenge_index(idx);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int online_click_hits_inline_decline(float x) {
+    OnlineLayout L;
+    online_calc_layout(&L);
+    return x >= (L.content_x + L.content_w - 132.0f * L.ui);
+}
+
+static void online_activate_selected_from_mouse(float x) {
+    OnlineHubRow* row;
+    if (g_online_selected_row < 0 || g_online_selected_row >= g_online_row_count) return;
+    row = &g_online_rows[g_online_selected_row];
+    if (online_click_hits_inline_decline(x) && online_selected_decline()) return;
+    if (row->kind == ONLINE_ROW_FRIEND) {
+        int idx = row->id;
+        if (idx >= 0 && idx < g_online_friend_count &&
+            g_online_friends[idx].online &&
+            online_click_hits_inline_decline(x)) {
+            online_try_send_friend_challenge(idx);
+        }
+        return;
+    }
+    online_activate_selected();
+}
+
+static void online_open_friend_context(int friend_idx, float x, float y) {
+    if (friend_idx < 0 || friend_idx >= g_online_friend_count) return;
+    g_online_context_active = 1;
+    g_online_context_friend = friend_idx;
+    g_online_context_x = x;
+    g_online_context_y = y;
+}
+
+static int online_context_action_at(float x, float y) {
+    OnlineLayout L;
+    OnlineFriend* fr;
+    float s;
+    float menu_w;
+    float item_h;
+    float mx;
+    float my;
+    int count;
+    int item;
+    if (!g_online_context_active || g_online_context_friend < 0 || g_online_context_friend >= g_online_friend_count) return 0;
+    fr = &g_online_friends[g_online_context_friend];
+    online_calc_layout(&L);
+    s = L.ui;
+    menu_w = 176.0f * s;
+    item_h = 34.0f * s;
+    count = fr->online ? 2 : 1;
+    mx = clampf(g_online_context_x, 8.0f * s, L.w - menu_w - 8.0f * s);
+    my = clampf(g_online_context_y, 8.0f * s, L.h - (float)count * item_h - 8.0f * s);
+    if (x < mx || x > mx + menu_w || y < my || y > my + (float)count * item_h) return 0;
+    item = (int)((y - my) / item_h);
+    if (fr->online && item == 0) return 1; /* challenge */
+    return 2; /* unfriend */
+}
+
+static int online_context_activate(int action) {
+    int idx = g_online_context_friend;
+    g_online_context_active = 0;
+    if (idx < 0 || idx >= g_online_friend_count) return 0;
+    if (action == 1) {
+        online_try_send_friend_challenge(idx);
+        return 1;
+    }
+    if (action == 2) {
+        online_server_send_username_action("friend_remove", g_online_friends[idx].name);
+        online_hub_set_status("Friend removed.");
+        online_remove_friend_index(idx);
+        return 1;
+    }
+    return 0;
+}
+
+static void online_adjust_selected(int delta) {
+    OnlineHubRow* row;
+    if (g_online_selected_row < 0 || g_online_selected_row >= g_online_row_count) return;
+    row = &g_online_rows[g_online_selected_row];
+    if (row->kind == ONLINE_ROW_SETTING) {
+        OnlineHubSetting setting = (OnlineHubSetting)row->id;
+        if (online_setting_is_text(setting)) return;
+        online_adjust_setting(setting, delta);
+    }
+}
+
+static const char* online_tab_name(OnlineHubTab tab) {
+    switch (tab) {
+        case ONLINE_TAB_PLAY: return "PLAY";
+        case ONLINE_TAB_FRIENDS: return "FRIENDS";
+        case ONLINE_TAB_SETTINGS: return "SETTINGS";
+        default: return "?";
+    }
+}
+
+static void online_hub_draw_rect(float x, float y, float w, float h, float r, float g, float b, float a) {
+    hooks_ui_fill_rect(x, y, w, h, r, g, b, a);
+}
+
+static void online_hub_draw_border(float x, float y, float w, float h, float line_w, float r, float g, float b, float a) {
+    hooks_ui_stroke_rect(x, y, w, h, line_w, r, g, b, a);
+}
+
+static void online_hub_text_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text) {
+    scale = clampf(scale, 0.76f, 3.00f);
+    a = clampf(a, 0.0f, 1.0f);
+    if (a <= 0.01f) return;
+    float o = clampf(2.0f * scale, 2.0f, 4.0f);
+    draw_text_scaled_mode_alpha(x + o, y + o, scale, 0.0f, 0.0f, 0.0f, a * 0.80f, text, 0);
+    draw_text_scaled_mode_alpha(x + 1.0f, y + o + 1.0f, scale, 0.0f, 0.0f, 0.0f, a * 0.70f, text, 0);
+    draw_text_scaled_mode_alpha(x, y, scale, r, g, b, a, text, 0);
+}
+
+static void online_hub_text(float x, float y, float scale, float r, float g, float b, const char* text) {
+    online_hub_text_alpha(x, y, scale, r, g, b, 1.0f, text);
+}
+
+static void online_hub_text_center_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text) {
+    scale = clampf(scale, 0.76f, 3.00f);
+    a = clampf(a, 0.0f, 1.0f);
+    if (a <= 0.01f) return;
+    float o = clampf(2.0f * scale, 2.0f, 4.0f);
+    draw_text_scaled_mode_alpha(x + o, y + o, scale, 0.0f, 0.0f, 0.0f, a * 0.80f, text, 1);
+    draw_text_scaled_mode_alpha(x + 1.0f, y + o + 1.0f, scale, 0.0f, 0.0f, 0.0f, a * 0.70f, text, 1);
+    draw_text_scaled_mode_alpha(x, y, scale, r, g, b, a, text, 1);
+}
+
+static void online_hub_text_center(float x, float y, float scale, float r, float g, float b, const char* text) {
+    online_hub_text_center_alpha(x, y, scale, r, g, b, 1.0f, text);
+}
+
+static void online_hub_text_right_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text) {
+    scale = clampf(scale, 0.76f, 3.00f);
+    a = clampf(a, 0.0f, 1.0f);
+    if (a <= 0.01f) return;
+    float o = clampf(2.0f * scale, 2.0f, 4.0f);
+    draw_text_scaled_mode_alpha(x + o, y + o, scale, 0.0f, 0.0f, 0.0f, a * 0.80f, text, 2);
+    draw_text_scaled_mode_alpha(x + 1.0f, y + o + 1.0f, scale, 0.0f, 0.0f, 0.0f, a * 0.70f, text, 2);
+    draw_text_scaled_mode_alpha(x, y, scale, r, g, b, a, text, 2);
+}
+
+static void online_hub_text_right(float x, float y, float scale, float r, float g, float b, const char* text) {
+    online_hub_text_right_alpha(x, y, scale, r, g, b, 1.0f, text);
+}
+
+static int online_hub_row_primary(const OnlineHubRow* row) {
+    if (!row || row->kind != ONLINE_ROW_ACTION) return 0;
+    return row->id == ONLINE_ACTION_LOGIN ||
+           row->id == ONLINE_ACTION_REGISTER ||
+           row->id == ONLINE_ACTION_QUEUE_CASUAL ||
+           row->id == ONLINE_ACTION_QUEUE_COMPETITIVE ||
+           row->id == ONLINE_ACTION_ACCEPT_CHALLENGE;
+}
+
+static int online_hub_row_boxed(const OnlineHubRow* row) {
+    if (!row) return 0;
+    return row->kind == ONLINE_ROW_ACTION ||
+           row->kind == ONLINE_ROW_SETTING ||
+           row->kind == ONLINE_ROW_FRIEND ||
+           row->kind == ONLINE_ROW_FRIEND_REQUEST ||
+           row->kind == ONLINE_ROW_CHALLENGE ||
+           row->kind == ONLINE_ROW_BACK;
+}
+
+static void online_hub_draw_button_box(float x, float y, float w, float h,
+                                       const char* label, const char* detail,
+                                       int selected, int primary, float s) {
+    float br = primary ? 0.06f : 0.075f;
+    float bg = primary ? 0.24f : 0.095f;
+    float bb = primary ? 0.21f : 0.125f;
+    float ba = primary ? 0.98f : 0.94f;
+    float tr = primary ? 0.82f : 0.90f;
+    float tg = primary ? 1.00f : 0.94f;
+    float tb = primary ? 0.94f : 0.98f;
+
+    if (selected) {
+        br += 0.05f;
+        bg += 0.05f;
+        bb += 0.05f;
+    }
+
+    online_hub_draw_rect(x, y, w, h, br, bg, bb, ba);
+    online_hub_draw_border(x, y, w, h, selected ? 2.0f : 1.0f,
+                           selected ? 0.48f : 0.30f,
+                           selected ? 0.94f : 0.52f,
+                           selected ? 0.86f : 0.62f,
+                           selected ? 1.0f : 0.84f);
+
+    mods_restore_render_state();
+    online_hub_text_center(x + w * 0.5f, y + h * 0.5f - 12.0f * s,
+                           1.12f * s, tr, tg, tb, label ? label : "");
+    if (detail && detail[0]) {
+        online_hub_text_right(x + w - 16.0f * s, y + h * 0.5f - 9.0f * s,
+                              0.68f * s, 0.62f, 0.72f, 0.88f, detail);
+    }
+}
+
+static void online_hub_draw_panel(const OnlineLayout* L) {
+    float s;
+    uint32_t tick;
+    float pulse;
+    if (!L) return;
+    s = L->ui;
+    tick = hooks_player_colour_tick();
+    pulse = 0.5f + 0.5f * hooks_triangle01(tick, 96u);
+
+    online_hub_draw_rect(0.0f, 0.0f, L->w, L->h, 0.01f, 0.015f, 0.02f, 0.16f);
+
+    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->panel_h, 0.022f, 0.026f, 0.034f, 0.90f);
+    online_hub_draw_rect(L->panel_x + 3.0f, L->panel_y + 3.0f,
+                         L->panel_w - 6.0f, L->panel_h - 6.0f, 0.050f, 0.058f, 0.074f, 0.62f);
+    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->header_h, 0.042f, 0.050f, 0.064f, 0.98f);
+    online_hub_draw_rect(L->panel_x, L->panel_y + L->panel_h - L->footer_h,
+                         L->panel_w, L->footer_h, 0.025f, 0.032f, 0.045f, 0.96f);
+    online_hub_draw_rect(L->content_x, L->content_y, L->content_w, L->content_h,
+                         0.035f, 0.044f, 0.058f, 0.60f);
+
+    online_hub_draw_border(L->panel_x, L->panel_y, L->panel_w, L->panel_h, 2.0f,
+                           0.22f + pulse * 0.14f,
+                           0.72f + pulse * 0.18f,
+                           0.66f + pulse * 0.16f,
+                           1.0f);
+    online_hub_draw_border(L->panel_x + 4.0f, L->panel_y + 4.0f,
+                           L->panel_w - 8.0f, L->panel_h - 8.0f, 1.0f,
+                           0.21f, 0.26f, 0.36f, 0.94f);
+    online_hub_draw_rect(L->panel_x + 4.0f, L->panel_y + L->header_h - 2.0f * s,
+                         L->panel_w - 8.0f, 2.0f * s,
+                         0.18f + pulse * 0.12f,
+                         0.70f + pulse * 0.18f,
+                         0.64f + pulse * 0.16f,
+                         0.88f);
+}
+
+static void online_hub_draw_tabs(const OnlineLayout* L) {
+    float s;
+    float gap;
+    float total_w;
+    float tab_w;
+    float tab_h;
+    float tab_x;
+    float tab_y;
+    if (!L) return;
+    s = L->ui;
+    gap = 6.0f * s;
+    total_w = clampf(250.0f * s, 205.0f * s, L->panel_w * 0.34f);
+    tab_w = (total_w - gap * 2.0f) / 3.0f;
+    tab_h = 30.0f * s;
+    tab_x = L->panel_x + L->panel_w - total_w - 14.0f * s;
+    tab_y = L->panel_y + (L->header_h - tab_h) * 0.5f;
+
+    for (int i = 0; i < ONLINE_TAB_COUNT; i++) {
+        int selected = (i == (int)g_online_tab);
+        float x = tab_x + (tab_w + gap) * (float)i;
+        online_hub_draw_rect(x, tab_y, tab_w, tab_h,
+                             selected ? 0.055f : 0.055f,
+                             selected ? 0.205f : 0.075f,
+                             selected ? 0.185f : 0.105f,
+                             selected ? 0.96f : 0.80f);
+        online_hub_draw_border(x, tab_y, tab_w, tab_h, selected ? 2.0f : 1.0f,
+                               selected ? 0.36f : 0.24f,
+                               selected ? 0.92f : 0.44f,
+                               selected ? 0.82f : 0.54f,
+                               selected ? 1.0f : 0.90f);
+        mods_restore_render_state();
+        online_hub_text_center(x + tab_w * 0.5f, tab_y + tab_h * 0.5f - 9.0f * s,
+                               0.62f * s,
+                               selected ? 0.82f : 0.72f,
+                               selected ? 1.00f : 0.82f,
+                               selected ? 0.94f : 0.92f,
+                               online_tab_name((OnlineHubTab)i));
+        if (i == ONLINE_TAB_FRIENDS && (g_online_request_count + g_online_challenge_count) > 0) {
+            char badge[16];
+            int pending = g_online_request_count + g_online_challenge_count;
+            float bw = pending > 9 ? 24.0f * s : 18.0f * s;
+            float bh = 17.0f * s;
+            float bx = x + tab_w - bw - 4.0f * s;
+            float by = tab_y - 5.0f * s;
+            snprintf(badge, sizeof(badge), "%d", pending > 99 ? 99 : pending);
+            online_hub_draw_rect(bx, by, bw, bh, 0.82f, 0.20f, 0.24f, 0.96f);
+            online_hub_draw_border(bx, by, bw, bh, 1.0f, 1.0f, 0.76f, 0.78f, 0.96f);
+            mods_restore_render_state();
+            online_hub_text_center(bx + bw * 0.5f, by + 2.0f * s,
+                                   0.54f * s, 1.0f, 0.94f, 0.94f, badge);
+        }
+    }
+}
+
+static int online_login_gateway_active(void) {
+    return !g_online_authed && g_online_tab == ONLINE_TAB_PLAY;
+}
+
+static void online_login_gateway_metrics(const OnlineLayout* L,
+                                         float* out_x,
+                                         float* out_y,
+                                         float* out_w,
+                                         float* out_row_h,
+                                         float* out_gap) {
+    float s = L ? L->ui : online_hub_ui_scale();
+    float form_w = L ? clampf(500.0f * s, 420.0f, L->panel_w - 96.0f * s) : 540.0f;
+    float row_h = 52.0f * s;
+    float gap = 12.0f * s;
+    if (out_w) *out_w = form_w;
+    if (out_row_h) *out_row_h = row_h;
+    if (out_gap) *out_gap = gap;
+    if (out_x) *out_x = L ? (L->center_x - form_w * 0.5f) : 0.0f;
+    if (out_y) *out_y = L ? (L->content_y + 78.0f * s) : 0.0f;
+}
+
+static int online_find_row_by_kind_id(OnlineHubRowKind kind, int id) {
+    for (int i = 0; i < g_online_row_count; i++) {
+        if (g_online_rows[i].kind == kind && g_online_rows[i].id == id) return i;
+    }
+    return -1;
+}
+
+static int online_login_row_at_point(float x, float y) {
+    OnlineLayout L;
+    float form_x;
+    float form_y;
+    float form_w;
+    float row_h;
+    float gap;
+    float button_w;
+    online_hub_rebuild_rows();
+    online_calc_layout(&L);
+    online_login_gateway_metrics(&L, &form_x, &form_y, &form_w, &row_h, &gap);
+    if (x >= form_x && x <= form_x + form_w && y >= form_y && y <= form_y + row_h) {
+        return online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_USERNAME);
+    }
+    if (x >= form_x && x <= form_x + form_w &&
+        y >= form_y + row_h + gap && y <= form_y + row_h * 2.0f + gap) {
+        return online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_PASSWORD);
+    }
+    button_w = (form_w - gap) * 0.5f;
+    y = y - (form_y + row_h * 2.0f + gap * 2.0f);
+    if (y >= 0.0f && y <= row_h) {
+        if (x >= form_x && x <= form_x + button_w) {
+            return online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_LOGIN);
+        }
+        if (x >= form_x + button_w + gap && x <= form_x + form_w) {
+            return online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_REGISTER);
+        }
+    }
+    return -1;
+}
+
+static int online_tab_at_point(float x, float y) {
+    OnlineLayout L;
+    float s;
+    float gap;
+    float total_w;
+    float tab_w;
+    float tab_h;
+    float tab_x;
+    float tab_y;
+    online_calc_layout(&L);
+    s = L.ui;
+    gap = 6.0f * s;
+    total_w = clampf(250.0f * s, 205.0f * s, L.panel_w * 0.34f);
+    tab_w = (total_w - gap * 2.0f) / 3.0f;
+    tab_h = 30.0f * s;
+    tab_x = L.panel_x + L.panel_w - total_w - 14.0f * s;
+    tab_y = L.panel_y + (L.header_h - tab_h) * 0.5f;
+    if (y < tab_y || y > tab_y + tab_h) return -1;
+    for (int i = 0; i < ONLINE_TAB_COUNT; i++) {
+        float tx = tab_x + (tab_w + gap) * (float)i;
+        if (x >= tx && x <= tx + tab_w) return i;
+    }
+    return -1;
+}
+
+static int online_row_at_point(float x, float y) {
+    OnlineLayout L;
+    float rows_top;
+    int cap;
+    int start;
+    int end;
+    online_hub_rebuild_rows();
+    if (online_login_gateway_active()) {
+        return online_login_row_at_point(x, y);
+    }
+    online_calc_layout(&L);
+    rows_top = L.list_top + 14.0f * L.ui;
+    if (g_online_status[0] && !g_online_queue_mode && !g_online_pending_match.active) rows_top += 32.0f * L.ui;
+    cap = (int)((L.list_bottom - rows_top) / L.row_h);
+    if (cap < 4) cap = 4;
+    start = clampi(g_online_scroll_row, 0, g_online_row_count);
+    end = start + cap;
+    if (end > g_online_row_count) end = g_online_row_count;
+    for (int i = start; i < end; i++) {
+        float row_y = rows_top + (float)(i - start) * L.row_h;
+        if (x >= L.content_x && x <= L.content_x + L.content_w &&
+            y >= row_y && y <= row_y + L.row_h) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void online_hub_draw_cursor(void) {
+    static const char* const cursor[] = {
+        "YYY.........",
+        "OYYY........",
+        "OOYYY.......",
+        ".OOYYY......",
+        "..OOYYY.....",
+        "...OOYYY....",
+        "....OOY.OOO.",
+        ".....O.OYY..",
+        "......OYY...",
+        "......OO.O..",
+        "......O...YO",
+        "..........OO",
+    };
+    float s = online_hub_ui_scale();
+    float px = clampf(2.0f * s, 2.0f, 4.0f);
+    float ox = g_online_mouse_x + 8.0f * s;
+    float oy = g_online_mouse_y + 4.0f * s;
+    for (int pass = 0; pass < 2; pass++) {
+        float dx = pass == 0 ? px * 0.8f : 0.0f;
+        float dy = pass == 0 ? px * 0.8f : 0.0f;
+        for (int row = 0; row < 12; row++) {
+            const char* line = cursor[row];
+            for (int col = 0; line[col]; col++) {
+                char c = line[col];
+                if (c == '.') continue;
+                if (pass == 0) {
+                    online_hub_draw_rect(ox + dx + (float)col * px, oy + dy + (float)row * px, px, px,
+                                         0.0f, 0.0f, 0.0f, 0.35f);
+                } else if (c == 'Y') {
+                    online_hub_draw_rect(ox + (float)col * px, oy + (float)row * px, px, px,
+                                         1.0f, 231.0f / 255.0f, 4.0f / 255.0f, 1.0f);
+                } else {
+                    online_hub_draw_rect(ox + (float)col * px, oy + (float)row * px, px, px,
+                                         154.0f / 255.0f, 119.0f / 255.0f, 0.0f, 1.0f);
+                }
+            }
+        }
+    }
+}
+
+static void online_hub_draw_context_menu(void) {
+    OnlineLayout L;
+    OnlineFriend* fr;
+    float s;
+    float menu_w;
+    float item_h;
+    float mx;
+    float my;
+    int count;
+    if (!g_online_context_active || g_online_tab != ONLINE_TAB_FRIENDS ||
+        g_online_context_friend < 0 || g_online_context_friend >= g_online_friend_count) {
+        return;
+    }
+    fr = &g_online_friends[g_online_context_friend];
+    online_calc_layout(&L);
+    s = L.ui;
+    menu_w = 176.0f * s;
+    item_h = 34.0f * s;
+    count = fr->online ? 2 : 1;
+    mx = clampf(g_online_context_x, 8.0f * s, L.w - menu_w - 8.0f * s);
+    my = clampf(g_online_context_y, 8.0f * s, L.h - (float)count * item_h - 8.0f * s);
+    online_hub_draw_rect(mx, my, menu_w, (float)count * item_h, 0.025f, 0.030f, 0.040f, 0.98f);
+    online_hub_draw_border(mx, my, menu_w, (float)count * item_h, 1.0f, 0.58f, 0.68f, 0.78f, 0.98f);
+    for (int i = 0; i < count; i++) {
+        int action = (fr->online && i == 0) ? 1 : 2;
+        int hover = (online_context_action_at(g_online_mouse_x, g_online_mouse_y) == action);
+        int sent = (action == 1) ? online_sent_challenge_pending(fr->name) : 0;
+        float y = my + (float)i * item_h;
+        if (hover) {
+            online_hub_draw_rect(mx + 2.0f * s, y + 2.0f * s, menu_w - 4.0f * s, item_h - 4.0f * s,
+                                 action == 1 ? (sent ? 0.08f : 0.06f) : 0.16f,
+                                 action == 1 ? (sent ? 0.10f : 0.18f) : 0.06f,
+                                 action == 1 ? (sent ? 0.14f : 0.15f) : 0.08f,
+                                 0.96f);
+        }
+        mods_restore_render_state();
+        online_hub_text(mx + 12.0f * s, y + item_h * 0.5f - 9.0f * s,
+                        0.76f * s,
+                        action == 1 ? (sent ? 0.72f : 0.76f) : 1.0f,
+                        action == 1 ? (sent ? 0.82f : 1.0f) : 0.70f,
+                        action == 1 ? (sent ? 0.94f : 0.92f) : 0.72f,
+                        action == 1 ? (sent ? "Sent!" : "Challenge") : "Unfriend");
+    }
+}
+
+static void online_hub_draw_wait_dots(float cx, float y, float s) {
+    uint32_t tick = hooks_player_colour_tick();
+    float dot = 9.0f * s;
+    float gap = 14.0f * s;
+    for (int i = 0; i < 5; i++) {
+        uint32_t local = (tick + (uint32_t)i * 12u) % 72u;
+        float pulse = hooks_triangle01(local, 72u);
+        float size = dot * (0.70f + pulse * 0.55f);
+        float x = cx - (2.0f * (dot + gap)) + (float)i * (dot + gap) - size * 0.5f;
+        online_hub_draw_rect(x, y - size * 0.5f, size, size,
+                             0.24f + pulse * 0.10f,
+                             0.76f + pulse * 0.16f,
+                             0.70f + pulse * 0.18f,
+                             0.62f + pulse * 0.30f);
+    }
+}
+
+static void online_hub_draw_overlay_card(const OnlineLayout* L, float card_w, float card_h, float* out_x, float* out_y) {
+    float s;
+    float x;
+    float y;
+    if (!L) return;
+    s = L->ui;
+    x = L->center_x - card_w * 0.5f;
+    y = L->content_y + (L->content_h - card_h) * 0.5f;
+    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->panel_h,
+                         0.005f, 0.008f, 0.012f, 0.44f);
+    online_hub_draw_rect(x, y, card_w, card_h, 0.030f, 0.038f, 0.050f, 0.96f);
+    online_hub_draw_rect(x + 2.0f * s, y + 2.0f * s,
+                         card_w - 4.0f * s, card_h - 4.0f * s,
+                         0.052f, 0.066f, 0.080f, 0.50f);
+    online_hub_draw_border(x, y, card_w, card_h, 1.0f,
+                           0.26f, 0.78f, 0.72f, 0.90f);
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+}
+
+static float online_ui_fade_alpha(int age, int lifetime, int fade_frames) {
+    if (lifetime <= 0) return 1.0f;
+    if (age < 0) age = 0;
+    if (fade_frames < 1) fade_frames = 1;
+    if (age >= lifetime) return 0.0f;
+    if (age <= lifetime - fade_frames) return 1.0f;
+    return clampf((float)(lifetime - age) / (float)fade_frames, 0.0f, 1.0f);
+}
+
+static float online_ui_pulse01(uint32_t period, uint32_t phase) {
+    uint32_t tick = hooks_player_colour_tick();
+    if (period < 2u) period = 2u;
+    return hooks_triangle01((tick + phase) % period, period);
+}
+
+static void online_ui_panel(float x, float y, float w, float h, float alpha, int hot) {
+    float pulse = online_ui_pulse01(120u, 0u);
+    alpha = clampf(alpha, 0.0f, 1.0f);
+    online_hub_draw_rect(x, y, w, h,
+                         0.025f, 0.032f, 0.044f, 0.92f * alpha);
+    online_hub_draw_rect(x + 3.0f, y + 3.0f, w - 6.0f, h - 6.0f,
+                         0.058f, 0.072f, 0.088f, 0.48f * alpha);
+    online_hub_draw_border(x, y, w, h, hot ? 2.0f : 1.0f,
+                           0.26f + pulse * 0.10f,
+                           0.72f + pulse * 0.16f,
+                           0.68f + pulse * 0.12f,
+                           (hot ? 0.98f : 0.82f) * alpha);
+}
+
+static int online_ui_close_hit(float x, float y, float bx, float by, float size) {
+    return x >= bx && x <= bx + size && y >= by && y <= by + size;
+}
+
+static void online_ui_close_button(float x, float y, float size, float alpha, int hover) {
+    float pad = size * 0.30f;
+    alpha = clampf(alpha, 0.0f, 1.0f);
+    online_hub_draw_rect(x, y, size, size,
+                         hover ? 0.30f : 0.12f,
+                         hover ? 0.10f : 0.12f,
+                         hover ? 0.12f : 0.15f,
+                         (hover ? 0.98f : 0.72f) * alpha);
+    online_hub_draw_border(x, y, size, size, 1.0f,
+                           hover ? 1.0f : 0.60f,
+                           hover ? 0.58f : 0.70f,
+                           hover ? 0.62f : 0.82f,
+                           0.90f * alpha);
+    hooks_ui_draw_line(x + pad, y + pad, x + size - pad, y + size - pad,
+                       2.0f, 1.0f, 0.88f, 0.88f, alpha);
+    hooks_ui_draw_line(x + size - pad, y + pad, x + pad, y + size - pad,
+                       2.0f, 1.0f, 0.88f, 0.88f, alpha);
+}
+
+static void online_queue_panel_metrics(const OnlineLayout* L,
+                                       float* out_x,
+                                       float* out_y,
+                                       float* out_w,
+                                       float* out_h,
+                                       float* out_bx,
+                                       float* out_by,
+                                       float* out_bw,
+                                       float* out_bh) {
+    float s = L ? L->ui : online_hub_ui_scale();
+    float w = L ? clampf(520.0f * s, 420.0f, L->content_w - 48.0f * s) : 520.0f * s;
+    float h = 214.0f * s;
+    float x = L ? (L->center_x - w * 0.5f) : 0.0f;
+    float y = L ? (L->content_y + clampf(34.0f * s, 18.0f, L->content_h * 0.20f)) : 0.0f;
+    float bw = 176.0f * s;
+    float bh = 42.0f * s;
+    float bx = x + w - bw - 22.0f * s;
+    float by = y + h - bh - 20.0f * s;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    if (out_bx) *out_bx = bx;
+    if (out_by) *out_by = by;
+    if (out_bw) *out_bw = bw;
+    if (out_bh) *out_bh = bh;
+}
+
+static int online_queue_cancel_button_at(float x, float y) {
+    OnlineLayout L;
+    float bw;
+    float bh;
+    float bx;
+    float by;
+    if (!g_online_queue_mode || g_online_pending_match.active) return 0;
+    online_calc_layout(&L);
+    online_queue_panel_metrics(&L, NULL, NULL, NULL, NULL, &bx, &by, &bw, &bh);
+    return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+}
+
+static void online_hub_render_matchmaking_panel(const OnlineLayout* L, int match_found) {
+    float s;
+    float card_w;
+    float card_h;
+    float card_x;
+    float card_y;
+    float bw;
+    float bh;
+    float bx;
+    float by;
+    char line[128];
+    float rail_x;
+    float rail_y;
+    float rail_w;
+    float rail_h;
+    if (!L) return;
+    if (match_found) {
+        if (!g_online_pending_match.active || g_online_pending_match.launch_countdown_frames <= 0) return;
+    } else {
+        if (!g_online_queue_mode || g_online_pending_match.active) return;
+    }
+    s = L->ui;
+    online_queue_panel_metrics(L, &card_x, &card_y, &card_w, &card_h, &bx, &by, &bw, &bh);
+    online_ui_panel(card_x, card_y, card_w, card_h, 1.0f, 1);
+    mods_restore_render_state();
+
+    if (match_found) {
+        int seconds = (g_online_pending_match.launch_countdown_frames + 59) / 60;
+        if (seconds < 1) seconds = 1;
+        online_hub_text(card_x + 26.0f * s, card_y + 25.0f * s,
+                        1.28f * s, 0.96f, 0.98f, 1.00f, "MATCH FOUND");
+        snprintf(line, sizeof(line), "vs %s",
+                 g_online_pending_match.opponent[0] ? g_online_pending_match.opponent : "opponent");
+        online_hub_text(card_x + 26.0f * s, card_y + 70.0f * s,
+                        0.98f * s, 0.76f, 0.98f, 0.86f, line);
+        snprintf(line, sizeof(line), "%s",
+                 g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
+        online_hub_text(card_x + 26.0f * s, card_y + 106.0f * s,
+                        0.88f * s, 0.74f, 0.82f, 0.94f, line);
+        snprintf(line, sizeof(line), "Starting in %d", seconds);
+        online_hub_text(card_x + 26.0f * s, card_y + 144.0f * s,
+                        1.00f * s, 1.00f, 0.86f, 0.44f, line);
+    } else {
+        online_hub_text(card_x + 26.0f * s, card_y + 25.0f * s,
+                        1.28f * s, 0.94f, 0.98f, 1.00f, "SEARCHING");
+        snprintf(line, sizeof(line), "%s queue",
+                 g_online_queue_mode == 2 ? "Competitive" : "Casual");
+        online_hub_text(card_x + 26.0f * s, card_y + 70.0f * s,
+                        0.98f * s, 0.72f, 0.92f, 0.88f, line);
+        snprintf(line, sizeof(line), "%d waiting",
+                 g_online_queue_mode == 2 ? g_online_queue_competitive_count : g_online_queue_casual_count);
+        online_hub_text(card_x + 26.0f * s, card_y + 106.0f * s,
+                        0.90f * s, 0.78f, 0.84f, 0.92f, line);
+        online_hub_draw_wait_dots(card_x + 86.0f * s, card_y + 157.0f * s, s);
+    }
+
+    rail_x = card_x + 26.0f * s;
+    rail_y = card_y + card_h - 28.0f * s;
+    rail_h = 8.0f * s;
+    rail_w = match_found ? (card_w - 52.0f * s) : (card_w - 26.0f * s - bw - 58.0f * s);
+    if (rail_w > 80.0f * s) {
+        online_hub_draw_rect(rail_x, rail_y, rail_w, rail_h, 0.13f, 0.17f, 0.22f, 0.86f);
+        online_hub_draw_border(rail_x, rail_y, rail_w, rail_h, 1.0f, 0.28f, 0.36f, 0.46f, 0.72f);
+        if (match_found) {
+            float total = (float)ONLINE_MATCH_COUNTDOWN_FRAMES;
+            float remaining = clampf((float)g_online_pending_match.launch_countdown_frames, 0.0f, total);
+            float progress = 1.0f - (remaining / total);
+            online_hub_draw_rect(rail_x + 1.0f * s, rail_y + 1.0f * s,
+                                 (rail_w - 2.0f * s) * progress, rail_h - 2.0f * s,
+                                 0.96f, 0.80f, 0.28f, 0.96f);
+        }
+    }
+
+    if (!match_found) {
+        online_hub_draw_button_box(bx, by, bw, bh, "CANCEL", "",
+                                   online_queue_cancel_button_at(g_online_mouse_x, g_online_mouse_y), 0, s);
+    }
+}
+
+static void online_hub_render_queue_overlay(const OnlineLayout* L) {
+    online_hub_render_matchmaking_panel(L, 0);
+}
+
+static void online_hub_render_match_countdown(const OnlineLayout* L) {
+    online_hub_render_matchmaking_panel(L, 1);
+}
+
+static void online_hub_render_login_gateway(const OnlineLayout* L) {
+    float s;
+    float form_x;
+    float form_y;
+    float form_w;
+    float row_h;
+    float gap;
+    float button_w;
+    char username[ONLINE_HUB_TEXT_MAX];
+    char password[ONLINE_HUB_TEXT_MAX];
+    char server[192];
+    int user_selected;
+    int pass_selected;
+    int login_selected;
+    int register_selected;
+    if (!L) return;
+    s = L->ui;
+    online_login_gateway_metrics(L, &form_x, &form_y, &form_w, &row_h, &gap);
+    button_w = (form_w - gap) * 0.5f;
+
+    online_format_setting_value(ONLINE_SETTING_USERNAME, username, sizeof(username));
+    online_format_setting_value(ONLINE_SETTING_PASSWORD, password, sizeof(password));
+    if (g_online_capture_active && g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
+        if (g_online_capture_target == ONLINE_SETTING_USERNAME) {
+            snprintf(username, sizeof(username), "%s_", g_online_capture_buf);
+        } else if (g_online_capture_target == ONLINE_SETTING_PASSWORD) {
+            size_t n = strlen(g_online_capture_buf);
+            if (n > sizeof(password) - 2) n = sizeof(password) - 2;
+            memset(password, '*', n);
+            password[n] = '_';
+            password[n + 1] = '\0';
+        }
+    }
+    snprintf(server, sizeof(server), "%s:%u", g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port);
+    user_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_USERNAME));
+    pass_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_PASSWORD));
+    login_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_LOGIN));
+    register_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_REGISTER));
+
+    mods_restore_render_state();
+    online_hub_text_center(L->center_x, L->panel_y + 48.0f * s,
+                           2.05f * s, 0.94f, 0.98f, 1.00f, "EGGNOGG+ ONLINE");
+    online_hub_text_center(L->center_x, L->panel_y + 91.0f * s,
+                           1.00f * s, 0.70f, 0.94f, 0.90f,
+                           g_online_server_state == ONLINE_SERVER_CONNECTED ? "Connected. Sign in to continue." : "Sign in to play online.");
+
+    online_hub_draw_rect(form_x - 30.0f * s, form_y - 42.0f * s,
+                         form_w + 60.0f * s, row_h * 3.0f + gap * 2.0f + 106.0f * s,
+                         0.030f, 0.038f, 0.050f, 0.90f);
+    online_hub_draw_border(form_x - 30.0f * s, form_y - 42.0f * s,
+                           form_w + 60.0f * s, row_h * 3.0f + gap * 2.0f + 106.0f * s,
+                           1.0f, 0.22f, 0.70f, 0.66f, 0.72f);
+
+    online_hub_draw_rect(form_x, form_y, form_w, row_h,
+                         user_selected ? 0.060f : 0.045f,
+                         user_selected ? 0.135f : 0.070f,
+                         user_selected ? 0.130f : 0.090f,
+                         0.96f);
+    online_hub_draw_border(form_x, form_y, form_w, row_h, user_selected ? 2.0f : 1.0f,
+                           user_selected ? 0.42f : 0.28f,
+                           user_selected ? 0.92f : 0.52f,
+                           user_selected ? 0.82f : 0.62f,
+                           0.92f);
+    mods_restore_render_state();
+    online_hub_text(form_x + 18.0f * s, form_y + 14.0f * s,
+                    0.98f * s, 0.70f, 0.82f, 0.90f, "USERNAME");
+    online_hub_text_right(form_x + form_w - 18.0f * s, form_y + 14.0f * s,
+                          1.04f * s, 0.94f, 0.98f, 1.00f, username[0] ? username : " ");
+
+    online_hub_draw_rect(form_x, form_y + row_h + gap, form_w, row_h,
+                         pass_selected ? 0.060f : 0.045f,
+                         pass_selected ? 0.135f : 0.070f,
+                         pass_selected ? 0.130f : 0.090f,
+                         0.96f);
+    online_hub_draw_border(form_x, form_y + row_h + gap, form_w, row_h, pass_selected ? 2.0f : 1.0f,
+                           pass_selected ? 0.42f : 0.28f,
+                           pass_selected ? 0.92f : 0.52f,
+                           pass_selected ? 0.82f : 0.62f,
+                           0.92f);
+    mods_restore_render_state();
+    online_hub_text(form_x + 18.0f * s, form_y + row_h + gap + 14.0f * s,
+                    0.98f * s, 0.70f, 0.82f, 0.90f, "PASSWORD");
+    online_hub_text_right(form_x + form_w - 18.0f * s, form_y + row_h + gap + 14.0f * s,
+                          1.04f * s, 0.94f, 0.98f, 1.00f, password[0] ? password : " ");
+
+    online_hub_draw_button_box(form_x, form_y + row_h * 2.0f + gap * 2.0f,
+                               button_w, row_h, "LOG IN", "",
+                               login_selected, 1, s);
+    online_hub_draw_button_box(form_x + button_w + gap, form_y + row_h * 2.0f + gap * 2.0f,
+                               button_w, row_h, "REGISTER", "",
+                               register_selected, 0, s);
+
+    mods_restore_render_state();
+    online_hub_text_center(L->center_x, form_y + row_h * 3.0f + gap * 2.0f + 28.0f * s,
+                           0.92f * s, 0.66f, 0.76f, 0.86f, server);
+    if (g_online_status[0]) {
+        online_hub_text_center(L->center_x, form_y + row_h * 3.0f + gap * 2.0f + 58.0f * s,
+                               0.98f * s, 0.84f, 0.94f, 1.00f, g_online_status);
+    }
+    online_hub_text(L->panel_x + 18.0f * s, L->panel_y + L->panel_h - L->footer_h + 12.0f * s,
+                    0.92f * s, 0.54f, 0.66f, 0.74f, "ESC");
+    online_hub_draw_cursor();
+}
+
+static void online_hub_render_ui(void) {
+    OnlineLayout L;
+    int cap;
+    int start;
+    int end;
+    float s;
+    float rows_top;
+    online_hub_rebuild_rows();
+    online_calc_layout(&L);
+    s = L.ui;
+    g_ui_scale = L.text_scale;
+
+    online_hub_draw_panel(&L);
+    if (online_login_gateway_active()) {
+        online_hub_render_login_gateway(&L);
+        return;
+    }
+
+    mods_restore_render_state();
+    online_hub_text_center(L.center_x, L.panel_y + 18.0f * s, 1.90f * s, 0.96f, 0.98f, 1.00f, "ONLINE HUB");
+    {
+        char subtitle[256];
+        if (g_online_authed) {
+            snprintf(subtitle, sizeof(subtitle), "%s  Elo %d", g_online_cfg.username, g_online_public_elo);
+        } else {
+            snprintf(subtitle, sizeof(subtitle), "%s", online_server_state_text());
+        }
+        online_hub_text_center(L.center_x, L.panel_y + 52.0f * s, 1.10f * s, 0.70f, 0.96f, 0.90f, subtitle);
+    }
+    online_hub_draw_tabs(&L);
+
+    rows_top = L.list_top + 14.0f * s;
+    if (g_online_status[0] && !g_online_queue_mode && !g_online_pending_match.active) {
+        online_hub_text_center(L.center_x, L.panel_y + L.header_h + 34.0f * s,
+                               1.04f * s, 0.82f, 0.94f, 1.00f, g_online_status);
+        rows_top += 32.0f * s;
+    }
+
+    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) {
+        online_hub_render_match_countdown(&L);
+        online_hub_draw_cursor();
+        return;
+    }
+
+    if (g_online_queue_mode && !g_online_pending_match.active) {
+        online_hub_render_queue_overlay(&L);
+        online_hub_text(L.panel_x + 18.0f * s, L.panel_y + L.panel_h - L.footer_h + 12.0f * s,
+                        0.88f * s, 0.40f, 0.48f, 0.58f, "ESC");
+        online_hub_draw_cursor();
+        return;
+    }
+
+    cap = (int)((L.list_bottom - rows_top) / L.row_h);
+    if (cap < 4) cap = 4;
+    start = clampi(g_online_scroll_row, 0, g_online_row_count);
+    end = start + cap;
+    if (end > g_online_row_count) end = g_online_row_count;
+    for (int i = start; i < end; i++) {
+        OnlineHubRow* row = &g_online_rows[i];
+        float y = rows_top + (float)(i - start) * L.row_h;
+        int selected = (i == g_online_selected_row);
+        float box_x = L.content_x + 18.0f * s;
+        float box_w = L.content_w - 36.0f * s;
+        float box_h = L.row_h - 8.0f * s;
+        char right[224];
+
+        safe_copy(right, sizeof(right), row->right);
+        if (g_online_capture_active && row->kind == ONLINE_ROW_SETTING &&
+            g_online_capture_kind == ONLINE_CAPTURE_SETTING &&
+            row->id == g_online_capture_target) {
+            if (row->id == ONLINE_SETTING_PASSWORD) {
+                size_t n = strlen(g_online_capture_buf);
+                if (n > sizeof(right) - 2) n = sizeof(right) - 2;
+                memset(right, '*', n);
+                right[n] = '_';
+                right[n + 1] = '\0';
+            } else {
+                snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
+            }
+        } else if (g_online_capture_active && row->kind == ONLINE_ROW_ACTION &&
+                   g_online_capture_kind == ONLINE_CAPTURE_ADD_FRIEND &&
+                   row->id == ONLINE_ACTION_ADD_FRIEND) {
+            snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
+        }
+
+        if (row->kind == ONLINE_ROW_INFO) {
+            float label_scale = (_stricmp(row->left, "Players in queue") == 0) ? 1.10f * s : 0.90f * s;
+            float value_scale = (_stricmp(row->left, "Players in queue") == 0) ? 1.44f * s : 0.86f * s;
+            online_hub_text(box_x, y + 8.0f * s, label_scale, 0.72f, 0.80f, 0.92f, row->left);
+            if (right[0]) {
+                online_hub_text_right(box_x + box_w, y + 7.0f * s, value_scale, 0.96f, 0.88f, 0.42f, right);
+            }
+        } else if (online_hub_row_boxed(row)) {
+            if (row->kind == ONLINE_ROW_FRIEND_REQUEST || row->kind == ONLINE_ROW_CHALLENGE) {
+                float accept_w = 86.0f * s;
+                float decline_w = 92.0f * s;
+                float action_h = box_h - 14.0f * s;
+                float decline_x = box_x + box_w - 14.0f * s - decline_w;
+                float accept_x = decline_x - 8.0f * s - accept_w;
+                float action_y = y + 7.0f * s;
+                float br = selected ? 0.075f : 0.050f;
+                float bg = selected ? 0.140f : 0.070f;
+                float bb = selected ? 0.135f : 0.090f;
+                online_hub_draw_rect(box_x, y, box_w, box_h, br, bg, bb, selected ? 0.98f : 0.94f);
+                online_hub_draw_border(box_x, y, box_w, box_h, selected ? 2.0f : 1.0f,
+                                       selected ? 0.40f : 0.34f,
+                                       selected ? 0.92f : 0.50f,
+                                       selected ? 0.82f : 0.58f,
+                                       selected ? 1.0f : 0.88f);
+                mods_restore_render_state();
+                online_hub_text(box_x + 16.0f * s, y + box_h * 0.5f - 11.0f * s,
+                                0.98f * s, 0.92f, 0.98f, 1.00f, row->left);
+                online_hub_text_right(accept_x - 14.0f * s, y + box_h * 0.5f - 10.0f * s,
+                                      0.76f * s, 0.84f, 0.90f, 0.98f, right);
+
+                online_hub_draw_rect(accept_x, action_y, accept_w, action_h,
+                                     0.08f, 0.22f, 0.15f, selected ? 0.98f : 0.92f);
+                online_hub_draw_border(accept_x, action_y, accept_w, action_h, 1.0f,
+                                       0.36f, 0.86f, 0.52f, 0.95f);
+                online_hub_draw_rect(decline_x, action_y, decline_w, action_h,
+                                     0.22f, 0.08f, 0.10f, selected ? 0.98f : 0.92f);
+                online_hub_draw_border(decline_x, action_y, decline_w, action_h, 1.0f,
+                                       0.90f, 0.42f, 0.44f, 0.95f);
+                mods_restore_render_state();
+                online_hub_text_center(accept_x + accept_w * 0.5f, action_y + action_h * 0.5f - 8.0f * s,
+                                       0.68f * s, 0.78f, 1.0f, 0.82f, "ACCEPT");
+                online_hub_text_center(decline_x + decline_w * 0.5f, action_y + action_h * 0.5f - 8.0f * s,
+                                       0.68f * s, 1.0f, 0.74f, 0.76f, "DECLINE");
+            } else if (row->kind == ONLINE_ROW_SETTING || row->kind == ONLINE_ROW_FRIEND) {
+                float br = selected ? 0.070f : 0.045f;
+                float bg = selected ? 0.125f : 0.070f;
+                float bb = selected ? 0.145f : 0.095f;
+                if (row->kind == ONLINE_ROW_FRIEND && row->id >= 0 && row->id < g_online_friend_count &&
+                    g_online_friends[row->id].blocked) {
+                    br = selected ? 0.16f : 0.08f;
+                    bg = selected ? 0.08f : 0.06f;
+                    bb = selected ? 0.09f : 0.07f;
+                }
+                online_hub_draw_rect(box_x, y, box_w, box_h, br, bg, bb, selected ? 0.98f : 0.92f);
+                online_hub_draw_border(box_x, y, box_w, box_h, selected ? 2.0f : 1.0f,
+                                       selected ? 0.40f : 0.32f,
+                                       selected ? 0.92f : 0.48f,
+                                       selected ? 0.82f : 0.58f,
+                                       selected ? 1.0f : 0.86f);
+                mods_restore_render_state();
+                online_hub_text(box_x + 18.0f * s, y + box_h * 0.5f - 11.0f * s,
+                                1.00f * s,
+                                selected ? 0.92f : 0.78f,
+                                selected ? 0.98f : 0.86f,
+                                selected ? 1.00f : 0.96f,
+                                row->left);
+                if (right[0]) {
+                    float rr = 0.84f;
+                    float rg = 0.90f;
+                    float rb = 0.98f;
+                    float right_edge = box_x + box_w - 18.0f * s;
+                    if (row->kind == ONLINE_ROW_FRIEND && _stricmp(right, "online") == 0) {
+                        rr = 0.62f; rg = 0.96f; rb = 0.70f;
+                    } else if (row->kind == ONLINE_ROW_FRIEND && _stricmp(right, "offline") == 0) {
+                        rr = 0.55f; rg = 0.60f; rb = 0.68f;
+                    }
+                    if (row->kind == ONLINE_ROW_FRIEND && row->id >= 0 && row->id < g_online_friend_count &&
+                        g_online_friends[row->id].online) {
+                        int sent = online_sent_challenge_pending(g_online_friends[row->id].name);
+                        float bw = 112.0f * s;
+                        float bh = box_h - 14.0f * s;
+                        float bx = box_x + box_w - 14.0f * s - bw;
+                        float by = y + 7.0f * s;
+                        right_edge = bx - 14.0f * s;
+                        online_hub_draw_rect(bx, by, bw, bh,
+                                             sent ? 0.10f : 0.08f,
+                                             sent ? 0.12f : 0.21f,
+                                             sent ? 0.16f : 0.18f,
+                                             selected ? 0.98f : 0.92f);
+                        online_hub_draw_border(bx, by, bw, bh, 1.0f, 0.34f, 0.86f, 0.74f, 0.95f);
+                        mods_restore_render_state();
+                        online_hub_text_center(bx + bw * 0.5f, by + bh * 0.5f - 8.0f * s,
+                                               0.66f * s,
+                                               sent ? 0.72f : 0.76f,
+                                               sent ? 0.82f : 1.0f,
+                                               sent ? 0.94f : 0.92f,
+                                               sent ? "SENT!" : "CHALLENGE");
+                    }
+                    online_hub_text_right(right_edge, y + box_h * 0.5f - 10.0f * s,
+                                          0.90f * s, rr, rg, rb, right);
+                }
+            } else {
+                online_hub_draw_button_box(box_x, y, box_w, box_h, row->left, right,
+                                           selected, online_hub_row_primary(row), s);
+            }
+        }
+    }
+
+    if (g_online_scroll_row > 0) {
+        online_hub_text_right(L.right_x, rows_top - 12.0f * s, 0.70f * s, 0.44f, 0.52f, 0.62f, "^");
+    }
+    if (g_online_scroll_row + cap < g_online_row_count) {
+        online_hub_text_right(L.right_x, L.list_bottom - 8.0f * s, 0.70f * s, 0.44f, 0.52f, 0.62f, "v");
+    }
+
+    online_hub_text(L.panel_x + 18.0f * s, L.panel_y + L.panel_h - L.footer_h + 12.0f * s,
+                    0.88f * s, 0.40f, 0.48f, 0.58f, "ESC");
+    online_hub_draw_context_menu();
+    online_hub_draw_cursor();
+}
+
+static void online_hub_open(void) {
+    void* cur;
+    if (!p_state_switch) return;
+    online_hub_load();
+    cur = p_state_current ? p_state_current() : NULL;
+    if (cur == (void*)&g_console_state) cur = g_console_return_state;
+    if (!cur || cur == (void*)&g_online_hub_state || cur == (void*)&g_online_result_state) {
+        cur = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    if (is_online_hub_state_active()) {
+        g_online_return_state = cur;
+        return;
+    }
+    g_online_pending_return_state = cur;
+    g_online_open_pending = 1;
+}
+
+static void __cdecl online_hub_enter(void) {
+    void* last = p_state_last ? p_state_last() : (void*)(uintptr_t)ADDR_MAIN_STATE;
+    online_hub_load();
+    if (!last || last == (void*)&g_online_hub_state || last == (void*)&g_console_state) {
+        last = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    g_online_return_state = last;
+    g_online_capture_active = 0;
+    online_hub_apply_net_settings();
+    online_hub_rebuild_rows();
+    if (!g_online_pending_match.active && !g_online_result.active) {
+        online_hub_set_status("");
+    }
+    online_reset_native_sound_state("online hub enter");
+    LOG_INFO("ONLINE HUB: enter");
+}
+
+static void __cdecl online_hub_update(void) {
+    online_sent_challenge_prune();
+    online_server_update();
+    online_match_pump_launch();
+    lua_manager_on_tick();
+    lua_manager_on_tick_post();
+    hooks_finish_game_tick();
+}
+
+static void online_hub_render_background(void) {
+    float w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    mods_restore_render_state();
+    if (g_console_bg_ready) {
+        console_draw_background(w, h);
+        online_hub_draw_rect(0.0f, 0.0f, w, h, 0.006f, 0.010f, 0.014f, 0.14f);
+        return;
+    }
+    if (p_main_draw) {
+        p_main_draw();
+        mods_restore_render_state();
+        if (p_menu_common_render) {
+            p_menu_common_render();
+            mods_restore_render_state();
+        }
+        if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+        mods_restore_render_state();
+        online_hub_draw_rect(0.0f, 0.0f, w, h, 0.006f, 0.010f, 0.014f, 0.38f);
+        return;
+    }
+    console_draw_background(w, h);
+}
+
+static void __cdecl online_hub_render(void) {
+    mods_restore_render_state();
+    online_hub_render_background();
+    mods_restore_render_state();
+    online_hub_render_ui();
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) {
+        p_main_sprite_batches_draw();
+    }
+    mods_restore_render_state();
+}
+
+static void __cdecl online_hub_leave(void) {
+    g_online_capture_active = 0;
+    online_hub_save();
+    mods_restore_render_state();
+    LOG_INFO("ONLINE HUB: leave");
+}
+
+static const char* online_result_title(OnlineMatchResult result) {
+    if (result == ONLINE_MATCH_RESULT_WIN) return "YOU WON";
+    if (result == ONLINE_MATCH_RESULT_LOSS) return "YOU LOST";
+    if (result == ONLINE_MATCH_RESULT_DRAW) return "DRAW";
+    return "GAME OVER";
+}
+
+static const char* online_result_button_label(int index) {
+    return index == 0 ? "REQUEUE" : "ONLINE HUB";
+}
+
+static void online_result_toast_metrics(float* out_x,
+                                        float* out_y,
+                                        float* out_w,
+                                        float* out_h,
+                                        float* out_close_x,
+                                        float* out_close_y,
+                                        float* out_close_size) {
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float sh = p_mad_h ? p_mad_h() : BASE_UI_H;
+    float s = online_hub_ui_scale();
+    float margin = 18.0f * s;
+    float w = clampf(410.0f * s, 340.0f, sw - margin * 2.0f);
+    float h = 128.0f * s;
+    float x = sw - w - margin;
+    float y = sh - h - margin;
+    float close_size = 24.0f * s;
+    float close_x;
+    float close_y;
+    if (x < margin) x = margin;
+    if (y < margin) y = margin;
+    close_x = x + w - close_size - 10.0f * s;
+    close_y = y + 10.0f * s;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    if (out_close_x) *out_close_x = close_x;
+    if (out_close_y) *out_close_y = close_y;
+    if (out_close_size) *out_close_size = close_size;
+}
+
+static void online_result_render_toast(void) {
+    float s;
+    float x;
+    float y;
+    float w;
+    float h;
+    float close_x;
+    float close_y;
+    float close_size;
+    float alpha;
+    int hover;
+    char line[256];
+    if (!g_online_result.active) return;
+    s = online_hub_ui_scale();
+    if (g_online_result.toast_lifetime <= 0) g_online_result.toast_lifetime = ONLINE_RESULT_TOAST_FRAMES;
+    alpha = online_ui_fade_alpha(g_online_result.toast_age, g_online_result.toast_lifetime, 90);
+    if (alpha <= 0.01f) return;
+    online_result_toast_metrics(&x, &y, &w, &h, &close_x, &close_y, &close_size);
+    hover = online_ui_close_hit(g_online_mouse_x, g_online_mouse_y, close_x, close_y, close_size);
+    online_ui_panel(x, y, w, h, alpha, 0);
+    online_hub_draw_rect(x, y, 5.0f * s, h,
+                         g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.24f : 0.86f,
+                         g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.92f : 0.30f,
+                         g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.54f : 0.34f,
+                         0.96f * alpha);
+    mods_restore_render_state();
+    online_hub_text_alpha(x + 18.0f * s, y + 18.0f * s,
+                    1.10f * s,
+                    g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.72f : 1.00f,
+                    g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 1.00f : 0.72f,
+                    g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.76f : 0.70f,
+                    alpha,
+                    online_result_title(g_online_result.result));
+    snprintf(line, sizeof(line), "%s - %s",
+             g_online_result.opponent[0] ? g_online_result.opponent : "opponent",
+             g_online_result.map_label[0] ? g_online_result.map_label : "selected map");
+    online_hub_text_alpha(x + 18.0f * s, y + 60.0f * s,
+                    0.78f * s, 0.86f, 0.91f, 0.98f, alpha, line);
+    if (g_online_result.competitive && g_online_result.elo_delta_valid) {
+        int delta = g_online_result.elo_after - g_online_result.elo_before;
+        snprintf(line, sizeof(line), "Elo %d (%+d)", g_online_result.elo_after, delta);
+    } else {
+        snprintf(line, sizeof(line), "Match complete");
+    }
+    online_hub_text_alpha(x + 18.0f * s, y + 91.0f * s,
+                    0.76f * s, 0.70f, 0.80f, 0.90f, alpha, line);
+    online_ui_close_button(close_x, close_y, close_size, alpha, hover);
+}
+
+static void online_result_tick_toast(void) {
+    if (!g_online_result.active) return;
+    if (g_online_result.toast_lifetime <= 0) g_online_result.toast_lifetime = ONLINE_RESULT_TOAST_FRAMES;
+    g_online_result.toast_age++;
+    if (g_online_result.toast_age >= g_online_result.toast_lifetime) {
+        g_online_result.active = 0;
+    }
+}
+
+static void online_result_activate(void) {
+    if (g_online_result.selected == 0) {
+        const char* queue = (g_online_result.queue_mode == 2) ? "competitive" : "casual";
+        if (!g_online_result.server_confirmed) {
+            safe_copy(g_online_result.status, sizeof(g_online_result.status), "Waiting for server result...");
+            return;
+        }
+        online_server_send_queue(queue);
+        g_online_tab = ONLINE_TAB_PLAY;
+        g_online_result.active = 0;
+        online_hub_open();
+    } else {
+        g_online_tab = ONLINE_TAB_PLAY;
+        g_online_result.active = 0;
+        online_hub_open();
+    }
+}
+
+static int online_result_close_at(float x, float y) {
+    float close_x;
+    float close_y;
+    float close_size;
+    if (!g_online_result.active) return 0;
+    online_result_toast_metrics(NULL, NULL, NULL, NULL, &close_x, &close_y, &close_size);
+    return online_ui_close_hit(x, y, close_x, close_y, close_size);
+}
+
+static int online_challenge_index_by_ref(int id, const char* from) {
+    if (id > 0) {
+        for (int i = 0; i < g_online_challenge_count; i++) {
+            if (g_online_challenges[i].id == id) return i;
+        }
+    }
+    if (!from || !from[0]) return -1;
+    for (int i = 0; i < g_online_challenge_count; i++) {
+        if (_stricmp(g_online_challenges[i].from, from) == 0) return i;
+    }
+    return -1;
+}
+
+static void online_challenge_toast_show(const char* from, int id, int elo, int expires_in) {
+    if (!g_online_cfg.challenge_notifications || !from || !from[0]) return;
+    memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
+    g_online_challenge_toast.active = 1;
+    g_online_challenge_toast.id = id;
+    g_online_challenge_toast.elo = elo;
+    if (expires_in <= 0) expires_in = 300;
+    g_online_challenge_toast.expires_ms = (uint32_t)GetTickCount() + (uint32_t)expires_in * 1000u;
+    safe_copy(g_online_challenge_toast.from, sizeof(g_online_challenge_toast.from), from);
+}
+
+static void online_challenge_toast_clear(int id, const char* from) {
+    if (!g_online_challenge_toast.active) return;
+    if (id > 0 && g_online_challenge_toast.id == id) {
+        memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
+        return;
+    }
+    if (from && from[0] && _stricmp(g_online_challenge_toast.from, from) == 0) {
+        memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
+    }
+}
+
+static void online_challenge_toast_metrics(float* out_x,
+                                           float* out_y,
+                                           float* out_w,
+                                           float* out_h,
+                                           float* out_accept_x,
+                                           float* out_accept_y,
+                                           float* out_accept_w,
+                                           float* out_accept_h,
+                                           float* out_decline_x,
+                                           float* out_decline_y,
+                                           float* out_decline_w,
+                                           float* out_decline_h) {
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float s = online_hub_ui_scale();
+    float margin = 18.0f * s;
+    float w = clampf(430.0f * s, 350.0f, sw - margin * 2.0f);
+    float h = 156.0f * s;
+    float x = sw - w - margin;
+    float y = margin;
+    float button_h = 34.0f * s;
+    float gap = 10.0f * s;
+    float decline_w = 112.0f * s;
+    float accept_w = 104.0f * s;
+    float decline_x = x + w - 18.0f * s - decline_w;
+    float accept_x = decline_x - gap - accept_w;
+    float button_y = y + h - button_h - 16.0f * s;
+    if (x < margin) x = margin;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    if (out_accept_x) *out_accept_x = accept_x;
+    if (out_accept_y) *out_accept_y = button_y;
+    if (out_accept_w) *out_accept_w = accept_w;
+    if (out_accept_h) *out_accept_h = button_h;
+    if (out_decline_x) *out_decline_x = decline_x;
+    if (out_decline_y) *out_decline_y = button_y;
+    if (out_decline_w) *out_decline_w = decline_w;
+    if (out_decline_h) *out_decline_h = button_h;
+}
+
+static int online_challenge_toast_seconds_left(void) {
+    uint32_t now_ms;
+    int32_t left_ms;
+    if (!g_online_challenge_toast.active) return 0;
+    now_ms = (uint32_t)GetTickCount();
+    left_ms = (int32_t)(g_online_challenge_toast.expires_ms - now_ms);
+    if (left_ms <= 0) return 0;
+    return (left_ms + 999) / 1000;
+}
+
+static int online_challenge_toast_action_at(float x, float y) {
+    float ax;
+    float ay;
+    float aw;
+    float ah;
+    float dx;
+    float dy;
+    float dw;
+    float dh;
+    if (!g_online_challenge_toast.active) return 0;
+    online_challenge_toast_metrics(NULL, NULL, NULL, NULL, &ax, &ay, &aw, &ah, &dx, &dy, &dw, &dh);
+    if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) return 1;
+    if (x >= dx && x <= dx + dw && y >= dy && y <= dy + dh) return 2;
+    return 0;
+}
+
+static int online_challenge_toast_activate(int action) {
+    int idx;
+    int id;
+    char from[48];
+    if (!g_online_challenge_toast.active || (action != 1 && action != 2)) return 0;
+    id = g_online_challenge_toast.id;
+    safe_copy(from, sizeof(from), g_online_challenge_toast.from);
+    idx = online_challenge_index_by_ref(id, from);
+    if (idx >= 0) {
+        id = g_online_challenges[idx].id;
+        safe_copy(from, sizeof(from), g_online_challenges[idx].from);
+    }
+    online_server_send_challenge_action(action == 1 ? "challenge_accept" : "challenge_decline", id, from);
+    if (idx >= 0) online_remove_challenge_index(idx);
+    online_challenge_toast_clear(id, from);
+    return 1;
+}
+
+static void online_challenge_toast_render(void) {
+    float s;
+    float x;
+    float y;
+    float w;
+    float h;
+    float ax;
+    float ay;
+    float aw;
+    float ah;
+    float dx;
+    float dy;
+    float dw;
+    float dh;
+    float alpha;
+    int left;
+    int accept_hot;
+    int decline_hot;
+    char line[160];
+    if (!g_online_challenge_toast.active) return;
+    left = online_challenge_toast_seconds_left();
+    if (left <= 0) {
+        memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
+        return;
+    }
+    s = online_hub_ui_scale();
+    alpha = 1.0f;
+    if (g_online_challenge_toast.age < ONLINE_CHALLENGE_TOAST_FADE_FRAMES) {
+        alpha = clampf((float)g_online_challenge_toast.age / (float)ONLINE_CHALLENGE_TOAST_FADE_FRAMES, 0.20f, 1.0f);
+    } else if (left <= 5) {
+        alpha = clampf((float)left / 5.0f, 0.24f, 1.0f);
+    }
+    online_challenge_toast_metrics(&x, &y, &w, &h, &ax, &ay, &aw, &ah, &dx, &dy, &dw, &dh);
+    accept_hot = online_challenge_toast_action_at(g_online_mouse_x, g_online_mouse_y) == 1;
+    decline_hot = online_challenge_toast_action_at(g_online_mouse_x, g_online_mouse_y) == 2;
+
+    online_ui_panel(x, y, w, h, alpha, accept_hot || decline_hot);
+    online_hub_draw_rect(x, y, 5.0f * s, h, 0.96f, 0.74f, 0.24f, 0.96f * alpha);
+    mods_restore_render_state();
+    online_hub_text_alpha(x + 18.0f * s, y + 17.0f * s,
+                          1.08f * s, 1.0f, 0.92f, 0.62f, alpha, "CHALLENGE");
+    snprintf(line, sizeof(line), "%s wants to play", g_online_challenge_toast.from[0] ? g_online_challenge_toast.from : "A friend");
+    online_hub_text_alpha(x + 18.0f * s, y + 55.0f * s,
+                          0.82f * s, 0.90f, 0.96f, 1.00f, alpha, line);
+    snprintf(line, sizeof(line), "Expires in %ds", left);
+    online_hub_text_alpha(x + 18.0f * s, y + 86.0f * s,
+                          0.74f * s, 0.70f, 0.80f, 0.90f, alpha, line);
+
+    online_hub_draw_rect(ax, ay, aw, ah,
+                         accept_hot ? 0.10f : 0.08f,
+                         accept_hot ? 0.30f : 0.22f,
+                         accept_hot ? 0.18f : 0.15f,
+                         0.94f * alpha);
+    online_hub_draw_border(ax, ay, aw, ah, accept_hot ? 2.0f : 1.0f,
+                           0.38f, 0.92f, 0.56f, 0.95f * alpha);
+    online_hub_draw_rect(dx, dy, dw, dh,
+                         decline_hot ? 0.30f : 0.22f,
+                         decline_hot ? 0.09f : 0.08f,
+                         decline_hot ? 0.11f : 0.10f,
+                         0.94f * alpha);
+    online_hub_draw_border(dx, dy, dw, dh, decline_hot ? 2.0f : 1.0f,
+                           0.92f, 0.42f, 0.44f, 0.95f * alpha);
+    mods_restore_render_state();
+    online_hub_text_center_alpha(ax + aw * 0.5f, ay + ah * 0.5f - 8.0f * s,
+                                 0.68f * s, 0.78f, 1.0f, 0.82f, alpha, "ACCEPT");
+    online_hub_text_center_alpha(dx + dw * 0.5f, dy + dh * 0.5f - 8.0f * s,
+                                 0.68f * s, 1.0f, 0.74f, 0.76f, alpha, "DECLINE");
+}
+
+static void online_challenge_toast_tick(void) {
+    if (!g_online_challenge_toast.active) return;
+    if (online_challenge_toast_seconds_left() <= 0) {
+        memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
+        return;
+    }
+    if (g_online_challenge_toast.age < 0x3fffffff) {
+        g_online_challenge_toast.age++;
+    }
+}
+
+static void __cdecl online_result_enter(void) {
+    g_online_capture_active = 0;
+    if (!g_online_result.active) {
+        memset(&g_online_result, 0, sizeof(g_online_result));
+        g_online_result.active = 1;
+        g_online_result.result = ONLINE_MATCH_RESULT_NONE;
+        g_online_result.toast_lifetime = ONLINE_RESULT_TOAST_FRAMES;
+        safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match ended.");
+    }
+    g_online_result.selected = 0;
+    LOG_INFO("ONLINE RESULT: enter");
+}
+
+static void __cdecl online_result_update(void) {
+    online_server_update();
+    lua_manager_on_tick();
+    lua_manager_on_tick_post();
+    hooks_finish_game_tick();
+}
+
+static void online_result_render_overlay(const OnlineLayout* L) {
+    (void)L;
+    online_result_render_toast();
+}
+
+static void __cdecl online_result_render(void) {
+    OnlineLayout L;
+    float s;
+    char line[256];
+    mods_restore_render_state();
+    online_hub_render_background();
+    mods_restore_render_state();
+    online_calc_layout(&L);
+    s = L.ui;
+    (void)s;
+    (void)line;
+    online_result_render_overlay(&L);
+    online_hub_draw_cursor();
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+    mods_restore_render_state();
+    return;
+    online_hub_draw_rect(L.panel_x, L.panel_y, L.panel_w, L.panel_h, 0.02f, 0.025f, 0.035f, 0.94f);
+    online_hub_draw_border(L.panel_x, L.panel_y, L.panel_w, L.panel_h, 2.0f,
+                           g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.54f : 0.72f,
+                           g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.86f : 0.50f,
+                           g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.42f : 0.36f,
+                           1.0f);
+    online_hub_text_center(L.center_x, L.panel_y + 58.0f * s, 1.75f * s,
+                           g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.72f : 0.98f,
+                           g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.95f : 0.66f,
+                           g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.52f : 0.48f,
+                           online_result_title(g_online_result.result));
+
+    snprintf(line, sizeof(line), "Opponent: %s",
+             g_online_result.opponent[0] ? g_online_result.opponent : "opponent");
+    online_hub_text_center(L.center_x, L.panel_y + 126.0f * s, 0.96f * s, 0.82f, 0.88f, 0.98f, line);
+    snprintf(line, sizeof(line), "Map: %s",
+             g_online_result.map_label[0] ? g_online_result.map_label : "selected map");
+    online_hub_text_center(L.center_x, L.panel_y + 166.0f * s, 0.86f * s, 0.66f, 0.72f, 0.82f, line);
+
+    if (g_online_result.competitive) {
+        if (g_online_result.elo_delta_valid) {
+            int delta = g_online_result.elo_after - g_online_result.elo_before;
+            snprintf(line, sizeof(line), "Competitive Elo: %d (%+d)", g_online_result.elo_after, delta);
+        } else {
+            snprintf(line, sizeof(line), "Competitive result reported");
+        }
+    } else {
+        snprintf(line, sizeof(line), "Casual match");
+    }
+    online_hub_text_center(L.center_x, L.panel_y + 218.0f * s, 0.92f * s, 0.96f, 0.88f, 0.42f, line);
+
+    online_hub_text_center(L.center_x, L.panel_y + 262.0f * s, 0.80f * s, 0.48f, 0.58f, 0.70f,
+                           g_online_result.status[0] ? g_online_result.status : "Result reported.");
+
+    {
+        float bw = 220.0f * s;
+        float bh = 52.0f * s;
+        float gap = 20.0f * s;
+        float by = L.panel_y + L.panel_h - L.footer_h - 70.0f * s;
+        for (int i = 0; i < 2; i++) {
+            float bx = L.center_x - bw - gap * 0.5f + (float)i * (bw + gap);
+            online_hub_draw_button_box(bx, by, bw, bh,
+                                       online_result_button_label(i),
+                                       i == 0 ? ((g_online_result.queue_mode == 2) ? "competitive" : "casual") : "",
+                                       i == g_online_result.selected,
+                                       i == 0,
+                                       s);
+        }
+    }
+    online_hub_draw_cursor();
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+    mods_restore_render_state();
+}
+
+static void __cdecl online_result_leave(void) {
+    mods_restore_render_state();
+    LOG_INFO("ONLINE RESULT: leave");
+}
+
+static uintptr_t online_player_ptr(int player_index) {
+    if (!p_player_slots || player_index < 0 || player_index > 1) return 0;
+    if (IsBadReadPtr((const void*)(p_player_slots + player_index), sizeof(uintptr_t))) return 0;
+    return p_player_slots[player_index];
+}
+
+static int online_player_room(int player_index, int* out_room) {
+    uintptr_t player = online_player_ptr(player_index);
+    if (!player) return 0;
+    if (IsBadReadPtr((const void*)player, PLAYER_SIZE)) return 0;
+    if (out_room) *out_room = (int)*(signed char*)(player + PLAYER_OFS_ROOM);
+    return 1;
+}
+
+static int online_player_screen_pos(int player_index, float y_offset, float* out_x, float* out_y) {
+    uintptr_t player = online_player_ptr(player_index);
+    float px;
+    float py;
+    float sw;
+    float sh;
+    float cam_x;
+    float cam_y;
+    float game_w;
+    float game_h;
+    float scale;
+    if (!player || !out_x || !out_y) return 0;
+    if (IsBadReadPtr((const void*)player, PLAYER_SIZE)) return 0;
+    px = *(float*)(player + PLAYER_OFS_X);
+    py = *(float*)(player + PLAYER_OFS_Y) + y_offset;
+    sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    sh = p_mad_h ? p_mad_h() : BASE_UI_H;
+    cam_x = g_camera_x ? *g_camera_x : 0.0f;
+    cam_y = g_camera_y ? *g_camera_y : 0.0f;
+    game_w = (g_game_w_native && *g_game_w_native > 1.0f) ? *g_game_w_native : BASE_UI_W;
+    game_h = (g_game_h_native && *g_game_h_native > 1.0f) ? *g_game_h_native : BASE_UI_H;
+    scale = (sw / game_w < sh / game_h) ? (sw / game_w) : (sh / game_h);
+    *out_x = sw * 0.5f + (px - cam_x) * scale;
+    *out_y = sh * 0.5f + (py - cam_y) * scale;
+    return 1;
+}
+
+static void online_draw_nametag(float cx, float cy, const char* text, int opponent) {
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float s = clampf(0.78f * online_hub_ui_scale(), 0.90f, 1.12f);
+    float text_w = approx_text_width(text, s);
+    float y;
+    if (!text || !text[0]) return;
+    cx = clampf(cx, text_w * 0.5f + 6.0f, sw - text_w * 0.5f - 6.0f);
+    y = cy - 10.0f * s;
+    mods_restore_render_state();
+    online_hub_text_center(cx, y + 4.0f * s,
+                           s,
+                           opponent ? 1.00f : 0.42f,
+                           opponent ? 0.58f : 1.00f,
+                           opponent ? 0.50f : 0.86f,
+                           text);
+}
+
+void hooks_online_on_pre_swap(void) {
+    void* state_ptr = p_state_current ? p_state_current() : NULL;
+    int local_player;
+    int remote_player;
+    int local_room = 0;
+    int remote_room = 0;
+    float x;
+    float y;
+    if (g_online_open_pending) {
+        g_online_open_pending = 0;
+        g_online_return_state = g_online_pending_return_state;
+        if (!g_online_return_state || g_online_return_state == (void*)&g_online_hub_state) {
+            g_online_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
+        }
+        (void)console_capture_background_now();
+        if (p_state_switch && !is_online_hub_state_active()) {
+            p_state_switch((void*)&g_online_hub_state);
+            state_ptr = (void*)&g_online_hub_state;
+        }
+    }
+
+    if (g_online_result.active) {
+        online_result_render_toast();
+        online_result_tick_toast();
+        mods_restore_render_state();
+        if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+        mods_restore_render_state();
+    }
+    if (g_online_challenge_toast.active) {
+        online_challenge_toast_render();
+        online_challenge_toast_tick();
+        online_hub_draw_cursor();
+        mods_restore_render_state();
+        if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+        mods_restore_render_state();
+    }
+
+    if (!ggpo_net_active() || !g_online_active_match.active) return;
+    if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE &&
+        state_ptr != (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED) {
+        return;
+    }
+    local_player = ggpo_net_local_player();
+    if (local_player < 0 || local_player > 1) local_player = clampi(g_online_active_match.local_player, 0, 1);
+    remote_player = local_player ^ 1;
+
+    if (online_player_room(local_player, &local_room) &&
+        online_player_room(remote_player, &remote_room) &&
+        local_room == remote_room &&
+        online_player_screen_pos(remote_player, -16.0f, &x, &y)) {
+        online_draw_nametag(x, y, g_online_active_match.opponent[0] ? g_online_active_match.opponent : "opponent", 1);
+    }
+    if (online_player_screen_pos(local_player, -16.0f, &x, &y)) {
+        online_draw_nametag(x, y, "V", 0);
+    }
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+    mods_restore_render_state();
+}
+
+static int online_result_keydown(int sym) {
+    switch (sym) {
+        case SDLK_ESCAPE:
+            g_online_result.selected = 1;
+            online_result_activate();
+            return 1;
+        case SDLK_LEFT:
+        case SDLK_UP:
+        case 'a': case 'A':
+        case 'w': case 'W':
+            g_online_result.selected = 0;
+            return 1;
+        case SDLK_RIGHT:
+        case SDLK_DOWN:
+        case 'd': case 'D':
+        case 's': case 'S':
+            g_online_result.selected = 1;
+            return 1;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+        case SDLK_SPACE:
+            online_result_activate();
+            return 1;
+        default:
+            return 1;
+    }
+}
+
+int hooks_online_hub_active(void) {
+    return is_online_hub_state_active() || is_online_result_state_active();
+}
+
+int hooks_online_hub_keydown(int sym, int scancode, int mod) {
+    (void)scancode;
+    (void)mod;
+    if (is_online_result_state_active()) return online_result_keydown(sym);
+    if (!is_online_hub_state_active()) return 0;
+    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_queue_mode) {
+        if (sym == SDLK_ESCAPE || sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
+            online_server_leave_queue();
+        }
+        return 1;
+    }
+
+    if (g_online_capture_active) {
+        if (sym == SDLK_ESCAPE) {
+            online_cancel_capture();
+            return 1;
+        }
+        if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+            online_commit_capture();
+            return 1;
+        }
+        if (sym == SDLK_BACKSPACE) {
+            size_t len = strlen(g_online_capture_buf);
+            if (len > 0) g_online_capture_buf[len - 1] = '\0';
+            return 1;
+        }
+        if (sym == SDLK_DELETE) {
+            g_online_capture_buf[0] = '\0';
+            return 1;
+        }
+        return 1;
+    }
+
+    online_hub_rebuild_rows();
+    switch (sym) {
+        case SDLK_ESCAPE:
+            if (p_state_switch) {
+                void* target = g_online_return_state ? g_online_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
+                if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+                p_state_switch(target);
+            }
+            return 1;
+        case SDLK_TAB:
+        case 'e': case 'E':
+            if (!g_online_authed) {
+                online_move_selection(1, 1);
+                return 1;
+            }
+            online_switch_tab(1);
+            return 1;
+        case 'q': case 'Q':
+            if (!g_online_authed) {
+                online_move_selection(-1, 1);
+                return 1;
+            }
+            online_switch_tab(-1);
+            return 1;
+        case SDLK_UP:
+        case 'w': case 'W':
+            online_move_selection(-1, 1);
+            return 1;
+        case SDLK_DOWN:
+        case 's': case 'S':
+            online_move_selection(1, 1);
+            return 1;
+        case SDLK_PAGEUP:
+            online_move_selection(-1, online_visible_rows_capacity() - 2);
+            return 1;
+        case SDLK_PAGEDOWN:
+            online_move_selection(1, online_visible_rows_capacity() - 2);
+            return 1;
+        case SDLK_HOME:
+            g_online_selected_row = online_first_selectable();
+            online_ensure_scroll_visible();
+            return 1;
+        case SDLK_END:
+            g_online_selected_row = online_last_selectable();
+            online_ensure_scroll_visible();
+            return 1;
+        case SDLK_LEFT:
+        case 'a': case 'A':
+            online_adjust_selected(-1);
+            return 1;
+        case SDLK_RIGHT:
+        case 'd': case 'D':
+            online_adjust_selected(1);
+            return 1;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+        case SDLK_SPACE:
+            online_activate_selected();
+            return 1;
+        case SDLK_BACKSPACE:
+        case SDLK_DELETE:
+            if (online_selected_decline()) return 1;
+            return 1;
+        default:
+            return 1;
+    }
+}
+
+int hooks_online_hub_textinput(const char* text) {
+    if (is_online_result_state_active()) return 1;
+    if (!is_online_hub_state_active()) return 0;
+    if (!g_online_capture_active) return 1;
+    if (text && text[0]) {
+        size_t len = strlen(g_online_capture_buf);
+        for (const unsigned char* p = (const unsigned char*)text; *p; p++) {
+            if (*p < 0x20) continue;
+            if (len + 1 >= sizeof(g_online_capture_buf)) break;
+            g_online_capture_buf[len++] = (char)*p;
+        }
+        g_online_capture_buf[len] = '\0';
+    }
+    return 1;
+}
+
+int hooks_online_hub_mousemotion(int x, int y) {
+    g_online_mouse_x = (float)x;
+    g_online_mouse_y = (float)y;
+    if (!is_online_hub_state_active() && !is_online_result_state_active()) return 0;
+    if (is_online_result_state_active()) {
+        return 1;
+    } else if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) {
+        return 1;
+    } else if (g_online_queue_mode) {
+        return 1;
+    } else if (!g_online_context_active) {
+        int hit = online_row_at_point((float)x, (float)y);
+        if (hit >= 0 && hit < g_online_row_count && g_online_rows[hit].selectable) {
+            g_online_selected_row = hit;
+            online_ensure_scroll_visible();
+        }
+    }
+    return 1;
+}
+
+int hooks_online_hub_mousewheel(int y) {
+    if (is_online_result_state_active()) return 1;
+    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_queue_mode) return 1;
+    if (!is_online_hub_state_active()) return 0;
+    if (y > 0) online_move_selection(-1, 3);
+    else if (y < 0) online_move_selection(1, 3);
+    return 1;
+}
+
+int hooks_online_hub_mousebutton(int x, int y, int button, int down) {
+    int row;
+    int tab;
+    g_online_mouse_x = (float)x;
+    g_online_mouse_y = (float)y;
+    if (down && button == 1) {
+        int challenge_action = online_challenge_toast_action_at((float)x, (float)y);
+        if (challenge_action) {
+            online_challenge_toast_activate(challenge_action);
+            return 1;
+        }
+    }
+    if (down && button == 1 && online_result_close_at((float)x, (float)y)) {
+        g_online_result.active = 0;
+        return 1;
+    }
+    if (!is_online_hub_state_active() && !is_online_result_state_active()) return 0;
+    if (!down) return 1;
+    if (is_online_result_state_active()) {
+        if (button != 1) return 1;
+        return 1;
+    }
+    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_queue_mode) {
+        if (button == 1 && online_queue_cancel_button_at((float)x, (float)y)) {
+            online_server_leave_queue();
+        }
+        return 1;
+    }
+    if (button == 1 && g_online_context_active) {
+        int action = online_context_action_at((float)x, (float)y);
+        if (action) {
+            online_context_activate(action);
+            return 1;
+        }
+        g_online_context_active = 0;
+    }
+    tab = g_online_authed ? online_tab_at_point((float)x, (float)y) : -1;
+    if (button == 1 && tab >= 0 && tab < ONLINE_TAB_COUNT) {
+        g_online_tab = (OnlineHubTab)tab;
+        g_online_selected_row = -1;
+        g_online_scroll_row = 0;
+        g_online_capture_active = 0;
+        g_online_context_active = 0;
+        online_hub_rebuild_rows();
+        return 1;
+    }
+    row = online_row_at_point((float)x, (float)y);
+    if (row >= 0 && row < g_online_row_count && g_online_rows[row].selectable) {
+        g_online_selected_row = row;
+        online_ensure_scroll_visible();
+        if (button == 3 && g_online_rows[row].kind == ONLINE_ROW_FRIEND) {
+            online_open_friend_context(g_online_rows[row].id, (float)x, (float)y);
+            return 1;
+        }
+        if (button == 1) online_activate_selected_from_mouse((float)x);
+    }
+    return 1;
+}
+
+int hooks_online_hub_control_action(int action) {
+    if (is_online_result_state_active()) {
+        switch (action) {
+            case 1:
+            case 3:
+                g_online_result.selected = 0;
+                return 1;
+            case 2:
+            case 4:
+                g_online_result.selected = 1;
+                return 1;
+            case 5:
+                online_result_activate();
+                return 1;
+            case 6:
+                g_online_result.selected = 1;
+                online_result_activate();
+                return 1;
+            default:
+                return 0;
+        }
+    }
+    if (!is_online_hub_state_active()) return 0;
+    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_queue_mode) {
+        if (action == 6) online_server_leave_queue();
+        return 1;
+    }
+    if (g_online_capture_active) return 1;
+    online_hub_rebuild_rows();
+    switch (action) {
+        case 1: online_move_selection(-1, 1); return 1;
+        case 2: online_move_selection(1, 1); return 1;
+        case 3: online_adjust_selected(-1); return 1;
+        case 4: online_adjust_selected(1); return 1;
+        case 5: online_activate_selected(); return 1;
+        case 6:
+            if (p_state_switch) {
+                void* target = g_online_return_state ? g_online_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
+                if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
+                p_state_switch(target);
+            }
+            return 1;
+        default:
+            return 0;
     }
 }
 
@@ -5391,6 +9397,10 @@ int hooks_console_mousebutton(int x, int y, int button, int down) {
 int hooks_console_keydown(int sym, int scancode, int mod) {
     (void)scancode;
 
+    if (sym == SDLK_F5 || sym == SDLK_F6 || sym == SDLK_F7 || sym == SDLK_F9 || sym == SDLK_F10) {
+        return 1;
+    }
+
     if (!is_console_state_active() && sym == SDLK_F2) {
         void* cur = p_state_current ? p_state_current() : NULL;
         if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
@@ -5428,6 +9438,10 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
     }
 
     if (sym == '`') {
+        if (g_online_active_match.active && !g_online_active_match.result_reported) {
+            if (is_console_state_active()) console_close();
+            return 1;
+        }
         g_console_suppress_next_textinput = 1;
         if (is_console_state_active()) {
             console_close();
@@ -5874,6 +9888,22 @@ void hooks_block_next_game_tick(int block) {
     g_block_game_tick_once = block ? 1 : 0;
 }
 
+static int hooks_can_run_simulated_game_update(void* state_ptr) {
+    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE) return 1;
+    if (g_allow_paused_game_tick &&
+        state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED &&
+        ggpo_net_active()) {
+        return 1;
+    }
+    return 0;
+}
+
+static int hooks_should_clear_native_pause_for_tick(void* state_ptr) {
+    return g_allow_paused_game_tick &&
+           state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED &&
+           ggpo_net_active();
+}
+
 int hooks_simulate_game_ticks(int count, int arg0) {
     fn_game_update_t real_update = p_game_update_trampoline
         ? p_game_update_trampoline
@@ -5885,11 +9915,21 @@ int hooks_simulate_game_ticks(int count, int arg0) {
 
     for (int i = 0; i < count; i++) {
         void* state_ptr = p_state_current ? p_state_current() : NULL;
-        if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
+        int restore_paused = 0;
+        int old_paused = 0;
+        if (!hooks_can_run_simulated_game_update(state_ptr)) {
             return (ran > 0) ? ran : -1;
+        }
+        if (hooks_should_clear_native_pause_for_tick(state_ptr) && g_native_paused) {
+            old_paused = *g_native_paused;
+            *g_native_paused = 0;
+            restore_paused = 1;
         }
         hooks_prepare_deterministic_game_update();
         real_update(arg0);
+        if (restore_paused) {
+            *g_native_paused = old_paused;
+        }
         hooks_finish_game_tick();
         ran++;
     }
@@ -6695,6 +10735,40 @@ static void __cdecl mods_entry_update(void) { }
 static void __cdecl mods_entry_render(void) { }
 static void __cdecl mods_entry_leave(void) { }
 
+static void* online_find_button_by_action(uintptr_t action_ptr) {
+    if (!p_button_count || !p_button_get || action_ptr == 0) return NULL;
+    {
+        int count = p_button_count();
+        if (count <= 0 || count > 3000) return NULL;
+        for (int i = 0; i < count; i++) {
+            void* btn = p_button_get(i);
+            if (!btn) continue;
+            if (IsBadReadPtr((uint8_t*)btn + BTN_OFS_ACTION_PTR, (SIZE_T)sizeof(void*))) continue;
+            if ((uintptr_t)(*(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR)) == action_ptr) {
+                return btn;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void* online_find_button_by_link(uintptr_t link_ptr) {
+    if (!p_button_count || !p_button_get || link_ptr == 0) return NULL;
+    {
+        int count = p_button_count();
+        if (count <= 0 || count > 3000) return NULL;
+        for (int i = 0; i < count; i++) {
+            void* btn = p_button_get(i);
+            if (!btn) continue;
+            if (IsBadReadPtr((uint8_t*)btn + BTN_OFS_LINK_PTR, (SIZE_T)sizeof(void*))) continue;
+            if ((uintptr_t)(*(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR)) == link_ptr) {
+                return btn;
+            }
+        }
+    }
+    return NULL;
+}
+
 static int install_detour(Detour* d, void* target, void* hook, size_t length) {
     if (!d || !target || !hook) return 0;
     if (length < 5 || length > sizeof(d->original)) return 0;
@@ -6785,6 +10859,304 @@ static int __cdecl mods_entry_player_filter_proxy(void* btn, int event_code) {
     return 0;
 }
 
+static int __cdecl online_hub_player_filter_proxy(void* btn, int event_code) {
+    if (!btn || !p_btn_player_filter) return 0;
+
+    if (event_code == 3) {
+        uint32_t* tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+        uint32_t old_tag = *tag_ptr;
+        int ok = 0;
+
+        *tag_ptr = 0x11;
+        ok = p_btn_player_filter(btn, event_code);
+        if (!ok) {
+            *tag_ptr = 0x12;
+            ok = p_btn_player_filter(btn, event_code);
+        }
+        *tag_ptr = old_tag;
+
+        if (ok) {
+            online_hub_open();
+        }
+        return 0;
+    }
+
+    {
+        uint32_t* tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+        uint32_t old_tag = *tag_ptr;
+
+        *tag_ptr = 0x11;
+        if (p_btn_player_filter(btn, event_code)) {
+            *tag_ptr = old_tag;
+            return 1;
+        }
+
+        *tag_ptr = 0x12;
+        if (p_btn_player_filter(btn, event_code)) {
+            *tag_ptr = old_tag;
+            return 1;
+        }
+
+        *tag_ptr = old_tag;
+    }
+    return 0;
+}
+
+static int online_activate_native_button(void* btn) {
+    uint32_t* tag_ptr;
+    uint32_t old_tag;
+    int ok = 0;
+    void* link_ptr = NULL;
+    int nolink = 0;
+    if (!btn || !p_btn_player_filter) return 0;
+    tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+    old_tag = *tag_ptr;
+    *tag_ptr = 0x11;
+    ok = p_btn_player_filter(btn, 3);
+    if (!ok) {
+        *tag_ptr = 0x12;
+        ok = p_btn_player_filter(btn, 3);
+    }
+    *tag_ptr = old_tag;
+    if (!ok) return 0;
+    if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_LINK_PTR, (SIZE_T)sizeof(void*))) {
+        link_ptr = *(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR);
+    }
+    if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_NOLINK_FLAG, (SIZE_T)sizeof(unsigned char))) {
+        nolink = (*(unsigned char*)((uint8_t*)btn + BTN_OFS_NOLINK_FLAG) != 0);
+    }
+    if (link_ptr && !nolink && p_state_switch) {
+        p_state_switch(link_ptr);
+    }
+    return 1;
+}
+
+static int online_native_winner_player(void) {
+    uintptr_t leader;
+    uintptr_t loser;
+    if (g_game_end_countdown && *g_game_end_countdown > 0 && g_game_leader && p_player_slots) {
+        if (g_game_loser && !IsBadReadPtr((const void*)g_game_loser, sizeof(uintptr_t))) {
+            loser = *g_game_loser;
+            if (loser == (uintptr_t)p_player_slots[0]) return 1;
+            if (loser == (uintptr_t)p_player_slots[1]) return 0;
+        }
+        leader = *g_game_leader;
+        if (leader == (uintptr_t)p_player_slots[0]) return 0;
+        if (leader == (uintptr_t)p_player_slots[1]) return 1;
+    }
+    if (g_game_score_target && g_game_score_player0 && g_game_score_player1 && *g_game_score_target > 0) {
+        int target = *g_game_score_target;
+        int s0 = *g_game_score_player0;
+        int s1 = *g_game_score_player1;
+        if (s0 >= target && s0 > s1) return 0;
+        if (s1 >= target && s1 > s0) return 1;
+    }
+    return -1;
+}
+
+static int online_match_state_allowed(void* state_ptr) {
+    return state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE ||
+           state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED;
+}
+
+static void online_monitor_active_match_state(void* state_ptr) {
+    if (!g_online_active_match.active || g_online_active_match.result_reported) return;
+    if (!ggpo_net_active()) {
+        online_finish_active_match(ONLINE_MATCH_RESULT_LOSS, "P2P disconnected; reported loss.", 1);
+        return;
+    }
+    if (online_match_state_allowed(state_ptr)) {
+        g_online_active_match.invalid_state_ticks = 0;
+        return;
+    }
+    g_online_active_match.invalid_state_ticks++;
+    if (g_online_active_match.invalid_state_ticks >= ONLINE_ABANDON_GRACE_TICKS) {
+        online_finish_active_match(ONLINE_MATCH_RESULT_LOSS, "You left the match; reported loss.", 1);
+    }
+}
+
+static void online_match_poll_completion(void) {
+    int winner;
+    int local_player;
+    OnlineMatchResult result;
+    if (!g_online_active_match.active || g_online_active_match.result_reported) return;
+    winner = online_native_winner_player();
+    if (winner < 0) return;
+    local_player = ggpo_net_local_player();
+    if (local_player < 0 || local_player > 1) {
+        local_player = clampi(g_online_active_match.local_player, 0, 1);
+    }
+    result = (winner == local_player) ? ONLINE_MATCH_RESULT_WIN : ONLINE_MATCH_RESULT_LOSS;
+    LOG_INFO("online.match: completion match=%d local_player=%d winner=%d result=%s end=%d leader=0x%08X loser=0x%08X score=%d-%d target=%d",
+             g_online_active_match.match_id,
+             local_player,
+             winner,
+             result == ONLINE_MATCH_RESULT_WIN ? "win" : "loss",
+             g_game_end_countdown ? *g_game_end_countdown : 0,
+             (unsigned int)(g_game_leader ? *g_game_leader : 0u),
+             (unsigned int)(g_game_loser ? *g_game_loser : 0u),
+             g_game_score_player0 ? *g_game_score_player0 : 0,
+             g_game_score_player1 ? *g_game_score_player1 : 0,
+             g_game_score_target ? *g_game_score_target : 0);
+    online_finish_active_match(result, "Reported result to server.", 1);
+}
+
+static void online_log_desync_snapshot_if_changed(void) {
+    static uint32_t s_seen_desync_count = 0;
+    uint32_t count = ggpo_net_desync_count();
+    if (count == s_seen_desync_count) return;
+    s_seen_desync_count = count;
+    if (count == 0) return;
+    LOG_WARN("online.match: desync snapshot count=%u frame=%u local_crc=%u remote_crc=%u net_frame=%u remote_frame=%u room=%d old_room=%d resumed=%d waterfall_count=%d waterfall_fx=0x%08X start=%d end=%d round_end=%d score=%d-%d target=%d map=%d seed=%u mrand=%u local_player=%d active_match=%d pending=%d",
+             (unsigned int)count,
+             (unsigned int)ggpo_net_desync_frame(),
+             (unsigned int)ggpo_net_desync_local_checksum(),
+             (unsigned int)ggpo_net_desync_remote_checksum(),
+             (unsigned int)ggpo_net_frame_count(),
+             (unsigned int)ggpo_net_remote_frame_count(),
+             g_game_active_room ? *g_game_active_room : -1,
+             g_game_old_active_room ? *g_game_old_active_room : -1,
+             g_game_resumed ? *g_game_resumed : -1,
+             g_game_waterfall_count ? *g_game_waterfall_count : -1,
+             (unsigned int)(g_game_waterfall_fx ? *g_game_waterfall_fx : 0u),
+             g_game_start_countdown ? *g_game_start_countdown : -1,
+             g_game_end_countdown ? *g_game_end_countdown : -1,
+             g_game_round_end_any ? *g_game_round_end_any : -1,
+             g_game_score_player0 ? *g_game_score_player0 : -1,
+             g_game_score_player1 ? *g_game_score_player1 : -1,
+             g_game_score_target ? *g_game_score_target : -1,
+             g_hook_map_selector ? *g_hook_map_selector : -1,
+             g_native_seed ? *g_native_seed : 0u,
+             g_native_mrand_seed ? *g_native_mrand_seed : 0u,
+             ggpo_net_local_player(),
+             g_online_active_match.active,
+             g_online_pending_match.active);
+}
+
+static void online_match_pump_launch(void) {
+    void* state_ptr;
+    if (!g_online_pending_match.active) return;
+    if (g_online_pending_match.launch_countdown_frames > 0) {
+        if (!is_online_hub_state_active()) {
+            online_hub_open();
+            return;
+        }
+        g_online_pending_match.launch_countdown_frames--;
+        if (g_online_pending_match.launch_countdown_frames > 0) return;
+        online_launch_pending_match_to_game();
+        return;
+    }
+    if (g_hook_map_selector) {
+        *g_hook_map_selector = g_online_pending_match.selector;
+    }
+    state_ptr = p_state_current ? p_state_current() : NULL;
+
+    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE && ggpo_net_active()) {
+        if (!g_online_pending_match.p2p_started) {
+            g_online_pending_match.p2p_started = 1;
+            online_active_match_begin_from_pending();
+            g_online_pending_match.active = 0;
+            online_hub_set_status("");
+        }
+        return;
+    }
+
+    if (g_online_pending_match.launch_stage <= 1) {
+        if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
+            state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+            void* start_btn = online_find_button_by_action(MAIN_START_ACTION_PTR);
+            if (start_btn && online_activate_native_button(start_btn)) {
+                g_online_pending_match.launch_stage = 2;
+            }
+            return;
+        }
+        if (state_ptr == (void*)(uintptr_t)ADDR_PREGAME_STATE) {
+            g_online_pending_match.launch_stage = 2;
+        }
+    }
+
+    if (g_online_pending_match.launch_stage == 2) {
+        if (state_ptr == (void*)(uintptr_t)ADDR_PREGAME_STATE) {
+            void* game_btn = online_find_button_by_link(ADDR_GAME_STATE);
+            if (!game_btn) game_btn = online_find_button_by_action(MAIN_START_ACTION_PTR);
+            if (game_btn && online_activate_native_button(game_btn)) {
+                g_online_pending_match.launch_stage = 3;
+            }
+            return;
+        }
+        if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
+            state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+            return;
+        }
+    }
+
+    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE && !g_online_pending_match.p2p_started) {
+        online_ensure_native_game_started();
+        if (g_online_pending_match.launch_delay_frames > 0) {
+            g_online_pending_match.launch_delay_frames--;
+            return;
+        }
+        g_online_pending_match.p2p_started = 1;
+        if (_stricmp(g_online_pending_match.p2p_role, "host") == 0) {
+            start_ggpo_net_host((uint16_t)g_online_pending_match.local_port, "online server match");
+        } else {
+            start_ggpo_net_join(g_online_pending_match.peer_host,
+                                (uint16_t)g_online_pending_match.peer_port,
+                                (uint16_t)g_online_pending_match.local_port,
+                                "online server match");
+        }
+        if (ggpo_net_active()) {
+            online_active_match_begin_from_pending();
+            g_online_pending_match.active = 0;
+            online_hub_set_status("");
+        } else {
+            online_hub_set_status("P2P session failed to start.");
+        }
+    }
+}
+
+static void add_online_button_to_main(void) {
+    void* start_btn;
+    void* btn;
+    static void* baseline_start_btn = NULL;
+    static float baseline_start_y = 0.0f;
+    if (!p_button_ex) return;
+
+    btn = online_find_button_by_action((uintptr_t)&online_hub_player_filter_proxy);
+    if (!btn) {
+        if (p_button_set_layout) {
+            p_button_set_layout(3.0f, 6.0f);
+        }
+        btn = p_button_ex(1.0f, 4.5f, 0u, "ONLINE", (int)(intptr_t)&online_hub_player_filter_proxy);
+        if (!btn) return;
+    }
+
+    *(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR) = (void*)&g_online_hub_state;
+    *(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR) = (void*)&online_hub_player_filter_proxy;
+
+    start_btn = online_find_button_by_action(MAIN_START_ACTION_PTR);
+    if (start_btn &&
+        !IsBadReadPtr((uint8_t*)start_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float)) &&
+        !IsBadWritePtr((uint8_t*)start_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float)) &&
+        !IsBadWritePtr((uint8_t*)btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
+        float sx = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_X);
+        float sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
+        float sw = *(float*)((uint8_t*)start_btn + BTN_OFS_WIDTH);
+        float sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
+        float gap = 8.0f;
+        float center_gap = (sh + gap) * 0.5f;
+        if (baseline_start_btn != start_btn) {
+            baseline_start_btn = start_btn;
+            baseline_start_y = sy;
+        }
+        *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y) = baseline_start_y - center_gap;
+        *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X) = sx;
+        *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y) = baseline_start_y + center_gap;
+        *(float*)((uint8_t*)btn + BTN_OFS_WIDTH) = sw;
+        *(float*)((uint8_t*)btn + BTN_OFS_HEIGHT) = sh;
+    }
+}
+
 static void add_mods_button_to_options(void) {
     if (!p_menu_button_link) return;
     if (p_button_set_layout) {
@@ -6815,6 +11187,43 @@ static void __cdecl hooked_options_enter_paused(void) {
     add_mods_button_to_options();
 }
 
+static int online_advance_net_gameplay_tick(int arg0) {
+    uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
+    uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
+    void* state_ptr = p_state_current ? p_state_current() : NULL;
+    uint32_t checksum = 0;
+    int advanced_any = 0;
+    int steps = 0;
+    char err[512];
+    char out[CONSOLE_LINE_TEXT];
+    if (state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED || state_ptr == (void*)&g_console_state) {
+        int local_player = ggpo_net_local_player();
+        if (local_player < 0 || local_player > 1) local_player = clampi(g_online_active_match.local_player, 0, 1);
+        if (local_player == 0) raw0 = 0u;
+        else raw1 = 0u;
+    }
+    do {
+        int advanced = 0;
+        if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
+            snprintf(out,
+                     sizeof(out),
+                     "ggpo.net: failed (%s)",
+                     err[0] ? err : "see log");
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+            LOG_ERROR("ggpo.net: failed (%s)", err[0] ? err : "unknown error");
+            online_reset_native_sound_state("ggpo failure");
+            ggpo_net_stop();
+            return -1;
+        }
+        if (!advanced) break;
+        advanced_any = 1;
+        steps++;
+    } while (steps < 4 && ggpo_net_catchup_pending());
+    online_match_poll_completion();
+    online_log_desync_snapshot_if_changed();
+    return advanced_any ? 1 : 0;
+}
+
 static int __cdecl hooked_main_update_with_buttons(int arg0) {
     fn_main_update_with_buttons_t real_update = p_main_update_with_buttons_trampoline
         ? p_main_update_with_buttons_trampoline
@@ -6824,14 +11233,33 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
+    online_monitor_active_match_state(state_ptr);
     if (!is_game_state) {
         lua_manager_on_tick();
     }
+    online_server_update();
     {
         int result = real_update ? real_update(arg0) : 0;
+        online_match_pump_launch();
         if (!is_game_state) {
+            void* after_update = p_state_current ? p_state_current() : NULL;
+            int net_tick_attempted = 0;
+            int net_tick_result = 0;
+            if (after_update == (void*)(uintptr_t)ADDR_MAIN_STATE ||
+                after_update == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+                add_online_button_to_main();
+            }
+            online_monitor_active_match_state(after_update);
+            if (after_update == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED && ggpo_net_active()) {
+                net_tick_attempted = 1;
+                g_allow_paused_game_tick++;
+                net_tick_result = online_advance_net_gameplay_tick(arg0);
+                g_allow_paused_game_tick--;
+            }
             lua_manager_on_tick_post();
-            hooks_finish_game_tick();
+            if (!net_tick_attempted || net_tick_result <= 0) {
+                hooks_finish_game_tick();
+            }
         }
         return result;
     }
@@ -7178,33 +11606,9 @@ static void __cdecl hooked_game_update(int arg0) {
     }
 
     if (ggpo_net_active()) {
-        uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
-        uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
-        uint32_t checksum = 0;
-        int advanced_any = 0;
-        int steps = 0;
-        char err[512];
-        char out[CONSOLE_LINE_TEXT];
-        do {
-            int advanced = 0;
-            if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
-                snprintf(out,
-                         sizeof(out),
-                         "ggpo.net: failed (%s)",
-                         err[0] ? err : "see log");
-                console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
-                LOG_ERROR("ggpo.net: failed (%s)", err[0] ? err : "unknown error");
-                ggpo_net_stop();
-                lua_manager_on_tick_post();
-                hooks_finish_game_tick();
-                return;
-            }
-            if (!advanced) break;
-            advanced_any = 1;
-            steps++;
-        } while (steps < 4 && ggpo_net_catchup_pending());
+        int net_tick_result = online_advance_net_gameplay_tick(arg0);
         lua_manager_on_tick_post();
-        if (!advanced_any) {
+        if (net_tick_result <= 0) {
             hooks_finish_game_tick();
         }
         return;

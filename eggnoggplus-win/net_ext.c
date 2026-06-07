@@ -135,3 +135,36 @@ void net_close(int slot) {
     closesocket(g_net[slot].fd);
     memset(&g_net[slot], 0, sizeof(g_net[slot]));
 }
+
+int net_local_ipv4(char *buf, int buflen) {
+    char host[256];
+    struct addrinfo hints, *res = NULL;
+    int ok = 0;
+    if (!buf || buflen <= 0) return 0;
+    buf[0] = '\0';
+    ensure_wsa();
+    if (gethostname(host, sizeof(host)) != 0) return 0;
+    host[sizeof(host) - 1] = '\0';
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) return 0;
+    for (struct addrinfo *it = res; it; it = it->ai_next) {
+        struct sockaddr_in *addr;
+        const unsigned char *ip;
+        if (!it->ai_addr || it->ai_addrlen < (int)sizeof(struct sockaddr_in)) continue;
+        addr = (struct sockaddr_in*)it->ai_addr;
+        ip = (const unsigned char*)&addr->sin_addr.s_addr;
+        if (ip[0] == 127 || ip[0] == 0) continue;
+        if (inet_ntop(AF_INET, &addr->sin_addr, buf, (socklen_t)buflen)) {
+            ok = 1;
+            break;
+        }
+    }
+    if (!ok && res && res->ai_addr) {
+        struct sockaddr_in *addr = (struct sockaddr_in*)res->ai_addr;
+        if (inet_ntop(AF_INET, &addr->sin_addr, buf, (socklen_t)buflen)) ok = 1;
+    }
+    freeaddrinfo(res);
+    return ok;
+}

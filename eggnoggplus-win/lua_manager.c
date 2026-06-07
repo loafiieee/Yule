@@ -4698,16 +4698,20 @@ static void ui_draw_default_custom_state_cursor(void) {
     p_sprite_batch_plot((int)(intptr_t)sprite_ptr, 0, 0);
 }
 
-static void ui_draw_text_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
+static void ui_draw_text_mode_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text, int mode) {
     if (!text || !text[0] || !p_plot_text || !p_turtle_set_pos || !p_turtle_set_scale || !p_turtle_set_angle) return;
     if (!p_turtle_set_rgb && !p_turtle_set_rgba) return;
     scale = ui_readable_text_scale(scale);
     p_turtle_set_angle(0.0);
     p_turtle_set_scale((double)scale, (double)scale);
-    if (p_turtle_set_rgb) p_turtle_set_rgb(r, g, b);
-    else p_turtle_set_rgba(r, g, b, 1.0f);
+    if (p_turtle_set_rgba) p_turtle_set_rgba(r, g, b, a);
+    else p_turtle_set_rgb(r, g, b);
     p_turtle_set_pos((double)x, (double)y);
     p_plot_text(text, mode);
+}
+
+static void ui_draw_text_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
+    ui_draw_text_mode_alpha(x, y, scale, r, g, b, 1.0f, text, mode);
 }
 
 static int reload_engine_gfx_atlases(const char* reason) {
@@ -6065,22 +6069,33 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     hdr->loser_raw = 0;
     hdr->waterfall_fx_present = 0;
     hdr->waterfall_fx_raw = 0;
+    hdr->crowd_sound_last_tick = 0;
+    hdr->chant_step = 0;
+    hdr->chant_timer = 0;
+    hdr->crowd_timer = 0;
+    hdr->game_do_lerp_colours = 0;
+    hdr->waterfall_count = 0;
+    hdr->lerp_time = 0;
+    hdr->score_shudder0 = 0;
+    hdr->score_shudder1 = 0;
+    hdr->resumed = 0;
     full_state_zero_transient_range(hdr, ADDR_LEADER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_WATERFALL_FX, sizeof(uintptr_t));
+    full_state_zero_transient_range(hdr, ADDR_CROWD_SOUND_LAST_TICK, sizeof(uint32_t));
+    full_state_zero_transient_range(hdr, ADDR_CHANT_STEP, sizeof(int));
+    full_state_zero_transient_range(hdr, ADDR_CHANT_TIMER, sizeof(int));
+    full_state_zero_transient_range(hdr, ADDR_CROWD_TIMER, sizeof(int));
+    full_state_zero_transient_range(hdr, ADDR_GAME_DO_LERP_COLOURS, sizeof(int));
+    full_state_zero_transient_range(hdr, ADDR_WATERFALL_COUNT, sizeof(int));
+    full_state_zero_transient_range(hdr, ADDR_LERP_TIME, sizeof(int));
+    full_state_zero_transient_range(hdr, ADDR_SCORE_SHUDDER, sizeof(int) * 2u);
     full_state_zero_transient_range(hdr, ADDR_PLAYER_ARRAY, sizeof(uintptr_t) * 2u);
     full_state_zero_transient_range(hdr, ADDR_CONTROLLER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_LOSER, sizeof(uintptr_t));
     if (zero_render_colours) {
         full_state_zero_player_render_colours(hdr);
-        hdr->crowd_sound_last_tick = 0;
-        hdr->chant_step = 0;
-        hdr->chant_timer = 0;
-        hdr->crowd_timer = 0;
-        hdr->game_do_lerp_colours = 0;
-        hdr->waterfall_count = 0;
-        hdr->lerp_time = 0;
-        hdr->score_shudder0 = 0;
-        hdr->score_shudder1 = 0;
+        hdr->rng_seed = 0;
+        hdr->game_old_active_room = hdr->active_room;
         hdr->camera_x = 0.0f;
         hdr->camera_y = 0.0f;
         hdr->camera_shake = 0.0f;
@@ -6099,6 +6114,55 @@ static int full_state_canonicalize_rollback_blob(void* blob, size_t blob_len, ch
 
 static int full_state_canonicalize_rollback_checksum_blob(void* blob, size_t blob_len, char* err, size_t err_cap) {
     return full_state_canonicalize_rollback_blob_ex(blob, blob_len, 1, err, err_cap);
+}
+
+static int full_state_rollback_summary_from_canonical_blob(const void* src, size_t src_len, LuaGameStateRollbackSummary* out_summary, char* err, size_t err_cap) {
+    const FullStateBlobHeader* hdr = NULL;
+    const uint8_t* bytes = (const uint8_t*)src;
+    const uint8_t* payload = NULL;
+    const uint8_t* things = NULL;
+    size_t players_len = (size_t)PLAYER_SIZE * 2u;
+    size_t things_len = 0;
+    size_t tilemap_len = 0;
+
+    if (!out_summary) {
+        full_state_set_err(err, err_cap, "summary output pointer unavailable");
+        return 0;
+    }
+    memset(out_summary, 0, sizeof(*out_summary));
+    if (!full_state_validate_blob_header(src, src_len, &hdr, err, err_cap)) {
+        return 0;
+    }
+
+    things_len = (size_t)hdr->thing_count * (size_t)THING_SIZE;
+    tilemap_len = (size_t)hdr->tilemap_bytes;
+    payload = bytes + sizeof(*hdr);
+
+    out_summary->full_crc = full_state_crc32(bytes, src_len);
+    out_summary->header_crc = full_state_crc32(bytes, offsetof(FullStateBlobHeader, transient_game_state));
+    out_summary->transient_crc = full_state_crc32(hdr->transient_game_state, sizeof(hdr->transient_game_state));
+    out_summary->thing_info_crc = full_state_crc32(hdr->thing_info_state, sizeof(hdr->thing_info_state));
+    out_summary->room_info_crc = full_state_crc32(hdr->room_info_state, sizeof(hdr->room_info_state));
+    out_summary->particle_crc = full_state_crc32(hdr->particle_state, sizeof(hdr->particle_state));
+    out_summary->player0_crc = full_state_crc32(payload, PLAYER_SIZE);
+    out_summary->player1_crc = full_state_crc32(payload + PLAYER_SIZE, PLAYER_SIZE);
+    out_summary->players_crc = full_state_crc32(payload, players_len);
+    things = payload + players_len;
+    out_summary->things_crc = full_state_crc32(things, things_len);
+    for (uint32_t i = 0; i < hdr->thing_count && i < LUA_ROLLBACK_SUMMARY_THING_SLOTS; i++) {
+        out_summary->thing_slot_crc[i] = full_state_crc32(things + ((size_t)i * (size_t)THING_SIZE), THING_SIZE);
+    }
+    out_summary->tilemap_crc = full_state_crc32(things + things_len, tilemap_len);
+    out_summary->active_room = (uint32_t)hdr->active_room;
+    out_summary->native_game_ticks = hdr->native_game_ticks;
+    out_summary->rng_seed = hdr->rng_seed;
+    out_summary->seed = hdr->seed;
+    out_summary->thing_count = hdr->thing_count;
+    out_summary->map_selector = (uint32_t)hdr->map_selector;
+    out_summary->round_end_any = (uint32_t)hdr->round_end_any;
+    out_summary->score_p0 = (uint32_t)hdr->score_p0;
+    out_summary->score_p1 = (uint32_t)hdr->score_p1;
+    return 1;
 }
 
 static int game_get_room_dims(int* out_room_w, int* out_room_h) {
@@ -7317,13 +7381,24 @@ static int lua_ui_text(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     UiLayout* layout = mod_ui_layout_or_default(mod);
     const char* text = luaL_checkstring(Ls, 1);
-    float r = (float)luaL_optnumber(Ls, 2, 0.95);
-    float g = (float)luaL_optnumber(Ls, 3, 0.95);
-    float b = (float)luaL_optnumber(Ls, 4, 0.95);
+    float r = 0.95f;
+    float g = 0.95f;
+    float b = 0.95f;
+    float a = 1.0f;
     float scale;
     if (!layout) return 0;
-    scale = (float)luaL_optnumber(Ls, 5, layout->text_scale);
-    ui_draw_text_mode(layout->cursor_x, layout->cursor_y, scale, r, g, b, text, 0);
+    if (lua_istable(Ls, 2)) {
+        ui_lua_read_color_opts(Ls, 2, NULL, &r, &g, &b, &a);
+        a = ui_lua_read_number_field(Ls, 2, "alpha", a);
+        scale = ui_lua_read_number_field(Ls, 2, "scale", layout->text_scale);
+    } else {
+        r = (float)luaL_optnumber(Ls, 2, 0.95);
+        g = (float)luaL_optnumber(Ls, 3, 0.95);
+        b = (float)luaL_optnumber(Ls, 4, 0.95);
+        scale = (float)luaL_optnumber(Ls, 5, layout->text_scale);
+        a = (float)luaL_optnumber(Ls, 6, 1.0);
+    }
+    ui_draw_text_mode_alpha(layout->cursor_x, layout->cursor_y, scale, r, g, b, a, text, 0);
     layout->cursor_y += layout->row_h + layout->gap;
     return 0;
 }
@@ -7332,11 +7407,23 @@ static int lua_ui_text_at(lua_State* Ls) {
     const char* text = luaL_checkstring(Ls, 1);
     float x = (float)luaL_checknumber(Ls, 2);
     float y = (float)luaL_checknumber(Ls, 3);
-    float scale = (float)luaL_optnumber(Ls, 4, 1.0);
-    float r = (float)luaL_optnumber(Ls, 5, 0.95);
-    float g = (float)luaL_optnumber(Ls, 6, 0.95);
-    float b = (float)luaL_optnumber(Ls, 7, 0.95);
-    ui_draw_text_mode(x, y, scale, r, g, b, text, 0);
+    float scale = 1.0f;
+    float r = 0.95f;
+    float g = 0.95f;
+    float b = 0.95f;
+    float a = 1.0f;
+    if (lua_istable(Ls, 4)) {
+        scale = ui_lua_read_number_field(Ls, 4, "scale", 1.0f);
+        ui_lua_read_color_opts(Ls, 4, NULL, &r, &g, &b, &a);
+        a = ui_lua_read_number_field(Ls, 4, "alpha", a);
+    } else {
+        scale = (float)luaL_optnumber(Ls, 4, 1.0);
+        r = (float)luaL_optnumber(Ls, 5, 0.95);
+        g = (float)luaL_optnumber(Ls, 6, 0.95);
+        b = (float)luaL_optnumber(Ls, 7, 0.95);
+        a = (float)luaL_optnumber(Ls, 8, 1.0);
+    }
+    ui_draw_text_mode_alpha(x, y, scale, r, g, b, a, text, 0);
     return 0;
 }
 
@@ -10583,6 +10670,19 @@ static const char* k_mod_ui_helpers_lua =
     "  return v\n"
     "end\n"
     "\n"
+    "local function clamp01(v)\n"
+    "  v = tonumber(v) or 0\n"
+    "  if v < 0 then return 0 elseif v > 1 then return 1 end\n"
+    "  return v\n"
+    "end\n"
+    "\n"
+    "local function shade(c, amount, alpha)\n"
+    "  c = type(c) == 'table' and c or {1, 1, 1, 1}\n"
+    "  amount = tonumber(amount) or 0\n"
+    "  local a = alpha ~= nil and alpha or c[4] or 1\n"
+    "  return { clamp01((c[1] or 0) + amount), clamp01((c[2] or 0) + amount), clamp01((c[3] or 0) + amount), a }\n"
+    "end\n"
+    "\n"
     "function ui.push_style(style)\n"
     "  local s = copy(style_stack[#style_stack] or default_dark)\n"
     "  merge(s, style)\n"
@@ -10597,6 +10697,16 @@ static const char* k_mod_ui_helpers_lua =
     "\n"
     "function ui.current_style()\n"
     "  return copy(style_stack[#style_stack] or default_dark)\n"
+    "end\n"
+    "\n"
+    "function ui.define_theme(name, style)\n"
+    "  if type(name) ~= 'string' or name == '' or type(style) ~= 'table' then return false end\n"
+    "  themes[name] = copy(style)\n"
+    "  return true\n"
+    "end\n"
+    "\n"
+    "function ui.style_color(key, fallback)\n"
+    "  return copy(color(style_stack[#style_stack] or default_dark, key, fallback))\n"
     "end\n"
     "\n"
     "function ui.theme(style)\n"
@@ -10641,7 +10751,7 @@ static const char* k_mod_ui_helpers_lua =
     "    scale = scale * 0.9\n"
     "    if ui.measure_text then tw, th = ui.measure_text(text, scale) else break end\n"
     "  end\n"
-    "  ui.text_at(text, x + (w - tw) * 0.5, y + h * 0.58, scale, c[1] or 1, c[2] or 1, c[3] or 1)\n"
+    "  ui.text_at(text, x + (w - tw) * 0.5, y + h * 0.58, scale, c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)\n"
     "end\n"
     "\n"
     "local function measured_width(text, scale)\n"
@@ -10702,7 +10812,7 @@ static const char* k_mod_ui_helpers_lua =
     "  local line_h = 9 * scale\n"
     "  if ui.measure_text then local _, measured_h = ui.measure_text('Ag', scale) line_h = tonumber(measured_h) or line_h end\n"
     "  for i = 1, #lines do\n"
-    "    ui.text_at(lines[i], x, y + (i - 1) * (line_h + line_gap) + line_h * 0.82, scale, fg[1] or 1, fg[2] or 1, fg[3] or 1)\n"
+    "    ui.text_at(lines[i], x, y + (i - 1) * (line_h + line_gap) + line_h * 0.82, scale, fg[1] or 1, fg[2] or 1, fg[3] or 1, fg[4] or 1)\n"
     "  end\n"
     "  return #lines * line_h + math.max(#lines - 1, 0) * line_gap, #lines\n"
     "end\n"
@@ -10768,6 +10878,90 @@ static const char* k_mod_ui_helpers_lua =
     "  end\n"
     "  maybe_tooltip(opts, hovered)\n"
     "  return clicked and not opts.disabled, hovered\n"
+    "end\n"
+    "\n"
+    "function ui.panel(a, b, c, d, e, f)\n"
+    "  local id, x, y, w, h, opts\n"
+    "  if type(a) == 'string' then id, x, y, w, h, opts = a, b, c, d, e, f or {} else x, y, w, h, opts = a, b, c, d, e or {} end\n"
+    "  opts = opts or {}\n"
+    "  local s = style_for(opts)\n"
+    "  local hovered, clicked, down = false, false, false\n"
+    "  if id and ui.hitbox then hovered, clicked, down = ui.hitbox(tostring(id), x, y, w, h, opts.hitbox or opts) end\n"
+    "  if opts.disabled then clicked, down = false, false end\n"
+    "  local bg = opts.bg or opts.fill or color(s, 'bg')\n"
+    "  if opts.disabled then bg = opts.disabled_bg or color(s, 'disabled') elseif down and opts.active then bg = opts.active elseif hovered and opts.hover then bg = opts.hover end\n"
+    "  ui.rect(x, y, w, h, { color = bg, alpha = opts.alpha })\n"
+    "  if opts.inner ~= false then\n"
+    "    local inner = type(opts.inner) == 'table' and opts.inner or shade(bg, tonumber(opts.inner_shade) or 0.025, opts.inner_alpha or ((bg[4] or 1) * 0.48))\n"
+    "    local inset = tonumber(opts.inset) or 3\n"
+    "    if w > inset * 2 and h > inset * 2 then ui.rect(x + inset, y + inset, w - inset * 2, h - inset * 2, { color = inner }) end\n"
+    "  end\n"
+    "  if opts.accent_edge then\n"
+    "    local aw = tonumber(opts.accent_w or opts.accent_width) or 4\n"
+    "    local accent = opts.accent or color(s, 'accent')\n"
+    "    if opts.accent_edge == 'right' then ui.rect(x + w - aw, y, aw, h, { color = accent, alpha = opts.accent_alpha })\n"
+    "    elseif opts.accent_edge == 'top' then ui.rect(x, y, w, aw, { color = accent, alpha = opts.accent_alpha })\n"
+    "    elseif opts.accent_edge == 'bottom' then ui.rect(x, y + h - aw, w, aw, { color = accent, alpha = opts.accent_alpha })\n"
+    "    else ui.rect(x, y, aw, h, { color = accent, alpha = opts.accent_alpha }) end\n"
+    "  end\n"
+    "  if opts.border ~= false then\n"
+    "    local border = type(opts.border) == 'table' and opts.border or color(s, 'border')\n"
+    "    ui.border(x, y, w, h, { line_w = opts.line_w or opts.line_width or 1, color = border, alpha = opts.border_alpha })\n"
+    "  end\n"
+    "  maybe_tooltip(opts, hovered)\n"
+    "  return clicked, hovered, down\n"
+    "end\n"
+    "\n"
+    "function ui.progress_bar(id, value, x, y, w, h, opts)\n"
+    "  if type(id) ~= 'string' then opts, h, w, y, x, value, id = h, w, y, x, value, id, nil end\n"
+    "  opts = opts or {}\n"
+    "  local s = style_for(opts)\n"
+    "  value = clamp01(value)\n"
+    "  local hovered, clicked, down = false, false, false\n"
+    "  if id and ui.hitbox and (opts.interactive or opts.hitbox) then hovered, clicked, down = ui.hitbox(tostring(id), x, y, w, h, opts.hitbox or opts) end\n"
+    "  local changed = false\n"
+    "  if opts.interactive and (clicked or down) and ui.mouse_pos then\n"
+    "    local mx, my = ui.mouse_pos()\n"
+    "    local next_value = opts.vertical and ((my - y) / h) or ((mx - x) / w)\n"
+    "    if opts.reverse then next_value = 1 - next_value end\n"
+    "    next_value = clamp01(next_value)\n"
+    "    if next_value ~= value then value, changed = next_value, true end\n"
+    "  end\n"
+    "  local bg = opts.bg or opts.rail or color(s, 'border')\n"
+    "  local fill = opts.fill or opts.color or color(s, 'accent')\n"
+    "  ui.rect(x, y, w, h, { color = bg, alpha = opts.alpha })\n"
+    "  if opts.vertical then\n"
+    "    local fh = h * value\n"
+    "    local fy = opts.reverse and y or (y + h - fh)\n"
+    "    ui.rect(x, fy, w, fh, { color = fill, alpha = opts.fill_alpha })\n"
+    "  else\n"
+    "    local fw = w * value\n"
+    "    local fx = opts.reverse and (x + w - fw) or x\n"
+    "    ui.rect(fx, y, fw, h, { color = fill, alpha = opts.fill_alpha })\n"
+    "  end\n"
+    "  if opts.border ~= false then ui.border(x, y, w, h, { line_w = opts.line_w or 1, color = type(opts.border) == 'table' and opts.border or color(s, 'border'), alpha = opts.border_alpha }) end\n"
+    "  if opts.label then text_center(opts.label, x, y, w, h, opts.text_scale or s.text_scale or 1, opts.text_color or color(s, 'fg')) end\n"
+    "  maybe_tooltip(opts, hovered)\n"
+    "  return value, changed, hovered\n"
+    "end\n"
+    "\n"
+    "function ui.close_button(id, x, y, size, opts)\n"
+    "  opts = opts or {}\n"
+    "  size = tonumber(size) or 24\n"
+    "  local s = style_for(opts)\n"
+    "  local hovered, clicked, down = false, false, false\n"
+    "  if ui.hitbox then hovered, clicked, down = ui.hitbox(tostring(id or 'close'), x, y, size, size, opts.hitbox or opts) end\n"
+    "  if opts.disabled then clicked, down = false, false end\n"
+    "  local bg = opts.bg or (hovered and (opts.hover or color(s, 'hover')) or color(s, 'bg'))\n"
+    "  if down and opts.active then bg = opts.active end\n"
+    "  ui.rect(x, y, size, size, { color = bg, alpha = opts.alpha })\n"
+    "  if opts.border ~= false then ui.border(x, y, size, size, { line_w = opts.line_w or 1, color = type(opts.border) == 'table' and opts.border or color(s, 'border'), alpha = opts.border_alpha }) end\n"
+    "  local fg = opts.color or opts.fg or color(s, 'fg')\n"
+    "  local p = size * (tonumber(opts.pad_ratio) or 0.30)\n"
+    "  ui.line(x + p, y + p, x + size - p, y + size - p, { line_w = opts.stroke or 2, color = fg, alpha = opts.fg_alpha })\n"
+    "  ui.line(x + size - p, y + p, x + p, y + size - p, { line_w = opts.stroke or 2, color = fg, alpha = opts.fg_alpha })\n"
+    "  maybe_tooltip(opts, hovered)\n"
+    "  return clicked and not opts.disabled, hovered, down\n"
     "end\n"
     "\n"
     "local function item_key_label(item, i)\n"
@@ -10878,7 +11072,7 @@ static const char* k_mod_ui_helpers_lua =
     "  ui.rect(x, track_y, w, 4, { color = color(s, 'border') })\n"
     "  ui.rect(x, track_y, w * t, 4, { color = color(s, 'accent') })\n"
     "  ui.rect(x + w * t - 4, y + 4, 8, h - 8, { color = hovered and color(s, 'fg') or color(s, 'accent') })\n"
-    "  if opts.label then ui.text_at(tostring(opts.label), x, y - 4, opts.text_scale or 0.75, color(s, 'fg')[1], color(s, 'fg')[2], color(s, 'fg')[3]) end\n"
+    "  if opts.label then local fg = color(s, 'fg'); ui.text_at(tostring(opts.label), x, y - 4, opts.text_scale or 0.75, fg[1] or 1, fg[2] or 1, fg[3] or 1, fg[4] or 1) end\n"
     "  maybe_tooltip(opts, hovered)\n"
     "  advance_if_layout(opts, x, y, h, s.gap)\n"
     "  return value, changed\n"
@@ -10890,7 +11084,7 @@ static const char* k_mod_ui_helpers_lua =
     "  local size = tonumber(opts.size) or 22\n"
     "  local x, y = resolve_bounds(opts, size, size)\n"
     "  local clicked = ui.icon_button(id, value and 'X' or '', x, y, size, size, opts)\n"
-    "  if opts.label then ui.text_at(tostring(opts.label), x + size + (opts.gap or s.gap), y + size * 0.72, opts.text_scale or s.text_scale, color(s, 'fg')[1], color(s, 'fg')[2], color(s, 'fg')[3]) end\n"
+    "  if opts.label then local fg = color(s, 'fg'); ui.text_at(tostring(opts.label), x + size + (opts.gap or s.gap), y + size * 0.72, opts.text_scale or s.text_scale, fg[1] or 1, fg[2] or 1, fg[3] or 1, fg[4] or 1) end\n"
     "  advance_if_layout(opts, x, y, size, s.gap)\n"
     "  if clicked then return not value, true end\n"
     "  return not not value, false\n"
@@ -13194,9 +13388,55 @@ int lua_manager_game_state_load(const void* src, size_t src_len, char* err, size
     return full_state_apply_blob(src, src_len, err, err_cap);
 }
 
+static void full_state_sanitize_live_rollback_fields(void) {
+    uintptr_t waterfall_fx = 0;
+
+    if (ptr_readable((const void*)p_waterfall_fx, sizeof(uintptr_t))) {
+        waterfall_fx = *p_waterfall_fx;
+    }
+    if (waterfall_fx && waterfall_fx < UINTPTR_MAX - 0x2cu &&
+        ptr_writable((void*)(waterfall_fx + 0x2cu), sizeof(uint32_t))) {
+        *(uint32_t*)(waterfall_fx + 0x2cu) = 0u;
+    }
+    if (ptr_writable((void*)p_waterfall_fx, sizeof(uintptr_t))) {
+        *p_waterfall_fx = 0u;
+    }
+    if (ptr_writable((void*)p_waterfall_count, sizeof(int))) {
+        *p_waterfall_count = 0;
+    }
+    if (ptr_writable((void*)p_crowd_sound_last_tick, sizeof(uint32_t))) {
+        *p_crowd_sound_last_tick = 0u;
+    }
+    if (ptr_writable((void*)p_chant_step, sizeof(int))) {
+        *p_chant_step = 0;
+    }
+    if (ptr_writable((void*)p_chant_timer, sizeof(int))) {
+        *p_chant_timer = 0;
+    }
+    if (ptr_writable((void*)p_crowd_timer, sizeof(int))) {
+        *p_crowd_timer = 0;
+    }
+    if (ptr_writable((void*)p_game_do_lerp_colours, sizeof(int))) {
+        *p_game_do_lerp_colours = 0;
+    }
+    if (ptr_writable((void*)p_lerp_time, sizeof(int))) {
+        *p_lerp_time = 0;
+    }
+    if (ptr_writable((void*)p_score_shudder, sizeof(int) * 2u)) {
+        p_score_shudder[0] = 0;
+        p_score_shudder[1] = 0;
+    }
+    if (ptr_writable((void*)p_resumed, sizeof(int))) {
+        *p_resumed = 0;
+    }
+}
+
 int lua_manager_game_state_load_rollback(const void* src, size_t src_len, char* err, size_t err_cap) {
     unsigned long long framework_tick_count = g_game_tick_count;
     int ok = full_state_apply_blob(src, src_len, err, err_cap);
+    if (ok) {
+        full_state_sanitize_live_rollback_fields();
+    }
     g_game_tick_count = framework_tick_count;
     return ok;
 }
@@ -13267,6 +13507,39 @@ int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_
     free(blob);
     *out_crc = crc;
     return 1;
+}
+
+int lua_manager_game_state_rollback_summary(LuaGameStateRollbackSummary* out_summary, char* err, size_t err_cap) {
+    size_t blob_len = lua_manager_game_state_size();
+    uint8_t* blob = NULL;
+    int ok = 0;
+
+    if (!out_summary) {
+        full_state_set_err(err, err_cap, "summary output pointer unavailable");
+        return 0;
+    }
+    if (blob_len == 0) {
+        full_state_set_err(err, err_cap, "game state unavailable");
+        return 0;
+    }
+
+    blob = (uint8_t*)malloc(blob_len);
+    if (!blob) {
+        full_state_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
+    if (!lua_manager_game_state_save(blob, blob_len, &blob_len, err, err_cap)) {
+        free(blob);
+        return 0;
+    }
+    if (!full_state_canonicalize_rollback_checksum_blob(blob, blob_len, err, err_cap)) {
+        free(blob);
+        return 0;
+    }
+
+    ok = full_state_rollback_summary_from_canonical_blob(blob, blob_len, out_summary, err, err_cap);
+    free(blob);
+    return ok;
 }
 
 int lua_manager_game_rng_seed(uint32_t* out_seed) {

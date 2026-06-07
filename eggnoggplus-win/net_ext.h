@@ -21,3 +21,6 @@ int  net_recv         (int slot, char *buf, int maxlen);
 int  net_connected    (int slot);
 int  net_connecting   (int slot);
 void net_close        (int slot);
+
+/* Best-effort local LAN IPv4 address for P2P hints. Returns 1 if filled. */
+int  net_local_ipv4    (char *buf, int buflen);

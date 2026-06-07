@@ -127,6 +127,8 @@ typedef struct CustomMapRoom {
 typedef struct CustomMap {
     char folder_id[CUSTOM_MAP_MAX_ID];
     char id[CUSTOM_MAP_MAX_ID];
+    char online_key[112];
+    char online_sig[16];
     char name[CUSTOM_MAP_MAX_NAME];
     char author[CUSTOM_MAP_MAX_AUTHOR];
     char description[CUSTOM_MAP_MAX_DESCRIPTION];
@@ -252,6 +254,37 @@ static uint64_t hash_bytes64(uint64_t h, const void* data, size_t len) {
         h *= 1099511628211ull;
     }
     return h;
+}
+
+static uint32_t weak_map_hash32(const char* a, const char* b) {
+    const uint64_t modp = 4294967291ull;
+    uint64_t h = 2166136261ull;
+    const unsigned char* p;
+    for (p = (const unsigned char*)(a ? a : ""); *p; p++) {
+        h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+    }
+    {
+        static const char sep[] = "\n--MAP--\n";
+        for (p = (const unsigned char*)sep; *p; p++) {
+            h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+        }
+    }
+    for (p = (const unsigned char*)(b ? b : ""); *p; p++) {
+        h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+    }
+    return (uint32_t)h;
+}
+
+static void copy_lower_ascii(char* dst, size_t dst_sz, const char* src) {
+    size_t i;
+    if (!dst || dst_sz == 0) return;
+    if (!src) src = "";
+    for (i = 0; i + 1 < dst_sz && src[i]; i++) {
+        unsigned char ch = (unsigned char)src[i];
+        if (ch >= 'A' && ch <= 'Z') ch = (unsigned char)(ch - 'A' + 'a');
+        dst[i] = (char)ch;
+    }
+    dst[i] = '\0';
 }
 
 static uint64_t hash_path_ci64(uint64_t h, const char* s) {
@@ -1824,6 +1857,14 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
         goto cleanup;
     }
 
+    {
+        char id_lower[CUSTOM_MAP_MAX_ID];
+        uint32_t sig = weak_map_hash32(json_text, map_text);
+        copy_lower_ascii(id_lower, sizeof(id_lower), custom_map.id[0] ? custom_map.id : custom_map.folder_id);
+        snprintf(custom_map.online_sig, sizeof(custom_map.online_sig), "%08x", (unsigned int)sig);
+        snprintf(custom_map.online_key, sizeof(custom_map.online_key), "custom:%s:%s", id_lower, custom_map.online_sig);
+    }
+
     if (!register_custom_map(registry, &custom_map)) {
         diag_log(&diag, 1, "failed to register custom map");
         goto cleanup;
@@ -2003,4 +2044,100 @@ void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void)) {
 
     map_info(g_custom_registry.maps[custom_index].id, "applying custom map for selector index %d", selector);
     apply_custom_map(&g_custom_registry.maps[custom_index]);
+}
+
+static int appendf_counted(char* out, size_t out_sz, size_t* pos, const char* fmt, ...) {
+    va_list args;
+    int n;
+    char scratch[1024];
+    if (!pos || !fmt) return 0;
+    va_start(args, fmt);
+    if (out && *pos < out_sz) {
+        n = vsnprintf(out + *pos, out_sz - *pos, fmt, args);
+    } else {
+        n = vsnprintf(scratch, sizeof(scratch), fmt, args);
+    }
+    va_end(args);
+    if (n < 0) return 0;
+    *pos += (size_t)n;
+    return 1;
+}
+
+static void append_json_string(char* out, size_t out_sz, size_t* pos, const char* s) {
+    if (!appendf_counted(out, out_sz, pos, "\"")) return;
+    for (; s && *s; s++) {
+        unsigned char ch = (unsigned char)*s;
+        switch (ch) {
+            case '\\': appendf_counted(out, out_sz, pos, "\\\\"); break;
+            case '"':  appendf_counted(out, out_sz, pos, "\\\""); break;
+            case '\b': appendf_counted(out, out_sz, pos, "\\b"); break;
+            case '\f': appendf_counted(out, out_sz, pos, "\\f"); break;
+            case '\n': appendf_counted(out, out_sz, pos, "\\n"); break;
+            case '\r': appendf_counted(out, out_sz, pos, "\\r"); break;
+            case '\t': appendf_counted(out, out_sz, pos, "\\t"); break;
+            default:
+                if (ch < 0x20) appendf_counted(out, out_sz, pos, "\\u%04x", (unsigned int)ch);
+                else appendf_counted(out, out_sz, pos, "%c", (int)ch);
+                break;
+        }
+    }
+    appendf_counted(out, out_sz, pos, "\"");
+}
+
+int custom_maps_build_manifest_json(char* out, size_t out_sz) {
+    size_t pos = 0;
+    int first = 1;
+    if (!g_custom_maps_inited) custom_maps_init();
+    custom_maps_reload_registry_if_needed(0);
+
+    appendf_counted(out, out_sz, &pos, "[");
+    for (int i = 0; i < VANILLA_MAP_COUNT; i++) {
+        if (!first) appendf_counted(out, out_sz, &pos, ",");
+        first = 0;
+        appendf_counted(out, out_sz, &pos, "{\"key\":\"vanilla:%d\",\"selector\":%d,\"label\":\"Vanilla %d\",\"kind\":\"vanilla\"}", i, i, i + 1);
+    }
+    for (int i = 0; i < g_custom_registry.count; i++) {
+        const CustomMap* map = &g_custom_registry.maps[i];
+        if (!first) appendf_counted(out, out_sz, &pos, ",");
+        first = 0;
+        appendf_counted(out, out_sz, &pos, "{\"key\":");
+        append_json_string(out, out_sz, &pos, map->online_key[0] ? map->online_key : map->id);
+        appendf_counted(out, out_sz, &pos, ",\"selector\":%d,\"label\":", VANILLA_MAP_COUNT + i);
+        append_json_string(out, out_sz, &pos, map->name[0] ? map->name : map->id);
+        appendf_counted(out, out_sz, &pos, ",\"kind\":\"custom\"}");
+    }
+    appendf_counted(out, out_sz, &pos, "]");
+    if (out && out_sz > 0) {
+        if (pos >= out_sz) out[out_sz - 1] = '\0';
+        else out[pos] = '\0';
+    }
+    return (int)pos;
+}
+
+int custom_maps_selector_for_key(const char* key, int* out_selector) {
+    const char* p;
+    char norm_key[160];
+    if (!key || !key[0] || !out_selector) return 0;
+    copy_lower_ascii(norm_key, sizeof(norm_key), key);
+    if (strncmp(norm_key, "vanilla:", 8) == 0) {
+        char* end = NULL;
+        long idx = strtol(norm_key + 8, &end, 10);
+        if (end && *end == '\0' && idx >= 0 && idx < VANILLA_MAP_COUNT) {
+            *out_selector = (int)idx;
+            return 1;
+        }
+    }
+
+    if (!g_custom_maps_inited) custom_maps_init();
+    custom_maps_reload_registry_if_needed(0);
+    for (int i = 0; i < g_custom_registry.count; i++) {
+        char map_key[160];
+        p = g_custom_registry.maps[i].online_key;
+        copy_lower_ascii(map_key, sizeof(map_key), p && p[0] ? p : g_custom_registry.maps[i].id);
+        if (strcmp(norm_key, map_key) == 0) {
+            *out_selector = VANILLA_MAP_COUNT + i;
+            return 1;
+        }
+    }
+    return 0;
 }

@@ -45,7 +45,7 @@ The custom UDP session is a prototype harness. It proves the game can run with r
   - Handles host/join, host state sync, input exchange, prediction, rollback, and checksum exchange.
 
 - `hooks.c`
-  - Hotkeys, console commands, tick hook, raw input override, and per-frame routing into loopback/local/net sessions.
+  - Hotkeys, console commands, built-in online hub, tick hook, raw input override, and per-frame routing into loopback/local/net sessions.
 
 ## Hotkeys And Commands
 
@@ -68,6 +68,7 @@ Do not use F1, F2, F9, F10, F11, or F12; the base game uses them for development
 
 Console commands:
 
+- `online.hub`
 - `ggpo.roundtrip`
 - `ggpo.selftest [frames]`
 - `ggpo.loopback`
@@ -183,10 +184,10 @@ Required match-start data:
 Recommended flow:
 
 1. Player logs in before entering online features.
-2. Player enters a ranked/casual queue or, later, accepts a friend challenge.
+2. Player enters a competitive/casual queue or accepts a friend challenge.
 3. Backend matches two players and creates a signed match config.
-4. Backend chooses player slots, seed, map/rules, cosmetics metadata, and transport route.
-5. Both clients verify version, assets, map, rules, cosmetic availability, and mod policy.
+4. Backend chooses player slots, seed, map/rules, and transport route.
+5. Both clients verify version, assets, map, rules, and mod policy.
 6. Both clients enter the match through the same deterministic start path.
 7. GGPO begins at frame 0 after both clients are synchronized.
 
@@ -194,11 +195,11 @@ Host full-state sync can remain as a debug or recovery tool, but production onli
 
 ## Chosen Production Direction
 
-The finished frontend should not expose a host/join menu. Players should see an online hub, queue buttons, account status, and later friend/challenge UI. The server decides who gets matched and how the match connects.
+The finished frontend should not expose a host/join menu. Players should see an online hub, queue buttons, account status, friends, and challenges. The server decides who gets matched and how the match connects.
 
 Use a hybrid transport model:
 
-- backend for accounts, sessions, queues, MMR, matchmaking, cosmetics metadata, match configs, results, and friend systems
+- backend for accounts, sessions, queues, hidden MMR, public Elo, matchmaking, match configs, results, and friend systems
 - direct P2P UDP gameplay when both clients can connect directly and the route is good
 - relay gameplay fallback when direct P2P fails, when NAT is strict, or when hiding player IPs is required
 - no fully authoritative gameplay server for the first production online version
@@ -218,14 +219,18 @@ This keeps the client simple, gives enough performance headroom for a relay, and
 
 ## Online Hub / Server Status
 
-The built-in online hub and standalone account/queue server have been removed for now. The remaining online code is the lower-level rollback and manual P2P debug harness:
+The built-in online hub is back in the framework and can be opened from the main-menu `ONLINE` button or the `online.hub` console command. It is translated from the old Lua hub into C-side framework UI and currently has three tabs:
 
-- F6/F7 `ggpo.net` host/join
-- F2/F3/F4 rollback verification tools
-- game-state save/load/checksum support
-- local input prediction, rollback, and checksum logging
+- Play: account login/register, Casual Queue, Competitive Queue, queue leave, and server-driven match launch.
+- Friends: username entry for adding friends, incoming friend requests, incoming 5-minute challenges, friend list, accept/decline actions, and friend challenges.
+- Settings: server address as a single `host:port` field and the local P2P UDP port (`Auto` by default).
+- Game Over: after an online match ends, both clients report win/loss to the server, receive the confirmed result and Elo update, then can requeue or return to the hub.
 
-The next production pass should rebuild the hub and backend carefully around a deterministic match-start contract instead of layering queue/account UI directly into the current debug harness.
+The default control server is `eggnogg.loafiieee.com:47778`, persisted in `mods\online_hub.cfg`. The prototype server lives in `online_server/server.js` and handles login/registration, public Elo, hidden server-side MMR, casual queue, competitive MMR-range queue, friends, friend requests, 5-minute challenges, shared-map selection, and P2P match setup.
+
+Gameplay remains direct P2P through `ggpo_net`. The server chooses the map from the intersection of both clients' map manifests, sends each client the local selector for that map, randomly chooses which client takes the F6-style host role, and sends the F7-style joiner the host endpoint. Clients include a LAN IPv4 hint in their map manifest; if both players appear to share one public address, the server gives the joiner the host's LAN address instead of the public NAT address. The launcher clears the pending match once P2P starts so returning to the menu cannot relaunch the same assignment. Cosmetic profile/asset packets are disabled in `ggpo_net`; online match setup no longer sends cosmetics.
+
+F6/F7 `ggpo.net` host/join and F2/F3/F4 rollback tools remain debug tools, not the player-facing online flow.
 
 ## Latency Tuning
 
@@ -257,8 +262,8 @@ The real frontend should be queue-first, not host/join-first.
 Online hub:
 
 - account login/create account from day one
-- current username, rating, connection region/status, and selected character/cosmetics
-- ranked queue button
+- current username, public Elo, and connection status
+- competitive queue button
 - casual queue button
 - queue cancel button
 - match found / connecting / synchronizing / loading states
@@ -279,43 +284,35 @@ Post-game screen:
 - queue again button
 - return to online hub button
 
-Friend and challenge system should come after queueing works:
+Current friend and challenge prototype:
 
 - friend list
-- add/remove/block friends
+- add/remove friends
+- incoming friend requests at the top of the Friends tab
 - online presence
-- direct challenge
+- direct friend challenges
 - accept/decline challenge
-- private rematch/challenge flow
+- 5-minute challenge expiry, with challenges also removed when a player disconnects
+
+Later friend work:
+
+- block/mute
+- private rematch flow
 
 For development, keep console commands available. Later, online production builds should keep game updates flowing through pause/menu states where needed and should block online-unsafe debug hotkeys.
 
 ## Player Identity And Cosmetics
 
-Cosmetics and character customization should be planned soon, before the online menu and matchmaking UI harden around player identity. They should work in offline/local play too, not only online.
+Cosmetics and character customization are out of the online protocol for now. They can still be designed for offline/local play, but online match setup should not send cosmetic profiles, cosmetic assets, hats, outfits, or customization payloads.
 
-Near-term cosmetics planning goals:
+Current online cosmetic rules:
 
-- define what can be customized: colors, body parts, hats, outfits, trails, nameplates, animations, etc.
-- define which cosmetics are built in, unlockable, account-owned, local-only, or modded
-- define how customization is selected in local play
-- define how customization is selected and validated in online play
-- define how cosmetic assets are loaded, cached, animated, and attached to characters
-- define fallback behavior for missing or mismatched cosmetics
-
-Online cosmetic rules:
-
-- enemy username above their character
-- small `V` indicator under the local player's character
-- hats/outfits/cosmetic choices render consistently on both clients
-- cosmetic choices are exchanged and validated before gameplay starts
-- cosmetic assets, animation data, and required texture/font resources load before the match begins
+- usernames and player indicators can be UI-only overlays
+- gameplay match setup does not exchange cosmetic data
 - cosmetic data is not sent every frame
 - cosmetics do not affect gameplay simulation
 - cosmetics are not included in rollback state checksums or desync decisions
-- if a cosmetic asset is missing or mismatched, the match should either fall back to a default cosmetic or fail before gameplay starts
-
-Before implementing this section, ask for the full customization/cosmetics design. There is a separate planned design for usernames, player indicators, hats, animations, unlocks, ownership, local customization, online validation, and cosmetic selection UX.
+- missing or mismatched cosmetic assets should not block an online match because they are not part of the match contract
 
 ## Matchmaking / Transport Needed
 
@@ -331,7 +328,7 @@ Needed backend pieces:
 - matchmaking rules
 - signed match config generation
 - match result reporting
-- friend/challenge APIs later
+- friend/challenge APIs
 - basic rate limiting and packet validation
 
 Needed transport pieces:
@@ -357,7 +354,7 @@ Phase 1: production plan and data contracts
 - write queue and match result data model
 - define client/server messages
 - define direct/relay transport abstraction
-- define cosmetics metadata shape enough that online match config can carry it later
+- keep cosmetics outside the online match config
 
 Phase 2: backend skeleton
 
@@ -407,7 +404,7 @@ Phase 7: friends and challenges
 - friend requests
 - presence
 - challenge flow
-- private rematch/challenge handling
+- remaining private rematch handling
 
 ## Mod And Anti-Cheat Policy
 
@@ -476,16 +473,16 @@ Desync diagnostics should report:
 - Real GGPO session wrapper.
 - Account creation/login from day one.
 - Queue-first online hub and status UI.
-- Ranked and casual matchmaking queues.
+- Competitive and casual matchmaking queues.
 - Signed backend match config.
 - Deterministic match-start flow.
 - Version/map/mod compatibility handshake.
-- Hybrid direct P2P / relay gameplay transport.
+- Direct P2P gameplay transport.
 - NAT traversal and relay fallback.
 - Custom online end screen with winner, rematch, queue again, and hub actions.
 - Disconnect/rematch handling.
-- Post-match result reporting and MMR/rating update path.
-- Cosmetics/customization plan that works offline and online.
+- Hardened post-match result reporting and MMR/rating update path.
+- Cosmetics/customization plan that works offline and stays out of online transport unless explicitly reintroduced.
 - Configurable input delay if needed.
 - Packet loss/jitter testing.
 - Desync dump files.
@@ -499,7 +496,7 @@ From repo root in PowerShell:
 ```powershell
 $env:PATH='C:\msys64\mingw32\bin;' + $env:PATH
 $src=@('dllmain.c','stubs.c','hooks.c','custom_maps.c','lua_manager.c','ggpo_ext.c','ggpo_loopback.c','ggpo_local.c','ggpo_net.c','font_ext.c','texture_ext.c','log.c','net_ext.c')
-$libs=@('-lkernel32','-luser32','-lopengl32','-l:libluajit-5.1.dll.a','-lws2_32','-lwinhttp','-IC:\msys64\mingw32\include','-LC:\msys64\mingw32\lib')
+$libs=@('-lkernel32','-luser32','-lopengl32','-l:libluajit-5.1.dll.a','-lws2_32','-lwinhttp','-lcomdlg32','-lshell32','-lole32','-IC:\msys64\mingw32\include','-LC:\msys64\mingw32\lib')
 & C:\msys64\mingw32\bin\gcc.exe -m32 -shared -o build\SDL2_test.dll @src @libs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & C:\msys64\mingw32\bin\gcc.exe -m32 -shared -o SDL2.dll @src @libs

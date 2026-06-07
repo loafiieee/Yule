@@ -16,10 +16,11 @@
 #include "lua_manager.h"
 
 #define GGPO_NET_MAGIC 0x50474E45u
-#define GGPO_NET_VERSION 7u
+#define GGPO_NET_VERSION 10u
 #define GGPO_NET_HISTORY_FRAMES 512
 #define GGPO_NET_PACKET_INPUTS 64
 #define GGPO_NET_PACKET_CHECKSUMS 32
+#define GGPO_NET_PACKET_SUMMARIES 4
 #define GGPO_NET_DEFAULT_MAX_PREDICTION 24
 #define GGPO_NET_DEFAULT_MAX_FRAME_ADVANTAGE 20
 #define GGPO_NET_DEFAULT_INPUT_DELAY 1
@@ -33,6 +34,7 @@
 #define GGPO_NET_COSMETIC_ASSET_BURST_CHUNKS 8
 #define GGPO_NET_SIM_QUEUE_PACKETS 512
 #define GGPO_NET_COSMETIC_SYNC_WAIT_TICKS 300
+#define GGPO_NET_ENABLE_COSMETICS 0
 
 #define GGPO_NET_PACKET_HELLO 1u
 #define GGPO_NET_PACKET_INPUT 2u
@@ -61,6 +63,8 @@ typedef struct GgpoNetHistoryEntry {
     uint32_t local_cmd;
     uint32_t remote_cmd;
     int remote_predicted;
+    int has_summary;
+    LuaGameStateRollbackSummary summary;
 } GgpoNetHistoryEntry;
 
 #pragma pack(push, 1)
@@ -79,6 +83,11 @@ typedef struct GgpoNetPacketChecksum {
     uint32_t frame;
     uint32_t checksum;
 } GgpoNetPacketChecksum;
+
+typedef struct GgpoNetPacketStateSummary {
+    uint32_t frame;
+    LuaGameStateRollbackSummary summary;
+} GgpoNetPacketStateSummary;
 
 typedef struct GgpoNetPacket {
     uint32_t magic;
@@ -99,8 +108,10 @@ typedef struct GgpoNetPacket {
     uint32_t last_checksum;
     uint32_t input_count;
     uint32_t checksum_count;
+    uint32_t summary_count;
     GgpoNetPacketInput inputs[GGPO_NET_PACKET_INPUTS];
     GgpoNetPacketChecksum checksums[GGPO_NET_PACKET_CHECKSUMS];
+    GgpoNetPacketStateSummary summaries[GGPO_NET_PACKET_SUMMARIES];
 } GgpoNetPacket;
 
 typedef struct GgpoNetStateChunkPacket {
@@ -160,10 +171,11 @@ typedef struct GgpoNetCosmeticAssetChunkPacket {
 } GgpoNetCosmeticAssetChunkPacket;
 #pragma pack(pop)
 
+#define GGPO_NET_MAX2(a, b) ((sizeof(a) > sizeof(b)) ? sizeof(a) : sizeof(b))
 #define GGPO_NET_MAX_PACKET_BYTES \
-    ((sizeof(GgpoNetStateChunkPacket) > sizeof(GgpoNetCosmeticPacket)) ? \
-        ((sizeof(GgpoNetStateChunkPacket) > sizeof(GgpoNetCosmeticAssetChunkPacket)) ? sizeof(GgpoNetStateChunkPacket) : sizeof(GgpoNetCosmeticAssetChunkPacket)) : \
-        ((sizeof(GgpoNetCosmeticPacket) > sizeof(GgpoNetCosmeticAssetChunkPacket)) ? sizeof(GgpoNetCosmeticPacket) : sizeof(GgpoNetCosmeticAssetChunkPacket)))
+    (GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) > GGPO_NET_MAX2(GgpoNetCosmeticPacket, GgpoNetCosmeticAssetChunkPacket) ? \
+        GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) : \
+        GGPO_NET_MAX2(GgpoNetCosmeticPacket, GgpoNetCosmeticAssetChunkPacket))
 
 typedef struct GgpoNetQueuedPacket {
     int valid;
@@ -870,6 +882,148 @@ static int ggpo_net_prepare_host_correction(const char* reason) {
     return 1;
 }
 
+static const LuaGameStateRollbackSummary* ggpo_net_packet_summary_for_frame(const GgpoNetPacket* p, uint32_t frame) {
+    uint32_t count = p ? p->summary_count : 0u;
+    if (!p) return NULL;
+    if (count > GGPO_NET_PACKET_SUMMARIES) count = GGPO_NET_PACKET_SUMMARIES;
+    for (uint32_t i = 0; i < count; i++) {
+        if (p->summaries[i].frame == frame) {
+            return &p->summaries[i].summary;
+        }
+    }
+    return NULL;
+}
+
+static void ggpo_net_append_component(char* dst, size_t dst_cap, const char* name) {
+    size_t len = 0;
+    if (!dst || dst_cap == 0 || !name || !name[0]) return;
+    len = strlen(dst);
+    if (len + 1 >= dst_cap) return;
+    snprintf(dst + len, dst_cap - len, "%s%s", len ? "," : "", name);
+}
+
+static void ggpo_net_log_desync_summary(uint32_t frame, const GgpoNetHistoryEntry* h, const LuaGameStateRollbackSummary* remote) {
+    const LuaGameStateRollbackSummary* local = (h && h->valid && h->frame == frame && h->has_summary) ? &h->summary : NULL;
+    char changed[192];
+    char player_detail[32];
+    char thing_detail[128];
+    changed[0] = '\0';
+    player_detail[0] = '\0';
+    thing_detail[0] = '\0';
+
+    if (!local && !remote) {
+        LOG_WARN("ggpo.net: desync detail frame=%u no local or remote rollback summaries available",
+                 (unsigned int)frame);
+        return;
+    }
+    if (!local) {
+        LOG_WARN("ggpo.net: desync detail frame=%u no local rollback summary; remote full=%u header=%u transient=%u players=%u things=%u tilemap=%u",
+                 (unsigned int)frame,
+                 (unsigned int)remote->full_crc,
+                 (unsigned int)remote->header_crc,
+                 (unsigned int)remote->transient_crc,
+                 (unsigned int)remote->players_crc,
+                 (unsigned int)remote->things_crc,
+                 (unsigned int)remote->tilemap_crc);
+        return;
+    }
+    if (!remote) {
+        LOG_WARN("ggpo.net: desync detail frame=%u no remote rollback summary; local full=%u header=%u transient=%u players=%u things=%u tilemap=%u room=%u ticks=%u rng=%u thing_count=%u map=%u score=%u-%u round_end=%u",
+                 (unsigned int)frame,
+                 (unsigned int)local->full_crc,
+                 (unsigned int)local->header_crc,
+                 (unsigned int)local->transient_crc,
+                 (unsigned int)local->players_crc,
+                 (unsigned int)local->things_crc,
+                 (unsigned int)local->tilemap_crc,
+                 (unsigned int)local->active_room,
+                 (unsigned int)local->native_game_ticks,
+                 (unsigned int)local->rng_seed,
+                 (unsigned int)local->thing_count,
+                 (unsigned int)local->map_selector,
+                 (unsigned int)local->score_p0,
+                 (unsigned int)local->score_p1,
+                 (unsigned int)local->round_end_any);
+        return;
+    }
+
+#define GGPO_NET_NOTE_DIFF(field, label) \
+    do { if (local->field != remote->field) ggpo_net_append_component(changed, sizeof(changed), label); } while (0)
+    GGPO_NET_NOTE_DIFF(header_crc, "header");
+    GGPO_NET_NOTE_DIFF(transient_crc, "transient");
+    GGPO_NET_NOTE_DIFF(thing_info_crc, "thing_info");
+    GGPO_NET_NOTE_DIFF(room_info_crc, "room_info");
+    GGPO_NET_NOTE_DIFF(particle_crc, "particles");
+    GGPO_NET_NOTE_DIFF(players_crc, "players");
+    GGPO_NET_NOTE_DIFF(things_crc, "things");
+    GGPO_NET_NOTE_DIFF(tilemap_crc, "tilemap");
+#undef GGPO_NET_NOTE_DIFF
+    if (!changed[0]) snprintf(changed, sizeof(changed), "unknown/full-only");
+
+    if (local->player0_crc != remote->player0_crc) ggpo_net_append_component(player_detail, sizeof(player_detail), "p0");
+    if (local->player1_crc != remote->player1_crc) ggpo_net_append_component(player_detail, sizeof(player_detail), "p1");
+    if (local->thing_count != remote->thing_count) ggpo_net_append_component(thing_detail, sizeof(thing_detail), "count");
+    {
+        uint32_t count = local->thing_count < remote->thing_count ? local->thing_count : remote->thing_count;
+        if (count > LUA_ROLLBACK_SUMMARY_THING_SLOTS) count = LUA_ROLLBACK_SUMMARY_THING_SLOTS;
+        for (uint32_t i = 0; i < count; i++) {
+            if (local->thing_slot_crc[i] != remote->thing_slot_crc[i]) {
+                char slot[12];
+                snprintf(slot, sizeof(slot), "%u", (unsigned int)i);
+                ggpo_net_append_component(thing_detail, sizeof(thing_detail), slot);
+            }
+        }
+    }
+    if (!player_detail[0]) snprintf(player_detail, sizeof(player_detail), "-");
+    if (!thing_detail[0]) snprintf(thing_detail, sizeof(thing_detail), "-");
+
+    LOG_ERROR("ggpo.net: desync detail frame=%u changed=%s player_diff=%s thing_slots=%s local{full=%u header=%u transient=%u thing_info=%u room_info=%u particles=%u players=%u p0=%u p1=%u things=%u tilemap=%u room=%u ticks=%u rng=%u seed=%u thing_count=%u map=%u score=%u-%u round_end=%u} remote{full=%u header=%u transient=%u thing_info=%u room_info=%u particles=%u players=%u p0=%u p1=%u things=%u tilemap=%u room=%u ticks=%u rng=%u seed=%u thing_count=%u map=%u score=%u-%u round_end=%u}",
+              (unsigned int)frame,
+              changed,
+              player_detail,
+              thing_detail,
+              (unsigned int)local->full_crc,
+              (unsigned int)local->header_crc,
+              (unsigned int)local->transient_crc,
+              (unsigned int)local->thing_info_crc,
+              (unsigned int)local->room_info_crc,
+              (unsigned int)local->particle_crc,
+              (unsigned int)local->players_crc,
+              (unsigned int)local->player0_crc,
+              (unsigned int)local->player1_crc,
+              (unsigned int)local->things_crc,
+              (unsigned int)local->tilemap_crc,
+              (unsigned int)local->active_room,
+              (unsigned int)local->native_game_ticks,
+              (unsigned int)local->rng_seed,
+              (unsigned int)local->seed,
+              (unsigned int)local->thing_count,
+              (unsigned int)local->map_selector,
+              (unsigned int)local->score_p0,
+              (unsigned int)local->score_p1,
+              (unsigned int)local->round_end_any,
+              (unsigned int)remote->full_crc,
+              (unsigned int)remote->header_crc,
+              (unsigned int)remote->transient_crc,
+              (unsigned int)remote->thing_info_crc,
+              (unsigned int)remote->room_info_crc,
+              (unsigned int)remote->particle_crc,
+              (unsigned int)remote->players_crc,
+              (unsigned int)remote->player0_crc,
+              (unsigned int)remote->player1_crc,
+              (unsigned int)remote->things_crc,
+              (unsigned int)remote->tilemap_crc,
+              (unsigned int)remote->active_room,
+              (unsigned int)remote->native_game_ticks,
+              (unsigned int)remote->rng_seed,
+              (unsigned int)remote->seed,
+              (unsigned int)remote->thing_count,
+              (unsigned int)remote->map_selector,
+              (unsigned int)remote->score_p0,
+              (unsigned int)remote->score_p1,
+              (unsigned int)remote->round_end_any);
+}
+
 static void ggpo_net_mark_desync(uint32_t frame, uint32_t local_checksum, uint32_t remote_checksum, const char* why) {
     GgpoNetHistoryEntry* h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
     if (g_net.desync_detected) return;
@@ -978,9 +1132,24 @@ static uint32_t ggpo_net_predict_remote(uint32_t frame, int* out_predicted) {
     return 0u;
 }
 
+static void ggpo_net_capture_history_summary(GgpoNetHistoryEntry* h) {
+    char err[128];
+    if (!h) return;
+    err[0] = '\0';
+    if (lua_manager_game_state_rollback_summary(&h->summary, err, sizeof(err))) {
+        h->has_summary = 1;
+        return;
+    }
+    h->has_summary = 0;
+    LOG_DEBUG("ggpo.net: rollback summary unavailable frame=%u (%s)",
+              (unsigned int)h->frame,
+              err[0] ? err : "unknown error");
+}
+
 static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     uint32_t count = 0;
     uint32_t checksum_count = 0;
+    uint32_t summary_count = 0;
     uint32_t latest_input_frame = g_net.frame + g_net.input_delay;
     memset(p, 0, sizeof(*p));
     p->magic = GGPO_NET_MAGIC;
@@ -1022,9 +1191,15 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
             p->checksums[checksum_count].frame = frame;
             p->checksums[checksum_count].checksum = h->post_checksum;
             checksum_count++;
+            if (h->has_summary && summary_count < GGPO_NET_PACKET_SUMMARIES) {
+                p->summaries[summary_count].frame = frame;
+                p->summaries[summary_count].summary = h->summary;
+                summary_count++;
+            }
         }
     }
     p->checksum_count = checksum_count;
+    p->summary_count = summary_count;
 }
 
 static int ggpo_net_send_packet(uint16_t type) {
@@ -1035,6 +1210,9 @@ static int ggpo_net_send_packet(uint16_t type) {
 }
 
 static int ggpo_net_send_cosmetic_profile(void) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    return 0;
+#endif
     GgpoNetCosmeticPacket p;
     if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
     if (g_net.local_cosmetic_profile_len == 0u ||
@@ -1063,6 +1241,9 @@ static int ggpo_net_send_cosmetic_profile(void) {
 }
 
 static void ggpo_net_send_cosmetic_profile_periodic(void) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    return;
+#endif
     if (!g_net.active || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
     if (g_net.local_cosmetic_profile_len == 0u) return;
     if (g_net.last_cosmetic_profile_send_tick != 0u &&
@@ -1073,6 +1254,10 @@ static void ggpo_net_send_cosmetic_profile_periodic(void) {
 }
 
 static int ggpo_net_send_cosmetic_asset_chunk(uint32_t chunk_index) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    (void)chunk_index;
+    return 0;
+#endif
     GgpoNetCosmeticAssetChunkPacket p;
     uint32_t chunk_count = 0;
     uint32_t chunk_size = 0;
@@ -1114,6 +1299,9 @@ static int ggpo_net_send_cosmetic_asset_chunk(uint32_t chunk_index) {
 }
 
 static void ggpo_net_send_cosmetic_asset_periodic(void) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    return;
+#endif
     uint32_t chunk_count = 0;
     if (!g_net.active || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
     if (!g_net.local_cosmetic_asset || g_net.local_cosmetic_asset_len == 0u) return;
@@ -1143,6 +1331,10 @@ static int ggpo_net_cosmetic_profiles_ready(void) {
 }
 
 static int ggpo_net_wait_for_cosmetic_profiles(uint32_t* out_checksum) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    (void)out_checksum;
+    return 0;
+#endif
     if (ggpo_net_cosmetic_profiles_ready()) {
         g_net.cosmetic_wait_start_tick = 0u;
         g_net.cosmetic_wait_cap_announced = 0;
@@ -1585,7 +1777,14 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
             ggpo_net_reset_recv_state();
             return;
         }
-        ggpo_net_mark_desync(0u, checksum, p->state_checksum, "host state transfer checksum mismatch");
+        LOG_WARN("ggpo.net: host state transfer checksum mismatch local=%u remote=%u frame=%u; waiting for resend",
+                 (unsigned int)checksum,
+                 (unsigned int)p->state_checksum,
+                 (unsigned int)p->frame);
+        g_net.state_synced = 0;
+        g_net.start_state_loaded = 0;
+        g_net.state_sync_announced = 0;
+        ggpo_net_reset_recv_state();
         return;
     }
 
@@ -1640,6 +1839,12 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
 }
 
 static void ggpo_net_handle_cosmetic_packet(const GgpoNetCosmeticPacket* p, int got_len, const struct sockaddr_in* from) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    (void)p;
+    (void)got_len;
+    (void)from;
+    return;
+#endif
     if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
     if (p->type != GGPO_NET_PACKET_COSMETICS) return;
     if (p->sender_player > 1u || (int)p->sender_player == g_net.local_player) return;
@@ -1695,6 +1900,12 @@ static void ggpo_net_handle_cosmetic_packet(const GgpoNetCosmeticPacket* p, int 
 }
 
 static void ggpo_net_handle_cosmetic_asset_chunk(const GgpoNetCosmeticAssetChunkPacket* p, int got_len, const struct sockaddr_in* from) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    (void)p;
+    (void)got_len;
+    (void)from;
+    return;
+#endif
     uint32_t expected_chunk_count = 0;
     uint32_t expected_chunk_size = 0;
     uint32_t expected_offset = 0;
@@ -1905,6 +2116,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
         if (!h->valid || h->frame != frame) continue;
         if (h->remote_predicted) continue;
         if (h->post_checksum != remote_checksum) {
+            ggpo_net_log_desync_summary(frame, h, ggpo_net_packet_summary_for_frame(p, frame));
             ggpo_net_recoverable_desync(frame, h->post_checksum, remote_checksum, "confirmed frame checksum mismatch");
             break;
         }
@@ -2108,6 +2320,7 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
         rh->remote_cmd = remote_cmd;
         rh->remote_predicted = predicted;
         rh->post_checksum = checksum;
+        ggpo_net_capture_history_summary(rh);
     }
 
     g_net.last_checksum = checksum;
@@ -2344,6 +2557,13 @@ int ggpo_net_build_mismatch(void) {
 }
 
 int ggpo_net_set_local_cosmetic_profile(const char* profile, size_t profile_len) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    (void)profile;
+    (void)profile_len;
+    memset(g_net.local_cosmetic_profile, 0, sizeof(g_net.local_cosmetic_profile));
+    g_net.local_cosmetic_profile_len = 0;
+    return 1;
+#endif
     if (!profile) profile_len = 0;
     if (profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) return 0;
     if (profile_len == g_net.local_cosmetic_profile_len &&
@@ -2391,6 +2611,16 @@ uint32_t ggpo_net_remote_cosmetic_profile_applied_revision(void) {
 }
 
 int ggpo_net_set_local_cosmetic_asset(const char* asset_id, const void* data, size_t data_len) {
+#if !GGPO_NET_ENABLE_COSMETICS
+    (void)asset_id;
+    (void)data;
+    (void)data_len;
+    free(g_net.local_cosmetic_asset);
+    g_net.local_cosmetic_asset = NULL;
+    memset(g_net.local_cosmetic_asset_id, 0, sizeof(g_net.local_cosmetic_asset_id));
+    g_net.local_cosmetic_asset_len = 0;
+    return 1;
+#endif
     size_t id_len = asset_id ? strlen(asset_id) : 0;
     if (!asset_id || id_len == 0 || !data || data_len == 0) {
         free(g_net.local_cosmetic_asset);
@@ -2892,6 +3122,7 @@ int ggpo_net_advance(uint32_t raw_p0,
     h->remote_cmd = remote_cmd;
     h->remote_predicted = predicted;
     h->post_checksum = checksum;
+    ggpo_net_capture_history_summary(h);
 
     g_net.last_checksum = checksum;
     g_net.frame++;

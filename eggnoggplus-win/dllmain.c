@@ -465,6 +465,7 @@ void SDL_GL_SwapWindow(SDL_Window* window) {
     g_last_real_qpc = now;
 
     lua_manager_on_frame();
+    hooks_online_on_pre_swap();
     hooks_console_on_pre_swap();
     if (real_SwapWindow) real_SwapWindow(window);
 }
@@ -497,6 +498,10 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
+                    consumed = 1;
+                    break;
+                }
                 lua_manager_on_key_event(event->key.keysym.sym, 1);
                 consumed = lua_manager_on_event("keydown",
                     event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
@@ -516,6 +521,10 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_mousebutton(event->button.x, event->button.y, event->button.button, 1)) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousebuttondown",
                     0, 0, 0, event->button.x, event->button.y, event->button.button);
                 break;
@@ -525,11 +534,19 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_mousebutton(event->button.x, event->button.y, event->button.button, 0)) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousebuttonup",
                     0, 0, 0, event->button.x, event->button.y, event->button.button);
                 break;
             case SDL_MOUSEMOTION:
                 if (hooks_console_active()) {
+                    consumed = 1;
+                    break;
+                }
+                if (hooks_online_hub_mousemotion(event->motion.x, event->motion.y)) {
                     consumed = 1;
                     break;
                 }
@@ -542,11 +559,19 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                     break;
                 }
+                if (hooks_online_hub_mousewheel(event->wheel.y)) {
+                    consumed = 1;
+                    break;
+                }
                 consumed = lua_manager_on_event("mousewheel",
                     0, 0, 0, event->wheel.x, event->wheel.y, (int)event->wheel.direction);
                 break;
             case SDL_TEXTINPUT: {
                 if (hooks_console_textinput(event->text.text)) {
+                    consumed = 1;
+                    break;
+                }
+                if (hooks_online_hub_textinput(event->text.text)) {
                     consumed = 1;
                     break;
                 }
@@ -580,6 +605,8 @@ int SDL_PollEvent(SDL_Event* event) {
                 } else if (hooks_console_active()) {
                     consumed = 1;
                 } else if (action && hooks_mods_menu_control_action(action)) {
+                    consumed = 1;
+                } else if (action && hooks_online_hub_control_action(action)) {
                     consumed = 1;
                 } else {
                     consumed = lua_manager_on_event("controllerbuttondown",
@@ -617,6 +644,8 @@ int SDL_PollEvent(SDL_Event* event) {
                     consumed = 1;
                 } else if (action && hooks_mods_menu_control_action(action)) {
                     consumed = 1;
+                } else if (action && hooks_online_hub_control_action(action)) {
+                    consumed = 1;
                 } else {
                     consumed = lua_manager_on_event("joybuttondown",
                         (int)event->jbutton.button, 0, 0, (int)event->jbutton.which, (int)event->jbutton.state, 0);
@@ -642,6 +671,8 @@ int SDL_PollEvent(SDL_Event* event) {
                 } else if (hooks_console_active()) {
                     consumed = 1;
                 } else if (action && hooks_mods_menu_control_action(action)) {
+                    consumed = 1;
+                } else if (action && hooks_online_hub_control_action(action)) {
                     consumed = 1;
                 } else {
                     consumed = lua_manager_on_event("joyhatmotion",

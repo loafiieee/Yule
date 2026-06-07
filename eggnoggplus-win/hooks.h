@@ -24,12 +24,22 @@ int hooks_console_mousewheel(int y);
 int hooks_console_mousebutton(int x, int y, int button, int down);
 void hooks_console_pump(void);
 void hooks_console_on_pre_swap(void);
+void hooks_online_on_pre_swap(void);
 
 // Mods menu input handling
 int hooks_mods_menu_keydown(int sym, int scancode, int mod);
 int hooks_mods_menu_control_action(int action);
 int hooks_mods_menu_active(void);
 void hooks_mods_menu_notify_reload(void);
+
+// Built-in online hub input handling
+int hooks_online_hub_keydown(int sym, int scancode, int mod);
+int hooks_online_hub_textinput(const char* text);
+int hooks_online_hub_mousebutton(int x, int y, int button, int down);
+int hooks_online_hub_mousemotion(int x, int y);
+int hooks_online_hub_mousewheel(int y);
+int hooks_online_hub_control_action(int action);
+int hooks_online_hub_active(void);
 
 
 // Custom state API (Lua)

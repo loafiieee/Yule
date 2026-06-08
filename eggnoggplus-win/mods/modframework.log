@@ -36,3 +36,4 @@
 [21:23:53] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
 [21:23:53] [INFO] [maps] registry ready: 2 custom maps (was 0)
 [21:23:53] [INFO] hooks_init: custom MODS menu ready
+[21:23:53] [INFO] [maps][big_jump] applying custom map for selector index 6

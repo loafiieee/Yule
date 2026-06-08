@@ -78,9 +78,19 @@ uint32_t ggpo_net_remote_cosmetic_asset_applied_revision(void);
 int ggpo_net_start_state_loaded(void);
 int ggpo_net_state_synced(void);
 int ggpo_net_remote_state_synced(void);
+int ggpo_net_has_peer(void);
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);
+int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap);
+int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap);
+int ggpo_net_send_server_probe(const char* host,
+                               uint16_t port,
+                               int match_id,
+                               const char* username,
+                               const char* token,
+                               char* err,
+                               size_t err_cap);
 void ggpo_net_stop(void);
 
 int ggpo_net_advance(uint32_t raw_p0,

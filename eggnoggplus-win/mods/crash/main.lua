@@ -4,11 +4,11 @@ local SDLK_F12 = 1073741893
 
 mod.on_load(function()
   mod.log("Loaded! id=" .. mod.id .. " name=" .. mod.name)
-  mod.log("enabled=" .. tostring(config.get("enabled", false)))
+  mod.log("armed=" .. tostring(config.get("armed", false)))
 end)
 
 mod.on_event(function(e)
-  if not config.get("enabled", false) then
+  if not config.get("armed", false) then
     return false
   end
 

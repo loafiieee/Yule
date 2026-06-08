@@ -196,6 +196,10 @@ typedef struct GgpoNetSession {
     SOCKET sock;
     struct sockaddr_in peer_addr;
     int has_peer_addr;
+    struct sockaddr_in probe_server_addr;
+    int has_probe_server_addr;
+    char probe_server_host[128];
+    uint16_t probe_server_port;
     uint32_t session_id;
     uint32_t remote_session_id;
     int has_remote_session_id;
@@ -425,6 +429,23 @@ static uint32_t ggpo_net_next_correction_id(void) {
 static void ggpo_net_set_err(char* err, size_t err_cap, const char* msg) {
     if (!err || err_cap == 0) return;
     snprintf(err, err_cap, "%s", msg ? msg : "unknown error");
+}
+
+static void ggpo_net_json_escape(char* out, size_t out_cap, const char* s) {
+    size_t pos = 0;
+    if (!out || out_cap == 0) return;
+    out[0] = '\0';
+    if (!s) return;
+    while (*s && pos + 1 < out_cap) {
+        unsigned char c = (unsigned char)*s++;
+        if ((c == '"' || c == '\\') && pos + 2 < out_cap) {
+            out[pos++] = '\\';
+            out[pos++] = (char)c;
+        } else if (c >= 32 && c < 127) {
+            out[pos++] = (char)c;
+        }
+    }
+    out[pos] = '\0';
 }
 
 static uint32_t ggpo_net_hash_mix_u32(uint32_t h, uint32_t v) {
@@ -2705,6 +2726,10 @@ int ggpo_net_remote_state_synced(void) {
     return g_net.remote_state_synced ? 1 : 0;
 }
 
+int ggpo_net_has_peer(void) {
+    return (g_net.active && g_net.has_peer_addr) ? 1 : 0;
+}
+
 void ggpo_net_stop(void) {
     if (g_net.sock != INVALID_SOCKET && g_net.sock != 0) {
         if (g_net.has_peer_addr) (void)ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
@@ -2828,7 +2853,6 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
 }
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap) {
-    if (local_port == 0) local_port = GGPO_NET_DEFAULT_PORT;
     if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, err, err_cap)) {
         return 0;
     }
@@ -2842,17 +2866,68 @@ int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap) {
     return 1;
 }
 
+int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap) {
+    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, err, err_cap)) {
+        return 0;
+    }
+    LOG_INFO("ggpo.net: joining deferred local_port=%u input_delay=%u max_advantage=%u max_prediction=%u state_size=%u checksum=%u",
+             (unsigned int)g_net.local_port,
+             (unsigned int)g_net.input_delay,
+             (unsigned int)g_net.max_frame_advantage,
+             (unsigned int)g_net.max_prediction,
+             (unsigned int)g_net.state_size,
+             (unsigned int)g_net.initial_checksum);
+    return 1;
+}
+
+int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap) {
+    struct sockaddr_in addr;
+    int changed = 0;
+    if (!g_net.active || g_net.sock == INVALID_SOCKET) {
+        ggpo_net_set_err(err, err_cap, "net session is not active");
+        return 0;
+    }
+    if (remote_port == 0) {
+        ggpo_net_set_err(err, err_cap, "missing peer port");
+        return 0;
+    }
+    if (!ggpo_net_resolve_peer(host, remote_port, &addr, err, err_cap)) {
+        return 0;
+    }
+    if (g_net.has_peer_addr) {
+        if (ggpo_net_addr_equal(&g_net.peer_addr, &addr)) {
+            return 1;
+        }
+        if (g_net.connected) {
+            ggpo_net_set_err(err, err_cap, "already connected to a different peer");
+            return 0;
+        }
+        changed = 1;
+    }
+    g_net.peer_addr = addr;
+    g_net.has_peer_addr = 1;
+    g_net.remote_port = remote_port;
+    LOG_INFO("ggpo.net: %s peer endpoint %s:%u mode=%s local_port=%u",
+             changed ? "updated" : "set",
+             host ? host : "",
+             (unsigned int)remote_port,
+             ggpo_net_mode_name(),
+             (unsigned int)g_net.local_port);
+    for (int i = 0; i < 4; i++) {
+        (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
+    }
+    return 1;
+}
+
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap) {
     if (remote_port == 0) remote_port = GGPO_NET_DEFAULT_PORT;
     if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, err, err_cap)) {
         return 0;
     }
-    if (!ggpo_net_resolve_peer(host, remote_port, &g_net.peer_addr, err, err_cap)) {
+    if (!ggpo_net_set_peer(host, remote_port, err, err_cap)) {
         ggpo_net_stop();
         return 0;
     }
-    g_net.has_peer_addr = 1;
-    g_net.remote_port = remote_port;
     LOG_INFO("ggpo.net: joining %s:%u local_port=%u input_delay=%u max_advantage=%u max_prediction=%u state_size=%u checksum=%u",
              host ? host : "",
              (unsigned int)remote_port,
@@ -2862,7 +2937,59 @@ int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_p
              (unsigned int)g_net.max_prediction,
              (unsigned int)g_net.state_size,
              (unsigned int)g_net.initial_checksum);
-    (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
+    return 1;
+}
+
+int ggpo_net_send_server_probe(const char* host,
+                               uint16_t port,
+                               int match_id,
+                               const char* username,
+                               const char* token,
+                               char* err,
+                               size_t err_cap) {
+    char user_json[96];
+    char token_json[128];
+    char line[384];
+    int len;
+    if (!g_net.active || g_net.sock == INVALID_SOCKET) {
+        ggpo_net_set_err(err, err_cap, "net session is not active");
+        return 0;
+    }
+    if (!host || !host[0] || port == 0) {
+        ggpo_net_set_err(err, err_cap, "missing probe server");
+        return 0;
+    }
+    if (match_id <= 0 || !username || !username[0] || !token || !token[0]) {
+        ggpo_net_set_err(err, err_cap, "missing probe identity");
+        return 0;
+    }
+    if (!g_net.has_probe_server_addr ||
+        g_net.probe_server_port != port ||
+        strcmp(g_net.probe_server_host, host) != 0) {
+        if (!ggpo_net_resolve_peer(host, port, &g_net.probe_server_addr, err, err_cap)) {
+            return 0;
+        }
+        snprintf(g_net.probe_server_host, sizeof(g_net.probe_server_host), "%s", host);
+        g_net.probe_server_port = port;
+        g_net.has_probe_server_addr = 1;
+    }
+    ggpo_net_json_escape(user_json, sizeof(user_json), username);
+    ggpo_net_json_escape(token_json, sizeof(token_json), token);
+    len = snprintf(line,
+                   sizeof(line),
+                   "{\"type\":\"p2p_probe\",\"match_id\":%d,\"username\":\"%s\",\"token\":\"%s\",\"local_port\":%u}\n",
+                   match_id,
+                   user_json,
+                   token_json,
+                   (unsigned int)g_net.local_port);
+    if (len <= 0 || len >= (int)sizeof(line)) {
+        ggpo_net_set_err(err, err_cap, "probe packet too large");
+        return 0;
+    }
+    if (!ggpo_net_send_raw_bytes(line, len, &g_net.probe_server_addr)) {
+        ggpo_net_set_err(err, err_cap, "probe send failed");
+        return 0;
+    }
     return 1;
 }
 

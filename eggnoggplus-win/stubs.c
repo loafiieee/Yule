@@ -1,5 +1,8 @@
 #include <windows.h>
 extern HMODULE real_sdl;
+unsigned int __cdecl luna_SDL_GetTicks(void);
+unsigned long long __cdecl luna_SDL_GetPerformanceCounter(void);
+unsigned long long __cdecl luna_SDL_GetPerformanceFrequency(void);
 
 void* p_SDL_AddEventWatch = NULL;
 void* p_SDL_AddHintCallback = NULL;
@@ -727,6 +730,9 @@ void init_stubs() {
     p_SDL_GetThreadID = GetProcAddress(real_sdl, "SDL_GetThreadID");
     p_SDL_GetThreadName = GetProcAddress(real_sdl, "SDL_GetThreadName");
     p_SDL_GetTicks = GetProcAddress(real_sdl, "SDL_GetTicks");
+    p_SDL_GetPerformanceCounter = (void*)luna_SDL_GetPerformanceCounter;
+    p_SDL_GetPerformanceFrequency = (void*)luna_SDL_GetPerformanceFrequency;
+    p_SDL_GetTicks = (void*)luna_SDL_GetTicks;
     p_SDL_GetTouchDevice = GetProcAddress(real_sdl, "SDL_GetTouchDevice");
     p_SDL_GetTouchFinger = GetProcAddress(real_sdl, "SDL_GetTouchFinger");
     p_SDL_GetVersion = GetProcAddress(real_sdl, "SDL_GetVersion");

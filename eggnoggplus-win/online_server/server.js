@@ -1,18 +1,20 @@
 "use strict";
 
 const net = require("net");
+const dgram = require("dgram");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
 const PORT = Number.parseInt(process.env.PORT || "47778", 10);
 const HOST = process.env.HOST || "0.0.0.0";
+const UDP_PORT = Number.parseInt(process.env.UDP_PORT || `${PORT}`, 10);
+const UDP_HOST = process.env.UDP_HOST || HOST;
 const DB_FILE = process.env.DB || path.join(__dirname, "users.json");
 const RATINGS_FILE = process.env.RATINGS || path.join(__dirname, "ratings.json");
 const SECRET_FILE = process.env.SECRET_FILE || path.join(__dirname, "server_secret.key");
 const DEFAULT_ELO = Number.parseInt(process.env.DEFAULT_ELO || "1000", 10);
 const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
-const DEFAULT_P2P_PORT = Number.parseInt(process.env.DEFAULT_P2P_PORT || "47777", 10);
 const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
@@ -39,11 +41,19 @@ function validUsername(username) {
   return /^[a-z0-9_]{1,24}$/.test(username);
 }
 
-function publicHost(socket) {
-  const raw = socket.remoteAddress || "";
-  if (raw.startsWith("::ffff:")) return raw.slice(7);
-  if (raw === "::1") return "127.0.0.1";
-  return raw;
+function normalizeRemoteAddress(raw) {
+  const value = String(raw || "");
+  if (value.startsWith("::ffff:")) return value.slice(7);
+  if (value === "::1") return "127.0.0.1";
+  return value;
+}
+
+function makeP2pToken() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function clientP2pPort(client) {
+  return Number.isInteger(client.p2p_port) ? client.p2p_port : 0;
 }
 
 function sanitizeHostHint(value) {
@@ -353,26 +363,24 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     competitive: queueName === "competitive",
     started_at: now(),
     results: new Map(),
+    p2p_tokens: {},
+    p2p_endpoints: new Map(),
+    p2p_notified: {},
   };
   activeMatches.set(match.id, match);
   a.match_id = match.id;
   b.match_id = match.id;
 
   const seed = crypto.randomBytes(4).readUInt32LE(0);
-  const aPublic = publicHost(a.socket);
-  const bPublic = publicHost(b.socket);
-  const samePublicHost = aPublic && bPublic && aPublic === bPublic;
   const aHosts = Math.random() < 0.5;
   const hostClient = aHosts ? a : b;
   const joinClient = aHosts ? b : a;
-  const hostPublic = aHosts ? aPublic : bPublic;
-  const joinPublic = aHosts ? bPublic : aPublic;
-  const hostLan = sanitizeHostHint(hostClient.lan_host);
-  const peerHostForJoin = samePublicHost && hostLan ? hostLan : hostPublic;
   const hostMapSel = aHosts ? shared.aSelector : shared.bSelector;
   const joinMapSel = aHosts ? shared.bSelector : shared.aSelector;
   const hostOpponent = joinClient.username;
   const joinOpponent = hostClient.username;
+  match.p2p_tokens[hostClient.username] = makeP2pToken();
+  match.p2p_tokens[joinClient.username] = makeP2pToken();
 
   send(hostClient, {
     type: "match_found",
@@ -385,7 +393,8 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     p2p_role: "host",
     peer_host: "",
     peer_port: 0,
-    local_port: hostClient.p2p_port || DEFAULT_P2P_PORT,
+    local_port: clientP2pPort(hostClient),
+    p2p_token: match.p2p_tokens[hostClient.username],
     map_key: shared.key,
     map_label: shared.label,
     map_sel: hostMapSel,
@@ -402,9 +411,10 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     opponent_elo: publicElo(joinOpponent),
     role: 1,
     p2p_role: "join",
-    peer_host: peerHostForJoin,
-    peer_port: hostClient.p2p_port || DEFAULT_P2P_PORT,
-    local_port: 0,
+    peer_host: "",
+    peer_port: 0,
+    local_port: clientP2pPort(joinClient),
+    p2p_token: match.p2p_tokens[joinClient.username],
     map_key: shared.key,
     map_label: shared.label,
     map_sel: joinMapSel,
@@ -413,9 +423,91 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     input_delay: DEFAULT_INPUT_DELAY,
   });
 
-  console.log(`[match#${match.id}] ${source}/${queueName || "challenge"} ${a.username} vs ${b.username} map=${shared.key} host=${hostClient.username} join=${joinClient.username} peer=${peerHostForJoin}:${hostClient.p2p_port || DEFAULT_P2P_PORT}${samePublicHost && hostLan ? " lan" : ""}`);
+  console.log(`[match#${match.id}] ${source}/${queueName || "challenge"} ${a.username} vs ${b.username} map=${shared.key} host=${hostClient.username} join=${joinClient.username} udp_punch=required`);
   broadcastQueueCounts();
   return true;
+}
+
+function matchHasUser(match, username) {
+  return !!match && (match.a === username || match.b === username);
+}
+
+function p2pPeerUsername(match, username) {
+  if (!match) return "";
+  if (match.a === username) return match.b;
+  if (match.b === username) return match.a;
+  return "";
+}
+
+function p2pHostFor(receiverEndpoint, peerClient, peerEndpoint) {
+  if (!peerEndpoint) return "";
+  if (receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
+    const lanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
+    if (lanHost) return lanHost;
+  }
+  return peerEndpoint.host;
+}
+
+function sendP2pPeerIfReady(match, username) {
+  const peer = p2pPeerUsername(match, username);
+  if (!peer) return;
+
+  const client = connectedClient(username);
+  const peerClient = connectedClient(peer);
+  const endpoint = match.p2p_endpoints && match.p2p_endpoints.get(username);
+  const peerEndpoint = match.p2p_endpoints && match.p2p_endpoints.get(peer);
+  if (!client || !endpoint || !peerEndpoint) return;
+
+  const peerHost = p2pHostFor(endpoint, peerClient, peerEndpoint);
+  if (!peerHost) return;
+
+  const notifyKey = `${peerHost}:${peerEndpoint.port}`;
+  if (match.p2p_notified[username] === notifyKey) return;
+  match.p2p_notified[username] = notifyKey;
+  send(client, {
+    type: "p2p_peer",
+    match_id: match.id,
+    peer_host: peerHost,
+    peer_port: peerEndpoint.port,
+  });
+}
+
+function maybeSendP2pPeers(match) {
+  if (!match || match.finished) return;
+  sendP2pPeerIfReady(match, match.a);
+  sendP2pPeerIfReady(match, match.b);
+}
+
+function handleUdpProbeMessage(msg, rinfo) {
+  if (!msg || msg.type !== "p2p_probe") return;
+
+  const matchId = Number.parseInt(msg.match_id, 10);
+  const username = normalizeUsername(msg.username);
+  const token = String(msg.token || "");
+  if (!Number.isInteger(matchId) || !validUsername(username) || !token) return;
+
+  const match = activeMatches.get(matchId);
+  if (!match || match.finished || !matchHasUser(match, username)) return;
+  if (match.p2p_tokens[username] !== token) return;
+
+  const host = normalizeRemoteAddress(rinfo.address);
+  const port = sanitizePort(rinfo.port, 0);
+  if (!host || !port) return;
+
+  const localPort = sanitizePort(msg.local_port, 0);
+  const prev = match.p2p_endpoints.get(username);
+  match.p2p_endpoints.set(username, {
+    host,
+    port,
+    local_port: localPort,
+    seen_at: now(),
+  });
+
+  if (!prev || prev.host !== host || prev.port !== port || prev.local_port !== localPort) {
+    console.log(`[p2p#${match.id}] ${username} udp=${host}:${port} local=${localPort}`);
+  }
+
+  maybeSendP2pPeers(match);
 }
 
 function tryCasualMatchmaking() {
@@ -507,7 +599,7 @@ function handleMapManifest(client, msg) {
   client.maps = sanitizeManifest(msg.maps);
   client.mapIndex = mapIndex(client.maps);
   client.map_serial = String(msg.serial || "").slice(0, 4096);
-  client.p2p_port = sanitizePort(msg.p2p_port, client.p2p_port || DEFAULT_P2P_PORT);
+  client.p2p_port = sanitizePort(msg.p2p_port, 0);
   client.lan_host = sanitizeHostHint(msg.lan_host);
   console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}`);
 }
@@ -908,7 +1000,7 @@ const server = net.createServer((socket) => {
     username: "",
     maps: defaultManifest(),
     mapIndex: mapIndex(defaultManifest()),
-    p2p_port: DEFAULT_P2P_PORT,
+    p2p_port: 0,
     lan_host: "",
     queue: "",
     queue_joined_at: 0,
@@ -957,3 +1049,28 @@ server.on("error", (err) => {
   console.error("Server error:", err.message);
   process.exit(1);
 });
+
+const udpServer = dgram.createSocket("udp4");
+
+udpServer.on("message", (buf, rinfo) => {
+  if (!buf || buf.length > 2048) return;
+  let msg;
+  try {
+    msg = JSON.parse(buf.toString("utf8").trim());
+  } catch (_) {
+    return;
+  }
+  handleUdpProbeMessage(msg, rinfo);
+});
+
+udpServer.on("listening", () => {
+  const addr = udpServer.address();
+  console.log(`Eggnogg+ P2P discovery UDP listening on ${addr.address}:${addr.port}`);
+});
+
+udpServer.on("error", (err) => {
+  console.error("P2P UDP server error:", err.message);
+  process.exit(1);
+});
+
+udpServer.bind(UDP_PORT, UDP_HOST);

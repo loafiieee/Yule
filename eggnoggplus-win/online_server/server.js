@@ -56,6 +56,10 @@ function clientP2pPort(client) {
   return Number.isInteger(client.p2p_port) ? client.p2p_port : 0;
 }
 
+function clientRouteVersion(client) {
+  return Number.isInteger(client && client.route_version) ? client.route_version : 0;
+}
+
 function sanitizeHostHint(value) {
   const host = String(value || "").trim();
   if (!host || host.length > 64) return "";
@@ -439,39 +443,78 @@ function p2pPeerUsername(match, username) {
   return "";
 }
 
-function p2pAddressFor(receiverEndpoint, peerClient, peerEndpoint) {
+function legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint) {
   if (!peerEndpoint) return null;
-
-  // When both players probe the signaling server from the same public IP, they
-  // are probably on the same LAN.  In that case the usable destination is the
-  // peer's LAN address and the peer's bound local UDP port, not the NAT-mapped
-  // public source port observed by this server.  Using the public port with a
-  // LAN address was a major same-network readiness bug.
+  let host = peerEndpoint.host;
+  let route = "public";
   if (receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
     const lanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
-    const lanPort = sanitizePort(peerEndpoint.local_port, 0);
-    if (lanHost && lanPort) {
-      return {
-        host: lanHost,
-        port: lanPort,
-        route: "lan",
-        public_host: peerEndpoint.host,
-        public_port: peerEndpoint.port,
-        lan_host: lanHost,
-        lan_port: lanPort,
-      };
+    if (lanHost) {
+      host = lanHost;
+      route = "legacy_lan_observed_port";
     }
   }
-
   return {
-    host: peerEndpoint.host,
+    host,
     port: peerEndpoint.port,
-    route: "public",
+    route,
     public_host: peerEndpoint.host,
     public_port: peerEndpoint.port,
     lan_host: sanitizeHostHint(peerClient && peerClient.lan_host),
     lan_port: sanitizePort(peerEndpoint.local_port, 0),
   };
+}
+
+function p2pAddressFor(receiverClient, receiverEndpoint, peerClient, peerEndpoint) {
+  if (!peerEndpoint) return null;
+
+  const receiverRouteVersion = clientRouteVersion(receiverClient);
+  const peerRouteVersion = clientRouteVersion(peerClient);
+  const routeV2 = receiverRouteVersion >= 2 && peerRouteVersion >= 2;
+
+  /* Compatibility note:
+   *
+   * The previous server.js immediately sent LAN-host + peer-local-port whenever
+   * both UDP probes came from the same public IP.  That is the right shape for a
+   * rebuilt route-v2 client, but it regressed the packaged/runtime client: the
+   * old client treats peer_host/peer_port as a single legacy endpoint and has no
+   * route-candidate/fallback layer, so a bad LAN hint leaves both games paused at
+   * frame 0 waiting for HELLO/state sync.
+   *
+   * Only route-v2 clients opt into LAN-local routing.  Legacy clients get the
+   * old observed endpoint behavior that was known to at least connect.  Same-PC
+   * route-v2 matches use loopback instead of the machine's LAN address to avoid
+   * Windows firewall/hairpin oddities.
+   */
+  if (routeV2 && receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
+    const receiverLanHost = sanitizeHostHint(receiverClient && receiverClient.lan_host);
+    const peerLanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
+    const peerLocalPort = sanitizePort(peerEndpoint.local_port, 0);
+    if (peerLanHost && peerLocalPort) {
+      if (receiverLanHost && receiverLanHost === peerLanHost) {
+        return {
+          host: "127.0.0.1",
+          port: peerLocalPort,
+          route: "loopback",
+          public_host: peerEndpoint.host,
+          public_port: peerEndpoint.port,
+          lan_host: peerLanHost,
+          lan_port: peerLocalPort,
+        };
+      }
+      return {
+        host: peerLanHost,
+        port: peerLocalPort,
+        route: "lan",
+        public_host: peerEndpoint.host,
+        public_port: peerEndpoint.port,
+        lan_host: peerLanHost,
+        lan_port: peerLocalPort,
+      };
+    }
+  }
+
+  return legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint);
 }
 
 function sendP2pPeerIfReady(match, username) {
@@ -484,7 +527,7 @@ function sendP2pPeerIfReady(match, username) {
   const peerEndpoint = match.p2p_endpoints && match.p2p_endpoints.get(peer);
   if (!client || !endpoint || !peerEndpoint) return;
 
-  const peerAddress = p2pAddressFor(endpoint, peerClient, peerEndpoint);
+  const peerAddress = p2pAddressFor(client, endpoint, peerClient, peerEndpoint);
   if (!peerAddress || !peerAddress.host || !peerAddress.port) return;
 
   const notifyKey = `${peerAddress.route}:${peerAddress.host}:${peerAddress.port}:${peerAddress.public_host}:${peerAddress.public_port}`;
@@ -632,7 +675,8 @@ function handleMapManifest(client, msg) {
   client.map_serial = String(msg.serial || "").slice(0, 4096);
   client.p2p_port = sanitizePort(msg.p2p_port, 0);
   client.lan_host = sanitizeHostHint(msg.lan_host);
-  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}`);
+  client.route_version = sanitizePort(msg.route_version, 0);
+  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}${client.route_version ? ` route_v${client.route_version}` : ""}`);
 }
 
 function sanitizePort(value, fallback) {
@@ -1033,6 +1077,7 @@ const server = net.createServer((socket) => {
     mapIndex: mapIndex(defaultManifest()),
     p2p_port: 0,
     lan_host: "",
+    route_version: 0,
     queue: "",
     queue_joined_at: 0,
     match_id: 0,

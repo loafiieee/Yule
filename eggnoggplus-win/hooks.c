@@ -6098,7 +6098,7 @@ static void online_server_send_map_manifest(void) {
     if (net_local_ipv4(lan_host, sizeof(lan_host)) && lan_host[0]) {
         online_json_escape(lan_json, sizeof(lan_json), lan_host);
     }
-    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"maps\":%s}\n",
+    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
              (unsigned int)g_online_cfg.local_port,
              lan_json,
              maps_json);

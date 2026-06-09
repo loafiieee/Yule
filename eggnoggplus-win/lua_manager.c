@@ -142,6 +142,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_CHANT_TIMER           0x541F64u
 #define ADDR_CROWD_TIMER           0x541F68u
 #define ADDR_THING_COUNT           0x54202Cu
+#define ADDR_CURRENT               0x542030u
 #define ADDR_THINGS_ALLOCATED      0x542034u
 #define ADDR_WATERFALL_COUNT       0x542038u
 #define ADDR_GAME_STARTED          0x54203Cu
@@ -186,7 +187,13 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_PLAYER_MODE0          0x55A180u
 #define ADDR_PLAYER_MODE1          0x55A184u
 #define ADDR_TRANSIENT_GAME_STATE  0x541E00u
-#define TRANSIENT_GAME_STATE_SIZE  0x480u
+/* Rollback transient globals live immediately before _things.  Keep this
+ * window tied to the Ghidra symbol boundary so the transient snapshot never
+ * duplicates the first bytes of the canonical _things payload. */
+#define TRANSIENT_GAME_STATE_SIZE  ((size_t)(ADDR_THINGS - ADDR_TRANSIENT_GAME_STATE))
+typedef char rollback_transient_must_not_overlap_things[
+    (ADDR_TRANSIENT_GAME_STATE + TRANSIENT_GAME_STATE_SIZE <= ADDR_THINGS) ? 1 : -1
+];
 
 typedef void* (__cdecl *fn_state_current_t)(void);
 typedef void* (__cdecl *fn_state_switch_t)(void*);
@@ -336,6 +343,7 @@ static volatile int* p_chant_step = (volatile int*)(uintptr_t)ADDR_CHANT_STEP;
 static volatile int* p_chant_timer = (volatile int*)(uintptr_t)ADDR_CHANT_TIMER;
 static volatile int* p_crowd_timer = (volatile int*)(uintptr_t)ADDR_CROWD_TIMER;
 static volatile int* p_native_thing_count = (volatile int*)(uintptr_t)ADDR_THING_COUNT;
+static volatile uintptr_t* p_current = (volatile uintptr_t*)(uintptr_t)ADDR_CURRENT;
 static volatile int* p_things_allocated = (volatile int*)(uintptr_t)ADDR_THINGS_ALLOCATED;
 static volatile int* p_waterfall_count = (volatile int*)(uintptr_t)ADDR_WATERFALL_COUNT;
 static volatile int* p_game_started = (volatile int*)(uintptr_t)ADDR_GAME_STARTED;
@@ -5172,7 +5180,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define TILEMAP_MAX_BYTES           (4u * 1024u * 1024u)
 
 #define FULL_STATE_BLOB_MAGIC       0x30474745u /* "EGG0" */
-#define FULL_STATE_BLOB_VERSION     4u
+#define FULL_STATE_BLOB_VERSION     5u
 
 typedef struct FullStateBlobHeader {
     uint32_t magic;
@@ -5217,6 +5225,8 @@ typedef struct FullStateBlobHeader {
     uint32_t seed;
     uint32_t loser_mode;
     uintptr_t loser_raw;
+    uint32_t controller_mode;
+    uintptr_t controller_raw;
     int32_t score_shudder0;
     int32_t score_shudder1;
     int32_t roomdef_count;
@@ -5296,6 +5306,8 @@ const char* lua_manager_game_state_offset_name(size_t offset) {
     FULL_STATE_FIELD_RANGE(seed);
     FULL_STATE_FIELD_RANGE(loser_mode);
     FULL_STATE_FIELD_RANGE(loser_raw);
+    FULL_STATE_FIELD_RANGE(controller_mode);
+    FULL_STATE_FIELD_RANGE(controller_raw);
     FULL_STATE_FIELD_RANGE(score_shudder0);
     FULL_STATE_FIELD_RANGE(score_shudder1);
     FULL_STATE_FIELD_RANGE(roomdef_count);
@@ -5432,13 +5444,49 @@ static void full_state_zero_transient_range(FullStateBlobHeader* hdr, uintptr_t 
     memset(hdr->transient_game_state + off, 0, len);
 }
 
-static uintptr_t full_state_remap_player_ptr(const FullStateBlobHeader* hdr, uintptr_t raw, uintptr_t p0, uintptr_t p1) {
-    uintptr_t raw_p0 = full_state_read_transient_ptr(hdr, ADDR_PLAYER_ARRAY);
-    uintptr_t raw_p1 = full_state_read_transient_ptr(hdr, ADDR_PLAYER_ARRAY + sizeof(uintptr_t));
-    if (raw == 0) return 0;
-    if (raw == raw_p0) return p0;
-    if (raw == raw_p1) return p1;
-    return 0;
+static uint32_t full_state_classify_player_ref(uintptr_t raw, uintptr_t p0, uintptr_t p1) {
+    if (raw == 0u) return FULL_STATE_LEADER_NONE;
+    if (raw == p0) return FULL_STATE_LEADER_P0;
+    if (raw == p1) return FULL_STATE_LEADER_P1;
+    return FULL_STATE_LEADER_RAW;
+}
+
+static uintptr_t full_state_resolve_player_ref(uint32_t mode, uintptr_t raw, uintptr_t p0, uintptr_t p1, int allow_raw) {
+    if (mode == FULL_STATE_LEADER_P0) return p0;
+    if (mode == FULL_STATE_LEADER_P1) return p1;
+    if (mode == FULL_STATE_LEADER_RAW && allow_raw) return raw;
+    return 0u;
+}
+
+static void full_state_restore_process_local_refs(const FullStateBlobHeader* hdr, uintptr_t p0, uintptr_t p1, int allow_raw) {
+    uintptr_t leader_ptr = 0u;
+    uintptr_t loser_ptr = 0u;
+    uintptr_t controller_ptr = 0u;
+
+    if (!hdr) return;
+    if (ptr_writable((void*)p_player_slots, sizeof(uintptr_t) * 2u)) {
+        p_player_slots[0] = p0;
+        p_player_slots[1] = p1;
+    }
+    leader_ptr = full_state_resolve_player_ref(hdr->leader_mode, hdr->leader_raw, p0, p1, allow_raw);
+    loser_ptr = full_state_resolve_player_ref(hdr->loser_mode, hdr->loser_raw, p0, p1, allow_raw);
+    controller_ptr = full_state_resolve_player_ref(hdr->controller_mode, hdr->controller_raw, p0, p1, allow_raw);
+
+    if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
+        *p_game_leader = leader_ptr;
+    }
+    if (ptr_writable((void*)p_loser, sizeof(uintptr_t))) {
+        *p_loser = loser_ptr;
+    }
+    if (ptr_writable((void*)p_controller, sizeof(uintptr_t))) {
+        *p_controller = controller_ptr;
+    }
+    if (ptr_writable((void*)p_waterfall_fx, sizeof(uintptr_t))) {
+        *p_waterfall_fx = hdr->waterfall_fx_present ? hdr->waterfall_fx_raw : 0u;
+    }
+    if (ptr_writable((void*)p_current, sizeof(uintptr_t))) {
+        *p_current = 0u;
+    }
 }
 
 static void full_state_set_err(char* err, size_t err_cap, const char* msg) {
@@ -5461,6 +5509,7 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
     uint8_t* payload = NULL;
     uintptr_t leader_raw = 0;
     uintptr_t loser_raw = 0;
+    uintptr_t controller_raw = 0;
 
     if (!dst || dst_len == 0) {
         full_state_set_err(err, err_cap, "destination buffer unavailable");
@@ -5612,18 +5661,17 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
     if (ptr_readable((const void*)p_game_leader, sizeof(uintptr_t))) {
         leader_raw = *p_game_leader;
         hdr->leader_raw = leader_raw;
-        if (leader_raw == 0) hdr->leader_mode = FULL_STATE_LEADER_NONE;
-        else if (leader_raw == p0) hdr->leader_mode = FULL_STATE_LEADER_P0;
-        else if (leader_raw == p1) hdr->leader_mode = FULL_STATE_LEADER_P1;
-        else hdr->leader_mode = FULL_STATE_LEADER_RAW;
+        hdr->leader_mode = full_state_classify_player_ref(leader_raw, p0, p1);
     }
     if (ptr_readable((const void*)p_loser, sizeof(uintptr_t))) {
         loser_raw = *p_loser;
         hdr->loser_raw = loser_raw;
-        if (loser_raw == 0) hdr->loser_mode = FULL_STATE_LEADER_NONE;
-        else if (loser_raw == p0) hdr->loser_mode = FULL_STATE_LEADER_P0;
-        else if (loser_raw == p1) hdr->loser_mode = FULL_STATE_LEADER_P1;
-        else hdr->loser_mode = FULL_STATE_LEADER_RAW;
+        hdr->loser_mode = full_state_classify_player_ref(loser_raw, p0, p1);
+    }
+    if (ptr_readable((const void*)p_controller, sizeof(uintptr_t))) {
+        controller_raw = *p_controller;
+        hdr->controller_raw = controller_raw;
+        hdr->controller_mode = full_state_classify_player_ref(controller_raw, p0, p1);
     }
     if (ptr_readable((const void*)p_score_shudder, sizeof(int) * 2u)) {
         hdr->score_shudder0 = p_score_shudder[0];
@@ -5863,23 +5911,6 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
     if (ptr_writable((void*)p_crowd_sound_last_tick, sizeof(uint32_t))) {
         *p_crowd_sound_last_tick = hdr->crowd_sound_last_tick;
     }
-    if (ptr_writable((void*)p_waterfall_fx, sizeof(uintptr_t))) {
-        *p_waterfall_fx = hdr->waterfall_fx_present ? hdr->waterfall_fx_raw : 0u;
-    }
-    if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
-        uintptr_t leader_ptr = 0;
-        if (hdr->leader_mode == FULL_STATE_LEADER_P0) leader_ptr = p0;
-        else if (hdr->leader_mode == FULL_STATE_LEADER_P1) leader_ptr = p1;
-        else if (hdr->leader_mode == FULL_STATE_LEADER_RAW) leader_ptr = hdr->leader_raw;
-        *p_game_leader = leader_ptr;
-    }
-    if (ptr_writable((void*)p_loser, sizeof(uintptr_t))) {
-        uintptr_t loser_ptr = 0;
-        if (hdr->loser_mode == FULL_STATE_LEADER_P0) loser_ptr = p0;
-        else if (hdr->loser_mode == FULL_STATE_LEADER_P1) loser_ptr = p1;
-        else if (hdr->loser_mode == FULL_STATE_LEADER_RAW) loser_ptr = hdr->loser_raw;
-        *p_loser = loser_ptr;
-    }
     if (ptr_writable((void*)p_score_shudder, sizeof(int) * 2u)) {
         p_score_shudder[0] = hdr->score_shudder0;
         p_score_shudder[1] = hdr->score_shudder1;
@@ -5938,29 +5969,7 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
     if (ptr_writable((void*)p_transient_game_state, TRANSIENT_GAME_STATE_SIZE)) {
         memcpy((void*)p_transient_game_state, hdr->transient_game_state, TRANSIENT_GAME_STATE_SIZE);
     }
-    if (ptr_writable((void*)p_player_slots, sizeof(uintptr_t) * 2u)) {
-        p_player_slots[0] = p0;
-        p_player_slots[1] = p1;
-    }
-    if (ptr_writable((void*)p_controller, sizeof(uintptr_t))) {
-        uintptr_t raw_controller = full_state_read_transient_ptr(hdr, ADDR_CONTROLLER);
-        uintptr_t controller_ptr = full_state_remap_player_ptr(hdr, raw_controller, p0, p1);
-        if (controller_ptr) {
-            *p_controller = controller_ptr;
-        }
-    }
-    if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
-        uintptr_t leader_ptr = 0;
-        if (hdr->leader_mode == FULL_STATE_LEADER_P0) leader_ptr = p0;
-        else if (hdr->leader_mode == FULL_STATE_LEADER_P1) leader_ptr = p1;
-        *p_game_leader = leader_ptr;
-    }
-    if (ptr_writable((void*)p_loser, sizeof(uintptr_t))) {
-        uintptr_t loser_ptr = 0;
-        if (hdr->loser_mode == FULL_STATE_LEADER_P0) loser_ptr = p0;
-        else if (hdr->loser_mode == FULL_STATE_LEADER_P1) loser_ptr = p1;
-        *p_loser = loser_ptr;
-    }
+    full_state_restore_process_local_refs(hdr, p0, p1, 1);
     memcpy((void*)p_thing_info, hdr->thing_info_state, THING_INFO_STATE_SIZE);
     memcpy((void*)p_room_info_state, hdr->room_info_state, ROOM_INFO_STATE_SIZE);
     memcpy((void*)p_particle_state, hdr->particle_state, PARTICLE_STATE_SIZE);
@@ -6067,6 +6076,10 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     hdr->framework_tick_count = 0;
     hdr->leader_raw = 0;
     hdr->loser_raw = 0;
+    hdr->controller_raw = 0;
+    if (hdr->leader_mode == FULL_STATE_LEADER_RAW) hdr->leader_mode = FULL_STATE_LEADER_NONE;
+    if (hdr->loser_mode == FULL_STATE_LEADER_RAW) hdr->loser_mode = FULL_STATE_LEADER_NONE;
+    if (hdr->controller_mode == FULL_STATE_LEADER_RAW) hdr->controller_mode = FULL_STATE_LEADER_NONE;
     hdr->waterfall_fx_present = 0;
     hdr->waterfall_fx_raw = 0;
     hdr->crowd_sound_last_tick = 0;
@@ -6080,11 +6093,13 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     hdr->score_shudder1 = 0;
     hdr->resumed = 0;
     full_state_zero_transient_range(hdr, ADDR_LEADER, sizeof(uintptr_t));
+    full_state_zero_transient_range(hdr, ADDR_CURRENT, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_WATERFALL_FX, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_CROWD_SOUND_LAST_TICK, sizeof(uint32_t));
     full_state_zero_transient_range(hdr, ADDR_CHANT_STEP, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CHANT_TIMER, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CROWD_TIMER, sizeof(int));
+    full_state_zero_transient_range(hdr, 0x541F04u, 0x5Cu); /* _danger_count + _danger_things scratch */
     full_state_zero_transient_range(hdr, ADDR_GAME_DO_LERP_COLOURS, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_WATERFALL_COUNT, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_LERP_TIME, sizeof(int));
@@ -13400,6 +13415,12 @@ static void full_state_sanitize_live_rollback_fields(void) {
     }
     if (ptr_writable((void*)p_waterfall_fx, sizeof(uintptr_t))) {
         *p_waterfall_fx = 0u;
+    }
+    if (ptr_writable((void*)p_current, sizeof(uintptr_t))) {
+        *p_current = 0u;
+    }
+    if (ptr_writable((void*)(uintptr_t)0x541F04u, 0x5Cu)) {
+        memset((void*)(uintptr_t)0x541F04u, 0, 0x5Cu);
     }
     if (ptr_writable((void*)p_waterfall_count, sizeof(int))) {
         *p_waterfall_count = 0;

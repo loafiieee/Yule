@@ -15,7 +15,7 @@ const RATINGS_FILE = process.env.RATINGS || path.join(__dirname, "ratings.json")
 const SECRET_FILE = process.env.SECRET_FILE || path.join(__dirname, "server_secret.key");
 const DEFAULT_ELO = Number.parseInt(process.env.DEFAULT_ELO || "1000", 10);
 const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
-const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
+const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "2", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
@@ -439,13 +439,39 @@ function p2pPeerUsername(match, username) {
   return "";
 }
 
-function p2pHostFor(receiverEndpoint, peerClient, peerEndpoint) {
-  if (!peerEndpoint) return "";
+function p2pAddressFor(receiverEndpoint, peerClient, peerEndpoint) {
+  if (!peerEndpoint) return null;
+
+  // When both players probe the signaling server from the same public IP, they
+  // are probably on the same LAN.  In that case the usable destination is the
+  // peer's LAN address and the peer's bound local UDP port, not the NAT-mapped
+  // public source port observed by this server.  Using the public port with a
+  // LAN address was a major same-network readiness bug.
   if (receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
     const lanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
-    if (lanHost) return lanHost;
+    const lanPort = sanitizePort(peerEndpoint.local_port, 0);
+    if (lanHost && lanPort) {
+      return {
+        host: lanHost,
+        port: lanPort,
+        route: "lan",
+        public_host: peerEndpoint.host,
+        public_port: peerEndpoint.port,
+        lan_host: lanHost,
+        lan_port: lanPort,
+      };
+    }
   }
-  return peerEndpoint.host;
+
+  return {
+    host: peerEndpoint.host,
+    port: peerEndpoint.port,
+    route: "public",
+    public_host: peerEndpoint.host,
+    public_port: peerEndpoint.port,
+    lan_host: sanitizeHostHint(peerClient && peerClient.lan_host),
+    lan_port: sanitizePort(peerEndpoint.local_port, 0),
+  };
 }
 
 function sendP2pPeerIfReady(match, username) {
@@ -458,17 +484,22 @@ function sendP2pPeerIfReady(match, username) {
   const peerEndpoint = match.p2p_endpoints && match.p2p_endpoints.get(peer);
   if (!client || !endpoint || !peerEndpoint) return;
 
-  const peerHost = p2pHostFor(endpoint, peerClient, peerEndpoint);
-  if (!peerHost) return;
+  const peerAddress = p2pAddressFor(endpoint, peerClient, peerEndpoint);
+  if (!peerAddress || !peerAddress.host || !peerAddress.port) return;
 
-  const notifyKey = `${peerHost}:${peerEndpoint.port}`;
+  const notifyKey = `${peerAddress.route}:${peerAddress.host}:${peerAddress.port}:${peerAddress.public_host}:${peerAddress.public_port}`;
   if (match.p2p_notified[username] === notifyKey) return;
   match.p2p_notified[username] = notifyKey;
   send(client, {
     type: "p2p_peer",
     match_id: match.id,
-    peer_host: peerHost,
-    peer_port: peerEndpoint.port,
+    peer_host: peerAddress.host,
+    peer_port: peerAddress.port,
+    peer_route: peerAddress.route,
+    peer_public_host: peerAddress.public_host,
+    peer_public_port: peerAddress.public_port,
+    peer_lan_host: peerAddress.lan_host,
+    peer_lan_port: peerAddress.lan_port,
   });
 }
 

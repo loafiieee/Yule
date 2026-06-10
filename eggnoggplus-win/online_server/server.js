@@ -15,7 +15,7 @@ const RATINGS_FILE = process.env.RATINGS || path.join(__dirname, "ratings.json")
 const SECRET_FILE = process.env.SECRET_FILE || path.join(__dirname, "server_secret.key");
 const DEFAULT_ELO = Number.parseInt(process.env.DEFAULT_ELO || "1000", 10);
 const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
-const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "2", 10);
+const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
@@ -54,10 +54,6 @@ function makeP2pToken() {
 
 function clientP2pPort(client) {
   return Number.isInteger(client.p2p_port) ? client.p2p_port : 0;
-}
-
-function clientRouteVersion(client) {
-  return Number.isInteger(client && client.route_version) ? client.route_version : 0;
 }
 
 function sanitizeHostHint(value) {
@@ -443,78 +439,13 @@ function p2pPeerUsername(match, username) {
   return "";
 }
 
-function legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint) {
-  if (!peerEndpoint) return null;
-  let host = peerEndpoint.host;
-  let route = "public";
+function p2pHostFor(receiverEndpoint, peerClient, peerEndpoint) {
+  if (!peerEndpoint) return "";
   if (receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
     const lanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
-    if (lanHost) {
-      host = lanHost;
-      route = "legacy_lan_observed_port";
-    }
+    if (lanHost) return lanHost;
   }
-  return {
-    host,
-    port: peerEndpoint.port,
-    route,
-    public_host: peerEndpoint.host,
-    public_port: peerEndpoint.port,
-    lan_host: sanitizeHostHint(peerClient && peerClient.lan_host),
-    lan_port: sanitizePort(peerEndpoint.local_port, 0),
-  };
-}
-
-function p2pAddressFor(receiverClient, receiverEndpoint, peerClient, peerEndpoint) {
-  if (!peerEndpoint) return null;
-
-  const receiverRouteVersion = clientRouteVersion(receiverClient);
-  const peerRouteVersion = clientRouteVersion(peerClient);
-  const routeV2 = receiverRouteVersion >= 2 && peerRouteVersion >= 2;
-
-  /* Compatibility note:
-   *
-   * The previous server.js immediately sent LAN-host + peer-local-port whenever
-   * both UDP probes came from the same public IP.  That is the right shape for a
-   * rebuilt route-v2 client, but it regressed the packaged/runtime client: the
-   * old client treats peer_host/peer_port as a single legacy endpoint and has no
-   * route-candidate/fallback layer, so a bad LAN hint leaves both games paused at
-   * frame 0 waiting for HELLO/state sync.
-   *
-   * Only route-v2 clients opt into LAN-local routing.  Legacy clients get the
-   * old observed endpoint behavior that was known to at least connect.  Same-PC
-   * route-v2 matches use loopback instead of the machine's LAN address to avoid
-   * Windows firewall/hairpin oddities.
-   */
-  if (routeV2 && receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
-    const receiverLanHost = sanitizeHostHint(receiverClient && receiverClient.lan_host);
-    const peerLanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
-    const peerLocalPort = sanitizePort(peerEndpoint.local_port, 0);
-    if (peerLanHost && peerLocalPort) {
-      if (receiverLanHost && receiverLanHost === peerLanHost) {
-        return {
-          host: "127.0.0.1",
-          port: peerLocalPort,
-          route: "loopback",
-          public_host: peerEndpoint.host,
-          public_port: peerEndpoint.port,
-          lan_host: peerLanHost,
-          lan_port: peerLocalPort,
-        };
-      }
-      return {
-        host: peerLanHost,
-        port: peerLocalPort,
-        route: "lan",
-        public_host: peerEndpoint.host,
-        public_port: peerEndpoint.port,
-        lan_host: peerLanHost,
-        lan_port: peerLocalPort,
-      };
-    }
-  }
-
-  return legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint);
+  return peerEndpoint.host;
 }
 
 function sendP2pPeerIfReady(match, username) {
@@ -527,22 +458,17 @@ function sendP2pPeerIfReady(match, username) {
   const peerEndpoint = match.p2p_endpoints && match.p2p_endpoints.get(peer);
   if (!client || !endpoint || !peerEndpoint) return;
 
-  const peerAddress = p2pAddressFor(client, endpoint, peerClient, peerEndpoint);
-  if (!peerAddress || !peerAddress.host || !peerAddress.port) return;
+  const peerHost = p2pHostFor(endpoint, peerClient, peerEndpoint);
+  if (!peerHost) return;
 
-  const notifyKey = `${peerAddress.route}:${peerAddress.host}:${peerAddress.port}:${peerAddress.public_host}:${peerAddress.public_port}`;
+  const notifyKey = `${peerHost}:${peerEndpoint.port}`;
   if (match.p2p_notified[username] === notifyKey) return;
   match.p2p_notified[username] = notifyKey;
   send(client, {
     type: "p2p_peer",
     match_id: match.id,
-    peer_host: peerAddress.host,
-    peer_port: peerAddress.port,
-    peer_route: peerAddress.route,
-    peer_public_host: peerAddress.public_host,
-    peer_public_port: peerAddress.public_port,
-    peer_lan_host: peerAddress.lan_host,
-    peer_lan_port: peerAddress.lan_port,
+    peer_host: peerHost,
+    peer_port: peerEndpoint.port,
   });
 }
 
@@ -675,8 +601,7 @@ function handleMapManifest(client, msg) {
   client.map_serial = String(msg.serial || "").slice(0, 4096);
   client.p2p_port = sanitizePort(msg.p2p_port, 0);
   client.lan_host = sanitizeHostHint(msg.lan_host);
-  client.route_version = sanitizePort(msg.route_version, 0);
-  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}${client.route_version ? ` route_v${client.route_version}` : ""}`);
+  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}`);
 }
 
 function sanitizePort(value, fallback) {
@@ -1077,7 +1002,6 @@ const server = net.createServer((socket) => {
     mapIndex: mapIndex(defaultManifest()),
     p2p_port: 0,
     lan_host: "",
-    route_version: 0,
     queue: "",
     queue_joined_at: 0,
     match_id: 0,

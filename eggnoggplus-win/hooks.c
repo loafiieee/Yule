@@ -1006,8 +1006,6 @@ typedef struct OnlineActiveMatch {
     int invalid_state_ticks;
     int p2p_probe_cooldown;
     int p2p_probe_warned;
-    int synth_guard_active;
-    int synth_guard_old_enabled;
     OnlineMatchResult result;
     char opponent[48];
     char map_label[128];
@@ -1781,7 +1779,6 @@ int hooks_set_native_synth_enabled(int enabled) {
 
 static uint32_t g_audio_rng_seed = 0xA53C9E21u;
 static volatile int g_audio_rng_wrap_depth = 0;
-static int g_audio_rng_detours_ok = 1;
 
 static int hooks_call_synth_callback_with_audio_rng(fn_synth_callback_t callback, void* effect) {
     int result = 0;
@@ -4568,14 +4565,6 @@ static int can_start_ggpo_net(const char* source) {
         LOG_WARN("%s", out);
         return 0;
     }
-    if (!g_audio_rng_detours_ok) {
-        static int synth_guard_warned = 0;
-        (void)hooks_set_native_synth_enabled(0);
-        if (!synth_guard_warned) {
-            synth_guard_warned = 1;
-            LOG_WARN("ggpo.net: native synth forced off because audio RNG detours are not installed");
-        }
-    }
     return 1;
 }
 
@@ -6098,7 +6087,7 @@ static void online_server_send_map_manifest(void) {
     if (net_local_ipv4(lan_host, sizeof(lan_host)) && lan_host[0]) {
         online_json_escape(lan_json, sizeof(lan_json), lan_host);
     }
-    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
+    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"maps\":%s}\n",
              (unsigned int)g_online_cfg.local_port,
              lan_json,
              maps_json);
@@ -6221,17 +6210,8 @@ static void online_open_result_screen(void) {
     g_online_context_active = 0;
 }
 
-static void online_restore_match_audio_guard(void) {
-    if (g_online_active_match.synth_guard_active) {
-        hooks_set_native_synth_enabled(g_online_active_match.synth_guard_old_enabled);
-        g_online_active_match.synth_guard_active = 0;
-        LOG_INFO("online.match: restored native synth after deterministic audio guard");
-    }
-}
-
 static void online_active_match_begin_from_pending(void) {
     online_clear_waterfall_audio_state("match begin");
-    online_restore_match_audio_guard();
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
     g_online_active_match.active = 1;
     g_online_active_match.match_id = g_online_pending_match.match_id;
@@ -6245,11 +6225,6 @@ static void online_active_match_begin_from_pending(void) {
     safe_copy(g_online_active_match.p2p_token, sizeof(g_online_active_match.p2p_token), g_online_pending_match.p2p_token);
     safe_copy(g_online_active_match.opponent, sizeof(g_online_active_match.opponent), g_online_pending_match.opponent);
     safe_copy(g_online_active_match.map_label, sizeof(g_online_active_match.map_label), g_online_pending_match.map_label);
-    if (!g_audio_rng_detours_ok) {
-        g_online_active_match.synth_guard_old_enabled = hooks_set_native_synth_enabled(0);
-        g_online_active_match.synth_guard_active = 1;
-        LOG_WARN("online.match: disabled native synth for deterministic online play because audio RNG detours failed");
-    }
 }
 
 static void online_finish_active_match(OnlineMatchResult result, const char* status, int send_report) {
@@ -6260,14 +6235,12 @@ static void online_finish_active_match(OnlineMatchResult result, const char* sta
         online_server_send_match_end(result);
     }
     if (ggpo_net_active()) stop_ggpo_net("online match complete");
-    online_restore_match_audio_guard();
     memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
     online_result_prepare(result, status);
     online_open_result_screen();
 }
 
 static void online_clear_match_state(void) {
-    online_restore_match_audio_guard();
     memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
 }
@@ -6429,10 +6402,7 @@ static void online_apply_p2p_peer(const char* line) {
 static void online_pump_p2p_probe(void) {
     char err[256];
     if (!g_online_active_match.active) return;
-    /* Keep probing the signaling server until connected, even after a peer
-     * endpoint is known.  This refreshes the NAT mapping and lets the server
-     * resend a changed observed endpoint during direct UDP hole punching. */
-    if (!ggpo_net_active() || ggpo_net_connected()) return;
+    if (!ggpo_net_active() || ggpo_net_connected() || ggpo_net_has_peer()) return;
     if (!g_online_active_match.p2p_token[0] || !g_online_cfg.username[0]) return;
     if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0) return;
     if (g_online_active_match.p2p_probe_cooldown > 0) {
@@ -6623,7 +6593,6 @@ static void online_server_handle_line(const char* line) {
             g_online_result.elo_delta_valid = 1;
         }
         safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match complete.");
-        online_restore_match_audio_guard();
         memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
         memset(&g_online_active_match, 0, sizeof(g_online_active_match));
     } else if (_stricmp(type, "match_end") == 0) {
@@ -12044,14 +12013,12 @@ void hooks_init(void) {
     }
 
     if (!install_detour(&g_respawn_warble_detour, (void*)(uintptr_t)ADDR_RESPAWN_WARBLE, (void*)&hooked_respawn_warble, 12)) {
-        g_audio_rng_detours_ok = 0;
-        LOG_WARN("hooks_init: failed to detour respawn_warble (online will disable native synth for determinism)");
+        LOG_WARN("hooks_init: failed to detour respawn_warble (audio RNG may affect gameplay RNG)");
     } else {
         p_respawn_warble_trampoline = (fn_synth_callback_t)g_respawn_warble_detour.trampoline;
     }
     if (!install_detour(&g_synth_effect_whistling_detour, (void*)(uintptr_t)ADDR_SYNTH_EFFECT_WHISTLING, (void*)&hooked_synth_effect_whistling, 6)) {
-        g_audio_rng_detours_ok = 0;
-        LOG_WARN("hooks_init: failed to detour synth_effect_whistling (online will disable native synth for determinism)");
+        LOG_WARN("hooks_init: failed to detour synth_effect_whistling (audio RNG may affect gameplay RNG)");
     } else {
         p_synth_effect_whistling_trampoline = (fn_synth_callback_t)g_synth_effect_whistling_detour.trampoline;
     }

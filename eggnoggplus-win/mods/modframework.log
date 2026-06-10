@@ -1,54 +1,425 @@
-[18:08:42] [INFO] Mod framework initializing...
-[18:08:42] [INFO] Mod framework API version: 1
-[18:08:42] [INFO] Scanning mods/ folder...
-[18:08:42] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[18:08:42] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[18:08:42] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[18:08:42] [INFO] [mod:crash] armed=false
-[18:08:42] [INFO] Loaded mod: crash
-[18:08:42] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[18:08:42] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[18:08:42] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[18:08:42] [INFO] [mod:poc_speedhack] speed=1
-[18:08:42] [INFO] Loaded mod: poc_speedhack
-[18:08:42] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[18:08:42] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[18:08:42] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[18:08:42] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[18:08:42] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[18:08:42] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[18:08:42] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[18:08:42] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[18:08:42] [INFO] Loaded mod: texture_pack_test
-[18:08:42] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
-[18:08:42] [INFO] [maps] scanning maps/ for custom maps
-[18:08:42] [INFO] [maps][example_map] scanning folder: maps\example_map
-[18:08:42] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[18:08:42] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[18:08:42] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[18:08:42] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[18:08:42] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[18:08:42] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[18:08:42] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
-[18:08:42] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[18:08:42] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[18:08:42] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[18:08:42] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[18:08:42] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[18:08:42] [INFO] hooks_init: custom MODS menu ready
-[18:09:03] [INFO] ONLINE HUB: enter
-[18:09:05] [INFO] online.hub: Settings saved.
-[18:09:07] [INFO] online.hub: Settings saved.
-[18:09:07] [INFO] online.hub: Connecting to online server...
-[18:09:07] [INFO] online.hub: Connected. Authenticating...
-[18:09:07] [INFO] online.hub: Logged in.
-[18:09:15] [INFO] online.hub: Joining casual queue...
-[18:09:15] [INFO] online.hub: Match found: loaf on Vanilla 4
-[18:09:17] [INFO] ONLINE HUB: leave
-[18:09:17] [INFO] ggpo.net: loca[18:09:17] [INFO] ONLINE HUB: leave
-[18:09:17] [INFO] ggpo.net: local build fingerprint build=DCBE51EB exe=632C561E dll=6271CA96 correction=on
-[18:09:17] [INFO] ggpo.net: joining deferred local_port=57068 input_delay=2 max_advantage=12 max_prediction=16 state_size=146960 checksum=4105837944
-[18:09:17] [INFO] ggpo.net: joining from online serv[18:12:09] [INFO] ggpo.net: stopped from online server result after 0 frame(s), checksum=856233882 tx=1584 rx=0 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
-[18:12:11] [INFO] [mod:crash] Unloaded
-[18:12:11] [INFO] [mod:poc_speedhack] Unloaded
-[18:12:11] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[21:23:53] [INFO] Mod framework initializing...
+[21:23:53] [INFO] Mod framework API version: 1
+[21:23:53] [INFO] Scanning mods/ folder...
+[21:23:53] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[21:23:53] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[21:23:53] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[21:23:53] [INFO] [mod:crash] armed=false
+[21:23:53] [INFO] Loaded mod: crash
+[21:23:53] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[21:23:53] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[21:23:53] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[21:23:53] [INFO] [mod:poc_speedhack] speed=1
+[21:23:53] [INFO] Loaded mod: poc_speedhack
+[21:23:53] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[21:23:53] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[21:23:53] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[21:23:53] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[21:23:53] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[21:23:53] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[21:23:53] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[21:23:53] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[21:23:53] [INFO] Loaded mod: texture_pack_test
+[21:23:53] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
+[21:23:53] [INFO] [maps] scanning maps/ for custom maps
+[21:23:53] [INFO] [maps][example_map] scanning folder: maps\example_map
+[21:23:53] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[21:23:53] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[21:23:53] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[21:23:53] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[21:23:53] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[21:23:53] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[21:23:53] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[21:23:53] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[21:23:53] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[21:23:53] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[21:23:53] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[21:23:53] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[21:23:53] [INFO] hooks_init: custom MODS menu ready
+[21:23:53] [INFO] [maps][big_jump] applying custom map for selector index 6
+[21:24:12] [INFO] ONLINE HUB: enter
+[21:24:14] [INFO] online.hub: Settings saved.
+[21:24:16] [INFO] online.hub: Settings saved.
+[21:24:18] [INFO] online.hub: Connecting to online server...
+[21:24:18] [INFO] online.hub: Connected. Authenticating...
+[21:24:18] [INFO] online.hub: Logged in.
+[21:24:20] [INFO] online.hub: Joining casual queue...
+[21:27:22] [INFO] online.hub: Logged in from another location.
+[21:27:22] [INFO] online.hub: Server disconnected.
+[21:27:38] [INFO] online.hub: Settings saved.
+[21:27:39] [INFO] online.hub: Connecting to online server...
+[21:27:39] [INFO] online.hub: Connected. Authenticating...
+[21:27:39] [INFO] online.hub: Logged in.
+[21:27:40] [INFO] online.hub: Joining casual queue...
+[21:27:40] [INFO] online.hub: Match found: loaf on Vanilla 1
+[21:27:43] [INFO] ONLINE HUB: leave
+[21:27:43] [INFO] ggpo.net: local build fingerprint build=0A910CE5 exe=632C561E dll=B4DBF48F correction=on
+[21:27:43] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 max_advantage=20 max_prediction=24 state_size=147464 checksum=3988619386
+[21:27:43] [INFO] ggpo.net: hosting from online server match udp=47777 player=0 delay=1 adv=20 predcap=24 corr=on state_size=147464
+[21:28:49] [INFO] ggpo.net: stopped from online server result after 0 frame(s), checksum=3988619386 tx=0 rx=0 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[21:29:03] [INFO] ONLINE HUB: enter
+[21:29:14] [INFO] online.hub: Match found: loaf on Vanilla 5
+[21:29:16] [INFO] ONLINE HUB: leave
+[21:29:16] [INFO] ggpo.net: local build fingerprint build=0A910CE5 exe=632C561E dll=B4DBF48F correction=on
+[21:29:16] [INFO] ggpo.net: joining 172.56.150.176:47777 local_port=53312 input_delay=1 max_advantage=20 max_prediction=24 state_size=131624 checksum=2711954938
+[21:29:16] [INFO] ggpo.net: joining from online server match 172.56.150.176:47777 local_udp=53312 player=1 delay=1 adv=20 predcap=24 corr=on state_size=131624
+[21:29:34] [INFO] ggpo.net: stopped from online server result after 0 frame(s), checksum=2711954938 tx=1074 rx=0 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[21:29:43] [INFO] ONLINE HUB: enter
+[21:29:52] [INFO] online.hub: Match found: loaf on Vanilla 4
+[21:29:54] [INFO] ONLINE HUB: leave
+[21:29:54] [INFO] ggpo.net: local build fingerprint build=0A910CE5 exe=632C561E dll=B4DBF48F correction=on
+[21:29:54] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 max_advantage=20 max_prediction=24 state_size=147464 checksum=1614267798
+[21:29:54] [INFO] ggpo.net: hosting from online server match udp=47777 player=0 delay=1 adv=20 predcap=24 corr=on state_size=147464
+[21:31:35] [INFO] ggpo.net: stopped from online server result after 0 frame(s), checksum=1614267798 tx=0 rx=0 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[21:31:58] [INFO] ONLINE HUB: enter
+[21:31:59] [INFO] ONLINE HUB: leave
+[21:32:00] [INFO] ONLINE HUB: enter
+[21:32:09] [INFO] online.hub: Match found: loaf on Vanilla 4
+[21:32:11] [INFO] ONLINE HUB: leave
+[21:32:12] [INFO] ggpo.net: local build fingerprint build=0A910CE5 exe=632C561E dll=B4DBF48F correction=on
+[21:32:12] [INFO] ggpo.net: joining 192.168.0.151:47777 local_port=65094 input_delay=1 max_advantage=20 max_prediction=24 state_size=147464 checksum=2925306872
+[21:32:12] [INFO] ggpo.net: joining from online server match 192.168.0.151:47777 local_udp=65094 player=1 delay=1 adv=20 predcap=24 corr=on state_size=147464
+[21:32:16] [INFO] ggpo.net: receiving host state id=0 frame=0 size=147464 checksum=2908042941 chunks=164/164
+[21:32:16] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=47777
+[21:32:16] [WARN] ggpo.net: initial state differs; using host state local_size=147464 remote_size=147464 local_checksum=2925306872 remote_checksum=2908042941
+[21:32:16] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[21:32:16] [INFO] ggpo.net: host state synced size=147464 checksum=2908042941 chunks=164
+[21:32:17] [INFO] ggpo.net: start state loaded checksum=2908042941 input_delay=1
+[21:32:17] [INFO] ggpo.net: waiting for remote frame 0 input
+[21:32:29] [INFO] ggpo.net: receiving correction delta state id=1 frame=593 size=147464 checksum=3407632203 chunks=123/164
+[21:32:29] [WARN] ggpo.net: correction applied id=1 frame=593 checksum=3407632203 chunks=123/123 mode=delta total=1 dup=0
+[21:32:43] [INFO] ggpo.net: receiving correction delta state id=2 frame=1236 size=147464 checksum=1328607901 chunks=124/164
+[21:32:43] [WARN] ggpo.net: correction applied id=2 frame=1236 checksum=1328607901 chunks=124/124 mode=delta total=2 dup=0
+[21:32:47] [INFO] ggpo.net: receiving correction delta state id=3 frame=1451 size=147464 checksum=702837228 chunks=123/164
+[21:32:47] [WARN] ggpo.net: correction applied id=3 frame=1451 checksum=702837228 chunks=123/123 mode=delta total=3 dup=0
+[21:32:53] [INFO] ggpo.net: receiving correction delta state id=4 frame=1718 size=147464 checksum=3388378129 chunks=123/164
+[21:32:53] [WARN] ggpo.net: correction applied id=4 frame=1718 checksum=3388378129 chunks=123/123 mode=delta total=4 dup=0
+[21:33:29] [INFO] ggpo.net: receiving correction delta state id=5 frame=3418 size=147464 checksum=1230894120 chunks=122/164
+[21:33:29] [WARN] ggpo.net: correction applied id=5 frame=3418 checksum=1230894120 chunks=122/122 mode=delta total=5 dup=0
+[21:33:29] [INFO] ggpo.net: receiving correction delta state id=6 frame=3423 size=147464 checksum=2132535118 chunks=37/164
+[21:33:29] [WARN] ggpo.net: correction applied id=6 frame=3423 checksum=2132535118 chunks=37/37 mode=delta total=6 dup=0
+[21:33:32] [ERROR] ggpo.net: desync detail frame=3543 changed=room_info player_diff=- thing_slots=- local{full=2953240127 header=2917063599 transient=2296458496 thing_info=2348746994 room_info=2283177182 particles=789665624 players=3233627433 p0=4078667147 p1=3363885416 things=428248892 tilemap=564331392 room=9 ticks=7899 rng=0 seed=42048 thing_count=16 map=3 score=0-0 round_end=0} remote{full=2439914501 header=2917063599 transient=2296458496 thing_info=2348746994 room_info=3700667336 particles=789665624 players=3233627433 p0=4078667147 p1=3363885416 things=428248892 tilemap=564331392 room=9 ticks=7899 rng=0 seed=42048 thing_count=16 map=3 score=0-0 round_end=0}
+[21:33:32] [ERROR] ggpo.net: recoverable desync frame=3543 local=2953240127 remote=2439914501 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=3564 remote_frame=3544 corr_id=6 corr_frame=3423 applied_id=6
+[21:33:32] [WARN] ggpo.net: requested host correction frame=3564 request_frame=3564 reason=confirmed frame checksum mismatch total=1
+[21:33:32] [WARN] online.match: desync snapshot count=1 frame=3543 local_crc=2953240127 remote_crc=2439914501 net_frame=3564 remote_frame=3544 room=9 old_room=9 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=3 seed=42048 mrand=1750053831 local_player=1 active_match=1 pending=0
+[21:33:32] [INFO] ggpo.net: receiving correction delta state id=7 frame=3545 size=147464 checksum=9526763 chunks=109/164
+[21:33:32] [WARN] ggpo.net: correction applied id=7 frame=3545 checksum=9526763 chunks=109/109 mode=delta total=7 dup=0
+[21:33:33] [ERROR] ggpo.net: desync detail frame=3582 changed=transient player_diff=- thing_slots=- local{full=3079922888 header=1067968227 transient=166750722 thing_info=2348746994 room_info=3700667336 particles=789665624 players=3309788092 p0=827160194 p1=4045520757 things=3307416455 tilemap=564331392 room=10 ticks=7938 rng=0 seed=42048 thing_count=16 map=3 score=0-0 round_end=0} remote{full=1858386475 header=1067968227 transient=3490005619 thing_info=2348746994 room_info=3700667336 particles=789665624 players=3309788092 p0=827160194 p1=4045520757 things=3307416455 tilemap=564331392 room=10 ticks=7938 rng=0 seed=42048 thing_count=16 map=3 score=0-0 round_end=0}
+[21:33:33] [ERROR] ggpo.net: recoverable desync frame=3582 local=3079922888 remote=1858386475 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=3593 remote_frame=3583 corr_id=7 corr_frame=3545 applied_id=7
+[21:33:33] [WARN] ggpo.net: requested host correction frame=3593 request_frame=3593 reason=confirmed frame checksum mismatch total=2
+[21:33:33] [WARN] online.match: desync snapshot count=2 frame=3582 local_crc=3079922888 remote_crc=1858386475 net_frame=3593 remote_frame=3583 room=10 old_room=10 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=3 seed=42048 mrand=618551948 local_player=1 active_match=1 pending=0
+[21:33:33] [INFO] ggpo.net: receiving correction delta state id=8 frame=3584 size=147464 checksum=2031813225 chunks=85/164
+[21:33:33] [WARN] ggpo.net: correction applied id=8 frame=3584 checksum=2031813225 chunks=85/85 mode=delta total=8 dup=0
+[21:33:37] [INFO] online.match: completion match=9 local_player=1 winner=0 result=loss end=600 leader=0x005421DC loser=0x00542338 score=0-0 target=0
+[21:33:37] [INFO] ggpo.net: stopped from online match complete after 3797 frame(s), checksum=1318744564 tx=9361 rx=8972 pred=7822 rb=138 adv_stall=417 pred_stall=0 desync=2
+[21:35:42] [INFO] online.hub: Match found: loaf on The Big Jump
+[21:35:42] [INFO] ONLINE HUB: enter
+[21:35:44] [INFO] [maps][big_jump] applying custom map for selector index 6
+[21:35:44] [INFO] ONLINE HUB: leave
+[21:35:45] [INFO] ggpo.net: local build fingerprint build=0A910CE5 exe=632C561E dll=B4DBF48F correction=on
+[21:35:45] [INFO] ggpo.net: hosting udp port=47777 input_delay=1 max_advantage=20 max_prediction=24 state_size=134792 checksum=46841192
+[21:35:45] [INFO] ggpo.net: hosting from online server match udp=47777 player=0 delay=1 adv=20 predcap=24 corr=on state_size=134792
+[21:35:45] [WARN] ggpo.net: peer build fingerprint differs local build=0A910CE5 exe=632C561E dll=B4DBF48F remote build=417B2965 exe=632C561E dll=B4DBF48F
+[21:35:45] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=57259
+[21:35:45] [WARN] ggpo.net: initial state differs; using host state local_size=134792 remote_size=134792 local_checksum=46841192 remote_checksum=895840145
+[21:35:45] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[21:35:45] [INFO] ggpo.net: remote state sync ack received
+[21:35:45] [INFO] ggpo.net: start state loaded checksum=46841192 input_delay=1
+[21:35:45] [INFO] ggpo.net: waiting for remote frame 0 input
+[21:35:53] [WARN] ggpo.net: peer requested correction request_frame=413 remote_frame=413 last_corr_frame=0 ack_id=0 total=1
+[21:35:53] [WARN] ggpo.net: host correction queued id=1 frame=433 checksum=1373517989 chunks=122/150 mode=delta reason=peer resync request
+[21:35:53] [INFO] ggpo.net: correction ack received id=1 checksum=1373517989 frame=433
+[21:35:54] [ERROR] ggpo.net: desync detail frame=435 changed=room_info,players,things player_diff=p1 thing_slots=2 local{full=143594261 header=745037877 transient=39331971 thing_info=2348746994 room_info=2322843367 particles=789665624 players=596074159 p0=2015505500 p1=2591305910 things=1269642529 tilemap=3040617036 room=1 ticks=16080 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=1134167861 header=745037877 transient=39331971 thing_info=2348746994 room_info=2462859153 particles=789665624 players=1116837454 p0=2015505500 p1=4217567319 things=3670560795 tilemap=3040617036 room=1 ticks=16080 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:35:54] [ERROR] ggpo.net: recoverable desync frame=435 local=143594261 remote=1134167861 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=438 remote_frame=436 corr_id=1 corr_frame=433 applied_id=0
+[21:35:54] [WARN] ggpo.net: host correction queued id=2 frame=438 checksum=904830447 chunks=99/150 mode=delta reason=confirmed frame checksum mismatch
+[21:35:54] [WARN] online.match: desync snapshot count=1 frame=435 local_crc=143594261 remote_crc=1134167861 net_frame=439 remote_frame=438 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x004EC6B8 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=2090504489 local_player=0 active_match=1 pending=0
+[21:35:55] [INFO] ggpo.net: correction ack received id=2 checksum=904830447 frame=438
+[21:35:56] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=432 current=456
+[21:35:56] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=432 current=456)
+[21:35:57] [ERROR] ggpo.net: desync detail frame=488 changed=transient player_diff=- thing_slots=- local{full=1448490049 header=3403637394 transient=3500753883 thing_info=2348746994 room_info=2322843367 particles=789665624 players=2568406786 p0=2948435697 p1=1858304856 things=1581193289 tilemap=3040617036 room=1 ticks=16133 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=1990400796 header=3403637394 transient=2962457333 thing_info=2348746994 room_info=2322843367 particles=789665624 players=2568406786 p0=2948435697 p1=1858304856 things=1581193289 tilemap=3040617036 room=1 ticks=16133 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:35:57] [ERROR] ggpo.net: recoverable desync frame=488 local=1448490049 remote=1990400796 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=505 remote_frame=490 corr_id=2 corr_frame=438 applied_id=0
+[21:35:57] [WARN] ggpo.net: host correction queued id=3 frame=505 checksum=3077117038 chunks=121/150 mode=delta reason=confirmed frame checksum mismatch
+[21:35:57] [WARN] online.match: desync snapshot count=2 frame=488 local_crc=1448490049 remote_crc=1990400796 net_frame=506 remote_frame=491 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x004EC6B8 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=2046799974 local_player=0 active_match=1 pending=0
+[21:35:57] [INFO] ggpo.net: correction ack received id=3 checksum=3077117038 frame=505
+[21:35:59] [ERROR] ggpo.net: desync detail frame=575 changed=transient player_diff=- thing_slots=- local{full=4155019722 header=1801002342 transient=3908376510 thing_info=2348746994 room_info=2322843367 particles=789665624 players=1073874990 p0=1215437126 p1=3851484276 things=4005062363 tilemap=3040617036 room=1 ticks=16220 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=881620039 header=1801002342 transient=1516273597 thing_info=2348746994 room_info=2322843367 particles=789665624 players=1073874990 p0=1215437126 p1=3851484276 things=4005062363 tilemap=3040617036 room=1 ticks=16220 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:35:59] [ERROR] ggpo.net: recoverable desync frame=575 local=4155019722 remote=881620039 reason=confirmed frame checksum mismatch local_cmd=0x00000002 remote_cmd=0x00000000 remote_predicted=0 local_frame=595 remote_frame=576 corr_id=3 corr_frame=505 applied_id=0
+[21:35:59] [WARN] ggpo.net: host correction queued id=4 frame=595 checksum=3899025726 chunks=121/150 mode=delta reason=confirmed frame checksum mismatch
+[21:35:59] [WARN] online.match: desync snapshot count=3 frame=575 local_crc=4155019722 remote_crc=881620039 net_frame=596 remote_frame=579 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x004EC6B8 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=1320635834 local_player=0 active_match=1 pending=0
+[21:35:59] [INFO] ggpo.net: correction ack received id=4 checksum=3899025726 frame=595
+[21:36:01] [ERROR] ggpo.net: desync detail frame=671 changed=transient player_diff=- thing_slots=- local{full=3678657662 header=1055038138 transient=2310218033 thing_info=2348746994 room_info=2322843367 particles=789665624 players=3331055810 p0=2112556376 p1=2092940457 things=529532529 tilemap=2273020080 room=1 ticks=16316 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=409418227 header=1055038138 transient=992364850 thing_info=2348746994 room_info=2322843367 particles=789665624 players=3331055810 p0=2112556376 p1=2092940457 things=529532529 tilemap=2273020080 room=1 ticks=16316 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:36:01] [ERROR] ggpo.net: recoverable desync frame=671 local=3678657662 remote=409418227 reason=confirmed frame checksum mismatch local_cmd=0x00000004 remote_cmd=0x00000000 remote_predicted=0 local_frame=684 remote_frame=672 corr_id=4 corr_frame=595 applied_id=0
+[21:36:01] [WARN] ggpo.net: host correction queued id=5 frame=684 checksum=2831822518 chunks=126/150 mode=delta reason=confirmed frame checksum mismatch
+[21:36:01] [WARN] online.match: desync snapshot count=4 frame=671 local_crc=3678657662 remote_crc=409418227 net_frame=685 remote_frame=672 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x004EC6B8 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=3328492145 local_player=0 active_match=1 pending=0
+[21:36:01] [INFO] ggpo.net: correction ack received id=5 checksum=2831822518 frame=684
+[21:36:01] [ERROR] ggpo.net: desync detail frame=689 changed=transient player_diff=- thing_slots=- local{full=2333620629 header=1914795706 transient=1357261359 thing_info=2348746994 room_info=2322843367 particles=789665624 players=3325273842 p0=4279074702 p1=2567025912 things=3465022537 tilemap=3647615866 room=1 ticks=16334 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=1211948056 header=1914795706 transient=3799204396 thing_info=2348746994 room_info=2322843367 particles=789665624 players=3325273842 p0=4279074702 p1=2567025912 things=3465022537 tilemap=3647615866 room=1 ticks=16334 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:36:01] [ERROR] ggpo.net: recoverable desync frame=689 local=2333620629 remote=1211948056 reason=confirmed frame checksum mismatch local_cmd=0x00000014 remote_cmd=0x00000000 remote_predicted=0 local_frame=698 remote_frame=690 corr_id=5 corr_frame=684 applied_id=0
+[21:36:01] [WARN] ggpo.net: host correction queued id=6 frame=698 checksum=152565815 chunks=114/150 mode=delta reason=confirmed frame checksum mismatch
+[21:36:01] [WARN] online.match: desync snapshot count=5 frame=689 local_crc=2333620629 remote_crc=1211948056 net_frame=698 remote_frame=691 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x004EC6B8 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=3671590545 local_player=0 active_match=1 pending=0
+[21:36:02] [INFO] ggpo.net: correction ack received id=6 checksum=152565815 frame=698
+[21:36:02] [ERROR] ggpo.net: desync detail frame=698 changed=transient player_diff=- thing_slots=- local{full=3413362779 header=224236495 transient=2918060121 thing_info=2348746994 room_info=2322843367 particles=789665624 players=1479947836 p0=893221488 p1=1530934954 things=598302245 tilemap=3403528528 room=1 ticks=16343 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=2751709972 header=224236495 transient=1971536015 thing_info=2348746994 room_info=2322843367 particles=789665624 players=1479947836 p0=893221488 p1=1530934954 things=598302245 tilemap=3403528528 room=1 ticks=16343 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:36:02] [ERROR] ggpo.net: recoverable desync frame=698 local=3413362779 remote=2751709972 reason=confirmed frame checksum mismatch local_cmd=0x00000014 remote_cmd=0x00000000 remote_predicted=0 local_frame=699 remote_frame=699 corr_id=6 corr_frame=698 applied_id=0
+[21:36:02] [WARN] ggpo.net: host correction queued id=7 frame=699 checksum=3413362779 chunks=77/150 mode=delta reason=confirmed frame checksum mismatch
+[21:36:02] [WARN] online.match: desync snapshot count=6 frame=698 local_crc=3413362779 remote_crc=2751709972 net_frame=700 remote_frame=699 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x004EC6B8 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=2618279879 local_player=0 active_match=1 pending=0
+[21:36:02] [INFO] ggpo.net: correction ack received id=7 checksum=3413362779 frame=699
+[21:36:02] [WARN] ggpo.net: peer requested correction request_frame=706 remote_frame=706 last_corr_frame=699 ack_id=7 total=2
+[21:36:02] [WARN] ggpo.net: host correction queued id=8 frame=707 checksum=3656729468 chunks=99/150 mode=delta reason=peer resync request
+[21:36:02] [INFO] ggpo.net: correction ack received id=8 checksum=3656729468 frame=707
+[21:36:03] [WARN] ggpo.net: peer requested correction request_frame=714 remote_frame=714 last_corr_frame=707 ack_id=8 total=3
+[21:36:03] [WARN] ggpo.net: host correction queued id=9 frame=717 checksum=2981300251 chunks=82/150 mode=delta reason=peer resync request
+[21:36:03] [INFO] ggpo.net: correction ack received id=9 checksum=2981300251 frame=717
+[21:36:03] [ERROR] ggpo.net: desync detail frame=720 changed=transient player_diff=- thing_slots=- local{full=3177580109 header=838670026 transient=2250930008 thing_info=2348746994 room_info=2322843367 particles=789665624 players=2655024432 p0=3267372970 p1=2712932105 things=813209501 tilemap=2200160167 room=2 ticks=16365 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=2118312896 header=838670026 transient=884940635 thing_info=2348746994 room_info=2322843367 particles=789665624 players=2655024432 p0=3267372970 p1=2712932105 things=813209501 tilemap=2200160167 room=2 ticks=16365 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:36:03] [ERROR] ggpo.net: recoverable desync frame=720 local=3177580109 remote=2118312896 reason=confirmed frame checksum mismatch local_cmd=0x00000016 remote_cmd=0x00000000 remote_predicted=0 local_frame=721 remote_frame=722 corr_id=9 corr_frame=717 applied_id=0
+[21:36:03] [WARN] ggpo.net: host correction queued id=10 frame=721 checksum=3177580109 chunks=57/150 mode=delta reason=confirmed frame checksum mismatch
+[21:36:03] [WARN] online.match: desync snapshot count=7 frame=720 local_crc=3177580109 remote_crc=2118312896 net_frame=722 remote_frame=723 room=2 old_room=2 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=187855752 local_player=0 active_match=1 pending=0
+[21:36:03] [INFO] ggpo.net: correction ack received id=10 checksum=3177580109 frame=721
+[21:36:03] [ERROR] ggpo.net: desync detail frame=721 changed=transient player_diff=- thing_slots=- local{full=1448389591 header=2763856087 transient=2768126008 thing_info=2348746994 room_info=2322843367 particles=789665624 players=3444780530 p0=2645349810 p1=2712932105 things=459807378 tilemap=2200160167 room=2 ticks=16366 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=2330857711 header=2763856087 transient=1781174606 thing_info=2348746994 room_info=2322843367 particles=789665624 players=3444780530 p0=2645349810 p1=2712932105 things=459807378 tilemap=2200160167 room=2 ticks=16366 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:36:03] [ERROR] ggpo.net: recoverable desync frame=721 local=1448389591 remote=2330857711 reason=confirmed frame checksum mismatch local_cmd=0x00000016 remote_cmd=0x00000000 remote_predicted=0 local_frame=732 remote_frame=726 corr_id=10 corr_frame=721 applied_id=0
+[21:36:03] [WARN] ggpo.net: host correction queued id=11 frame=732 checksum=2125478371 chunks=61/150 mode=delta reason=confirmed frame checksum mismatch
+[21:36:03] [WARN] online.match: desync snapshot count=8 frame=721 local_crc=1448389591 remote_crc=2330857711 net_frame=733 remote_frame=726 room=2 old_room=2 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=3649619593 local_player=0 active_match=1 pending=0
+[21:36:03] [INFO] ggpo.net: correction ack received id=11 checksum=2125478371 frame=732
+[21:36:03] [WARN] ggpo.net: peer requested correction request_frame=736 remote_frame=736 last_corr_frame=732 ack_id=11 total=4
+[21:36:03] [WARN] ggpo.net: host correction queued id=12 frame=739 checksum=1158114534 chunks=60/150 mode=delta reason=peer resync request
+[21:36:04] [INFO] ggpo.net: correction ack received id=12 checksum=1158114534 frame=739
+[21:36:04] [ERROR] ggpo.net: desync detail frame=743 changed=transient player_diff=- thing_slots=- local{full=3008501496 header=828013606 transient=860819213 thing_info=2348746994 room_info=2322843367 particles=789665624 players=2446003973 p0=203024720 p1=2712932105 things=173004596 tilemap=3040617036 room=2 ticks=16388 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0} remote{full=1886843765 header=828013606 transient=2178574094 thing_info=2348746994 room_info=2322843367 particles=789665624 players=2446003973 p0=203024720 p1=2712932105 things=173004596 tilemap=3040617036 room=2 ticks=16388 rng=0 seed=16063 thing_count=16 map=6 score=0-0 round_end=0}
+[21:36:04] [ERROR] ggpo.net: recoverable desync frame=743 local=3008501496 remote=1886843765 reason=confirmed frame checksum mismatch local_cmd=0x00000016 remote_cmd=0x00000000 remote_predicted=0 local_frame=746 remote_frame=744 corr_id=12 corr_frame=739 applied_id=0
+[21:36:04] [WARN] ggpo.net: host correction queued id=13 frame=746 checksum=609896740 chunks=61/150 mode=delta reason=confirmed frame checksum mismatch
+[21:36:04] [WARN] online.match: desync snapshot count=9 frame=743 local_crc=3008501496 remote_crc=1886843765 net_frame=747 remote_frame=745 room=2 old_room=2 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=6 seed=16063 mrand=585741232 local_player=0 active_match=1 pending=0
+[21:36:04] [INFO] ggpo.net: correction ack received id=13 checksum=609896740 frame=746
+[21:36:06] [INFO] online.match: completion match=10 local_player=0 winner=0 result=win end=600 leader=0x005421DC loser=0x00542338 score=0-0 target=0
+[21:36:06] [INFO] ggpo.net: stopped from online match complete after 888 frame(s), checksum=3935659594 tx=7937 rx=3112 pred=810 rb=0 adv_stall=107 pred_stall=288 desync=9
+[21:36:12] [INFO] [maps][big_jump] applying custom map for selector index 6
+[21:36:14] [INFO] [maps][big_jump] applying custom map for selector index 6
+[21:36:15] [INFO] ONLINE HUB: enter
+[21:36:27] [INFO] online.hub: Match found: loaf on Vanilla 5
+[21:36:30] [INFO] ONLINE HUB: leave
+[21:36:30] [INFO] ggpo.net: local build fingerprint build=0A910CE5 exe=632C561E dll=B4DBF48F correction=on
+[21:36:30] [INFO] ggpo.net: joining 192.168.0.151:47777 local_port=63615 input_delay=1 max_advantage=20 max_prediction=24 state_size=131624 checksum=2669941960
+[21:36:30] [INFO] ggpo.net: joining from online server match 192.168.0.151:47777 local_udp=63615 player=1 delay=1 adv=20 predcap=24 corr=on state_size=131624
+[21:36:30] [WARN] ggpo.net: peer build fingerprint differs local build=0A910CE5 exe=632C561E dll=B4DBF48F remote build=417B2965 exe=632C561E dll=B4DBF48F
+[21:36:30] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=47777
+[21:36:30] [WARN] ggpo.net: initial state differs; using host state local_size=131624 remote_size=131624 local_checksum=2669941960 remote_checksum=1746725317
+[21:36:30] [INFO] ggpo.net: receiving host state id=0 frame=0 size=131624 checksum=1746725317 chunks=147/147
+[21:36:30] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[21:36:30] [INFO] ggpo.net: host state synced size=131624 checksum=1746725317 chunks=147
+[21:36:30] [INFO] ggpo.net: start state loaded checksum=1746725317 input_delay=1
+[21:36:30] [INFO] ggpo.net: waiting for remote frame 0 input
+[21:36:40] [INFO] ggpo.net: receiving correction delta state id=1 frame=507 size=131624 checksum=670562533 chunks=16/147
+[21:36:40] [WARN] ggpo.net: correction applied id=1 frame=507 checksum=670562533 chunks=16/16 mode=delta total=1 dup=0
+[21:36:40] [INFO] ggpo.net: receiving correction delta state id=2 frame=510 size=131624 checksum=2919953730 chunks=11/147
+[21:36:40] [WARN] ggpo.net: correction applied id=2 frame=510 checksum=2919953730 chunks=11/11 mode=delta total=2 dup=0
+[21:36:40] [INFO] ggpo.net: receiving correction delta state id=3 frame=511 size=131624 checksum=1616239152 chunks=8/147
+[21:36:40] [WARN] ggpo.net: correction applied id=3 frame=511 checksum=1616239152 chunks=8/8 mode=delta total=3 dup=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=4 frame=522 size=131624 checksum=2109879634 chunks=18/147
+[21:36:41] [WARN] ggpo.net: correction applied id=4 frame=522 checksum=2109879634 chunks=18/18 mode=delta total=4 dup=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=5 frame=525 size=131624 checksum=32920938 chunks=14/147
+[21:36:41] [WARN] ggpo.net: correction applied id=5 frame=525 checksum=32920938 chunks=14/14 mode=delta total=5 dup=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=6 frame=527 size=131624 checksum=2232707232 chunks=15/147
+[21:36:41] [WARN] ggpo.net: correction applied id=6 frame=527 checksum=2232707232 chunks=15/15 mode=delta total=6 dup=0
+[21:36:41] [ERROR] ggpo.net: desync detail frame=529 changed=transient player_diff=- thing_slots=- local{full=1590504392 header=129907111 transient=2807880249 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1391652181 p0=2417148783 p1=863297110 things=4231002478 tilemap=4268541958 room=0 ticks=18304 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2262911971 header=129907111 transient=601134437 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1391652181 p0=2417148783 p1=863297110 things=4231002478 tilemap=4268541958 room=0 ticks=18304 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:41] [ERROR] ggpo.net: recoverable desync frame=529 local=1590504392 remote=2262911971 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=532 remote_frame=530 corr_id=6 corr_frame=527 applied_id=6
+[21:36:41] [WARN] ggpo.net: requested host correction frame=532 request_frame=532 reason=confirmed frame checksum mismatch total=1
+[21:36:41] [WARN] online.match: desync snapshot count=1 frame=529 local_crc=1590504392 remote_crc=2262911971 net_frame=532 remote_frame=532 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3009530252 local_player=1 active_match=1 pending=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=7 frame=534 size=131624 checksum=3472398688 chunks=18/147
+[21:36:41] [WARN] ggpo.net: correction applied id=7 frame=534 checksum=3472398688 chunks=18/18 mode=delta total=7 dup=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=8 frame=536 size=131624 checksum=3429454213 chunks=17/147
+[21:36:41] [WARN] ggpo.net: correction applied id=8 frame=536 checksum=3429454213 chunks=17/17 mode=delta total=8 dup=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=9 frame=538 size=131624 checksum=3906004617 chunks=17/147
+[21:36:41] [WARN] ggpo.net: correction applied id=9 frame=538 checksum=3906004617 chunks=17/17 mode=delta total=9 dup=0
+[21:36:41] [ERROR] ggpo.net: desync detail frame=538 changed=transient player_diff=- thing_slots=- local{full=36536710 header=1536958326 transient=3793357086 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3760672153 p0=1198040430 p1=4030608583 things=718813138 tilemap=4268541958 room=0 ticks=18313 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3221516830 header=1536958326 transient=3704463226 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3760672153 p0=1198040430 p1=4030608583 things=718813138 tilemap=4268541958 room=0 ticks=18313 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:41] [ERROR] ggpo.net: recoverable desync frame=538 local=36536710 remote=3221516830 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=540 remote_frame=539 corr_id=9 corr_frame=538 applied_id=9
+[21:36:41] [WARN] ggpo.net: requested host correction frame=540 request_frame=540 reason=confirmed frame checksum mismatch total=2
+[21:36:41] [WARN] online.match: desync snapshot count=2 frame=538 local_crc=36536710 remote_crc=3221516830 net_frame=540 remote_frame=539 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=2596715353 local_player=1 active_match=1 pending=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=10 frame=540 size=131624 checksum=2223683934 chunks=18/147
+[21:36:41] [WARN] ggpo.net: correction applied id=10 frame=540 checksum=2223683934 chunks=18/18 mode=delta total=10 dup=0
+[21:36:41] [INFO] ggpo.net: receiving correction delta state id=11 frame=541 size=131624 checksum=4198833814 chunks=18/147
+[21:36:41] [WARN] ggpo.net: correction applied id=11 frame=541 checksum=4198833814 chunks=18/18 mode=delta total=11 dup=0
+[21:36:42] [ERROR] ggpo.net: desync detail frame=543 changed=transient player_diff=- thing_slots=- local{full=2538242092 header=3646095110 transient=216595768 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1177773891 p0=3318278639 p1=852106495 things=1185276226 tilemap=4268541958 room=0 ticks=18318 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2451036082 header=3646095110 transient=2894491440 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1177773891 p0=3318278639 p1=852106495 things=1185276226 tilemap=4268541958 room=0 ticks=18318 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:42] [ERROR] ggpo.net: recoverable desync frame=543 local=2538242092 remote=2451036082 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=545 remote_frame=544 corr_id=11 corr_frame=541 applied_id=11
+[21:36:42] [WARN] ggpo.net: requested host correction frame=545 request_frame=545 reason=confirmed frame checksum mismatch total=3
+[21:36:42] [WARN] online.match: desync snapshot count=3 frame=543 local_crc=2538242092 remote_crc=2451036082 net_frame=545 remote_frame=545 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=1244339966 local_player=1 active_match=1 pending=0
+[21:36:42] [INFO] ggpo.net: receiving correction delta state id=12 frame=547 size=131624 checksum=2324535887 chunks=25/147
+[21:36:42] [WARN] ggpo.net: correction applied id=12 frame=547 checksum=2324535887 chunks=25/25 mode=delta total=12 dup=0
+[21:36:42] [INFO] ggpo.net: receiving correction delta state id=13 frame=555 size=131624 checksum=1276452474 chunks=30/147
+[21:36:42] [WARN] ggpo.net: correction applied id=13 frame=555 checksum=1276452474 chunks=30/30 mode=delta total=13 dup=0
+[21:36:42] [INFO] ggpo.net: receiving correction delta state id=14 frame=558 size=131624 checksum=766682870 chunks=30/147
+[21:36:42] [WARN] ggpo.net: correction applied id=14 frame=558 checksum=766682870 chunks=30/30 mode=delta total=14 dup=0
+[21:36:42] [INFO] ggpo.net: receiving correction delta state id=15 frame=564 size=131624 checksum=2222623860 chunks=36/147
+[21:36:42] [WARN] ggpo.net: correction applied id=15 frame=564 checksum=2222623860 chunks=36/36 mode=delta total=15 dup=0
+[21:36:42] [ERROR] ggpo.net: desync detail frame=565 changed=transient player_diff=- thing_slots=- local{full=2318896874 header=2890376354 transient=3357057644 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3643349049 p0=1653421194 p1=4281113344 things=4288240633 tilemap=4268541958 room=0 ticks=18340 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2201660027 header=2890376354 transient=226934091 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3643349049 p0=1653421194 p1=4281113344 things=4288240633 tilemap=4268541958 room=0 ticks=18340 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:42] [ERROR] ggpo.net: recoverable desync frame=565 local=2318896874 remote=2201660027 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=567 remote_frame=566 corr_id=15 corr_frame=564 applied_id=15
+[21:36:42] [WARN] ggpo.net: requested host correction frame=567 request_frame=567 reason=confirmed frame checksum mismatch total=4
+[21:36:42] [WARN] online.match: desync snapshot count=4 frame=565 local_crc=2318896874 remote_crc=2201660027 net_frame=567 remote_frame=567 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=2620376575 local_player=1 active_match=1 pending=0
+[21:36:42] [INFO] ggpo.net: receiving correction delta state id=16 frame=568 size=131624 checksum=334459029 chunks=35/147
+[21:36:42] [WARN] ggpo.net: correction applied id=16 frame=568 checksum=334459029 chunks=35/35 mode=delta total=16 dup=0
+[21:36:42] [ERROR] ggpo.net: desync detail frame=570 changed=transient player_diff=- thing_slots=- local{full=3890460323 header=3890965534 transient=2729515518 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3450820669 p0=4065211423 p1=1767309945 things=3316986193 tilemap=4268541958 room=0 ticks=18345 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=392614485 header=3890965534 transient=2004447970 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3450820669 p0=4065211423 p1=1767309945 things=3316986193 tilemap=4268541958 room=0 ticks=18345 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:43] [ERROR] ggpo.net: recoverable desync frame=570 local=3890460323 remote=392614485 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=571 remote_frame=572 corr_id=16 corr_frame=568 applied_id=16
+[21:36:43] [WARN] ggpo.net: requested host correction frame=571 request_frame=571 reason=confirmed frame checksum mismatch total=5
+[21:36:43] [WARN] online.match: desync snapshot count=5 frame=570 local_crc=3890460323 remote_crc=392614485 net_frame=571 remote_frame=574 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3659988573 local_player=1 active_match=1 pending=0
+[21:36:43] [INFO] ggpo.net: receiving correction delta state id=17 frame=576 size=131624 checksum=3972736278 chunks=37/147
+[21:36:43] [WARN] ggpo.net: correction applied id=17 frame=576 checksum=3972736278 chunks=37/37 mode=delta total=17 dup=0
+[21:36:43] [INFO] ggpo.net: receiving correction delta state id=18 frame=580 size=131624 checksum=3441282374 chunks=34/147
+[21:36:43] [WARN] ggpo.net: correction applied id=18 frame=580 checksum=3441282374 chunks=34/34 mode=delta total=18 dup=0
+[21:36:43] [ERROR] ggpo.net: desync detail frame=582 changed=transient player_diff=- thing_slots=- local{full=1010683161 header=2168710941 transient=617225075 thing_info=2348746994 room_info=2932909348 particles=789665624 players=557809116 p0=123834211 p1=3964277329 things=935725184 tilemap=4268541958 room=0 ticks=18357 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=339985370 header=2168710941 transient=154639231 thing_info=2348746994 room_info=2932909348 particles=789665624 players=557809116 p0=123834211 p1=3964277329 things=935725184 tilemap=4268541958 room=0 ticks=18357 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:43] [ERROR] ggpo.net: recoverable desync frame=582 local=1010683161 remote=339985370 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=583 remote_frame=584 corr_id=18 corr_frame=580 applied_id=18
+[21:36:43] [WARN] ggpo.net: requested host correction frame=583 request_frame=583 reason=confirmed frame checksum mismatch total=6
+[21:36:43] [WARN] online.match: desync snapshot count=6 frame=582 local_crc=1010683161 remote_crc=339985370 net_frame=583 remote_frame=584 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=2541870079 local_player=1 active_match=1 pending=0
+[21:36:43] [INFO] ggpo.net: receiving correction delta state id=19 frame=585 size=131624 checksum=2414440876 chunks=37/147
+[21:36:43] [WARN] ggpo.net: correction applied id=19 frame=585 checksum=2414440876 chunks=37/37 mode=delta total=19 dup=0
+[21:36:43] [ERROR] ggpo.net: desync detail frame=586 changed=transient player_diff=- thing_slots=- local{full=320569907 header=3117471146 transient=1364278300 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1885708059 p0=143090941 p1=3513605235 things=2657498015 tilemap=4268541958 room=0 ticks=18361 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3005551051 header=3117471146 transient=2969558716 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1885708059 p0=143090941 p1=3513605235 things=2657498015 tilemap=4268541958 room=0 ticks=18361 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:43] [ERROR] ggpo.net: recoverable desync frame=586 local=320569907 remote=3005551051 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=588 remote_frame=589 corr_id=19 corr_frame=585 applied_id=19
+[21:36:43] [WARN] ggpo.net: requested host correction frame=588 request_frame=588 reason=confirmed frame checksum mismatch total=7
+[21:36:43] [WARN] online.match: desync snapshot count=7 frame=586 local_crc=320569907 remote_crc=3005551051 net_frame=588 remote_frame=589 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=4047315231 local_player=1 active_match=1 pending=0
+[21:36:43] [INFO] ggpo.net: receiving correction delta state id=20 frame=590 size=131624 checksum=3345449101 chunks=39/147
+[21:36:43] [WARN] ggpo.net: correction applied id=20 frame=590 checksum=3345449101 chunks=39/39 mode=delta total=20 dup=0
+[21:36:43] [ERROR] ggpo.net: desync detail frame=590 changed=transient player_diff=- thing_slots=- local{full=354363781 header=2925411271 transient=3757668401 thing_info=2348746994 room_info=2932909348 particles=789665624 players=208381040 p0=3827419317 p1=2558275288 things=2726110658 tilemap=4268541958 room=0 ticks=18365 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2765348640 header=2925411271 transient=1725529664 thing_info=2348746994 room_info=2932909348 particles=789665624 players=208381040 p0=3827419317 p1=2558275288 things=2726110658 tilemap=4268541958 room=0 ticks=18365 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:43] [ERROR] ggpo.net: recoverable desync frame=590 local=354363781 remote=2765348640 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=593 remote_frame=593 corr_id=20 corr_frame=590 applied_id=20
+[21:36:43] [WARN] ggpo.net: requested host correction frame=593 request_frame=593 reason=confirmed frame checksum mismatch total=8
+[21:36:43] [WARN] online.match: desync snapshot count=8 frame=590 local_crc=354363781 remote_crc=2765348640 net_frame=593 remote_frame=593 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=4196301236 local_player=1 active_match=1 pending=0
+[21:36:43] [INFO] ggpo.net: receiving correction delta state id=21 frame=594 size=131624 checksum=3588855360 chunks=39/147
+[21:36:43] [WARN] ggpo.net: correction applied id=21 frame=594 checksum=3588855360 chunks=39/39 mode=delta total=21 dup=0
+[21:36:44] [ERROR] ggpo.net: desync detail frame=598 changed=transient player_diff=- thing_slots=- local{full=1773377916 header=3230715216 transient=2788522726 thing_info=2348746994 room_info=2932909348 particles=789665624 players=95226568 p0=2648533032 p1=3079870881 things=1942875408 tilemap=4268541958 room=0 ticks=18373 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=1415572941 header=3230715216 transient=714384802 thing_info=2348746994 room_info=2932909348 particles=789665624 players=95226568 p0=2648533032 p1=3079870881 things=1942875408 tilemap=4268541958 room=0 ticks=18373 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:44] [ERROR] ggpo.net: recoverable desync frame=598 local=1773377916 remote=1415572941 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=604 remote_frame=599 corr_id=21 corr_frame=594 applied_id=21
+[21:36:44] [WARN] ggpo.net: requested host correction frame=604 request_frame=604 reason=confirmed frame checksum mismatch total=9
+[21:36:44] [WARN] online.match: desync snapshot count=9 frame=598 local_crc=1773377916 remote_crc=1415572941 net_frame=604 remote_frame=599 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3537624000 local_player=1 active_match=1 pending=0
+[21:36:44] [INFO] ggpo.net: receiving correction delta state id=22 frame=600 size=131624 checksum=548874414 chunks=40/147
+[21:36:44] [WARN] ggpo.net: correction applied id=22 frame=600 checksum=548874414 chunks=40/40 mode=delta total=22 dup=0
+[21:36:44] [ERROR] ggpo.net: desync detail frame=603 changed=transient player_diff=- thing_slots=- local{full=2513799102 header=1833169402 transient=2837158550 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2042557766 p0=355091325 p1=2293728549 things=3974245934 tilemap=4268541958 room=0 ticks=18378 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=77257199 header=1833169402 transient=2026957372 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2042557766 p0=355091325 p1=2293728549 things=3974245934 tilemap=4268541958 room=0 ticks=18378 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:44] [ERROR] ggpo.net: recoverable desync frame=603 local=2513799102 remote=77257199 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=604 remote_frame=604 corr_id=22 corr_frame=600 applied_id=22
+[21:36:44] [WARN] ggpo.net: requested host correction frame=604 request_frame=604 reason=confirmed frame checksum mismatch total=10
+[21:36:44] [WARN] online.match: desync snapshot count=10 frame=603 local_crc=2513799102 remote_crc=77257199 net_frame=604 remote_frame=607 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3609959186 local_player=1 active_match=1 pending=0
+[21:36:44] [INFO] ggpo.net: receiving correction delta state id=23 frame=608 size=131624 checksum=3978726671 chunks=44/147
+[21:36:44] [WARN] ggpo.net: correction applied id=23 frame=608 checksum=3978726671 chunks=44/44 mode=delta total=23 dup=0
+[21:36:44] [ERROR] ggpo.net: desync detail frame=613 changed=transient player_diff=- thing_slots=- local{full=3100673480 header=3985936111 transient=2954650338 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3192704558 p0=3925841238 p1=3356561158 things=2077601138 tilemap=4268541958 room=0 ticks=18388 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3210003860 header=3985936111 transient=828746349 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3192704558 p0=3925841238 p1=3356561158 things=2077601138 tilemap=4268541958 room=0 ticks=18388 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:44] [ERROR] ggpo.net: recoverable desync frame=613 local=3100673480 remote=3210003860 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=621 remote_frame=614 corr_id=23 corr_frame=608 applied_id=23
+[21:36:44] [WARN] ggpo.net: requested host correction frame=621 request_frame=621 reason=confirmed frame checksum mismatch total=11
+[21:36:44] [WARN] online.match: desync snapshot count=11 frame=613 local_crc=3100673480 remote_crc=3210003860 net_frame=621 remote_frame=616 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3067179997 local_player=1 active_match=1 pending=0
+[21:36:44] [INFO] ggpo.net: receiving correction delta state id=24 frame=617 size=131624 checksum=2833546968 chunks=46/147
+[21:36:44] [WARN] ggpo.net: correction applied id=24 frame=617 checksum=2833546968 chunks=46/46 mode=delta total=24 dup=0
+[21:36:45] [INFO] ggpo.net: receiving correction delta state id=25 frame=630 size=131624 checksum=2130540867 chunks=48/147
+[21:36:45] [WARN] ggpo.net: correction applied id=25 frame=630 checksum=2130540867 chunks=48/48 mode=delta total=25 dup=0
+[21:36:45] [ERROR] ggpo.net: desync detail frame=632 changed=transient,room_info,players,things player_diff=p0 thing_slots=1 local{full=3153516816 header=2593671726 transient=2677477933 thing_info=2348746994 room_info=765748362 particles=789665624 players=2999931630 p0=2482178509 p1=400014537 things=4110161481 tilemap=4268541958 room=0 ticks=18407 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3272217865 header=2593671726 transient=1837980695 thing_info=2348746994 room_info=2012469058 particles=789665624 players=1606085916 p0=340761966 p1=400014537 things=1532610877 tilemap=4268541958 room=0 ticks=18407 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:45] [ERROR] ggpo.net: recoverable desync frame=632 local=3153516816 remote=3272217865 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=633 remote_frame=634 corr_id=25 corr_frame=630 applied_id=25
+[21:36:45] [WARN] ggpo.net: requested host correction frame=633 request_frame=633 reason=confirmed frame checksum mismatch total=12
+[21:36:45] [WARN] online.match: desync snapshot count=12 frame=632 local_crc=3153516816 remote_crc=3272217865 net_frame=633 remote_frame=636 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=582954853 local_player=1 active_match=1 pending=0
+[21:36:45] [INFO] ggpo.net: receiving correction delta state id=26 frame=637 size=131624 checksum=66358270 chunks=53/147
+[21:36:45] [WARN] ggpo.net: correction applied id=26 frame=637 checksum=66358270 chunks=53/53 mode=delta total=26 dup=0
+[21:36:45] [ERROR] ggpo.net: desync detail frame=639 changed=transient player_diff=- thing_slots=- local{full=496938583 header=3334106367 transient=2410696346 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3207762897 p0=331701556 p1=338652686 things=2578001358 tilemap=4268541958 room=0 ticks=18414 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=180149510 header=3334106367 transient=2556552871 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3207762897 p0=331701556 p1=338652686 things=2578001358 tilemap=4268541958 room=0 ticks=18414 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:45] [ERROR] ggpo.net: recoverable desync frame=639 local=496938583 remote=180149510 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=640 remote_frame=641 corr_id=26 corr_frame=637 applied_id=26
+[21:36:45] [WARN] ggpo.net: requested host correction frame=640 request_frame=640 reason=confirmed frame checksum mismatch total=13
+[21:36:45] [WARN] online.match: desync snapshot count=13 frame=639 local_crc=496938583 remote_crc=180149510 net_frame=640 remote_frame=641 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=211527055 local_player=1 active_match=1 pending=0
+[21:36:45] [INFO] ggpo.net: receiving correction delta state id=27 frame=642 size=131624 checksum=1340851027 chunks=52/147
+[21:36:45] [WARN] ggpo.net: correction applied id=27 frame=642 checksum=1340851027 chunks=52/52 mode=delta total=27 dup=0
+[21:36:45] [INFO] ggpo.net: receiving correction delta state id=28 frame=647 size=131624 checksum=70355071 chunks=52/147
+[21:36:45] [WARN] ggpo.net: correction applied id=28 frame=647 checksum=70355071 chunks=52/52 mode=delta total=28 dup=0
+[21:36:45] [INFO] ggpo.net: receiving correction delta state id=29 frame=650 size=131624 checksum=196660702 chunks=53/147
+[21:36:45] [WARN] ggpo.net: correction applied id=29 frame=650 checksum=196660702 chunks=53/53 mode=delta total=29 dup=0
+[21:36:45] [ERROR] ggpo.net: desync detail frame=655 changed=transient player_diff=- thing_slots=- local{full=3220364656 header=2558645579 transient=1656899837 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3086313382 p0=1703010957 p1=1585151434 things=2229196073 tilemap=4268541958 room=0 ticks=18430 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=289945318 header=2558645579 transient=3289304816 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3086313382 p0=1703010957 p1=1585151434 things=2229196073 tilemap=4268541958 room=0 ticks=18430 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:45] [ERROR] ggpo.net: recoverable desync frame=655 local=3220364656 remote=289945318 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=657 remote_frame=656 corr_id=29 corr_frame=650 applied_id=29
+[21:36:46] [WARN] ggpo.net: requested host correction frame=657 request_frame=657 reason=confirmed frame checksum mismatch total=14
+[21:36:46] [WARN] online.match: desync snapshot count=14 frame=655 local_crc=3220364656 remote_crc=289945318 net_frame=657 remote_frame=656 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=7524377 local_player=1 active_match=1 pending=0
+[21:36:46] [INFO] ggpo.net: receiving correction delta state id=30 frame=657 size=131624 checksum=3175029130 chunks=54/147
+[21:36:46] [WARN] ggpo.net: correction applied id=30 frame=657 checksum=3175029130 chunks=54/54 mode=delta total=30 dup=0
+[21:36:46] [ERROR] ggpo.net: desync detail frame=659 changed=transient player_diff=- thing_slots=- local{full=3513561670 header=3376146104 transient=1115172676 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3180960361 p0=181288527 p1=1706927447 things=3507962650 tilemap=4268541958 room=0 ticks=18434 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=1075483269 header=3376146104 transient=1907720294 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3180960361 p0=181288527 p1=1706927447 things=3507962650 tilemap=4268541958 room=0 ticks=18434 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:46] [ERROR] ggpo.net: recoverable desync frame=659 local=3513561670 remote=1075483269 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=662 remote_frame=663 corr_id=30 corr_frame=657 applied_id=30
+[21:36:46] [WARN] ggpo.net: requested host correction frame=662 request_frame=662 reason=confirmed frame checksum mismatch total=15
+[21:36:46] [WARN] online.match: desync snapshot count=15 frame=659 local_crc=3513561670 remote_crc=1075483269 net_frame=662 remote_frame=663 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=656462542 local_player=1 active_match=1 pending=0
+[21:36:46] [INFO] ggpo.net: receiving correction delta state id=31 frame=664 size=131624 checksum=1709474230 chunks=54/147
+[21:36:46] [WARN] ggpo.net: correction applied id=31 frame=664 checksum=1709474230 chunks=54/54 mode=delta total=31 dup=0
+[21:36:46] [INFO] ggpo.net: receiving correction delta state id=32 frame=668 size=131624 checksum=1973952128 chunks=49/147
+[21:36:46] [WARN] ggpo.net: correction applied id=32 frame=668 checksum=1973952128 chunks=49/49 mode=delta total=32 dup=0
+[21:36:46] [ERROR] ggpo.net: desync detail frame=671 changed=transient player_diff=- thing_slots=- local{full=2509592657 header=4054373391 transient=1990762182 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3051701287 p0=2248078046 p1=1577885604 things=331671421 tilemap=4268541958 room=0 ticks=18446 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3896828287 header=4054373391 transient=2354412206 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3051701287 p0=2248078046 p1=1577885604 things=331671421 tilemap=4268541958 room=0 ticks=18446 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:46] [ERROR] ggpo.net: recoverable desync frame=671 local=2509592657 remote=3896828287 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=672 remote_frame=672 corr_id=32 corr_frame=668 applied_id=32
+[21:36:46] [WARN] ggpo.net: requested host correction frame=672 request_frame=672 reason=confirmed frame checksum mismatch total=16
+[21:36:46] [WARN] online.match: desync snapshot count=16 frame=671 local_crc=2509592657 remote_crc=3896828287 net_frame=672 remote_frame=673 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=1475156427 local_player=1 active_match=1 pending=0
+[21:36:46] [INFO] ggpo.net: receiving correction delta state id=33 frame=674 size=131624 checksum=3214585511 chunks=50/147
+[21:36:46] [WARN] ggpo.net: correction applied id=33 frame=674 checksum=3214585511 chunks=50/50 mode=delta total=33 dup=0
+[21:36:46] [ERROR] ggpo.net: desync detail frame=680 changed=transient player_diff=- thing_slots=- local{full=480762909 header=4088482666 transient=3253131091 thing_info=2348746994 room_info=2012469058 particles=789665624 players=934182795 p0=1275623723 p1=3886964686 things=3644446600 tilemap=4268541958 room=0 ticks=18455 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2847722331 header=4088482666 transient=2197099801 thing_info=2348746994 room_info=2012469058 particles=789665624 players=934182795 p0=1275623723 p1=3886964686 things=3644446600 tilemap=4268541958 room=0 ticks=18455 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:46] [ERROR] ggpo.net: recoverable desync frame=680 local=480762909 remote=2847722331 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=682 remote_frame=681 corr_id=33 corr_frame=674 applied_id=33
+[21:36:46] [WARN] ggpo.net: requested host correction frame=682 request_frame=682 reason=confirmed frame checksum mismatch total=17
+[21:36:46] [WARN] online.match: desync snapshot count=17 frame=680 local_crc=480762909 remote_crc=2847722331 net_frame=682 remote_frame=681 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=2666470431 local_player=1 active_match=1 pending=0
+[21:36:46] [INFO] ggpo.net: receiving correction delta state id=34 frame=682 size=131624 checksum=2465379468 chunks=50/147
+[21:36:47] [WARN] ggpo.net: correction applied id=34 frame=682 checksum=2465379468 chunks=50/50 mode=delta total=34 dup=0
+[21:36:50] [INFO] ggpo.net: receiving correction delta state id=35 frame=869 size=131624 checksum=3900297276 chunks=69/147
+[21:36:50] [WARN] ggpo.net: correction applied id=35 frame=869 checksum=3900297276 chunks=69/69 mode=delta total=35 dup=0
+[21:36:57] [ERROR] ggpo.net: desync detail frame=1205 changed=transient player_diff=- thing_slots=- local{full=2318204793 header=1328055414 transient=1563388 thing_info=2348746994 room_info=2012469058 particles=789665624 players=39007687 p0=2422700632 p1=974269422 things=1181911101 tilemap=4268541958 room=0 ticks=18980 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3118595741 header=1328055414 transient=917546685 thing_info=2348746994 room_info=2012469058 particles=789665624 players=39007687 p0=2422700632 p1=974269422 things=1181911101 tilemap=4268541958 room=0 ticks=18980 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:57] [ERROR] ggpo.net: recoverable desync frame=1205 local=2318204793 remote=3118595741 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000001 remote_predicted=0 local_frame=1223 remote_frame=1206 corr_id=35 corr_frame=869 applied_id=35
+[21:36:57] [WARN] ggpo.net: requested host correction frame=1223 request_frame=1223 reason=confirmed frame checksum mismatch total=18
+[21:36:57] [WARN] online.match: desync snapshot count=18 frame=1205 local_crc=2318204793 remote_crc=3118595741 net_frame=1223 remote_frame=1210 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3997857112 local_player=1 active_match=1 pending=0
+[21:36:57] [INFO] ggpo.net: receiving correction delta state id=36 frame=1211 size=131624 checksum=1620686807 chunks=38/147
+[21:36:57] [WARN] ggpo.net: correction applied id=36 frame=1211 checksum=1620686807 chunks=38/38 mode=delta total=36 dup=0
+[21:36:57] [INFO] ggpo.net: receiving correction delta state id=37 frame=1215 size=131624 checksum=3994550494 chunks=15/147
+[21:36:57] [WARN] ggpo.net: correction applied id=37 frame=1215 checksum=3994550494 chunks=15/15 mode=delta total=37 dup=0
+[21:36:57] [INFO] ggpo.net: receiving correction delta state id=38 frame=1220 size=131624 checksum=500776399 chunks=15/147
+[21:36:57] [WARN] ggpo.net: correction applied id=38 frame=1220 checksum=500776399 chunks=15/15 mode=delta total=38 dup=0
+[21:36:57] [ERROR] ggpo.net: desync detail frame=1223 changed=transient player_diff=- thing_slots=- local{full=2881139418 header=3374910093 transient=3683220848 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3777362407 p0=639647741 p1=2626866716 things=3411564682 tilemap=4268541958 room=0 ticks=18998 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=161585875 header=3374910093 transient=3168109244 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3777362407 p0=639647741 p1=2626866716 things=3411564682 tilemap=4268541958 room=0 ticks=18998 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:57] [ERROR] ggpo.net: recoverable desync frame=1223 local=2881139418 remote=161585875 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1224 remote_frame=1224 corr_id=38 corr_frame=1220 applied_id=38
+[21:36:57] [WARN] ggpo.net: requested host correction frame=1224 request_frame=1224 reason=confirmed frame checksum mismatch total=19
+[21:36:57] [WARN] online.match: desync snapshot count=19 frame=1223 local_crc=2881139418 remote_crc=161585875 net_frame=1224 remote_frame=1226 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=1872343292 local_player=1 active_match=1 pending=0
+[21:36:57] [INFO] ggpo.net: receiving correction delta state id=39 frame=1227 size=131624 checksum=2605052970 chunks=17/147
+[21:36:57] [WARN] ggpo.net: correction applied id=39 frame=1227 checksum=2605052970 chunks=17/17 mode=delta total=39 dup=0
+[21:36:58] [ERROR] ggpo.net: desync detail frame=1228 changed=transient player_diff=- thing_slots=- local{full=298216947 header=2189804081 transient=1571576446 thing_info=2348746994 room_info=2012469058 particles=789665624 players=4047116582 p0=754799401 p1=1956694922 things=1630379452 tilemap=4268541958 room=0 ticks=19003 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=1647633934 header=2189804081 transient=3411805550 thing_info=2348746994 room_info=2012469058 particles=789665624 players=4047116582 p0=754799401 p1=1956694922 things=1630379452 tilemap=4268541958 room=0 ticks=19003 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:58] [ERROR] ggpo.net: recoverable desync frame=1228 local=298216947 remote=1647633934 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1232 remote_frame=1229 corr_id=39 corr_frame=1227 applied_id=39
+[21:36:58] [WARN] ggpo.net: requested host correction frame=1232 request_frame=1232 reason=confirmed frame checksum mismatch total=20
+[21:36:58] [WARN] online.match: desync snapshot count=20 frame=1228 local_crc=298216947 remote_crc=1647633934 net_frame=1232 remote_frame=1230 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=2731250167 local_player=1 active_match=1 pending=0
+[21:36:58] [INFO] ggpo.net: receiving correction delta state id=40 frame=1231 size=131624 checksum=2939288745 chunks=17/147
+[21:36:58] [WARN] ggpo.net: correction applied id=40 frame=1231 checksum=2939288745 chunks=17/17 mode=delta total=40 dup=0
+[21:36:58] [ERROR] ggpo.net: desync detail frame=1232 changed=transient player_diff=- thing_slots=- local{full=1319701070 header=2500537436 transient=1604256744 thing_info=2348746994 room_info=2012469058 particles=789665624 players=1007302180 p0=1203549238 p1=1841145665 things=1954068993 tilemap=4268541958 room=0 ticks=19007 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3539659118 header=2500537436 transient=172548585 thing_info=2348746994 room_info=2012469058 particles=789665624 players=1007302180 p0=1203549238 p1=1841145665 things=1954068993 tilemap=4268541958 room=0 ticks=19007 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:58] [ERROR] ggpo.net: recoverable desync frame=1232 local=1319701070 remote=3539659118 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1235 remote_frame=1234 corr_id=40 corr_frame=1231 applied_id=40
+[21:36:58] [WARN] ggpo.net: requested host correction frame=1235 request_frame=1235 reason=confirmed frame checksum mismatch total=21
+[21:36:58] [WARN] online.match: desync snapshot count=21 frame=1232 local_crc=1319701070 remote_crc=3539659118 net_frame=1235 remote_frame=1236 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=41889741 local_player=1 active_match=1 pending=0
+[21:36:58] [INFO] ggpo.net: receiving correction delta state id=41 frame=1237 size=131624 checksum=2750745706 chunks=17/147
+[21:36:58] [WARN] ggpo.net: correction applied id=41 frame=1237 checksum=2750745706 chunks=17/17 mode=delta total=41 dup=0
+[21:36:58] [INFO] ggpo.net: receiving correction delta state id=42 frame=1241 size=131624 checksum=4046169522 chunks=20/147
+[21:36:58] [WARN] ggpo.net: correction applied id=42 frame=1241 checksum=4046169522 chunks=20/20 mode=delta total=42 dup=0
+[21:36:58] [INFO] ggpo.net: receiving correction delta state id=43 frame=1245 size=131624 checksum=491260714 chunks=21/147
+[21:36:58] [WARN] ggpo.net: correction applied id=43 frame=1245 checksum=491260714 chunks=21/21 mode=delta total=43 dup=0
+[21:36:58] [INFO] ggpo.net: receiving correction delta state id=44 frame=1251 size=131624 checksum=559373531 chunks=22/147
+[21:36:58] [WARN] ggpo.net: correction applied id=44 frame=1251 checksum=559373531 chunks=22/22 mode=delta total=44 dup=0
+[21:36:59] [ERROR] ggpo.net: desync detail frame=1267 changed=transient player_diff=- thing_slots=- local{full=2801071650 header=587447749 transient=2749056580 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3527253266 p0=4141203155 p1=1629190090 things=3598629388 tilemap=4268541958 room=0 ticks=19042 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=3056719035 header=587447749 transient=3476711264 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3527253266 p0=4141203155 p1=1629190090 things=3598629388 tilemap=4268541958 room=0 ticks=19042 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:59] [ERROR] ggpo.net: recoverable desync frame=1267 local=2801071650 remote=3056719035 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1273 remote_frame=1268 corr_id=44 corr_frame=1251 applied_id=44
+[21:36:59] [WARN] ggpo.net: requested host correction frame=1273 request_frame=1273 reason=confirmed frame checksum mismatch total=22
+[21:36:59] [WARN] online.match: desync snapshot count=22 frame=1267 local_crc=2801071650 remote_crc=3056719035 net_frame=1273 remote_frame=1268 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=278034919 local_player=1 active_match=1 pending=0
+[21:36:59] [INFO] ggpo.net: receiving correction delta state id=45 frame=1269 size=131624 checksum=259015584 chunks=27/147
+[21:36:59] [WARN] ggpo.net: correction applied id=45 frame=1269 checksum=259015584 chunks=27/27 mode=delta total=45 dup=0
+[21:36:59] [INFO] ggpo.net: receiving correction delta state id=46 frame=1277 size=131624 checksum=3185141352 chunks=27/147
+[21:36:59] [WARN] ggpo.net: correction applied id=46 frame=1277 checksum=3185141352 chunks=27/27 mode=delta total=46 dup=0
+[21:36:59] [ERROR] ggpo.net: desync detail frame=1279 changed=transient player_diff=- thing_slots=- local{full=252852580 header=462458738 transient=3145348038 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3943370968 p0=185869377 p1=644277 things=1661349249 tilemap=4268541958 room=0 ticks=19054 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=1275112035 header=462458738 transient=1270634378 thing_info=2348746994 room_info=2012469058 particles=789665624 players=3943370968 p0=185869377 p1=644277 things=1661349249 tilemap=4268541958 room=0 ticks=19054 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:59] [ERROR] ggpo.net: recoverable desync frame=1279 local=252852580 remote=1275112035 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1282 remote_frame=1280 corr_id=46 corr_frame=1277 applied_id=46
+[21:36:59] [WARN] ggpo.net: requested host correction frame=1282 request_frame=1282 reason=confirmed frame checksum mismatch total=23
+[21:36:59] [INFO] ggpo.net: receiving correction delta state id=47 frame=1281 size=131624 checksum=927794823 chunks=28/147
+[21:36:59] [WARN] online.match: desync snapshot count=23 frame=1279 local_crc=252852580 remote_crc=1275112035 net_frame=1282 remote_frame=1281 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=1290543873 local_player=1 active_match=1 pending=0
+[21:36:59] [WARN] ggpo.net: correction applied id=47 frame=1281 checksum=927794823 chunks=28/28 mode=delta total=47 dup=0
+[21:36:59] [ERROR] ggpo.net: desync detail frame=1283 changed=transient player_diff=- thing_slots=- local{full=822847348 header=2100823153 transient=1849804871 thing_info=2348746994 room_info=2012469058 particles=789665624 players=1584100162 p0=2249128406 p1=326256900 things=554530212 tilemap=4268541958 room=0 ticks=19058 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2056772642 header=2100823153 transient=3155861968 thing_info=2348746994 room_info=2012469058 particles=789665624 players=1584100162 p0=2249128406 p1=326256900 things=554530212 tilemap=4268541958 room=0 ticks=19058 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:36:59] [ERROR] ggpo.net: recoverable desync frame=1283 local=822847348 remote=2056772642 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1284 remote_frame=1284 corr_id=47 corr_frame=1281 applied_id=47
+[21:36:59] [WARN] ggpo.net: requested host correction frame=1284 request_frame=1284 reason=confirmed frame checksum mismatch total=24
+[21:36:59] [WARN] online.match: desync snapshot count=24 frame=1283 local_crc=822847348 remote_crc=2056772642 net_frame=1284 remote_frame=1286 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=2741063110 local_player=1 active_match=1 pending=0
+[21:36:59] [INFO] ggpo.net: receiving correction delta state id=48 frame=1288 size=131624 checksum=3348282926 chunks=30/147
+[21:36:59] [WARN] ggpo.net: correction applied id=48 frame=1288 checksum=3348282926 chunks=30/30 mode=delta total=48 dup=0
+[21:37:00] [INFO] ggpo.net: receiving correction delta state id=49 frame=1290 size=131624 checksum=867174886 chunks=30/147
+[21:37:00] [WARN] ggpo.net: correction applied id=49 frame=1290 checksum=867174886 chunks=30/30 mode=delta total=49 dup=0
+[21:37:00] [INFO] ggpo.net: receiving correction delta state id=50 frame=1293 size=131624 checksum=4014678105 chunks=29/147
+[21:37:00] [WARN] ggpo.net: correction applied id=50 frame=1293 checksum=4014678105 chunks=29/29 mode=delta total=50 dup=0
+[21:37:00] [INFO] ggpo.net: receiving correction delta state id=51 frame=1318 size=131624 checksum=4227927618 chunks=41/147
+[21:37:00] [WARN] ggpo.net: correction applied id=51 frame=1318 checksum=4227927618 chunks=41/41 mode=delta total=51 dup=0
+[21:37:01] [ERROR] ggpo.net: desync detail frame=1321 changed=transient player_diff=- thing_slots=- local{full=4190400110 header=939292711 transient=1261679439 thing_info=2348746994 room_info=2012469058 particles=789665624 players=2800339208 p0=1447705132 p1=3838396396 things=4009316770 tilemap=4268541958 room=0 ticks=19096 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=794047647 header=939292711 transient=741651547 thing_info=2348746994 room_info=2012469058 particles=789665624 players=2800339208 p0=1447705132 p1=3838396396 things=4009316770 tilemap=4268541958 room=0 ticks=19096 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:37:01] [ERROR] ggpo.net: recoverable desync frame=1321 local=4190400110 remote=794047647 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1322 remote_frame=1322 corr_id=51 corr_frame=1318 applied_id=51
+[21:37:01] [WARN] ggpo.net: requested host correction frame=1322 request_frame=1322 reason=confirmed frame checksum mismatch total=25
+[21:37:01] [WARN] online.match: desync snapshot count=25 frame=1321 local_crc=4190400110 remote_crc=794047647 net_frame=1322 remote_frame=1324 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=1963253690 local_player=1 active_match=1 pending=0
+[21:37:01] [INFO] ggpo.net: receiving correction delta state id=52 frame=1325 size=131624 checksum=2419950908 chunks=41/147
+[21:37:01] [WARN] ggpo.net: correction applied id=52 frame=1325 checksum=2419950908 chunks=41/41 mode=delta total=52 dup=0
+[21:37:01] [ERROR] ggpo.net: desync detail frame=1327 changed=transient player_diff=- thing_slots=- local{full=60874645 header=3322765916 transient=1067558127 thing_info=2348746994 room_info=2012469058 particles=789665624 players=404811170 p0=43019079 p1=1043402389 things=1257974765 tilemap=4268541958 room=0 ticks=19102 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2985070716 header=3322765916 transient=3561326099 thing_info=2348746994 room_info=2012469058 particles=789665624 players=404811170 p0=43019079 p1=1043402389 things=1257974765 tilemap=4268541958 room=0 ticks=19102 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:37:01] [ERROR] ggpo.net: recoverable desync frame=1327 local=60874645 remote=2985070716 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1328 remote_frame=1328 corr_id=52 corr_frame=1325 applied_id=52
+[21:37:01] [WARN] ggpo.net: requested host correction frame=1328 request_frame=1328 reason=confirmed frame checksum mismatch total=26
+[21:37:01] [WARN] online.match: desync snapshot count=26 frame=1327 local_crc=60874645 remote_crc=2985070716 net_frame=1328 remote_frame=1328 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=3233509133 local_player=1 active_match=1 pending=0
+[21:37:01] [INFO] ggpo.net: receiving correction delta state id=53 frame=1329 size=131624 checksum=3962324268 chunks=41/147
+[21:37:01] [WARN] ggpo.net: correction applied id=53 frame=1329 checksum=3962324268 chunks=41/41 mode=delta total=53 dup=0
+[21:37:01] [ERROR] ggpo.net: desync detail frame=1333 changed=transient,room_info,players,things player_diff=p1 thing_slots=2 local{full=559272031 header=3978526796 transient=2009405838 thing_info=2348746994 room_info=4067066766 particles=789665624 players=1724711239 p0=3560458312 p1=3688169909 things=2684710015 tilemap=4268541958 room=0 ticks=19108 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1} remote{full=2503052690 header=3978526796 transient=2251975118 thing_info=2348746994 room_info=3297089588 particles=789665624 players=593232934 p0=3560458312 p1=2655257812 things=1616880258 tilemap=4268541958 room=0 ticks=19108 rng=0 seed=53415 thing_count=16 map=4 score=0-0 round_end=1}
+[21:37:01] [ERROR] ggpo.net: recoverable desync frame=1333 local=559272031 remote=2503052690 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1334 remote_frame=1334 corr_id=53 corr_frame=1329 applied_id=53
+[21:37:01] [WARN] ggpo.net: requested host correction frame=1334 request_frame=1334 reason=confirmed frame checksum mismatch total=27
+[21:37:01] [WARN] online.match: desync snapshot count=27 frame=1333 local_crc=559272031 remote_crc=2503052690 net_frame=1334 remote_frame=1335 room=0 old_room=0 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=1 score=0-0 target=7 map=4 seed=53415 mrand=958482249 local_player=1 active_match=1 pending=0
+[21:37:01] [INFO] ggpo.net: receiving correction delta state id=54 frame=1339 size=131624 checksum=2795423608 chunks=45/147
+[21:37:01] [WARN] ggpo.net: correction applied id=54 frame=1339 checksum=2795423608 chunks=45/45 mode=delta total=54 dup=0
+[21:37:02] [INFO] ggpo.net: stopped from online server result after 1356 frame(s), checksum=942427267 tx=5971 rx=7789 pred=2179 rb=30 adv_stall=65 pred_stall=0 desync=27
+[21:37:40] [INFO] [mod:crash] Unloaded
+[21:37:40] [INFO] [mod:poc_speedhack] Unloaded
+[21:37:40] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

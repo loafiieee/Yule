@@ -197,25 +197,25 @@ Host full-state sync can remain as a debug or recovery tool, but production onli
 
 The finished frontend should not expose a host/join menu. Players should see an online hub, queue buttons, account status, friends, and challenges. The server decides who gets matched and how the match connects.
 
-Use a no-relay direct peer-to-peer transport model:
+Use a hybrid transport model:
 
 - backend for accounts, sessions, queues, hidden MMR, public Elo, matchmaking, match configs, results, and friend systems
 - direct P2P UDP gameplay when both clients can connect directly and the route is good
-- explicit connection failure messaging for strict NAT, CGNAT, or restrictive firewall cases
-- no gameplay relay infrastructure and no fully authoritative gameplay server for the first production online version
+- relay gameplay fallback when direct P2P fails, when NAT is strict, or when hiding player IPs is required
+- no fully authoritative gameplay server for the first production online version
 
-In normal gameplay there should not be a gameplay-authoritative host. Both clients run deterministic rollback simulation. The server can still choose a session owner, P0/P1 assignment, or direct UDP route, but gameplay truth comes from deterministic inputs and checksum validation.
+In normal gameplay there should not be a gameplay-authoritative host. Both clients run deterministic rollback simulation. The server can still choose a session owner, P0/P1 assignment, or direct/relay route, but gameplay truth comes from deterministic inputs and checksum validation.
 
 Recommended backend stack:
 
-- Go or Node service for account/control traffic plus UDP signaling and connectivity probes.
+- Go service for the first backend because it can handle HTTP/WebSocket control traffic and UDP relay/signaling in one deployable binary.
 - PostgreSQL for accounts, player profile data, MMR, match history, cosmetics ownership, and friend data.
 - In-memory queue state at first, with Redis later if queues need to span multiple backend instances.
 - HTTPS REST for account/profile operations.
 - WebSocket for live queue, matchmaking, match found, ready checks, and post-match result flow.
-- UDP sockets for direct connectivity probes.
+- UDP sockets for gameplay relay and connectivity probes.
 
-This keeps the client and deployment simple and avoids VPS relay regions.  The trade-off is that some internet paths will require port forwarding or a more permissive NAT.
+This keeps the client simple, gives enough performance headroom for a relay, and avoids committing to a heavyweight service layout too early.
 
 ## Online Hub / Server Status
 
@@ -334,18 +334,16 @@ Needed backend pieces:
 Needed transport pieces:
 
 - signaling service for client connection setup
-- direct UDP NAT traversal / hole punching
-- direct UDP connectivity probes from both clients
-- LAN route selection that uses the peer LAN host and local UDP port
-- public-route endpoint updates when the NAT mapping changes before connect
+- NAT traversal strategy
+- direct UDP connectivity probes
+- relay fallback for strict NATs or bad routes
+- route selection based on connectivity and latency
 - timeout, disconnect, and reconnect policy
 - per-match transport tokens so random packets cannot join a match
 
-This build intentionally does **not** use relay fallback.  Cross-network play is direct UDP only: it can work through endpoint-independent NATs and port-forwarded/firewall-open paths, but symmetric NAT or CGNAT can still block direct peer-to-peer traffic.
-
 The backend should hide transport details from the frontend. The online UI should say "queueing", "match found", "connecting", or "synchronizing", not "host" or "join".
 
-GGPO handles rollback protocol details, but it does not provide accounts, queues, matchmaking, friend systems, signaling, or NAT traversal by itself.
+GGPO handles rollback protocol details, but it does not provide accounts, queues, matchmaking, friend systems, signaling, NAT traversal, or relay infrastructure by itself.
 
 ## Implementation Phases
 
@@ -355,7 +353,7 @@ Phase 1: production plan and data contracts
 - write account/profile schema
 - write queue and match result data model
 - define client/server messages
-- define direct UDP transport and no-relay failure handling
+- define direct/relay transport abstraction
 - keep cosmetics outside the online match config
 
 Phase 2: backend skeleton
@@ -388,7 +386,7 @@ Phase 5: transport hardening
 
 - direct UDP signaling
 - NAT traversal probes
-- no-relay direct route failure handling
+- relay fallback
 - route choice and ping display
 - disconnect handling
 
@@ -452,7 +450,7 @@ Additional tests to add:
 - mismatched map/version rejection tests
 - mod mismatch rejection tests
 - two-machine LAN test
-- internet test with direct UDP NAT traversal and a port-forwarded/firewall-open fallback path
+- internet test with NAT/relay path
 
 Desync diagnostics should report:
 
@@ -480,7 +478,7 @@ Desync diagnostics should report:
 - Deterministic match-start flow.
 - Version/map/mod compatibility handshake.
 - Direct P2P gameplay transport.
-- Direct UDP NAT traversal with clear no-relay failure messaging.
+- NAT traversal and relay fallback.
 - Custom online end screen with winner, rematch, queue again, and hub actions.
 - Disconnect/rematch handling.
 - Hardened post-match result reporting and MMR/rating update path.

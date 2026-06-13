@@ -30,6 +30,8 @@
 #define GGPO_NET_CORRECTION_BURST_CHUNKS 32
 #define GGPO_NET_RESYNC_REQUEST_INTERVAL_TICKS 30
 #define GGPO_NET_STATE_CHUNK_BYTES 900
+#define GGPO_NET_PUNCH_HELLO_BURST 8
+#define GGPO_NET_PUNCH_HELLO_INTERVAL_TICKS 3
 #define GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES 900
 #define GGPO_NET_COSMETIC_ASSET_BURST_CHUNKS 8
 #define GGPO_NET_SIM_QUEUE_PACKETS 512
@@ -205,6 +207,8 @@ typedef struct GgpoNetSession {
     int has_remote_session_id;
     uint32_t service_tick;
     uint32_t last_rx_tick;
+    uint32_t last_handshake_burst_tick;
+    uint32_t alternate_endpoint_updates;
     uint32_t frame;
     uint32_t last_checksum;
     uint32_t initial_checksum;
@@ -745,6 +749,37 @@ static int ggpo_net_accept_remote_session(uint32_t session_id) {
     return g_net.remote_session_id == session_id;
 }
 
+static int ggpo_net_accept_packet_source(const struct sockaddr_in* from, uint32_t session_id, const char* kind) {
+    if (!from) return 0;
+    if (!ggpo_net_accept_remote_session(session_id)) return 0;
+
+    if (!g_net.has_peer_addr) {
+        g_net.peer_addr = *from;
+        g_net.has_peer_addr = 1;
+        g_net.remote_port = ntohs(from->sin_port);
+        g_net.last_handshake_burst_tick = 0u;
+        return 1;
+    }
+
+    if (ggpo_net_addr_equal(&g_net.peer_addr, from)) {
+        return 1;
+    }
+
+    if (!g_net.connected && g_net.frame == 0u && !g_net.start_state_loaded) {
+        g_net.peer_addr = *from;
+        g_net.remote_port = ntohs(from->sin_port);
+        g_net.last_handshake_burst_tick = 0u;
+        g_net.alternate_endpoint_updates++;
+        LOG_INFO("ggpo.net: accepted alternate peer endpoint from %s packet port=%u updates=%u",
+                 kind ? kind : "unknown",
+                 (unsigned int)g_net.remote_port,
+                 (unsigned int)g_net.alternate_endpoint_updates);
+        return 1;
+    }
+
+    return 0;
+}
+
 static GgpoNetInputEntry* ggpo_net_input_slot(GgpoNetInputEntry* entries, uint32_t frame) {
     return &entries[frame % GGPO_NET_HISTORY_FRAMES];
 }
@@ -1230,6 +1265,24 @@ static int ggpo_net_send_packet(uint16_t type) {
     return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, type != GGPO_NET_PACKET_BYE);
 }
 
+static void ggpo_net_send_handshake_burst(uint32_t count) {
+    if (!g_net.active || g_net.connected || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
+    if (count == 0u) count = 1u;
+    for (uint32_t i = 0; i < count; i++) {
+        (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
+    }
+}
+
+static void ggpo_net_send_periodic_handshake_burst(void) {
+    if (!g_net.active || g_net.connected || !g_net.has_peer_addr) return;
+    if (g_net.last_handshake_burst_tick != 0u &&
+        g_net.service_tick - g_net.last_handshake_burst_tick < GGPO_NET_PUNCH_HELLO_INTERVAL_TICKS) {
+        return;
+    }
+    g_net.last_handshake_burst_tick = ggpo_net_now_tick();
+    ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST);
+}
+
 static int ggpo_net_send_cosmetic_profile(void) {
 #if !GGPO_NET_ENABLE_COSMETICS
     return 0;
@@ -1656,8 +1709,7 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     if (p->type != GGPO_NET_PACKET_STATE_CHUNK) return;
     if (g_net.mode != GGPO_NET_MODE_JOIN) return;
     if ((int)p->sender_player != g_net.remote_player) return;
-    if (!from || !ggpo_net_addr_equal(&g_net.peer_addr, from)) return;
-    if (!ggpo_net_accept_remote_session(p->session_id)) return;
+    if (!ggpo_net_accept_packet_source(from, p->session_id, "state")) return;
     if (p->state_size == 0 || p->state_size > (uint32_t)g_net.state_size) return;
     if (p->chunk_size == 0 || p->chunk_size > GGPO_NET_STATE_CHUNK_BYTES) return;
     if (got_len < (int)(offsetof(GgpoNetStateChunkPacket, data) + p->chunk_size)) return;
@@ -1872,14 +1924,7 @@ static void ggpo_net_handle_cosmetic_packet(const GgpoNetCosmeticPacket* p, int 
     if (p->profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) return;
     if (got_len < (int)(offsetof(GgpoNetCosmeticPacket, profile) + p->profile_len)) return;
 
-    if (!g_net.has_peer_addr) {
-        g_net.peer_addr = *from;
-        g_net.has_peer_addr = 1;
-        g_net.remote_port = ntohs(from->sin_port);
-    } else if (!ggpo_net_addr_equal(&g_net.peer_addr, from)) {
-        return;
-    }
-    if (!ggpo_net_accept_remote_session(p->session_id)) {
+    if (!ggpo_net_accept_packet_source(from, p->session_id, "cosmetic")) {
         return;
     }
 
@@ -1945,14 +1990,7 @@ static void ggpo_net_handle_cosmetic_asset_chunk(const GgpoNetCosmeticAssetChunk
     if (p->chunk_size != expected_chunk_size) return;
     if (expected_offset + expected_chunk_size > p->asset_len) return;
 
-    if (!g_net.has_peer_addr) {
-        g_net.peer_addr = *from;
-        g_net.has_peer_addr = 1;
-        g_net.remote_port = ntohs(from->sin_port);
-    } else if (!ggpo_net_addr_equal(&g_net.peer_addr, from)) {
-        return;
-    }
-    if (!ggpo_net_accept_remote_session(p->session_id)) {
+    if (!ggpo_net_accept_packet_source(from, p->session_id, "asset")) {
         return;
     }
 
@@ -2015,14 +2053,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
     if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
     if (p->sender_player > 1u || (int)p->sender_player == g_net.local_player) return;
 
-    if (!g_net.has_peer_addr) {
-        g_net.peer_addr = *from;
-        g_net.has_peer_addr = 1;
-        g_net.remote_port = ntohs(from->sin_port);
-    } else if (!ggpo_net_addr_equal(&g_net.peer_addr, from)) {
-        return;
-    }
-    if (!ggpo_net_accept_remote_session(p->session_id)) {
+    if (!ggpo_net_accept_packet_source(from, p->session_id, "input")) {
         return;
     }
 
@@ -2913,9 +2944,8 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
              (unsigned int)remote_port,
              ggpo_net_mode_name(),
              (unsigned int)g_net.local_port);
-    for (int i = 0; i < 4; i++) {
-        (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
-    }
+    g_net.last_handshake_burst_tick = 0u;
+    ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST * 2u);
     return 1;
 }
 
@@ -3031,6 +3061,7 @@ int ggpo_net_advance(uint32_t raw_p0,
         }
     }
 
+    ggpo_net_send_periodic_handshake_burst();
     (void)ggpo_net_send_packet(g_net.connected ? GGPO_NET_PACKET_INPUT : GGPO_NET_PACKET_HELLO);
     ggpo_net_send_cosmetic_profile_periodic();
     ggpo_net_send_cosmetic_asset_periodic();

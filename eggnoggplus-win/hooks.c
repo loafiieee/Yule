@@ -1005,6 +1005,7 @@ typedef struct OnlineActiveMatch {
     int result_reported;
     int invalid_state_ticks;
     int p2p_probe_cooldown;
+    int p2p_probe_logged;
     int p2p_probe_warned;
     OnlineMatchResult result;
     char opponent[48];
@@ -6087,7 +6088,7 @@ static void online_server_send_map_manifest(void) {
     if (net_local_ipv4(lan_host, sizeof(lan_host)) && lan_host[0]) {
         online_json_escape(lan_json, sizeof(lan_json), lan_host);
     }
-    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"maps\":%s}\n",
+    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
              (unsigned int)g_online_cfg.local_port,
              lan_json,
              maps_json);
@@ -6402,7 +6403,9 @@ static void online_apply_p2p_peer(const char* line) {
 static void online_pump_p2p_probe(void) {
     char err[256];
     if (!g_online_active_match.active) return;
-    if (!ggpo_net_active() || ggpo_net_connected() || ggpo_net_has_peer()) return;
+    /* Keep probing until the session connects. This keeps NAT mappings warm and
+     * lets the server resend a changed observed endpoint during hole punching. */
+    if (!ggpo_net_active() || ggpo_net_connected()) return;
     if (!g_online_active_match.p2p_token[0] || !g_online_cfg.username[0]) return;
     if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0) return;
     if (g_online_active_match.p2p_probe_cooldown > 0) {
@@ -6411,13 +6414,22 @@ static void online_pump_p2p_probe(void) {
     }
     g_online_active_match.p2p_probe_cooldown = 12;
     err[0] = '\0';
-    if (!ggpo_net_send_server_probe(g_online_cfg.server_host,
-                                    g_online_cfg.server_port,
-                                    g_online_active_match.match_id,
-                                    g_online_cfg.username,
-                                    g_online_active_match.p2p_token,
-                                    err,
-                                    sizeof(err))) {
+    if (ggpo_net_send_server_probe(g_online_cfg.server_host,
+                                   g_online_cfg.server_port,
+                                   g_online_active_match.match_id,
+                                   g_online_cfg.username,
+                                   g_online_active_match.p2p_token,
+                                   err,
+                                   sizeof(err))) {
+        if (!g_online_active_match.p2p_probe_logged) {
+            g_online_active_match.p2p_probe_logged = 1;
+            LOG_INFO("online.p2p: sent UDP discovery probe match=%d server=%s:%u local_udp=%u",
+                     g_online_active_match.match_id,
+                     g_online_cfg.server_host,
+                     (unsigned int)g_online_cfg.server_port,
+                     (unsigned int)ggpo_net_local_port());
+        }
+    } else {
         if (!g_online_active_match.p2p_probe_warned) {
             g_online_active_match.p2p_probe_warned = 1;
             LOG_WARN("online.p2p: server UDP probe failed match=%d (%s)",

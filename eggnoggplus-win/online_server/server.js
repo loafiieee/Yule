@@ -56,6 +56,10 @@ function clientP2pPort(client) {
   return Number.isInteger(client.p2p_port) ? client.p2p_port : 0;
 }
 
+function clientRouteVersion(client) {
+  return Number.isInteger(client && client.route_version) ? client.route_version : 0;
+}
+
 function sanitizeHostHint(value) {
   const host = String(value || "").trim();
   if (!host || host.length > 64) return "";
@@ -439,13 +443,61 @@ function p2pPeerUsername(match, username) {
   return "";
 }
 
-function p2pHostFor(receiverEndpoint, peerClient, peerEndpoint) {
-  if (!peerEndpoint) return "";
+function legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint) {
+  if (!peerEndpoint) return null;
+  let host = peerEndpoint.host;
+  let route = "public";
   if (receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
     const lanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
-    if (lanHost) return lanHost;
+    if (lanHost) {
+      host = lanHost;
+      route = "legacy_lan_observed_port";
+    }
   }
-  return peerEndpoint.host;
+  return {
+    host,
+    port: peerEndpoint.port,
+    route,
+    public_host: peerEndpoint.host,
+    public_port: peerEndpoint.port,
+    lan_host: sanitizeHostHint(peerClient && peerClient.lan_host),
+    lan_port: sanitizePort(peerEndpoint.local_port, 0),
+  };
+}
+
+function p2pAddressFor(receiverClient, receiverEndpoint, peerClient, peerEndpoint) {
+  if (!peerEndpoint) return null;
+
+  const routeV2 = clientRouteVersion(receiverClient) >= 2 && clientRouteVersion(peerClient) >= 2;
+  if (routeV2 && receiverEndpoint && receiverEndpoint.host === peerEndpoint.host) {
+    const receiverLanHost = sanitizeHostHint(receiverClient && receiverClient.lan_host);
+    const peerLanHost = sanitizeHostHint(peerClient && peerClient.lan_host);
+    const peerLocalPort = sanitizePort(peerEndpoint.local_port, 0);
+    if (peerLanHost && peerLocalPort) {
+      if (receiverLanHost && receiverLanHost === peerLanHost) {
+        return {
+          host: "127.0.0.1",
+          port: peerLocalPort,
+          route: "loopback",
+          public_host: peerEndpoint.host,
+          public_port: peerEndpoint.port,
+          lan_host: peerLanHost,
+          lan_port: peerLocalPort,
+        };
+      }
+      return {
+        host: peerLanHost,
+        port: peerLocalPort,
+        route: "lan",
+        public_host: peerEndpoint.host,
+        public_port: peerEndpoint.port,
+        lan_host: peerLanHost,
+        lan_port: peerLocalPort,
+      };
+    }
+  }
+
+  return legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint);
 }
 
 function sendP2pPeerIfReady(match, username) {
@@ -458,17 +510,22 @@ function sendP2pPeerIfReady(match, username) {
   const peerEndpoint = match.p2p_endpoints && match.p2p_endpoints.get(peer);
   if (!client || !endpoint || !peerEndpoint) return;
 
-  const peerHost = p2pHostFor(endpoint, peerClient, peerEndpoint);
-  if (!peerHost) return;
+  const peerAddress = p2pAddressFor(client, endpoint, peerClient, peerEndpoint);
+  if (!peerAddress || !peerAddress.host || !peerAddress.port) return;
 
-  const notifyKey = `${peerHost}:${peerEndpoint.port}`;
+  const notifyKey = `${peerAddress.route}:${peerAddress.host}:${peerAddress.port}:${peerAddress.public_host}:${peerAddress.public_port}`;
   if (match.p2p_notified[username] === notifyKey) return;
   match.p2p_notified[username] = notifyKey;
   send(client, {
     type: "p2p_peer",
     match_id: match.id,
-    peer_host: peerHost,
-    peer_port: peerEndpoint.port,
+    peer_host: peerAddress.host,
+    peer_port: peerAddress.port,
+    peer_route: peerAddress.route,
+    peer_public_host: peerAddress.public_host,
+    peer_public_port: peerAddress.public_port,
+    peer_lan_host: peerAddress.lan_host,
+    peer_lan_port: peerAddress.lan_port,
   });
 }
 
@@ -478,23 +535,14 @@ function maybeSendP2pPeers(match) {
   sendP2pPeerIfReady(match, match.b);
 }
 
-function handleUdpProbeMessage(msg, rinfo) {
-  if (!msg || msg.type !== "p2p_probe") return;
-
-  const matchId = Number.parseInt(msg.match_id, 10);
-  const username = normalizeUsername(msg.username);
-  const token = String(msg.token || "");
+function registerP2pEndpoint(matchId, username, token, host, port, localPort, source) {
   if (!Number.isInteger(matchId) || !validUsername(username) || !token) return;
 
   const match = activeMatches.get(matchId);
   if (!match || match.finished || !matchHasUser(match, username)) return;
   if (match.p2p_tokens[username] !== token) return;
-
-  const host = normalizeRemoteAddress(rinfo.address);
-  const port = sanitizePort(rinfo.port, 0);
   if (!host || !port) return;
 
-  const localPort = sanitizePort(msg.local_port, 0);
   const prev = match.p2p_endpoints.get(username);
   match.p2p_endpoints.set(username, {
     host,
@@ -504,10 +552,22 @@ function handleUdpProbeMessage(msg, rinfo) {
   });
 
   if (!prev || prev.host !== host || prev.port !== port || prev.local_port !== localPort) {
-    console.log(`[p2p#${match.id}] ${username} udp=${host}:${port} local=${localPort}`);
+    console.log(`[p2p#${match.id}] ${username} ${source}=${host}:${port} local=${localPort}`);
   }
 
   maybeSendP2pPeers(match);
+}
+
+function handleUdpProbeMessage(msg, rinfo) {
+  if (!msg || msg.type !== "p2p_probe") return;
+
+  const matchId = Number.parseInt(msg.match_id, 10);
+  const username = normalizeUsername(msg.username);
+  const token = String(msg.token || "");
+  const host = normalizeRemoteAddress(rinfo.address);
+  const port = sanitizePort(rinfo.port, 0);
+  const localPort = sanitizePort(msg.local_port, 0);
+  registerP2pEndpoint(matchId, username, token, host, port, localPort, "udp");
 }
 
 function tryCasualMatchmaking() {
@@ -601,7 +661,8 @@ function handleMapManifest(client, msg) {
   client.map_serial = String(msg.serial || "").slice(0, 4096);
   client.p2p_port = sanitizePort(msg.p2p_port, 0);
   client.lan_host = sanitizeHostHint(msg.lan_host);
-  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}`);
+  client.route_version = sanitizePort(msg.route_version, 0);
+  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}${client.route_version ? ` route_v${client.route_version}` : ""}`);
 }
 
 function sanitizePort(value, fallback) {
@@ -1002,6 +1063,7 @@ const server = net.createServer((socket) => {
     mapIndex: mapIndex(defaultManifest()),
     p2p_port: 0,
     lan_host: "",
+    route_version: 0,
     queue: "",
     queue_joined_at: 0,
     match_id: 0,

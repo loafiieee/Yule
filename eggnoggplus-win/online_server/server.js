@@ -25,6 +25,7 @@ const MATCH_STALE_MS = Number.parseInt(process.env.MATCH_STALE_MS || `${10 * 60 
 const COMPETITIVE_BASE_RANGE = Number.parseInt(process.env.COMPETITIVE_BASE_RANGE || "150", 10);
 const COMPETITIVE_RANGE_PER_SEC = Number.parseInt(process.env.COMPETITIVE_RANGE_PER_SEC || "8", 10);
 const COMPETITIVE_MAX_RANGE = Number.parseInt(process.env.COMPETITIVE_MAX_RANGE || "650", 10);
+const UDP_DIAG = process.env.UDP_DIAG === "1";
 
 let nextMatchId = 1;
 let nextChallengeId = 1;
@@ -50,6 +51,10 @@ function normalizeRemoteAddress(raw) {
 
 function makeP2pToken() {
   return crypto.randomBytes(16).toString("hex");
+}
+
+function udpDiag(line) {
+  if (UDP_DIAG) console.log(line);
 }
 
 function clientP2pPort(client) {
@@ -527,6 +532,7 @@ function sendP2pPeerIfReady(match, username) {
     peer_lan_host: peerAddress.lan_host,
     peer_lan_port: peerAddress.lan_port,
   });
+  console.log(`[p2p#${match.id}] sent peer to ${username} route=${peerAddress.route} peer=${peerAddress.host}:${peerAddress.port} public=${peerAddress.public_host}:${peerAddress.public_port}${peerAddress.lan_host ? ` lan=${peerAddress.lan_host}:${peerAddress.lan_port}` : ""}`);
 }
 
 function maybeSendP2pPeers(match) {
@@ -536,12 +542,24 @@ function maybeSendP2pPeers(match) {
 }
 
 function registerP2pEndpoint(matchId, username, token, host, port, localPort, source) {
-  if (!Number.isInteger(matchId) || !validUsername(username) || !token) return;
+  if (!Number.isInteger(matchId) || !validUsername(username) || !token) {
+    udpDiag(`[p2p] ignored ${source} probe: invalid identity match=${matchId} user=${username || "?"} from=${host || "?"}:${port || 0}`);
+    return;
+  }
 
   const match = activeMatches.get(matchId);
-  if (!match || match.finished || !matchHasUser(match, username)) return;
-  if (match.p2p_tokens[username] !== token) return;
-  if (!host || !port) return;
+  if (!match || match.finished || !matchHasUser(match, username)) {
+    udpDiag(`[p2p#${matchId}] ignored ${source} probe: no active match for ${username} from=${host || "?"}:${port || 0}`);
+    return;
+  }
+  if (match.p2p_tokens[username] !== token) {
+    udpDiag(`[p2p#${match.id}] ignored ${source} probe: bad token for ${username} from=${host || "?"}:${port || 0}`);
+    return;
+  }
+  if (!host || !port) {
+    udpDiag(`[p2p#${match.id}] ignored ${source} probe: missing source address for ${username}`);
+    return;
+  }
 
   const prev = match.p2p_endpoints.get(username);
   match.p2p_endpoints.set(username, {
@@ -556,6 +574,24 @@ function registerP2pEndpoint(matchId, username, token, host, port, localPort, so
   }
 
   maybeSendP2pPeers(match);
+}
+
+function sendUdpJson(rinfo, payload) {
+  const line = `${JSON.stringify(payload)}\n`;
+  udpServer.send(Buffer.from(line, "utf8"), rinfo.port, rinfo.address);
+}
+
+function handleUdpPingMessage(msg, rinfo) {
+  const host = normalizeRemoteAddress(rinfo.address);
+  const port = sanitizePort(rinfo.port, 0);
+  sendUdpJson(rinfo, {
+    type: "udp_pong",
+    seq: msg.seq || 0,
+    observed_host: host,
+    observed_port: port,
+    server_time: now(),
+  });
+  udpDiag(`[udp] ping from ${host}:${port}`);
 }
 
 function handleUdpProbeMessage(msg, rinfo) {
@@ -1120,6 +1156,10 @@ udpServer.on("message", (buf, rinfo) => {
   try {
     msg = JSON.parse(buf.toString("utf8").trim());
   } catch (_) {
+    return;
+  }
+  if (msg && msg.type === "udp_ping") {
+    handleUdpPingMessage(msg, rinfo);
     return;
   }
   handleUdpProbeMessage(msg, rinfo);

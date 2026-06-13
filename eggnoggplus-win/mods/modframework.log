@@ -1,50 +1,74 @@
-[10:01:43] [INFO] Mod framework initializing...
-[10:01:43] [INFO] Mod framework API version: 1
-[10:01:43] [INFO] Scanning mods/ folder...
-[10:01:43] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[10:01:43] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[10:01:43] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[10:01:43] [INFO] [mod:crash] armed=false
-[10:01:43] [INFO] Loaded mod: crash
-[10:01:43] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[10:01:43] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[10:01:43] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[10:01:43] [INFO] [mod:poc_speedhack] speed=1
-[10:01:43] [INFO] Loaded mod: poc_speedhack
-[10:01:43] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[10:01:43] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[10:01:43] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[10:01:43] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[10:01:43] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[10:01:43] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[10:01:43] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[10:01:43] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[10:01:43] [INFO] Loaded mod: texture_pack_test
-[10:01:43] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
-[10:01:43] [INFO] [maps] scanning maps/ for custom maps
-[10:01:43] [INFO] [maps][example_map] scanning folder: maps\example_map
-[10:01:43] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[10:01:43] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[10:01:43] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[10:01:43] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[10:01:43] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[10:01:43] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[10:01:43] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
-[10:01:43] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[10:01:43] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[10:01:43] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[10:01:43] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[10:01:43] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[10:01:43] [INFO] hooks_init: custom MODS menu ready
-[10:01:49] [INFO] ONLINE HUB: enter
-[10:01:53] [INFO] online.hub: Settings saved.
-[10:01:56] [INFO] online.hub: Connecting to online server...
-[10:01:56] [INFO] online.hub: Connected. Authenticating...
-[10:01:56] [INFO] online.hub: Logged in.
-[10:01:56] [INFO] online.hub: Joining casual qu[10:01:5[10:01:57] [INFO] online.hub: Match found: loaf[10:01:57] [INFO[10:01:59] [INFO] ONLINE HUB: leave
-[10:02:00] [INFO] ggpo.net: local build finger[10:02:00] [INFO] ggpo.net: local build fingerprint build=74DB[10:02:00] [INFO] ggpo.net: joining deferred l[10:02:00] [INFO] ggpo.net: hosting udp port=58957 input_delay=1 max_advantage=20 max_prediction=24 stat[10:02:00] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=58956 player=1 delay=1 adv=20 predcap=24 corr=on state_size=141128
-[10:02:00] [INFO] online.p2p: sent UDP discovery probe match=1 server=eggnogg.loafiieee.com:47778 local_udp=58956
-[10[10:02:37] [INFO] ggpo.net: stopped from online server result after 0 frame(s), checksum=2219318990 tx=343 rx=0 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
-[10:02:38] [INFO] [mod:crash] Unloaded
-[10:02:38] [INFO] [mod:poc_speedhack] Unloaded
-[10:02:38] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[10:12:02] [INFO] Mod framework initializing...
+[10:12:02] [INFO] Mod framework API version: 1
+[10:12:02] [INFO] Scanning mods/ folder...
+[10:12:02] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[10:12:02] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[10:12:02] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[10:12:02] [INFO] [mod:crash] armed=false
+[10:12:02] [INFO] Loaded mod: crash
+[10:12:02] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[10:12:02] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[10:12:02] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[10:12:02] [INFO] [mod:poc_speedhack] speed=1
+[10:12:02] [INFO] Loaded mod: poc_speedhack
+[10:12:02] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[10:12:02] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[10:12:02] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[10:12:02] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[10:12:02] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[10:12:02] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[10:12:02] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[10:12:02] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[10:12:02] [INFO] Loaded mod: texture_pack_test
+[10:12:02] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
+[10:12:02] [INFO] [maps] scanning maps/ for custom maps
+[10:12:02] [INFO] [maps][example_map] scanning folder: maps\example_map
+[10:12:02] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[10:12:02] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[10:12:02] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[10:12:02] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[10:12:02] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[10:12:02] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[10:12:02] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[10:12:02] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[10:12:02] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[10:12:02] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[10:12:02] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[10:12:02] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[10:12:02] [INFO] hooks_init: custom MODS menu ready
+[10:12:08] [INFO] ONLINE HUB: enter
+[10:12:13] [INFO] online.hub: Settings saved.
+[10:12:14] [INFO] online.hub: Connecting to online server...
+[10:12:14] [INFO] online.hub: Connected. Authenticating...
+[10:12:14] [INFO] online.hub: Logged in.
+[10:12:15] [INFO] online.hub: Joining casual queue...
+[10:12:15] [INFO] online.hub: Match found: loaf on Vanilla 5
+[10:12:18] [INFO] ONLINE HUB: leave
+[10:12:18] [INFO] ggpo.net: local build fingerprint build=6F28F764 exe=632C561E dll=0956D0C4 correction=on
+[10:12:18] [INFO] ggpo.net: joining deferred local_port=60108 input_delay=1 max_advantage=20 max_prediction=24 state_size=131624 checksum=1801409123
+[10:12:18] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=60108 player=1 delay=1 adv=20 predcap=24 corr=on state_size=131624
+[10:12:18] [INFO] online.p2p: sent UDP discovery probe match=1 server=eggnogg.loafiieee.com:47778 local_udp=60108
+[10:13:05] [INFO] ggpo.net: stopped from online match complete after 0 frame(s), checksum=1801409123 tx=435 rx=0 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[10:13:08] [INFO] ONLINE HUB: enter
+[10:13:25] [INFO] online.hub: Settings saved.
+[10:1[10:13:30] [INFO] online.hub: Settings saved and applied.
+[10:13:36] [INFO] online.hub: Connecting to online server...
+[10:13:36] [INFO] online.hub: Connected. Authenticating...
+[10:13:36] [INFO] online.hub: Logged in.
+[10:13:37] [INFO] online.hub: Joining casual queue...
+[10:13:37] [INFO] online.hub: Match found: loaf on Vanilla 2
+[10:13:40] [INFO] ONLINE HUB: leave
+[10:13:40] [INFO] ggpo.net: local build fingerprint build=6F28F76[10:13:40] [INFO] ggpo.net: local build fingerprint build=6F28F764 exe=632C561E dll=0956D0C4 correction=on
+[10:13:40] [INFO] ggpo.net: joining deferred local_port=58271 input_delay=1 max_advantage=20 max_prediction=24 state_size=141128 checksum=1256595541
+[10:13:40] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=58271 player=1 delay=1 adv=20 predcap=24 corr=on state_size=141[10:13:40] [INFO] ggpo.net: set peer endpoint 127.0.0.1:58271 mode=host local_port=58270
+[10:13:40] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=58271
+[10:13:40] [WARN] ggpo.net: initial state differs; using host state local_size=141128 remote_size=141128 loc[10:13:40] [WARN] ggpo.net: initial state differs; [10:13:40] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[10:13:40] [INFO] ggpo.net: remote state sync ack received
+[10:13:40] [INFO] ggpo.net: start state loaded checksum=1596035306 input_delay=1
+[10:13:40] [INFO] ggpo.net: waiting for remote frame 0 input
+[10:14:43] [INFO] ggpo.net: stopped from online server result after 3744 frame(s), checksum=3197602394 tx=7705 rx=7524 pred=1362 rb=0 adv_stall=0 pred_stall=0 desync=0
+[10:14:44] [INFO] [mod:crash] Unloaded
+[10:14:44] [INFO] [mod:poc_speedhack] Unloaded
+[10:14:44] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+loaded
+[10:14:43] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

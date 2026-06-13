@@ -26,6 +26,12 @@ Default bind is `0.0.0.0:47778` for TCP and UDP. For public internet play, the
 host must allow inbound TCP `47778` and inbound UDP `47778`; set `UDP_PORT` or
 `UDP_HOST` only if the discovery socket needs a different bind.
 
+For deployment checks, send UDP JSON `{"type":"udp_ping","seq":1}` to the
+server port and expect `udp_pong`. Valid match probes log `[p2p#...] ... udp=`
+when received and `[p2p#...] sent peer ...` when both peers have probed. If
+matches are found over TCP but those P2P logs never appear, UDP is not reaching
+the discovery socket or the remote process is not running this server code.
+
 The server never sends cosmetics or cosmetic asset data. Match messages contain
 only opponent identity, public Elo, P2P endpoint data, input delay, and the
 server-selected map key/selector.

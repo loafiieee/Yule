@@ -186,6 +186,7 @@ extern void SDL_free(void* mem);
 #define ADDR_RNDSIGN                  0x4052C0u
 #define ADDR_RESPAWN_WARBLE           0x41BB70u
 #define ADDR_SYNTH_EFFECT_WHISTLING   0x41BBD0u
+#define ADDR_SOUND_SWORD_CHING        0x425D70u
 #define ADDR_SYNTH_EFFECTS_INIT       0x408780u
 #define ADDR_SYN_ENABLE_RANGE         0x406F40u
 #define ADDR_SYNTH_ENGINE             0x5540E0u
@@ -520,6 +521,7 @@ typedef int (__cdecl *fn_tile_action_t)(void*, int, int, int, int);
 typedef void (__cdecl *fn_colour_query_t)(float*);
 typedef int (__cdecl *fn_synth_callback_t)(void*);
 typedef void (__cdecl *fn_synth_effects_init_t)(int, int);
+typedef void* (__cdecl *fn_sound_sword_ching_t)(float, float);
 typedef void (__cdecl *fn_syn_enable_range_t)(int, uint32_t, uint32_t, int);
 typedef int   (__cdecl *fn_game_player_colour_index_t)(uint32_t, int);
 typedef int   (__cdecl *fn_game_set_player_colour_index_t)(uint32_t, int, uint32_t);
@@ -605,6 +607,7 @@ static fn_rgba_load_t                p_rgba_load = (fn_rgba_load_t)(uintptr_t)AD
 static fn_rgba_load_t                p_rgba_load_trampoline = NULL;
 static fn_synth_callback_t           p_respawn_warble_trampoline = NULL;
 static fn_synth_callback_t           p_synth_effect_whistling_trampoline = NULL;
+static fn_sound_sword_ching_t        p_sound_sword_ching_trampoline = NULL;
 static fn_synth_effects_init_t       p_synth_effects_init = (fn_synth_effects_init_t)(uintptr_t)ADDR_SYNTH_EFFECTS_INIT;
 static fn_syn_enable_range_t         p_syn_enable_range = (fn_syn_enable_range_t)(uintptr_t)ADDR_SYN_ENABLE_RANGE;
 
@@ -643,6 +646,7 @@ static Detour g_rng_rnd5050_detour;
 static Detour g_rng_rndsign_detour;
 static Detour g_respawn_warble_detour;
 static Detour g_synth_effect_whistling_detour;
+static Detour g_sound_sword_ching_detour;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -1683,11 +1687,68 @@ void __cdecl hooks_rng_trace_record_from_hook(uint32_t kind, uintptr_t caller) {
     }
 }
 
+/*
+ * Per-frame cosmetic RNG isolation (bug-1 fix).
+ *
+ * The rngtrace diagnostic showed ~80 frnd/rnd draws PER FRAME coming from a
+ * tight cluster of call sites (0x0043E4xx-0x0043EAxx, a camera-culled tile/
+ * background animation) that advance the shared gameplay seed _mrand_seed. The
+ * NUMBER of draws depends on the local camera, which is intentionally excluded
+ * from the synced/checksummed state, so two peers draw a different count and
+ * the gameplay seed drifts - surfacing as desyncs on respawn/teleport (the
+ * camera jumps) and invisible to single-process replay (F3) because one
+ * process is internally self-consistent. Route exactly those call sites to a
+ * private cosmetic seed so they never perturb the gameplay seed; the visuals
+ * stay random while gameplay RNG (respawn side, etc.) keeps the deterministic
+ * seed. Caller addresses come straight from the rngtrace dump (return address
+ * captured via __builtin_return_address in the C hooks below).
+ */
+typedef long double (__cdecl *fn_rng_frnd_t)(float, float);
+typedef int         (__cdecl *fn_rng_rnd_t)(int, int);
+typedef unsigned    (__cdecl *fn_rng_rnd5050_t)(void);
+
+static uint32_t g_cosmetic_rng_seed = 0x1ED37A11u;
+static volatile int g_cosmetic_rng_depth = 0;
+
+static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
+    uint32_t c = (uint32_t)caller;
+    /*
+     * Cosmetic background tile/decoration "action" handlers, registered in the
+     * tile-type table by tiledef_init. These are render-only and draw frnd/rnd/
+     * rnd5050 purely for visual variation - crowd spectators, waterfall spray
+     * particles (~50 draws/frame), and "puzzley" decoration tiles. Their per-frame
+     * draw COUNT depends on camera culling / particle state, which is NOT synced
+     * between peers (waterfall state is even canonicalized out of the rollback
+     * checksum), so on the shared gameplay seed they drift it. None of these
+     * functions write gameplay state. Isolated by whole-function address range
+     * (bounds from the objdump symbol table); the intervening tile actions
+     * (spikes/wall/scroll/lighting) draw no RNG, so the gaps are moot.
+     */
+    if (c >= 0x0043E1B0u && c < 0x0043E360u) return 1; /* _puzzley_action   */
+    if (c >= 0x0043E450u && c < 0x0043EB10u) return 1; /* _crowd_action     */
+    if (c >= 0x0043EE20u && c < 0x0043F4B0u) return 1; /* _waterfall_action */
+    switch (c) {
+        /* Cosmetic RNG draws inside game_update (a mixed gameplay/cosmetic fn,
+         * so isolated per call site, not by range). Crowd cheer/ambient gated by
+         * the crowd/chant timers + real-time audio clock; waterfall sound pitch/
+         * volume stored into the _fx_15991 sound object (ADDR_WATERFALL_FX
+         * 0x541E44 +0x3c/+0x44), verified in disasm @0x42d185/0x42d206/0x42d242. */
+        case 0x0042C801u: /* frnd(0,2)  - crowd cheer colour trigger */
+        case 0x0042CA16u: /* rnd(-10,10) - crowd ambient sound pan   */
+        case 0x0042CA2Cu: /* rnd(-10,10) - crowd ambient sound pan   */
+        case 0x0042D19Cu: /* frnd(-1,1)  - waterfall sound randomize */
+        case 0x0042D23Eu: /* frnd(1,0.5) - waterfall sound randomize */
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 #ifdef HOOKS_INTELLISENSE
 static void hooked_mrand(void) { }
-static void hooked_rnd(void) { }
-static void hooked_frnd(void) { }
-static void hooked_rnd5050(void) { }
+static int __cdecl hooked_rnd(int a, int b) { (void)a; (void)b; return 0; }
+static long double __cdecl hooked_frnd(float a, float b) { (void)a; (void)b; return 0.0L; }
+static unsigned __cdecl hooked_rnd5050(void) { return 0; }
 static void hooked_rndsign(void) { }
 #else
 static void __attribute__((naked)) hooked_mrand(void) {
@@ -1705,49 +1766,75 @@ static void __attribute__((naked)) hooked_mrand(void) {
     );
 }
 
-static void __attribute__((naked)) hooked_rnd(void) {
-    __asm__ __volatile__(
-        "pushfl\n\t"
-        "pushal\n\t"
-        "movl 36(%esp), %eax\n\t"
-        "pushl %eax\n\t"
-        "pushl $2\n\t"
-        "call _hooks_rng_trace_record_from_hook\n\t"
-        "addl $8, %esp\n\t"
-        "popal\n\t"
-        "popfl\n\t"
-        "jmp *_g_hooks_rng_rnd_trampoline\n\t"
-    );
+/*
+ * rnd/frnd/rnd5050 are C wrappers (not naked tail-jumps) so that, for the cosmetic
+ * call sites in hooks_rng_caller_is_cosmetic, we can swap the gameplay seed for a
+ * private cosmetic seed around the real draw. Reached via the detour's jmp, so
+ * __builtin_return_address(0) is the original caller (the draw site). The trace
+ * records only NON-cosmetic draws so a desync dump isn't flooded by cosmetic spray.
+ * Non-cosmetic callers pass straight through unchanged. Same isolation pattern as
+ * hooked_sound_sword_ching. mrand/rndsign have no cosmetic callers and stay naked.
+ */
+static int __cdecl hooked_rnd(int lo, int hi) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    fn_rng_rnd_t real = (fn_rng_rnd_t)g_hooks_rng_rnd_trampoline;
+    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    int result;
+    /* Trace only non-cosmetic draws so a desync dump isn't flooded by isolated
+     * cosmetic spray; cosmetic draws no longer touch the gameplay seed anyway. */
+    if (!cosmetic) hooks_rng_trace_record_from_hook(2u, caller);
+    if (!real) return 0;
+    if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
+        uint32_t game_seed = *g_native_mrand_seed;
+        g_cosmetic_rng_depth++;
+        *g_native_mrand_seed = g_cosmetic_rng_seed;
+        result = real(lo, hi);
+        g_cosmetic_rng_seed = *g_native_mrand_seed;
+        *g_native_mrand_seed = game_seed;
+        g_cosmetic_rng_depth--;
+        return result;
+    }
+    return real(lo, hi);
 }
 
-static void __attribute__((naked)) hooked_frnd(void) {
-    __asm__ __volatile__(
-        "pushfl\n\t"
-        "pushal\n\t"
-        "movl 36(%esp), %eax\n\t"
-        "pushl %eax\n\t"
-        "pushl $3\n\t"
-        "call _hooks_rng_trace_record_from_hook\n\t"
-        "addl $8, %esp\n\t"
-        "popal\n\t"
-        "popfl\n\t"
-        "jmp *_g_hooks_rng_frnd_trampoline\n\t"
-    );
+static long double __cdecl hooked_frnd(float lo, float hi) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    fn_rng_frnd_t real = (fn_rng_frnd_t)g_hooks_rng_frnd_trampoline;
+    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    long double result;
+    if (!cosmetic) hooks_rng_trace_record_from_hook(3u, caller);
+    if (!real) return 0.0L;
+    if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
+        uint32_t game_seed = *g_native_mrand_seed;
+        g_cosmetic_rng_depth++;
+        *g_native_mrand_seed = g_cosmetic_rng_seed;
+        result = real(lo, hi);
+        g_cosmetic_rng_seed = *g_native_mrand_seed;
+        *g_native_mrand_seed = game_seed;
+        g_cosmetic_rng_depth--;
+        return result;
+    }
+    return real(lo, hi);
 }
 
-static void __attribute__((naked)) hooked_rnd5050(void) {
-    __asm__ __volatile__(
-        "pushfl\n\t"
-        "pushal\n\t"
-        "movl 36(%esp), %eax\n\t"
-        "pushl %eax\n\t"
-        "pushl $4\n\t"
-        "call _hooks_rng_trace_record_from_hook\n\t"
-        "addl $8, %esp\n\t"
-        "popal\n\t"
-        "popfl\n\t"
-        "jmp *_g_hooks_rng_rnd5050_trampoline\n\t"
-    );
+static unsigned __cdecl hooked_rnd5050(void) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    fn_rng_rnd5050_t real = (fn_rng_rnd5050_t)g_hooks_rng_rnd5050_trampoline;
+    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    unsigned result;
+    if (!cosmetic) hooks_rng_trace_record_from_hook(4u, caller);
+    if (!real) return 0;
+    if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
+        uint32_t game_seed = *g_native_mrand_seed;
+        g_cosmetic_rng_depth++;
+        *g_native_mrand_seed = g_cosmetic_rng_seed;
+        result = real();
+        g_cosmetic_rng_seed = *g_native_mrand_seed;
+        *g_native_mrand_seed = game_seed;
+        g_cosmetic_rng_depth--;
+        return result;
+    }
+    return real();
 }
 
 static void __attribute__((naked)) hooked_rndsign(void) {
@@ -1806,6 +1893,32 @@ static int __cdecl hooked_respawn_warble(void* effect) {
 
 static int __cdecl hooked_synth_effect_whistling(void* effect) {
     return hooks_call_synth_callback_with_audio_rng(p_synth_effect_whistling_trampoline, effect);
+}
+
+/* sound_sword_ching() draws frnd() (off the shared _mrand_seed) at trigger time
+ * for pitch variation, gated by a per-tick dedup static that is NOT part of the
+ * rolled-back state. Under rollback replay that gate goes stale, so the number
+ * of RNG draws differs from the live frame and the gameplay RNG stream drifts -
+ * eventually corrupting checksummed state (the desync seen on death/respawn/
+ * teleport). Run it against the dedicated audio RNG so these cosmetic draws can
+ * never touch the gameplay stream, exactly like the synth DSP callbacks above. */
+static void* __cdecl hooked_sound_sword_ching(float pitch, float secondary) {
+    void* result;
+    uint32_t game_seed;
+
+    if (!p_sound_sword_ching_trampoline) return NULL;
+    if (!g_native_mrand_seed || g_audio_rng_wrap_depth > 0) {
+        return p_sound_sword_ching_trampoline(pitch, secondary);
+    }
+
+    game_seed = *g_native_mrand_seed;
+    g_audio_rng_wrap_depth++;
+    *g_native_mrand_seed = g_audio_rng_seed;
+    result = p_sound_sword_ching_trampoline(pitch, secondary);
+    g_audio_rng_seed = *g_native_mrand_seed;
+    *g_native_mrand_seed = game_seed;
+    g_audio_rng_wrap_depth--;
+    return result;
 }
 
 static int str_bool_true(const char* s) {
@@ -4730,6 +4843,48 @@ static void console_run_ggpo_net(const char* arg) {
                  ggpo_net_active() ? " for future inputs" : "");
         console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
         LOG_INFO("%s", out);
+        return;
+    }
+    if (_stricmp(action, "autodelay") == 0 || _stricmp(action, "auto_delay") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok = console_parse_token(&cursor);
+        if (tok && tok[0]) {
+            int on = (_stricmp(tok, "on") == 0 || _stricmp(tok, "1") == 0 || _stricmp(tok, "true") == 0);
+            int off = (_stricmp(tok, "off") == 0 || _stricmp(tok, "0") == 0 || _stricmp(tok, "false") == 0);
+            if (!on && !off) {
+                console_push_line_rgb("Usage: ggpo.net autodelay [on|off]", 0.98f, 0.76f, 0.40f);
+                return;
+            }
+            ggpo_net_set_auto_input_delay(on);
+            LOG_INFO("ggpo.net: auto input delay %s", on ? "on" : "off");
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: auto input delay %s (rtt~%u frames, current delay=%u)",
+                 ggpo_net_auto_input_delay() ? "on" : "off",
+                 (unsigned int)ggpo_net_rtt_ticks(),
+                 (unsigned int)ggpo_net_input_delay());
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(action, "rngtrace") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok = console_parse_token(&cursor);
+        if (tok && tok[0]) {
+            int on = (_stricmp(tok, "on") == 0 || _stricmp(tok, "1") == 0 || _stricmp(tok, "true") == 0);
+            int off = (_stricmp(tok, "off") == 0 || _stricmp(tok, "0") == 0 || _stricmp(tok, "false") == 0);
+            if (!on && !off) {
+                console_push_line_rgb("Usage: ggpo.net rngtrace [on|off]", 0.98f, 0.76f, 0.40f);
+                return;
+            }
+            ggpo_net_set_rng_trace(on);
+            LOG_INFO("ggpo.net: per-frame rng trace %s", on ? "on" : "off");
+        }
+        snprintf(out,
+                 sizeof(out),
+                 "ggpo.net: per-frame rng trace %s (logs live frames that draw RNG to modframework.log)",
+                 ggpo_net_rng_trace() ? "on" : "off");
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(action, "advantage") == 0 || _stricmp(action, "max_advantage") == 0 || _stricmp(action, "timesync") == 0) {
@@ -11333,6 +11488,22 @@ static int online_advance_net_gameplay_tick(int arg0) {
         else raw1 = 0u;
     }
     online_pump_p2p_probe();
+    if (ggpo_net_build_mismatch()) {
+        /* Builds differ (exe/dll file-hash mismatch). Rollback determinism
+         * really does require identical simulation code on both peers, so this
+         * makes desyncs likely. We used to hard-abort here, but that blocks
+         * real-world testing whenever one peer is briefly on an older DLL, so
+         * now we warn once and let the match proceed. ggpo.net already logs the
+         * exact fingerprints once per match. */
+        static int s_warned_build_mismatch = 0;
+        if (!s_warned_build_mismatch) {
+            s_warned_build_mismatch = 1;
+            console_push_line_rgb("ggpo.net: WARNING - opponent is on a different build; desyncs likely",
+                                  0.98f, 0.78f, 0.40f);
+            online_hub_set_status("Warning: opponent is on a different game build - desyncs likely. Use identical versions for a clean match.");
+            LOG_WARN("ggpo.net: build/exe/dll fingerprint mismatch with opponent - continuing anyway (desyncs expected)");
+        }
+    }
     do {
         int advanced = 0;
         if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
@@ -12033,6 +12204,11 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour synth_effect_whistling (audio RNG may affect gameplay RNG)");
     } else {
         p_synth_effect_whistling_trampoline = (fn_synth_callback_t)g_synth_effect_whistling_detour.trampoline;
+    }
+    if (!install_detour(&g_sound_sword_ching_detour, (void*)(uintptr_t)ADDR_SOUND_SWORD_CHING, (void*)&hooked_sound_sword_ching, 6)) {
+        LOG_WARN("hooks_init: failed to detour sound_sword_ching (audio RNG may affect gameplay RNG)");
+    } else {
+        p_sound_sword_ching_trampoline = (fn_sound_sword_ching_t)g_sound_sword_ching_detour.trampoline;
     }
 
 

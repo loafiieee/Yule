@@ -7,6 +7,7 @@
 #include "ggpo_ext.h"
 #include "hooks.h"
 #include "lua_manager.h"
+#include "log.h"
 
 #define GGPO_LOOPBACK_HISTORY_FRAMES 128
 #define GGPO_LOOPBACK_VERIFY_INTERVAL 90
@@ -21,6 +22,7 @@ typedef struct GgpoLoopbackHistoryEntry {
     size_t post_state_len;
     GgpoFrameInputs inputs;
     HooksRngTrace rng_trace;
+    uint32_t post_seed; /* live _mrand_seed at end of this frame */
 } GgpoLoopbackHistoryEntry;
 
 typedef struct GgpoLoopbackSession {
@@ -203,6 +205,32 @@ static int ggpo_loopback_verify_recent(int arg0, char* err, size_t err_cap) {
         if (!replay_ok) {
             (void)ggpo_loopback_restore_scratch(NULL, 0);
             return 0;
+        }
+        /*
+         * Bug-1 detector: the gameplay checksum excludes rng_seed, so a cosmetic
+         * RNG consumer that draws differently under replay (synth suppressed)
+         * silently drifts the shared seed without tripping the checksum here -
+         * the desync only surfaces frames later when gameplay consumes the
+         * drifted seed. Catch it at the exact frame: if the seed drifted AND the
+         * live/replay RNG traces differ, the first differing caller is the
+         * unisolated offender to route through the audio-RNG isolation.
+         */
+        {
+            uint32_t replay_seed = 0;
+            if (lua_manager_game_rng_seed(&replay_seed) &&
+                replay_seed != entry->post_seed &&
+                (replay_rng_trace.count != entry->rng_trace.count ||
+                 memcmp(replay_rng_trace.events, entry->rng_trace.events,
+                        sizeof(replay_rng_trace.events)) != 0)) {
+                char rng_detail[256];
+                hooks_rng_trace_describe_diff(&entry->rng_trace, &replay_rng_trace,
+                                              rng_detail, sizeof(rng_detail));
+                LOG_WARN("ggpo.loopback: rng seed drift under replay frame=%u live_seed=%u replay_seed=%u %s",
+                         f,
+                         (unsigned int)entry->post_seed,
+                         (unsigned int)replay_seed,
+                         rng_detail);
+            }
         }
         if (replay_checksum != entry->post_checksum) {
             uint8_t* post_blob = ggpo_loopback_post_blob_for_frame(f);
@@ -404,6 +432,8 @@ int ggpo_loopback_advance(uint32_t raw_p0, uint32_t raw_p1, int arg0, uint32_t* 
     g_loopback.last_post_state_len = post_state_len;
     g_loopback.has_last_post_state = 1;
 
+    slot->post_seed = 0u;
+    (void)lua_manager_game_rng_seed(&slot->post_seed);
     slot->post_checksum = checksum;
     slot->post_state_len = post_state_len;
     slot->valid = 1;

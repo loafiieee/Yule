@@ -156,6 +156,16 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_SEED                  0x542074u
 #define ADDR_THING_LATEST          0x54204cu
 #define ADDR_GAME_DO_LERP_COLOURS  0x542050u
+/*
+ * Room colour-transition lerp value storage lives contiguously in the
+ * transient block between crowd_timer (0x541F68+4) and thing_count (0x54202C).
+ * These are the background/water/foreground colour floats interpolated during
+ * room transitions (DAT_00541F70..DAT_00542028 in the decompile). Purely
+ * cosmetic - excluded from the rollback checksum so render/timing drift does
+ * not trigger false-positive desyncs.
+ */
+#define ADDR_COLOUR_LERP_BLOCK     0x541F70u
+#define COLOUR_LERP_BLOCK_BYTES    (0x54202Cu - 0x541F70u)
 #define ADDR_THINGS                0x542080u
 #define ADDR_THING_INFO            0x543640u
 #define ADDR_ROOM_INFO             0x543700u
@@ -6102,7 +6112,32 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
         hdr->camera_shake_decay = 0.0f;
         hdr->game_w = 0.0f;
         hdr->game_h = 0.0f;
+        /*
+         * Room colour-transition lerp values (see ADDR_COLOUR_LERP_BLOCK). The
+         * lerp control fields (game_do_lerp_colours, lerp_time) were already
+         * canonicalized, but the colour value storage was not - it drifts
+         * between peers on render/timing differences and was the dominant
+         * source of false-positive "transient" desyncs and the resulting
+         * full-state correction storm. Exclude from the checksum only; the
+         * live colours are untouched on load (this runs on a throwaway copy).
+         */
+        full_state_zero_transient_range(hdr, ADDR_COLOUR_LERP_BLOCK, COLOUR_LERP_BLOCK_BYTES);
         memset(hdr->particle_state, 0, sizeof(hdr->particle_state));
+        /*
+         * _room_info (ADDR_ROOM_INFO 0x543700, the entire ROOM_INFO_STATE_SIZE
+         * 0x4444 region) is NOT gameplay state - it is the cosmetic
+         * "skeleton_statue" background decoration buffer (ghidra skeleton_statue
+         * @0x41fb..; the game does `memset(&_room_info,0,0x4444)` on room load and
+         * treats it as a per-column ring of 32 decoration sprites at
+         * &_room_info + col*0x404 + ringidx*0x20, with the ring index stored at
+         * 0x543b00+col*0x404). It mirrors player position/colour and advances on
+         * render timing, so its contents and ring indices drift between peers
+         * (camera-culled, timing-dependent) and were the dominant `changed=room_info`
+         * desync - even when the gameplay rng_seed matched. The real per-room
+         * gameplay layout lives in a separate symbol (_room_templates), not here.
+         * Exclude from the checksum only; live decoration memory is untouched.
+         */
+        memset(hdr->room_info_state, 0, sizeof(hdr->room_info_state));
     }
 
     return 1;
@@ -13532,12 +13567,30 @@ int lua_manager_game_state_rollback_summary(LuaGameStateRollbackSummary* out_sum
         free(blob);
         return 0;
     }
-    if (!full_state_canonicalize_rollback_checksum_blob(blob, blob_len, err, err_cap)) {
-        free(blob);
-        return 0;
-    }
 
-    ok = full_state_rollback_summary_from_canonical_blob(blob, blob_len, out_summary, err, err_cap);
+    /*
+     * Diagnostic: capture the REAL gameplay rng seed before canonicalization
+     * zeroes it. The summary's rng_seed field is transmitted to the peer and
+     * logged in the desync detail (printed as rng=...), but it is NOT part of
+     * any checksum or desync trigger, so stuffing the live seed here is purely
+     * observational. It lets us see directly whether _mrand_seed has drifted
+     * between the two machines at a desync frame (seeds differ => RNG drift;
+     * seeds equal => a non-RNG thing field is non-deterministic).
+     */
+    {
+        uint32_t real_seed = 0;
+        if (blob_len >= sizeof(FullStateBlobHeader)) {
+            real_seed = ((const FullStateBlobHeader*)blob)->rng_seed;
+        }
+        if (!full_state_canonicalize_rollback_checksum_blob(blob, blob_len, err, err_cap)) {
+            free(blob);
+            return 0;
+        }
+        ok = full_state_rollback_summary_from_canonical_blob(blob, blob_len, out_summary, err, err_cap);
+        if (ok) {
+            out_summary->rng_seed = real_seed;
+        }
+    }
     free(blob);
     return ok;
 }

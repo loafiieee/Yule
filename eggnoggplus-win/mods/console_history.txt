@@ -8,3 +8,4 @@ ls
 help
 state.switch main
 help
+ggpo.net rngtrace on

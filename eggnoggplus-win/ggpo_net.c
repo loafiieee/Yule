@@ -16,7 +16,7 @@
 #include "lua_manager.h"
 
 #define GGPO_NET_MAGIC 0x50474E45u
-#define GGPO_NET_VERSION 10u
+#define GGPO_NET_VERSION 13u
 #define GGPO_NET_HISTORY_FRAMES 512
 #define GGPO_NET_PACKET_INPUTS 64
 #define GGPO_NET_PACKET_CHECKSUMS 32
@@ -111,6 +111,8 @@ typedef struct GgpoNetPacket {
     uint32_t input_count;
     uint32_t checksum_count;
     uint32_t summary_count;
+    uint32_t send_tick;   /* sender's service tick when this packet was built */
+    uint32_t tick_echo;   /* most recent send_tick the sender has seen from us */
     GgpoNetPacketInput inputs[GGPO_NET_PACKET_INPUTS];
     GgpoNetPacketChecksum checksums[GGPO_NET_PACKET_CHECKSUMS];
     GgpoNetPacketStateSummary summaries[GGPO_NET_PACKET_SUMMARIES];
@@ -271,6 +273,14 @@ typedef struct GgpoNetSession {
     uint32_t input_delay;
     uint32_t max_frame_advantage;
     uint32_t max_prediction;
+    /* RTT estimation (in service ticks ~= frames) for adaptive input delay.
+     * peer_last_send_tick is the newest send_tick we have seen from the peer,
+     * which we echo back so the peer can compute its own round trip. */
+    uint32_t peer_last_send_tick;
+    uint32_t rtt_ema_ticks;
+    uint32_t rtt_last_ticks;
+    uint32_t rtt_sample_count;
+    int auto_input_delay_applied;
     GgpoNetHistoryEntry history[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry local_inputs[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry remote_inputs[GGPO_NET_HISTORY_FRAMES];
@@ -351,6 +361,18 @@ typedef struct GgpoNetSession {
 static GgpoNetSession g_net;
 static int g_wsa_ready = 0;
 static uint32_t g_net_config_input_delay = GGPO_NET_DEFAULT_INPUT_DELAY;
+/* When set, measured RTT may raise the effective input delay above the
+ * configured value to cut prediction/rollback on high-latency links. It never
+ * lowers it below the configured value, and each peer adapts independently
+ * (input delay is local-only and asymmetric-safe). */
+static int g_net_config_auto_input_delay = 1;
+/* Diagnostic: when on, every LIVE (non-rollback) frame that draws RNG logs a
+ * compact per-frame trace (frame, local seed before->after, draw count, caller
+ * addresses). Two instances on one machine share modframework.log, so the first
+ * frame whose p=0 and p=1 lines differ is the process-local RNG divergence and
+ * its first differing caller is the offender. Off by default; toggle with the
+ * console: "ggpo.net rngtrace on". */
+static int g_net_config_rng_trace = 0;
 static uint32_t g_net_config_max_frame_advantage = GGPO_NET_DEFAULT_MAX_FRAME_ADVANTAGE;
 static uint32_t g_net_config_max_prediction = GGPO_NET_DEFAULT_MAX_PREDICTION;
 static uint32_t g_net_config_sim_loss_percent = 0;
@@ -363,6 +385,29 @@ static uint32_t g_net_local_dll_id = 0;
 
 static int ggpo_net_send_packet(uint16_t type);
 static void ggpo_net_clear_rollback_history(void);
+
+/* Per-frame RNG trace ring (diagnostic, populated only when rngtrace is on).
+ * Stored in RAM with no I/O during play; dumped to the log when a desync fires
+ * so two same-machine instances can be diffed frame-by-frame. */
+#define GGPO_NET_RNG_RING        256u
+#define GGPO_NET_RNG_FRAME_DRAWS 28u
+typedef struct GgpoNetRngFrame {
+    int valid;
+    uint32_t frame;
+    uint32_t seed_before;
+    uint32_t seed_after;
+    uint32_t local_cmd;
+    uint32_t remote_cmd;
+    uint32_t count;
+    uint32_t stored;
+    uint8_t kinds[GGPO_NET_RNG_FRAME_DRAWS];
+    uint32_t callers[GGPO_NET_RNG_FRAME_DRAWS];
+} GgpoNetRngFrame;
+static GgpoNetRngFrame g_rng_ring[GGPO_NET_RNG_RING];
+static uint32_t g_rng_dump_count;
+static void ggpo_net_record_rng_frame(uint32_t frame, uint32_t local_cmd, uint32_t remote_cmd,
+                                      uint32_t seed_before, uint32_t seed_after, const HooksRngTrace* tr);
+static void ggpo_net_dump_rng_ring(uint32_t desync_frame);
 
 static uint32_t ggpo_net_state_chunk_count(uint32_t state_size) {
     if (state_size == 0u) return 0u;
@@ -840,6 +885,51 @@ static uint32_t ggpo_net_now_tick(void) {
     return g_net.service_tick ? g_net.service_tick : 1u;
 }
 
+/* Fold one peer packet's timing into the RTT estimate. send_tick is the peer's
+ * clock when it built the packet (echoed back to it next send); tick_echo is
+ * the newest send_tick of OURS the peer had seen, so service_tick - tick_echo
+ * is our measured round trip in service ticks (~frames at 60Hz). */
+static void ggpo_net_record_peer_timing(uint32_t peer_send_tick, uint32_t our_tick_echo) {
+    uint32_t sample;
+    if (peer_send_tick) g_net.peer_last_send_tick = peer_send_tick;
+    if (!our_tick_echo || g_net.service_tick < our_tick_echo) return;
+    sample = g_net.service_tick - our_tick_echo;
+    if (sample > 600u) return; /* >10s: stale echo, ignore */
+    g_net.rtt_last_ticks = sample;
+    if (g_net.rtt_sample_count == 0u) {
+        g_net.rtt_ema_ticks = sample;
+    } else {
+        /* EMA, weight 1/4 toward the new sample */
+        g_net.rtt_ema_ticks = (g_net.rtt_ema_ticks * 3u + sample) / 4u;
+    }
+    if (g_net.rtt_sample_count < 0xFFFFFFFFu) g_net.rtt_sample_count++;
+}
+
+/* One-shot at match start: raise the local input delay to cover roughly half of
+ * the measured one-way latency, so the peer's inputs land before we simulate
+ * their frame (fewer mispredictions/rollbacks). Never lowers below the
+ * configured value; clamped to GGPO_NET_MAX_INPUT_DELAY. */
+static void ggpo_net_apply_auto_input_delay(void) {
+    uint32_t one_way;
+    uint32_t target;
+    if (g_net.auto_input_delay_applied) return;
+    if (!g_net_config_auto_input_delay) return;
+    if (g_net.rtt_sample_count == 0u) return; /* no RTT yet -> keep configured value */
+    g_net.auto_input_delay_applied = 1;
+    one_way = (g_net.rtt_ema_ticks + 1u) / 2u;
+    target = (one_way + 1u) / 2u;
+    if (target > (uint32_t)GGPO_NET_MAX_INPUT_DELAY) target = (uint32_t)GGPO_NET_MAX_INPUT_DELAY;
+    if (target > g_net.input_delay) {
+        LOG_INFO("ggpo.net: auto input delay %u->%u (rtt~%u ticks, one_way~%u, samples=%u)",
+                 (unsigned int)g_net.input_delay,
+                 (unsigned int)target,
+                 (unsigned int)g_net.rtt_ema_ticks,
+                 (unsigned int)one_way,
+                 (unsigned int)g_net.rtt_sample_count);
+    }
+    if (target > g_net.input_delay) g_net.input_delay = target;
+}
+
 static void ggpo_net_begin_awaiting_correction(uint32_t request_frame) {
     g_net.awaiting_correction = 1;
     g_net.correction_request_frame = request_frame;
@@ -1123,6 +1213,8 @@ static void ggpo_net_recoverable_desync(uint32_t frame, uint32_t local_checksum,
               (unsigned int)g_net.correction_frame,
               (unsigned int)g_net.last_correction_applied_id);
 
+    ggpo_net_dump_rng_ring(frame);
+
     if (!g_net.correction_enabled) {
         ggpo_net_mark_desync(frame, local_checksum, remote_checksum, why);
         return;
@@ -1235,6 +1327,8 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
         count++;
     }
     p->input_count = count;
+    p->send_tick = g_net.service_tick;
+    p->tick_echo = g_net.peer_last_send_tick;
 
     if (!g_net.correction_active && !g_net.awaiting_correction) {
         for (uint32_t i = 1; i <= GGPO_NET_HISTORY_FRAMES && checksum_count < GGPO_NET_PACKET_CHECKSUMS; i++) {
@@ -2058,6 +2152,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
     }
 
     ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
+    ggpo_net_record_peer_timing(p->send_tick, p->tick_echo);
     g_net.remote_player = (int)p->sender_player;
     if (!g_net.connected) {
         g_net.connected = 1;
@@ -2321,6 +2416,7 @@ static int ggpo_net_load_start_state_if_ready(char* err, size_t err_cap) {
     memcpy(g_net.state_blobs, g_net.initial_state, g_net.initial_state_len);
     ggpo_net_clear_runtime_history();
     g_net.frame = 0;
+    ggpo_net_apply_auto_input_delay();
     ggpo_net_seed_local_input_delay();
     g_net.last_checksum = checksum;
     g_net.start_state_loaded = 1;
@@ -2437,6 +2533,30 @@ int ggpo_net_set_input_delay(uint32_t frames) {
         }
     }
     return 1;
+}
+
+int ggpo_net_auto_input_delay(void) {
+    return g_net_config_auto_input_delay ? 1 : 0;
+}
+
+int ggpo_net_rng_trace(void) {
+    return g_net_config_rng_trace ? 1 : 0;
+}
+
+int ggpo_net_set_rng_trace(int enabled) {
+    g_net_config_rng_trace = enabled ? 1 : 0;
+    return 1;
+}
+
+int ggpo_net_set_auto_input_delay(int enabled) {
+    g_net_config_auto_input_delay = enabled ? 1 : 0;
+    return 1;
+}
+
+/* Smoothed round-trip estimate in service ticks (~frames at 60Hz); 0 if no
+ * samples yet or no active session. */
+uint32_t ggpo_net_rtt_ticks(void) {
+    return (g_net.active && g_net.rtt_sample_count) ? g_net.rtt_ema_ticks : 0u;
 }
 
 uint32_t ggpo_net_max_frame_advantage(void) {
@@ -2860,6 +2980,13 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
     g_net.sock = s;
     g_net.session_id = ggpo_net_make_session_id();
     g_net.input_delay = g_net_config_input_delay;
+    g_net.peer_last_send_tick = 0u;
+    g_net.rtt_ema_ticks = 0u;
+    g_net.rtt_last_ticks = 0u;
+    g_net.rtt_sample_count = 0u;
+    g_net.auto_input_delay_applied = 0;
+    memset(g_rng_ring, 0, sizeof(g_rng_ring));
+    g_rng_dump_count = 0u;
     g_net.max_frame_advantage = g_net_config_max_frame_advantage;
     g_net.max_prediction = g_net_config_max_prediction;
     g_net.sim_loss_percent = g_net_config_sim_loss_percent;
@@ -3021,6 +3148,69 @@ int ggpo_net_send_server_probe(const char* host,
         return 0;
     }
     return 1;
+}
+
+/* Cheap: copy a compact signature of this frame's RNG draws into the ring. No
+ * formatting or I/O happens here, so it is safe to run every live frame. */
+static void ggpo_net_record_rng_frame(uint32_t frame, uint32_t local_cmd, uint32_t remote_cmd,
+                                      uint32_t seed_before, uint32_t seed_after, const HooksRngTrace* tr) {
+    GgpoNetRngFrame* slot = &g_rng_ring[frame % GGPO_NET_RNG_RING];
+    uint32_t n = tr ? tr->count : 0u;
+    uint32_t cap = (n > GGPO_NET_RNG_FRAME_DRAWS) ? GGPO_NET_RNG_FRAME_DRAWS : n;
+    uint32_t i;
+    slot->valid = 1;
+    slot->frame = frame;
+    slot->seed_before = seed_before;
+    slot->seed_after = seed_after;
+    slot->local_cmd = local_cmd;
+    slot->remote_cmd = remote_cmd;
+    slot->count = n;
+    slot->stored = cap;
+    for (i = 0; i < cap; i++) {
+        slot->kinds[i] = (uint8_t)tr->events[i].kind;
+        slot->callers[i] = (uint32_t)tr->events[i].caller;
+    }
+}
+
+/* Dump the recent ring (frames that drew RNG) around a desync. Both instances
+ * write the shared modframework.log tagged p=0/p=1; align by f= and the first
+ * frame whose seed_after diverges (with matching seed_before) is the offending
+ * draw, identifiable by its caller list. */
+static void ggpo_net_dump_rng_ring(uint32_t desync_frame) {
+    uint32_t window = GGPO_NET_RNG_RING - 8u;
+    uint32_t newest = g_net.frame;
+    uint32_t oldest = (newest > window) ? newest - window : 0u;
+    uint32_t f;
+    if (!g_net_config_rng_trace) return;
+    if (g_rng_dump_count >= 6u) return; /* avoid flooding on a correction storm */
+    g_rng_dump_count++;
+    LOG_INFO("ggpo.rngtrace DUMP p=%d desync_frame=%u window=%u..%u",
+             g_net.local_player, (unsigned int)desync_frame,
+             (unsigned int)oldest, (unsigned int)newest);
+    for (f = oldest; f <= newest; f++) {
+        GgpoNetRngFrame* slot = &g_rng_ring[f % GGPO_NET_RNG_RING];
+        char buf[640];
+        int off = 0;
+        uint32_t i;
+        if (!slot->valid || slot->frame != f || slot->count == 0u) continue;
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off,
+                        "ggpo.rngtrace f=%u p=%d cmd=%08X/%08X s=%u->%u n=%u%s:",
+                        (unsigned int)f,
+                        g_net.local_player,
+                        (unsigned int)slot->local_cmd,
+                        (unsigned int)slot->remote_cmd,
+                        (unsigned int)slot->seed_before,
+                        (unsigned int)slot->seed_after,
+                        (unsigned int)slot->count,
+                        (slot->count > slot->stored) ? "+" : "");
+        for (i = 0; i < slot->stored && off < (int)sizeof(buf) - 16; i++) {
+            off += snprintf(buf + off, sizeof(buf) - (size_t)off,
+                            " %u@%08X",
+                            (unsigned int)slot->kinds[i],
+                            (unsigned int)slot->callers[i]);
+        }
+        LOG_INFO("%s", buf);
+    }
 }
 
 int ggpo_net_advance(uint32_t raw_p0,
@@ -3268,11 +3458,26 @@ int ggpo_net_advance(uint32_t raw_p0,
 
     {
         GgpoFrameInputs inputs;
+        int trace = g_net_config_rng_trace;
+        uint32_t seed_before = 0;
         memset(&inputs, 0, sizeof(inputs));
         inputs.player_cmd[g_net.local_player] = local_cmd;
         inputs.player_cmd[g_net.remote_player] = remote_cmd;
+        if (trace) {
+            (void)lua_manager_game_rng_seed(&seed_before);
+            hooks_rng_trace_begin(g_net.frame, 0u);
+        }
         if (!ggpo_ext_advance_frame(&inputs, arg0, &checksum, err, err_cap)) {
+            if (trace) hooks_rng_trace_end();
             return 0;
+        }
+        if (trace) {
+            HooksRngTrace tr;
+            uint32_t seed_after = 0;
+            hooks_rng_trace_copy(&tr);
+            hooks_rng_trace_end();
+            (void)lua_manager_game_rng_seed(&seed_after);
+            ggpo_net_record_rng_frame(g_net.frame, local_cmd, remote_cmd, seed_before, seed_after, &tr);
         }
     }
 

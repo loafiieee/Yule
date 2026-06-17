@@ -119,6 +119,7 @@ uint32_t ggpo_net_late_input_count(void);
 uint32_t ggpo_net_dropped_input_count(void);
 uint32_t ggpo_net_frame_advantage_stall_count(void);
 uint32_t ggpo_net_prediction_stall_count(void);
+uint32_t ggpo_net_timesync_stall_count(void);
 uint32_t ggpo_net_desync_count(void);
 uint32_t ggpo_net_desync_frame(void);
 uint32_t ggpo_net_desync_local_checksum(void);

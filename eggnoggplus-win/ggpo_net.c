@@ -16,7 +16,10 @@
 #include "lua_manager.h"
 
 #define GGPO_NET_MAGIC 0x50474E45u
-#define GGPO_NET_VERSION 13u
+/* v14: input packets now carry the sender's frame advantage (frame_advantage)
+ * for bilateral time synchronization. Peers on different versions reject each
+ * other's packets cleanly, so both ends must run the same build. */
+#define GGPO_NET_VERSION 14u
 #define GGPO_NET_HISTORY_FRAMES 512
 #define GGPO_NET_PACKET_INPUTS 64
 #define GGPO_NET_PACKET_CHECKSUMS 32
@@ -27,6 +30,21 @@
 #define GGPO_NET_TIMEOUT_TICKS 600
 #define GGPO_NET_CORRECTION_TIMEOUT_TICKS 2400
 #define GGPO_NET_MAX_BLOCK_TICKS 60
+/* Bilateral time synchronization (GGPO-style). Each peer exchanges its own
+ * frame advantage; the genuinely-ahead peer sheds its lead one frame at a time
+ * so both sims converge on a shared timeline instead of one free-running into
+ * the hard frame-advantage wall (slow motion) while the other eats large late
+ * rollbacks (jitter). drift = (avg_local_adv - avg_remote_adv) / 2 is our true
+ * lead in frames; the +latency bias is symmetric and cancels. */
+#define GGPO_NET_TIMESYNC_WINDOW 40        /* frames averaged to estimate drift */
+#define GGPO_NET_TIMESYNC_MIN_SAMPLES 8    /* warm-up before acting on drift */
+#define GGPO_NET_TIMESYNC_MIN_DRIFT 1.0f   /* ignore sub-frame drift (noise) */
+#define GGPO_NET_TIMESYNC_SMOOTH 12.0f     /* larger = gentler correction rate */
+#define GGPO_NET_TIMESYNC_MAX_ACCUM 8.0f   /* cap pending stall debt (frames) */
+/* Re-evaluate auto input delay at most this often (ticks ~= frames) so a link
+ * that degrades mid-match can still raise delay. Upward-only, like the initial
+ * one-shot, so it never collides with already-simulated local frames. */
+#define GGPO_NET_AUTO_DELAY_INTERVAL_TICKS 180u
 #define GGPO_NET_CORRECTION_BURST_CHUNKS 32
 #define GGPO_NET_RESYNC_REQUEST_INTERVAL_TICKS 30
 #define GGPO_NET_STATE_CHUNK_BYTES 900
@@ -113,6 +131,7 @@ typedef struct GgpoNetPacket {
     uint32_t summary_count;
     uint32_t send_tick;   /* sender's service tick when this packet was built */
     uint32_t tick_echo;   /* most recent send_tick the sender has seen from us */
+    int32_t  frame_advantage; /* sender's frame lead over the remote frame it knows */
     GgpoNetPacketInput inputs[GGPO_NET_PACKET_INPUTS];
     GgpoNetPacketChecksum checksums[GGPO_NET_PACKET_CHECKSUMS];
     GgpoNetPacketStateSummary summaries[GGPO_NET_PACKET_SUMMARIES];
@@ -281,6 +300,21 @@ typedef struct GgpoNetSession {
     uint32_t rtt_last_ticks;
     uint32_t rtt_sample_count;
     int auto_input_delay_applied;
+    uint32_t auto_input_delay_last_tick;
+    /* Bilateral time-sync state. ts_local_adv/ts_remote_adv are a sliding window
+     * of per-frame advantage samples; *_sum track their running totals so the
+     * average is O(1). remote_frame_advantage is the newest advantage the peer
+     * reported. ts_stall_accum is fractional stall debt; when it reaches 1.0 we
+     * pause the local sim for one frame to shed our lead. */
+    int32_t remote_frame_advantage;
+    int32_t ts_local_adv[GGPO_NET_TIMESYNC_WINDOW];
+    int32_t ts_remote_adv[GGPO_NET_TIMESYNC_WINDOW];
+    int32_t ts_local_adv_sum;
+    int32_t ts_remote_adv_sum;
+    uint32_t ts_count;
+    uint32_t ts_head;
+    float ts_stall_accum;
+    uint32_t timesync_stalls;
     GgpoNetHistoryEntry history[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry local_inputs[GGPO_NET_HISTORY_FRAMES];
     GgpoNetInputEntry remote_inputs[GGPO_NET_HISTORY_FRAMES];
@@ -905,19 +939,27 @@ static void ggpo_net_record_peer_timing(uint32_t peer_send_tick, uint32_t our_ti
     if (g_net.rtt_sample_count < 0xFFFFFFFFu) g_net.rtt_sample_count++;
 }
 
-/* One-shot at match start: raise the local input delay to cover roughly half of
- * the measured one-way latency, so the peer's inputs land before we simulate
- * their frame (fewer mispredictions/rollbacks). Never lowers below the
- * configured value; clamped to GGPO_NET_MAX_INPUT_DELAY. */
+/* Raise the local input delay to cover roughly the full measured one-way
+ * latency plus a one-frame jitter margin, so the peer's inputs usually land
+ * before we simulate their frame (far fewer mispredictions/rollbacks than the
+ * old half-one-way target). Runs once at match start and then re-evaluates
+ * every GGPO_NET_AUTO_DELAY_INTERVAL_TICKS so a link that degrades mid-match can
+ * still raise delay. Upward-only and local-only (input delay is asymmetric-safe,
+ * and only raising never collides with already-simulated local frames); clamped
+ * to GGPO_NET_MAX_INPUT_DELAY. */
 static void ggpo_net_apply_auto_input_delay(void) {
     uint32_t one_way;
     uint32_t target;
-    if (g_net.auto_input_delay_applied) return;
     if (!g_net_config_auto_input_delay) return;
     if (g_net.rtt_sample_count == 0u) return; /* no RTT yet -> keep configured value */
+    if (g_net.auto_input_delay_applied &&
+        g_net.service_tick - g_net.auto_input_delay_last_tick < GGPO_NET_AUTO_DELAY_INTERVAL_TICKS) {
+        return;
+    }
     g_net.auto_input_delay_applied = 1;
+    g_net.auto_input_delay_last_tick = g_net.service_tick;
     one_way = (g_net.rtt_ema_ticks + 1u) / 2u;
-    target = (one_way + 1u) / 2u;
+    target = one_way + 1u; /* cover ~full one-way trip + 1 frame of jitter */
     if (target > (uint32_t)GGPO_NET_MAX_INPUT_DELAY) target = (uint32_t)GGPO_NET_MAX_INPUT_DELAY;
     if (target > g_net.input_delay) {
         LOG_INFO("ggpo.net: auto input delay %u->%u (rtt~%u ticks, one_way~%u, samples=%u)",
@@ -926,8 +968,59 @@ static void ggpo_net_apply_auto_input_delay(void) {
                  (unsigned int)g_net.rtt_ema_ticks,
                  (unsigned int)one_way,
                  (unsigned int)g_net.rtt_sample_count);
+        g_net.input_delay = target;
     }
-    if (target > g_net.input_delay) g_net.input_delay = target;
+}
+
+/* Record this frame's local/remote frame-advantage samples into the sliding
+ * window and update the pending stall debt. Called once per advanced frame.
+ *   local advantage  = our sim frame - newest remote sim frame we know about
+ *   remote advantage = the symmetric value the peer last reported
+ * Both carry the same +latency bias, so drift = (avg_local - avg_remote)/2 is
+ * our true lead in frames with latency cancelled out. When we lead by more than
+ * a frame we accumulate fractional stall debt (gently, scaled by SMOOTH); when
+ * we are behind we never stall and clear any debt. */
+static void ggpo_net_timesync_record(void) {
+    int32_t ladv = g_net.has_remote_frame
+        ? ((int32_t)g_net.frame - (int32_t)g_net.remote_frame)
+        : 0;
+    int32_t radv = g_net.remote_frame_advantage;
+    uint32_t i = g_net.ts_head;
+
+    g_net.ts_local_adv_sum  += ladv - g_net.ts_local_adv[i];
+    g_net.ts_remote_adv_sum += radv - g_net.ts_remote_adv[i];
+    g_net.ts_local_adv[i]  = ladv;
+    g_net.ts_remote_adv[i] = radv;
+    g_net.ts_head = (i + 1u) % GGPO_NET_TIMESYNC_WINDOW;
+    if (g_net.ts_count < GGPO_NET_TIMESYNC_WINDOW) g_net.ts_count++;
+
+    if (g_net.ts_count >= GGPO_NET_TIMESYNC_MIN_SAMPLES) {
+        float avg_l = (float)g_net.ts_local_adv_sum  / (float)g_net.ts_count;
+        float avg_r = (float)g_net.ts_remote_adv_sum / (float)g_net.ts_count;
+        float drift = (avg_l - avg_r) * 0.5f; /* >0 => we are ahead */
+        if (drift > GGPO_NET_TIMESYNC_MIN_DRIFT) {
+            float shed = drift;
+            float cap = (float)g_net.max_frame_advantage;
+            if (shed > cap) shed = cap;
+            g_net.ts_stall_accum += shed / GGPO_NET_TIMESYNC_SMOOTH;
+            if (g_net.ts_stall_accum > GGPO_NET_TIMESYNC_MAX_ACCUM) {
+                g_net.ts_stall_accum = GGPO_NET_TIMESYNC_MAX_ACCUM;
+            }
+        } else if (drift < 0.0f) {
+            g_net.ts_stall_accum = 0.0f; /* we are behind: do not hold back */
+        }
+    }
+}
+
+/* Returns 1 if the local sim should pause for one frame to let the peer catch
+ * up (we are gently ahead). Consumes one unit of accumulated stall debt. */
+static int ggpo_net_timesync_should_stall(void) {
+    if (g_net.ts_stall_accum >= 1.0f) {
+        g_net.ts_stall_accum -= 1.0f;
+        g_net.timesync_stalls++;
+        return 1;
+    }
+    return 0;
 }
 
 static void ggpo_net_begin_awaiting_correction(uint32_t request_frame) {
@@ -1329,6 +1422,11 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     p->input_count = count;
     p->send_tick = g_net.service_tick;
     p->tick_echo = g_net.peer_last_send_tick;
+    /* Our lead over the newest remote frame we know about. Carries a +latency
+     * bias that cancels against the peer's symmetric value (see timesync). */
+    p->frame_advantage = g_net.has_remote_frame
+        ? ((int32_t)g_net.frame - (int32_t)g_net.remote_frame)
+        : 0;
 
     if (!g_net.correction_active && !g_net.awaiting_correction) {
         for (uint32_t i = 1; i <= GGPO_NET_HISTORY_FRAMES && checksum_count < GGPO_NET_PACKET_CHECKSUMS; i++) {
@@ -1739,6 +1837,14 @@ static void ggpo_net_clear_runtime_history(void) {
     g_net.prediction_wait_start_tick = 0;
     g_net.frame_advantage_wait_cap_announced = 0;
     g_net.prediction_wait_cap_announced = 0;
+    g_net.remote_frame_advantage = 0;
+    memset(g_net.ts_local_adv, 0, sizeof(g_net.ts_local_adv));
+    memset(g_net.ts_remote_adv, 0, sizeof(g_net.ts_remote_adv));
+    g_net.ts_local_adv_sum = 0;
+    g_net.ts_remote_adv_sum = 0;
+    g_net.ts_count = 0;
+    g_net.ts_head = 0;
+    g_net.ts_stall_accum = 0.0f;
 }
 
 static void ggpo_net_clear_rollback_history(void) {
@@ -2153,6 +2259,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
 
     ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
     ggpo_net_record_peer_timing(p->send_tick, p->tick_echo);
+    g_net.remote_frame_advantage = p->frame_advantage;
     g_net.remote_player = (int)p->sender_player;
     if (!g_net.connected) {
         g_net.connected = 1;
@@ -3356,6 +3463,25 @@ int ggpo_net_advance(uint32_t raw_p0,
         return 0;
     }
 
+    /* Keep the local input delay tracking the link as it changes (rate-limited,
+     * upward-only). Safe to call every advance once we are connected. */
+    ggpo_net_apply_auto_input_delay();
+
+    /* Primary pacing regulator: gentle bilateral time-sync. If we are genuinely
+     * ahead of the peer, pause one frame so both sims converge on a shared
+     * timeline. This sheds the lead a frame at a time long before we reach the
+     * hard frame-advantage wall below, so neither peer free-runs into slow
+     * motion nor falls far enough behind to eat large late rollbacks. Only the
+     * truly-ahead peer ever stalls here (drift>0), so this can never deadlock. */
+    if (!g_net.correction_active &&
+        !g_net.awaiting_correction &&
+        !correction_wait_expired &&
+        g_net.has_remote_frame &&
+        ggpo_net_timesync_should_stall()) {
+        if (out_checksum) *out_checksum = g_net.last_checksum;
+        return 1;
+    }
+
     if (!g_net.correction_active &&
         !correction_wait_expired &&
         g_net.has_remote_frame &&
@@ -3500,6 +3626,7 @@ int ggpo_net_advance(uint32_t raw_p0,
 
     g_net.last_checksum = checksum;
     g_net.frame++;
+    ggpo_net_timesync_record();
     if (out_checksum) *out_checksum = checksum;
     if (out_advanced) *out_advanced = 1;
     return 1;
@@ -3559,6 +3686,10 @@ uint32_t ggpo_net_frame_advantage_stall_count(void) {
 
 uint32_t ggpo_net_prediction_stall_count(void) {
     return g_net.prediction_stalls;
+}
+
+uint32_t ggpo_net_timesync_stall_count(void) {
+    return g_net.timesync_stalls;
 }
 
 uint32_t ggpo_net_desync_count(void) {

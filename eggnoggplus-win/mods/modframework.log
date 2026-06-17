@@ -1,61 +1,124 @@
-[21:51:27] [INFO] Mod framework initializing...
-[21:51:27] [INFO] Mod framework API version: 1
-[21:51:27] [INFO] Scanning mods/ folder...
-[21:51:27] [INFO] Loading mod: abilities_demo (Abilities Demo) v1.0 by Framework
-[21:51:27] [INFO]   Dash + double jump built entirely on the World Control API (mod.game.world). Local-first; auto-disables online.
-[21:51:27] [INFO] [mod:abilities_demo] Loaded. Double-jump = press JUMP again in the air; dash = double-tap a direction.
-[21:51:27] [INFO] Loaded mod: abilities_demo
-[21:51:27] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[21:51:27] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[21:51:27] [ERROR] Error running crash: mods\crash\main.lua:1: attempt to call global 'require' (a nil value)
-[21:51:27] [INFO] Loading mod: options_demo (Options Demo) v1.0 by Framework
-[21:51:27] [INFO]   Demonstrates the 'options' (enum) config type. Open Options -> Mods and cycle the choices.
-[21:51:27] [INFO] [mod:options_demo] Loaded. Cycle 'difficulty' in Options -> Mods and watch the log.
-[21:51:27] [INFO] [mod:options_demo] SUP! DIFFICULTY = EASY
-[21:51:27] [INFO] [mod:options_demo] set hard -> true
-[21:51:27] [INFO] [mod:options_demo] set EASY -> true
-[21:51:27] [INFO] [mod:options_demo] set impossible-> false
-[21:51:27] [INFO] Loaded mod: options_demo
-[21:51:27] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[21:51:27] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[21:51:27] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[21:51:27] [INFO] [mod:poc_speedhack] speed=1
-[21:51:27] [INFO] Loaded mod: poc_speedhack
-[21:51:27] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[21:51:27] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[21:51:27] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[21:51:27] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[21:51:27] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[21:51:27] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[21:51:27] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[21:51:27] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[21:51:27] [INFO] Loaded mod: texture_pack_test
-[21:51:27] [INFO] Loading mod: tile_demo (Tile Demo) v1.0 by Framework
-[21:51:27] [INFO]   Custom tile behaviors via mod.game.register_tile: a ground-bounce, plus configurable bounce/spike tiles and a tile-id inspector. Local-first.
-[21:51:27] [INFO] [mod:tile_demo] Loaded. Play 'Content Demo': '!' springs you up, '_' kills (and is spawn-safe).
-[21:51:27] [INFO] Loaded mod: tile_demo
-[21:51:27] [INFO] Done. 6 mod folder(s) scanned, 6 candidate manifest(s), 5 mod(s) loaded.
-[21:51:27] [INFO] [maps] scanning maps/ for custom maps
-[21:51:27] [INFO] [maps][content_demo] scanning folder: maps\content_demo
-[21:51:27] [INFO] [maps][content_demo] loading json: maps\content_demo\data.json
-[21:51:27] [INFO] [maps][content_demo] loading map: maps\content_demo\data.map
-[21:51:27] [WARN] [maps][content_demo] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [WARN] [maps][content_demo] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [WARN] [maps][content_demo] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [WARN] [maps][content_demo] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [INFO] [maps][content_demo] registered: name="Content Demo" author="Framework" source_rooms=4 final_rooms=7 mode=swords
-[21:51:27] [INFO] [maps][example_map] scanning folder: maps\example_map
-[21:51:27] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[21:51:27] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[21:51:27] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[21:51:27] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
-[21:51:27] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[21:51:27] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[21:51:27] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[21:51:27] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[21:51:27] [INFO] [maps] registry ready: 3 custom maps (was 0)
-[21:51:27] [INFO] hooks_init: custom MODS menu ready
-[21:51:27] [INFO] hooks: applied startup sound setting (on)
+[13:50:59] [INFO] Mod framework initializing...
+[13:50:59] [INFO] Mod framework API version: 1
+[13:50:59] [INFO] Scanning mods/ folder...
+[13:50:59] [INFO] Loading mod: abilities_demo (Abilities Demo) v1.0 by Framework
+[13:50:59] [INFO]   Dash + double jump built entirely on the World Control API (mod.game.world). Local-first; auto-disables online.
+[13:50:59] [INFO] [mod:abilities_demo] Loaded. Double-jump = press JUMP again in the air; dash = double-tap a direction.
+[13:50:59] [INFO] Loaded mod: abilities_demo
+[13:50:59] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[13:50:59] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[13:50:59] [ERROR] Error running crash: mods\crash\main.lua:1: attempt to call global 'require' (a nil value)
+[13:50:59] [INFO] Loading mod: options_demo (Options Demo) v1.0 by Framework
+[13:50:59] [INFO]   Demonstrates the 'options' (enum) config type. Open Options -> Mods and cycle the choices.
+[13:50:59] [INFO] [mod:options_demo] Loaded. Cycle 'difficulty' in Options -> Mods and watch the log.
+[13:50:59] [INFO] [mod:options_demo] SUP! DIFFICULTY = EASY
+[13:50:59] [INFO] [mod:options_demo] set hard -> true
+[13:50:59] [INFO] [mod:options_demo] set EASY -> true
+[13:50:59] [INFO] [mod:options_demo] set impossible-> false
+[13:50:59] [INFO] Loaded mod: options_demo
+[13:50:59] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[13:50:59] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[13:50:59] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[13:50:59] [INFO] [mod:poc_speedhack] speed=1
+[13:50:59] [INFO] Loaded mod: poc_speedhack
+[13:50:59] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[13:50:59] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[13:50:59] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[13:50:59] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[13:50:59] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[13:50:59] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[13:50:59] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[13:50:59] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[13:50:59] [INFO] Loaded mod: texture_pack_test
+[13:50:59] [INFO] Loading mod: tile_demo (Tile Demo) v1.0 by Framework
+[13:50:59] [INFO]   Custom tile behaviors via mod.game.register_tile: a ground-bounce, plus configurable bounce/spike tiles and a tile-id inspector. Local-first.
+[13:50:59] [INFO] [mod:tile_demo] Loaded. Play 'Content Demo': '!' springs you up, '_' kills (and is spawn-safe).
+[13:50:59] [INFO] Loaded mod: tile_demo
+[13:50:59] [INFO] Done. 6 mod folder(s) scanned, 6 candidate manifest(s), 5 mod(s) loaded.
+[13:50:59] [INFO] [maps] scanning maps/ for custom maps
+[13:50:59] [INFO] [maps][content_demo] scanning folder: maps\content_demo
+[13:50:59] [INFO] [maps][content_demo] loading json: maps\content_demo\data.json
+[13:50:59] [INFO] [maps][content_demo] loading map: maps\content_demo\data.map
+[13:50:59] [WARN] [maps][content_demo] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [WARN] [maps][content_demo] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [WARN] [maps][content_demo] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [WARN] [maps][content_demo] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [INFO] [maps][content_demo] registered: name="Content Demo" author="Framework" source_rooms=4 final_rooms=7 mode=swords
+[13:50:59] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:50:59] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:50:59] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:50:59] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:50:59] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[13:50:59] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:50:59] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:50:59] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:50:59] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:50:59] [INFO] [maps] registry ready: 3 custom maps (was 0)
+[13:50:59] [INFO] hooks_init: custom MODS menu ready
+[13:51:00] [INFO] hooks: applied startup sound setting (on)
+[13:51:07] [INFO] ONLINE HUB: enter
+[13:51:13] [INFO] online.hub: Settings saved.
+[13:51:14] [INFO] online.hub: Connecting to online server...
+[13:51:14] [INFO] online.hub: Connected. Authenticating...
+[13:51:14] [INFO] online.hub: Logged in.
+[13:51:15] [INFO] online.hub: Joining casual queue...
+[13:51:15] [INFO] online.hub: Match found: loaf on Vanilla 3
+[13:51:18] [INFO] ONLINE HUB: leave
+[13:51:18] [INFO] ggpo.net: local build fingerprint build=72CE7F73 exe=632C561E dll=060FD905 correction=on
+[13:51:18] [INFO] ggpo.net: hosting udp port=62030 input_delay=1 max_advantage=20 max_prediction=24 state_size=144296 checksum=2721438663
+[13:51:18] [INFO] ggpo.net: hosting from online server match udp=62030 player=0 delay=1 adv=20 predcap=24 corr=on state_size=144296
+[13:51:18] [INFO] online.p2p: sent UDP discovery probe match=67 server=eggnogg.loafiieee.com:47778 local_udp=62030
+[13:51:18] [WARN] custom tile behaviors are disabled during online matches (local-first; v1)
+[13:51:18] [INFO] ggpo.net: set peer endpoint 127.0.0.1:59432 mode=host local_port=62030
+[13:51:18] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=59432
+[13:51:18] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=2721438663 remote_checksum=1268637976
+[13:51:18] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[13:51:18] [INFO] ggpo.net: remote state sync ack received
+[13:51:18] [INFO] ggpo.net: auto input delay 1->2 (rtt~1 ticks, one_way~1, samples=31)
+[13:51:18] [INFO] ggpo.net: start state loaded checksum=2721438663 input_delay=2
+[13:51:18] [INFO] ggpo.net: waiting for remote frame 0 input
+[13:51:20] [WARN] ggpo.net: peer requested correction request_frame=118 remote_frame=118 last_corr_frame=0 ack_id=0 total=1
+[13:51:20] [WARN] ggpo.net: host correction queued id=1 frame=121 checksum=479723140 chunks=123/161 mode=delta reason=peer resync request
+[13:51:20] [INFO] ggpo.net: correction ack received id=1 checksum=479723140 frame=121
+[13:51:38] [ERROR] ggpo.net: desync detail frame=1123 changed=things player_diff=- thing_slots=4 local{full=2132992387 header=3081525317 transient=3571207568 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3756307576 p0=2362169553 p1=542779927 things=178893645 tilemap=4237208340 room=4 ticks=1486 rng=2134540323 seed=42048 thing_count=16 map=2 score=0-0 round_end=0} remote{full=1077388307 header=3081525317 transient=3571207568 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3756307576 p0=2362169553 p1=542779927 things=278395788 tilemap=4237208340 room=4 ticks=1486 rng=970948415 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
+[13:51:38] [ERROR] ggpo.net: recoverable desync frame=1123 local=2132992387 remote=1077388307 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000008 remote_predicted=0 local_frame=1124 remote_frame=1125 corr_id=1 corr_frame=121 applied_id=0
+[13:51:38] [WARN] ggpo.net: host correction queued id=2 frame=1124 checksum=2132992387 chunks=122/161 mode=delta reason=confirmed frame checksum mismatch
+[13:51:38] [WARN] online.match: desync snapshot count=1 frame=1123 local_crc=2132992387 remote_crc=1077388307 net_frame=1125 remote_frame=1128 room=4 old_room=4 resumed=0 waterfall_count=4 waterfall_fx=0x004EC7E8 start=0 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=143102074 local_player=0 active_match=1 pending=0
+[13:51:38] [INFO] ggpo.net: correction ack received id=2 checksum=2132992387 frame=1124
+[13:51:42] [WARN] ggpo.net: peer requested correction request_frame=1332 remote_frame=1332 last_corr_frame=1124 ack_id=2 total=2
+[13:51:42] [WARN] ggpo.net: host correction queued id=3 frame=1334 checksum=512665298 chunks=124/161 mode=delta reason=peer resync request
+[13:51:42] [INFO] ggpo.net: correction ack received id=3 checksum=512665298 frame=1334
+[13:51:45] [ERROR] ggpo.net: desync detail frame=1546 changed=things player_diff=- thing_slots=5 local{full=3364537277 header=1714775466 transient=2327188597 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3829072809 p0=2150854222 p1=2775895994 things=2076966847 tilemap=4237208340 room=3 ticks=1909 rng=1242305652 seed=42048 thing_count=16 map=2 score=0-0 round_end=0} remote{full=3554506191 header=1714775466 transient=2327188597 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3829072809 p0=2150854222 p1=2775895994 things=2446790431 tilemap=4237208340 room=3 ticks=1909 rng=530866816 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
+[13:51:45] [ERROR] ggpo.net: recoverable desync frame=1546 local=3364537277 remote=3554506191 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000019 remote_predicted=0 local_frame=1547 remote_frame=1548 corr_id=3 corr_frame=1334 applied_id=0
+[13:51:45] [WARN] ggpo.net: host correction queued id=4 frame=1547 checksum=3364537277 chunks=122/161 mode=delta reason=confirmed frame checksum mismatch
+[13:51:45] [WARN] online.match: desync snapshot count=2 frame=1546 local_crc=3364537277 remote_crc=3554506191 net_frame=1548 remote_frame=1550 room=3 old_room=3 resumed=0 waterfall_count=2 waterfall_fx=0x004EC620 start=0 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=1260177712 local_player=0 active_match=1 pending=0
+[13:51:45] [INFO] ggpo.net: correction ack received id=4 checksum=3364537277 frame=1547
+[13:51:52] [WARN] ggpo.net: peer requested correction request_frame=1914 remote_frame=1914 last_corr_frame=1547 ack_id=4 total=3
+[13:51:52] [WARN] ggpo.net: host correction queued id=5 frame=1919 checksum=3444976245 chunks=125/161 mode=delta reason=peer resync request
+[13:51:52] [INFO] ggpo.net: correction ack received id=5 checksum=3444976245 frame=1919
+[13:51:56] [ERROR] ggpo.net: desync detail frame=2139 changed=things player_diff=- thing_slots=14 local{full=3607211806 header=1900501328 transient=2140781728 thing_info=2348746994 room_info=2932909348 particles=789665624 players=4131034802 p0=2507870549 p1=3980207780 things=522345754 tilemap=3750691537 room=2 ticks=2502 rng=746849204 seed=42048 thing_count=16 map=2 score=0-0 round_end=0} remote{full=594937046 header=1900501328 transient=2140781728 thing_info=2348746994 room_info=2932909348 particles=789665624 players=4131034802 p0=2507870549 p1=3980207780 things=1317681192 tilemap=3750691537 room=2 ticks=2502 rng=2839795068 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
+[13:51:56] [ERROR] ggpo.net: recoverable desync frame=2139 local=3607211806 remote=594937046 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000004 remote_predicted=0 local_frame=2140 remote_frame=2142 corr_id=5 corr_frame=1919 applied_id=0
+[13:51:56] [WARN] ggpo.net: host correction queued id=6 frame=2140 checksum=3607211806 chunks=128/161 mode=delta reason=confirmed frame checksum mismatch
+[13:51:56] [WARN] online.match: desync snapshot count=3 frame=2139 local_crc=3607211806 remote_crc=594937046 net_frame=2141 remote_frame=2145 room=2 old_room=2 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=1246875636 local_player=0 active_match=1 pending=0
+[13:51:56] [INFO] ggpo.net: correction ack received id=6 checksum=3607211806 frame=2140
+[13:51:58] [WARN] ggpo.net: peer requested correction request_frame=2266 remote_frame=2266 last_corr_frame=2140 ack_id=6 total=4
+[13:51:58] [WARN] ggpo.net: host correction queued id=7 frame=2270 checksum=203379901 chunks=110/161 mode=delta reason=peer resync request
+[13:51:58] [INFO] ggpo.net: correction ack received id=7 checksum=203379901 frame=2270
+[13:52:14] [INFO] online.match: completion match=67 local_player=0 winner=1 result=loss end=600 leader=0x00542338 loser=0x005421DC score=0-0 target=0
+[13:52:14] [INFO] ggpo.net: stopped from online match complete after 3174 frame(s), checksum=1711266626 tx=8214 rx=6824 pred=622 rb=23 adv_stall=0 pred_stall=0 ts_stall=168 desync=3
+[13:52:29] [INFO] [mod:poc_speedhack] Unloaded
+[13:52:29] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+ng_info=2348746994 room_info=2932909348 particles=789665624 players=4066469444 p0=630149125 p1=366815304 things=2976921621 tilemap=4237208340 room=2 ticks=2628 rng=2106130592 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
+[13:51:58] [ERROR] ggpo.net: recoverable desync frame=2265 local=3036298195 remote=2684295142 reason=confirmed frame checksum mismatch local_cmd=0x0000000A remote_cmd=0x00000000 remote_predicted=0 local_frame=2266 remote_frame=2268 corr_id=6 corr_frame=2140 applied_id=6
+[13:51:58] [WARN] ggpo.net: requested host correction frame=2266 request_frame=2266 reason=confirmed frame checksum mismatch total=4
+[13:51:58] [WARN] online.match: desync snapshot count=4 frame=2265 local_crc=3036298195 remote_crc=2684295142 net_frame=2266 remote_frame=2269 room=2 old_room=2 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=0 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=2751506867 local_player=1 active_match=1 pending=0
+[13:51:58] [INFO] ggpo.net: receiving correction delta state id=7 frame=2270 size=144296 checksum=203379901 chunks=110/161
+[13:51:58] [WARN] ggpo.net: correction applied id=7 frame=2270 checksum=203379901 chunks=110/110 mode=delta total=7 dup=371
+[13:52:14] [INFO] online.match: completion match=67 local_player=1 winner=1 result=win end=600 leader=0x00542338 loser=0x005421DC score=0-0 target=0
+[13:52:14] [INFO] ggpo.net: stopped from online match complete after 3174 frame(s), checksum=1711266626 tx=6825 rx=8163 pred=621 rb=0 adv_stall=0 pred_stall=0 ts_stall=159 desync=4
+[13:52:15] [INFO] [mod:abilities_demo] P2: jump press (count=1 grounded=false)
+[13:52:27] [INFO] [mod:poc_speedhack] Unloaded
+[13:52:27] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

@@ -1,7 +1,5 @@
-Later:
-
 - API for adding content to gameplay, like more weapons than just a sword, custom map tiles, anything.
-- Improve console
 - Beautify basically every menu. add animations, better readability, etc
 - Add mod support in some form to online
+- Fix the desyncs on deaths, respawns, and teleports in online mode
 - cosmetics (MUCH MUCH LATER)

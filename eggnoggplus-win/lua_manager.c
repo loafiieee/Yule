@@ -21,6 +21,7 @@
 #include "ggpo_net.h"
 
 static lua_State *L = NULL;
+static int g_safe_env_ref = -2; /* LUA_NOREF; sandbox allowlist table ref */
 
 typedef struct SDL_RWops SDL_RWops;
 extern SDL_RWops* SDL_RWFromFile(const char* file, const char* mode);
@@ -4630,21 +4631,22 @@ static int lua_mod_os_exit(lua_State* Ls) {
 }
 
 static void push_mod_os_table(lua_State* Ls, LoadedMod* mod) {
-    lua_getglobal(Ls, "os");
-    if (!lua_istable(Ls, -1)) {
-        lua_pop(Ls, 1);
-        lua_newtable(Ls);
-    } else {
-        lua_newtable(Ls);
-        lua_pushnil(Ls);
-        while (lua_next(Ls, -3) != 0) {
-            lua_pushvalue(Ls, -2);
-            lua_insert(Ls, -2);
-            lua_settable(Ls, -4);
-        }
-        lua_remove(Ls, -2);
-    }
+    /* Only time/date helpers are exposed. Notably absent: os.execute (shell),
+       os.remove / os.rename (file deletion), os.getenv, os.tmpname. */
+    static const char* k_safe_os[] = { "time", "clock", "date", "difftime", NULL };
 
+    lua_newtable(Ls); /* safe os */
+    lua_getglobal(Ls, "os");
+    if (lua_istable(Ls, -1)) {
+        for (int i = 0; k_safe_os[i]; i++) {
+            lua_getfield(Ls, -1, k_safe_os[i]);
+            if (lua_isnil(Ls, -1)) lua_pop(Ls, 1);
+            else lua_setfield(Ls, -3, k_safe_os[i]);
+        }
+    }
+    lua_pop(Ls, 1); /* drop real os */
+
+    /* Deliberate exit routes through the crash-handler path, not a clean exit. */
     lua_pushlightuserdata(Ls, mod);
     lua_pushcclosure(Ls, lua_mod_os_exit, 1);
     lua_setfield(Ls, -2, "exit");
@@ -6669,6 +6671,13 @@ static int lua_mod_dofile(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     const char* rel = luaL_checkstring(Ls, 1);
     char path[MAX_PATH];
+
+    /* Confine to the mod's own folder: reject parent traversal and absolute paths. */
+    if (strstr(rel, "..") || rel[0] == '\\' || rel[0] == '/' ||
+        (rel[0] && rel[1] == ':')) {
+        return luaL_error(Ls, "mod.dofile: path must stay inside the mod folder");
+    }
+
     snprintf(path, sizeof(path), "%s\\%s", mod->folder_path, rel);
 
     if (luaL_loadfile(Ls, path) != 0) {
@@ -12281,9 +12290,14 @@ static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
     // Create environment table for the mod
     lua_newtable(L); // env
     {
-        // env metatable: __index = _G
+        // env metatable: __index = sandbox allowlist (NOT the real _G), so mods
+        // can only reach vetted globals + their injected APIs.
         lua_newtable(L); // mt
-        lua_pushvalue(L, LUA_GLOBALSINDEX);
+        if (g_safe_env_ref != LUA_NOREF) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, g_safe_env_ref);
+        } else {
+            lua_pushvalue(L, LUA_GLOBALSINDEX); // fallback (should not happen)
+        }
         lua_setfield(L, -2, "__index");
         lua_setmetatable(L, -2);
     }
@@ -12371,6 +12385,48 @@ static void reset_runtime_ui_state(void) {
     g_last_btn_count = -1;
 }
 
+/* Build the allowlist of globals a sandboxed mod environment may see. Anything
+ * NOT added here is unreachable from mods: io, os.execute/remove/rename,
+ * package/require, dofile/loadfile/loadstring/load, debug, ffi, jit,
+ * getfenv/setfenv, and the real _G. So a malicious mod cannot touch the
+ * filesystem (outside its scoped storage/dofile), run shell commands, load
+ * native code, or escape its sandbox. Trusted/official mods that genuinely need
+ * more would be granted it via a future mod.json capability declaration. */
+static void build_safe_globals(lua_State* Ls) {
+    static const char* k_value_globals[] = {
+        "assert", "error", "ipairs", "pairs", "next", "pcall", "xpcall", "select",
+        "tonumber", "tostring", "type", "unpack", "rawequal", "rawget", "rawset",
+        "rawlen", "setmetatable", "getmetatable", "print", "collectgarbage", "_VERSION",
+        NULL
+    };
+    static const char* k_lib_globals[] = { "math", "string", "table", "coroutine", "bit", NULL };
+    int safe;
+
+    if (g_safe_env_ref != LUA_NOREF) return;
+
+    lua_newtable(Ls);
+    safe = lua_gettop(Ls);
+
+    for (int i = 0; k_value_globals[i]; i++) {
+        lua_getglobal(Ls, k_value_globals[i]);
+        if (lua_isnil(Ls, -1)) lua_pop(Ls, 1);
+        else lua_setfield(Ls, safe, k_value_globals[i]);
+    }
+    for (int i = 0; k_lib_globals[i]; i++) {
+        lua_getglobal(Ls, k_lib_globals[i]);
+        if (lua_isnil(Ls, -1)) lua_pop(Ls, 1);
+        else lua_setfield(Ls, safe, k_lib_globals[i]);
+    }
+
+    /* _G inside a mod resolves to the sandbox itself, never the real globals. */
+    lua_pushvalue(Ls, safe);
+    lua_setfield(Ls, safe, "_G");
+
+    lua_pushvalue(Ls, safe);
+    g_safe_env_ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    lua_pop(Ls, 1);
+}
+
 static int create_lua_runtime(void) {
     if (L) return 1;
     L = luaL_newstate();
@@ -12380,6 +12436,7 @@ static int create_lua_runtime(void) {
     }
     luaL_openlibs(L);
     extend_package_path();
+    build_safe_globals(L);
     return 1;
 }
 

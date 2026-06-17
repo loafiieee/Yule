@@ -137,6 +137,21 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_GAME_ACTIVE_ROOM      0x541E08u
 #define ADDR_LEADER                0x541E0Cu
 #define ADDR_CROWD_SOUND_LAST_TICK 0x541E40u
+/*
+ * Wall-clock (_mad_ticks) sound-effect debounce timers that the game packs into
+ * the transient region. Each is set to _mad_ticks (real time, NOT synced between
+ * peers) when its sfx plays, so they diverge between peers and shift whenever
+ * sound is toggled - the "changed=transient" desync. CROWD_SOUND_LAST_TICK above
+ * (_last_.14582 @0x541E40) was already canonicalized; these five were missed.
+ * Grouped into two contiguous runs (the gaps are dead space / already-zeroed fx).
+ *   A: 0x541E10 _last_.15333 (sword-block) + 0x541E14 _last_.14917 (creepy ambience)
+ *   B: 0x541EF8 _last_.15487 (sword_ching per-tick) + 0x541EFC _last_.15039
+ *      + 0x541F00 _last_.14573 (do_cheer)
+ */
+#define ADDR_SOUND_DEDUP_TIMERS_A     0x541E10u
+#define SOUND_DEDUP_TIMERS_A_BYTES    0x8u
+#define ADDR_SOUND_DEDUP_TIMERS_B     0x541EF8u
+#define SOUND_DEDUP_TIMERS_B_BYTES    0xCu
 #define ADDR_WATERFALL_FX          0x541E44u
 #define ADDR_CHANT_STEP            0x541F60u
 #define ADDR_CHANT_TIMER           0x541F64u
@@ -222,6 +237,8 @@ typedef uint32_t (__cdecl *fn_main_player_poll_cmds_t)(uint32_t, uint32_t);
 typedef int   (__cdecl *fn_is_pos_solid_t)(float, float);
 typedef int   (__cdecl *fn_map_tiles_h_t)(void);
 typedef int   (__cdecl *fn_map_tile_t)(int, int);
+typedef void  (__cdecl *fn_player_die_t)(int player_ptr);
+typedef unsigned char* (__cdecl *fn_map_coord_tile_t)(float x, float y);
 typedef void  (__cdecl *fn_game_player_colour_t)(float*, uint32_t, int);
 typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite_ptr, int flip, int layer);
 typedef void* (__cdecl *fn_sprite_get_t)(uint32_t sprite_id);
@@ -290,6 +307,10 @@ static fn_main_player_poll_cmds_t p_main_player_poll_cmds = (fn_main_player_poll
 static fn_is_pos_solid_t     p_is_pos_solid     = (fn_is_pos_solid_t)(uintptr_t)ADDR_IS_POS_SOLID;
 static fn_map_tiles_h_t      p_map_tiles_h       = (fn_map_tiles_h_t)(uintptr_t)ADDR_MAP_TILES_H;
 static fn_map_tile_t         p_map_tile          = (fn_map_tile_t)(uintptr_t)ADDR_MAP_TILE;
+/* Custom-content (World Control) native helpers. player_die: cdecl(player_ptr);
+   map_coord_tile: cdecl(float x, float y) -> byte* to the tile id at a world pos. */
+static fn_player_die_t       p_player_die        = (fn_player_die_t)(uintptr_t)0x00422830u;
+static fn_map_coord_tile_t   p_map_coord_tile    = (fn_map_coord_tile_t)(uintptr_t)0x00434B30u;
 static fn_game_player_colour_t p_game_player_colour = (fn_game_player_colour_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR;
 static fn_sprite_batch_plot_t p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
 static fn_sprite_get_t        p_sprite_get        = (fn_sprite_get_t)(uintptr_t)ADDR_SPRITE_GET;
@@ -666,6 +687,9 @@ typedef struct DiscoveredMod {
 // Config model
 // =============================
 
+#define CFG_MAX_OPTIONS 16
+#define CFG_OPTION_LEN  64
+
 typedef struct ConfigEntry {
     char key[64];
     char label[64];
@@ -675,6 +699,9 @@ typedef struct ConfigEntry {
     int  has_max;
     double min_value;
     double max_value;
+    // LUA_CFG_ENUM: the fixed list of allowed string options.
+    char options[CFG_MAX_OPTIONS][CFG_OPTION_LEN];
+    int  option_count;
 } ConfigEntry;
 
 typedef struct ConfigAction {
@@ -1883,6 +1910,7 @@ static const char* type_to_string(int type) {
         case LUA_CFG_FLOAT:  return "float";
         case LUA_CFG_STRING: return "str";
         case LUA_CFG_ACTION: return "action";
+        case LUA_CFG_ENUM:   return "options";
         default: return "none";
     }
 }
@@ -1894,11 +1922,62 @@ static int string_to_type(const char* t) {
     if (_stricmp(t, "float") == 0 || _stricmp(t, "number") == 0 || _stricmp(t, "double") == 0) return LUA_CFG_FLOAT;
     if (_stricmp(t, "str") == 0 || _stricmp(t, "string") == 0) return LUA_CFG_STRING;
     if (_stricmp(t, "action") == 0 || _stricmp(t, "button") == 0) return LUA_CFG_ACTION;
+    if (_stricmp(t, "options") == 0 || _stricmp(t, "enum") == 0) return LUA_CFG_ENUM;
     return LUA_CFG_NONE;
+}
+
+// Find a value among an enum entry's options (case-insensitive). Returns the
+// option index, or -1 if not present.
+static int cfg_enum_find_option(const ConfigEntry* e, const char* val) {
+    if (!e || !val) return -1;
+    for (int i = 0; i < e->option_count; i++) {
+        if (_stricmp(e->options[i], val) == 0) return i;
+    }
+    return -1;
+}
+
+// Force an enum entry's value to a declared option: snaps an unknown value to
+// the first option and canonicalizes the spelling to match the declaration.
+static void cfg_enum_snap_value(ConfigEntry* e) {
+    if (!e || e->type != LUA_CFG_ENUM) return;
+    if (e->option_count <= 0) { e->value[0] = '\0'; return; }
+    int idx = cfg_enum_find_option(e, e->value);
+    if (idx < 0) idx = 0;
+    snprintf(e->value, sizeof(e->value), "%s", e->options[idx]);
+}
+
+// Split a raw "a, b, c" bracket body into an enum entry's option list.
+static void cfg_parse_options(const char* inner, ConfigEntry* e) {
+    e->option_count = 0;
+    if (!inner || !inner[0]) return;
+
+    char buf[256];
+    strncpy(buf, inner, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    char* p = buf;
+    while (*p && e->option_count < CFG_MAX_OPTIONS) {
+        char* comma = strchr(p, ',');
+        if (comma) *comma = '\0';
+
+        char tmp[CFG_OPTION_LEN];
+        strncpy(tmp, p, sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        str_trim(tmp);
+        if (tmp[0]) {
+            strncpy(e->options[e->option_count], tmp, CFG_OPTION_LEN - 1);
+            e->options[e->option_count][CFG_OPTION_LEN - 1] = '\0';
+            e->option_count++;
+        }
+
+        if (!comma) break;
+        p = comma + 1;
+    }
 }
 
 static void clamp_cfg_value(ConfigEntry* e) {
     if (!e) return;
+    if (e->type == LUA_CFG_ENUM) { cfg_enum_snap_value(e); return; }
     if (e->type != LUA_CFG_INT && e->type != LUA_CFG_FLOAT) return;
 
     double v = atof(e->value);
@@ -1918,14 +1997,17 @@ static int parse_type_and_bounds(const char* type_src,
                                  int* out_has_min,
                                  double* out_min,
                                  int* out_has_max,
-                                 double* out_max) {
-    char type_buf[64];
+                                 double* out_max,
+                                 char* out_inner,
+                                 size_t inner_sz) {
+    char type_buf[256];
     char base[32];
-    char bounds[48];
+    char bounds[256];
     char* lb = NULL;
     char* rb = NULL;
 
     if (!type_src || !out_type || !out_has_min || !out_min || !out_has_max || !out_max) return 0;
+    if (out_inner && inner_sz) out_inner[0] = '\0';
 
     strncpy(type_buf, type_src, sizeof(type_buf) - 1);
     type_buf[sizeof(type_buf) - 1] = '\0';
@@ -1956,6 +2038,11 @@ static int parse_type_and_bounds(const char* type_src,
         strncpy(base, type_buf, sizeof(base) - 1);
         base[sizeof(base) - 1] = '\0';
         bounds[0] = '\0';
+    }
+
+    if (out_inner && inner_sz) {
+        strncpy(out_inner, bounds, inner_sz - 1);
+        out_inner[inner_sz - 1] = '\0';
     }
 
     *out_type = string_to_type(base);
@@ -1998,6 +2085,19 @@ static void format_type_with_bounds(const ConfigEntry* e, char* out, size_t outs
     if (!e) return;
 
     const char* base = type_to_string(e->type);
+    if (e->type == LUA_CFG_ENUM) {
+        char list[256];
+        size_t pos = 0;
+        list[0] = '\0';
+        for (int i = 0; i < e->option_count; i++) {
+            int n = snprintf(list + pos, sizeof(list) - pos, "%s%s",
+                             (i ? "," : ""), e->options[i]);
+            if (n < 0 || (size_t)n >= sizeof(list) - pos) break;
+            pos += (size_t)n;
+        }
+        snprintf(out, outsz, "options[%s]", list);
+        return;
+    }
     if ((e->type == LUA_CFG_INT || e->type == LUA_CFG_FLOAT) && (e->has_min || e->has_max)) {
         char minbuf[64] = {0};
         char maxbuf[64] = {0};
@@ -2424,7 +2524,7 @@ static int mod_config_load(LoadedMod* mod) {
         if (!rest[0]) continue;
 
         // Split on first comma
-        char type_str[64] = {0};
+        char type_str[256] = {0};
         char value_str[256] = {0};
 
         char* comma = find_top_level_comma(rest);
@@ -2446,7 +2546,9 @@ static int mod_config_load(LoadedMod* mod) {
         int has_max = 0;
         double min_value = 0.0;
         double max_value = 0.0;
-        if (!parse_type_and_bounds(type_str, &type, &has_min, &min_value, &has_max, &max_value)) continue;
+        char type_inner[256] = {0};
+        if (!parse_type_and_bounds(type_str, &type, &has_min, &min_value, &has_max, &max_value,
+                                   type_inner, sizeof(type_inner))) continue;
 
         ConfigEntry e;
         memset(&e, 0, sizeof(e));
@@ -2457,6 +2559,15 @@ static int mod_config_load(LoadedMod* mod) {
         e.has_max = has_max;
         e.min_value = min_value;
         e.max_value = max_value;
+
+        if (type == LUA_CFG_ENUM) {
+            cfg_parse_options(type_inner, &e);
+            if (e.option_count <= 0) {
+                LOG_WARN("[mod:%s] config key '%s' is type 'options' but has no choices; skipping",
+                         mod->id, key);
+                continue;
+            }
+        }
 
         if (type == LUA_CFG_ACTION) {
             // optional label after comma
@@ -5873,9 +5984,21 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
     if (ptr_writable((void*)p_crowd_sound_last_tick, sizeof(uint32_t))) {
         *p_crowd_sound_last_tick = hdr->crowd_sound_last_tick;
     }
-    if (ptr_writable((void*)p_waterfall_fx, sizeof(uintptr_t))) {
-        *p_waterfall_fx = hdr->waterfall_fx_present ? hdr->waterfall_fx_raw : 0u;
-    }
+    /*
+     * Do NOT restore _fx_15991 (the waterfall sound pointer). It is a live handle
+     * into the process-local synth-effects array, not gameplay state - the saved
+     * value goes stale the instant that slot is recycled, and writing it back made
+     * the next game_update waterfall logic pour waterfall pitch/volume into whatever
+     * unrelated sound now occupies the slot (the "waterfall noise with no waterfall"
+     * bug). It is already canonicalized out of the rollback checksum, so leaving the
+     * LIVE pointer untouched is safe: game_update re-derives the waterfall every
+     * frame from the current room's tile scan (ghidra 24127-24164/24348-24360) and
+     * starts/stops/updates the sound correctly on its own.
+     *
+     * (void) the saved field so the captured value is still validated/ignored.
+     */
+    (void)hdr->waterfall_fx_present;
+    (void)hdr->waterfall_fx_raw;
     if (ptr_writable((void*)p_game_leader, sizeof(uintptr_t))) {
         uintptr_t leader_ptr = 0;
         if (hdr->leader_mode == FULL_STATE_LEADER_P0) leader_ptr = p0;
@@ -6092,6 +6215,11 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     full_state_zero_transient_range(hdr, ADDR_LEADER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_WATERFALL_FX, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_CROWD_SOUND_LAST_TICK, sizeof(uint32_t));
+    /* The other five wall-clock sfx debounce timers the dev missed (see defines):
+     * pure audio timing, never gameplay - zero them so toggling sound / a sfx
+     * firing on one peer can't diverge the transient checksum. */
+    full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_TIMERS_A, SOUND_DEDUP_TIMERS_A_BYTES);
+    full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_TIMERS_B, SOUND_DEDUP_TIMERS_B_BYTES);
     full_state_zero_transient_range(hdr, ADDR_CHANT_STEP, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CHANT_TIMER, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CROWD_TIMER, sizeof(int));
@@ -6589,6 +6717,9 @@ static int lua_cfg_get(lua_State* Ls) {
         case LUA_CFG_STRING:
             lua_pushstring(Ls, e->value);
             return 1;
+        case LUA_CFG_ENUM:
+            lua_pushstring(Ls, e->value);
+            return 1;
         default:
             lua_pushnil(Ls);
             return 1;
@@ -6634,6 +6765,13 @@ static int lua_cfg_set(lua_State* Ls) {
             const char* s = luaL_checkstring(Ls, 2);
             strncpy(e->value, s, sizeof(e->value) - 1);
             e->value[sizeof(e->value) - 1] = '\0';
+            break;
+        }
+        case LUA_CFG_ENUM: {
+            const char* s = luaL_checkstring(Ls, 2);
+            int oi = cfg_enum_find_option(e, s);
+            if (oi < 0) { lua_pushboolean(Ls, 0); return 1; }
+            snprintf(e->value, sizeof(e->value), "%s", e->options[oi]);
             break;
         }
         default:
@@ -9962,6 +10100,528 @@ static int lua_game_is_solid(lua_State* Ls) {
     return 1;
 }
 
+/* ============================================================================
+ * World Control API (mod.game.world) + custom tile behaviors.
+ *
+ * The general "control the live game world" layer: read/write player state,
+ * read tiles, apply effects (kill via native player_die, bounce, teleport, ...),
+ * and bind behavior to tile ids. Intended for tick-time use (mod.on_tick). v1 is
+ * local-first; tile dispatch is gated off during GGPO online matches.
+ * ==========================================================================*/
+
+#define WORLD_MAX_TILE_BEHAVIORS 64
+
+typedef struct TileBehavior {
+    int used;
+    int mod_index;       /* owning mod (index into g_mods) */
+    int id;              /* tile id to match (0..255), or -1 for "any solid" */
+    int match_solid;     /* if 1, match any solid tile instead of a specific id */
+    char glyph;          /* source glyph, for reporting (0 if registered by id) */
+    int on_enter_ref;    /* LUA_NOREF when absent */
+    int on_stay_ref;
+    int on_exit_ref;
+} TileBehavior;
+
+static TileBehavior g_tile_behaviors[WORLD_MAX_TILE_BEHAVIORS];
+static unsigned char g_tile_overlap_prev[2][WORLD_MAX_TILE_BEHAVIORS];
+static int g_tile_behavior_active = 0;
+static int g_world_online_warned = 0;
+
+/* Map a custom-map glyph to its engine tile type (matches the engine's roomdef
+ * placement). Returns the tile type, or -1 for unknown/ambiguous glyphs. Only
+ * single-tile glyphs are included (multi-tile decals like G/L/N/Y are omitted).
+ * Lets mods + map authors refer to tiles by the glyph they place, not a magic id. */
+static int world_glyph_to_type(char g) {
+    switch (g) {
+        case '@': return 1;   case '!': return 3;   case '_': return 4;
+        case 'X': case 'v': return 5;   case 'm': return 6;
+        case 'C': case 'c': return 8;   case '^': return 9;   case 'E': return 10;
+        case 'A': return 11;  case 'P': return 12;  case 'W': return 14;
+        case 'w': return 15;  case '~': return 16;
+        case 'S': case 'u': case 'x': return 20;
+        case '#': case '-': case ':': case '=': case 'H': case 'I': case '`': case 'e': return 21;
+        case '+': return 22;  case 'F': case 'Z': return 23;  case 'f': return 24;
+        case '|': return 25;  case 'Q': case 'q': return 26;  case 'O': return 27;
+        case '*': case 'K': return 28;  case 'i': return 29;
+        case '1': case '2': return 30;  case 'l': return 31;
+        default: return -1;
+    }
+}
+
+/* Tile id (0..255) at a world pixel position, or -1 if unavailable. */
+static int world_tile_id_at(float x, float y) {
+    unsigned char* t;
+    if (!p_map_coord_tile || IsBadCodePtr((FARPROC)(void*)p_map_coord_tile)) return -1;
+    t = p_map_coord_tile(x, y);
+    if (!t || IsBadReadPtr(t, 1)) return -1;
+    return (int)*t;
+}
+
+static int world_tile_is_solid(float x, float y) {
+    if (!p_is_pos_solid || IsBadCodePtr((FARPROC)(void*)p_is_pos_solid)) return 0;
+    return p_is_pos_solid(x, y) != 0;
+}
+
+/* Resolve the player index carried as an upvalue on a handle method closure,
+ * and set *base so params can be read whether the call used p:m() or p.m(). */
+static uintptr_t world_method_player(lua_State* Ls, int* base) {
+    int pidx = (int)lua_tointeger(Ls, lua_upvalueindex(1)) & 1;
+    *base = lua_istable(Ls, 1) ? 1 : 0;
+    return game_get_player_ptr(pidx);
+}
+
+static int world_p_set_pos(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    *(float*)(pp + PLAYER_OFS_X) = (float)luaL_checknumber(Ls, base + 1);
+    *(float*)(pp + PLAYER_OFS_Y) = (float)luaL_checknumber(Ls, base + 2);
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_teleport(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    float x, y;
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    x = (float)luaL_checknumber(Ls, base + 1);
+    y = (float)luaL_checknumber(Ls, base + 2);
+    *(float*)(pp + PLAYER_OFS_X) = x;
+    *(float*)(pp + PLAYER_OFS_Y) = y;
+    *(float*)(pp + PLAYER_OFS_PREV_X) = x;  /* avoid interpolation tearing */
+    *(float*)(pp + PLAYER_OFS_PREV_Y) = y;
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_set_velocity(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    if (!lua_isnoneornil(Ls, base + 1)) *(float*)(pp + PLAYER_OFS_VX) = (float)luaL_checknumber(Ls, base + 1);
+    if (!lua_isnoneornil(Ls, base + 2)) *(float*)(pp + PLAYER_OFS_VY) = (float)luaL_checknumber(Ls, base + 2);
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_add_velocity(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    *(float*)(pp + PLAYER_OFS_VX) += (float)luaL_optnumber(Ls, base + 1, 0.0);
+    *(float*)(pp + PLAYER_OFS_VY) += (float)luaL_optnumber(Ls, base + 2, 0.0);
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_knockback(lua_State* Ls) { return world_p_add_velocity(Ls); }
+
+static int world_p_bounce(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    /* default to a solid upward launch if no value given (engine: -y is up) */
+    *(float*)(pp + PLAYER_OFS_VY) = (float)luaL_optnumber(Ls, base + 1, -6.0);
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_set_facing(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    int sign;
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    sign = (int)luaL_checkinteger(Ls, base + 1);
+    *(signed char*)(pp + PLAYER_OFS_FACING_SIGN) = (signed char)(sign >= 0 ? 1 : -1);
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_set_has_sword(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    int want;
+    if (!pp || !ptr_writable((void*)pp, PLAYER_SIZE)) { lua_pushboolean(Ls, 0); return 1; }
+    want = lua_toboolean(Ls, base + 1);
+    /* native semantics: byte == 0 means "has sword" */
+    *(uint8_t*)(pp + PLAYER_OFS_HAS_SWORD) = want ? 0 : 1;
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+static int world_p_kill(lua_State* Ls) {
+    int base; uintptr_t pp = world_method_player(Ls, &base);
+    (void)base;
+    if (!pp) { lua_pushboolean(Ls, 0); return 1; }
+    if (!p_player_die || IsBadCodePtr((FARPROC)(void*)p_player_die)) { lua_pushboolean(Ls, 0); return 1; }
+    p_player_die((int)pp);
+    lua_pushboolean(Ls, 1); return 1;
+}
+
+/* Build a player handle table (live-read fields + write methods) on the stack. */
+static void world_push_player_handle(lua_State* Ls, int idx) {
+    uintptr_t pp;
+    idx &= 1;
+    pp = game_get_player_ptr(idx);
+
+    lua_newtable(Ls);
+    lua_push_field_int(Ls, "index", idx);
+
+    if (pp && ptr_readable((const void*)pp, PLAYER_SIZE)) {
+        uint8_t cf = *(uint8_t*)(pp + PLAYER_OFS_COLLISION_FLAGS);
+        lua_push_field_number(Ls, "x",  (double)*(float*)(pp + PLAYER_OFS_X));
+        lua_push_field_number(Ls, "y",  (double)*(float*)(pp + PLAYER_OFS_Y));
+        lua_push_field_number(Ls, "prev_x", (double)*(float*)(pp + PLAYER_OFS_PREV_X));
+        lua_push_field_number(Ls, "prev_y", (double)*(float*)(pp + PLAYER_OFS_PREV_Y));
+        lua_push_field_number(Ls, "vx", (double)*(float*)(pp + PLAYER_OFS_VX));
+        lua_push_field_number(Ls, "vy", (double)*(float*)(pp + PLAYER_OFS_VY));
+        lua_push_field_int(Ls, "facing", (int)*(signed char*)(pp + PLAYER_OFS_FACING_SIGN));
+        lua_push_field_int(Ls, "room", (int)*(signed char*)(pp + PLAYER_OFS_ROOM));
+        lua_push_field_int(Ls, "state_id", (int)*(uint8_t*)(pp + PLAYER_OFS_STATE_ID));
+        lua_push_field_int(Ls, "cmd_bits", (int)*(uint8_t*)(pp + PLAYER_OFS_CMD_BITS));
+        lua_push_field_int(Ls, "prev_cmd_bits", (int)*(uint8_t*)(pp + PLAYER_OFS_PREV_CMD_BITS));
+        lua_push_field_bool(Ls, "has_sword", (*(uint8_t*)(pp + PLAYER_OFS_HAS_SWORD) == 0));
+        lua_push_field_bool(Ls, "grounded",   (cf & PLAYER_COLLIDE_GROUNDED) != 0);
+        lua_push_field_bool(Ls, "ceiling",    (cf & PLAYER_COLLIDE_CEILING) != 0);
+        lua_push_field_bool(Ls, "wall_right", (cf & PLAYER_COLLIDE_WALL_RIGHT) != 0);
+        lua_push_field_bool(Ls, "wall_left",  (cf & PLAYER_COLLIDE_WALL_LEFT) != 0);
+        lua_push_field_bool(Ls, "valid", 1);
+    } else {
+        lua_push_field_bool(Ls, "valid", 0);
+    }
+
+    /* write methods (player index carried as upvalue) */
+    #define WORLD_BIND_METHOD(name, fn) \
+        lua_pushinteger(Ls, idx); lua_pushcclosure(Ls, fn, 1); lua_setfield(Ls, -2, name)
+    WORLD_BIND_METHOD("set_pos",      world_p_set_pos);
+    WORLD_BIND_METHOD("teleport",     world_p_teleport);
+    WORLD_BIND_METHOD("set_velocity", world_p_set_velocity);
+    WORLD_BIND_METHOD("add_velocity", world_p_add_velocity);
+    WORLD_BIND_METHOD("knockback",    world_p_knockback);
+    WORLD_BIND_METHOD("bounce",       world_p_bounce);
+    WORLD_BIND_METHOD("set_facing",   world_p_set_facing);
+    WORLD_BIND_METHOD("set_has_sword", world_p_set_has_sword);
+    WORLD_BIND_METHOD("kill",         world_p_kill);
+    WORLD_BIND_METHOD("hurt",         world_p_kill);
+    #undef WORLD_BIND_METHOD
+}
+
+static int lua_world_player(lua_State* Ls) {
+    int idx = (int)luaL_optinteger(Ls, 1, 0) & 1;
+    world_push_player_handle(Ls, idx);
+    return 1;
+}
+
+static int lua_world_online_active(lua_State* Ls) {
+    lua_pushboolean(Ls, ggpo_net_active());
+    return 1;
+}
+
+static void world_push_tile_table(lua_State* Ls, int id, int solid, double x, double y) {
+    lua_newtable(Ls);
+    lua_push_field_int(Ls, "id", id);
+    lua_push_field_bool(Ls, "solid", solid);
+    lua_push_field_number(Ls, "x", x);
+    lua_push_field_number(Ls, "y", y);
+}
+
+static int lua_world_tile_at_world(lua_State* Ls) {
+    float x = (float)luaL_checknumber(Ls, 1);
+    float y = (float)luaL_checknumber(Ls, 2);
+    int id = world_tile_id_at(x, y);
+    if (id < 0) { lua_pushnil(Ls); return 1; }
+    world_push_tile_table(Ls, id, world_tile_is_solid(x, y), (double)x, (double)y);
+    return 1;
+}
+
+static int lua_world_player_tile(lua_State* Ls) {
+    int idx = (int)luaL_optinteger(Ls, 1, 0) & 1;
+    uintptr_t pp = game_get_player_ptr(idx);
+    float x, y; int id;
+    if (!pp || !ptr_readable((const void*)pp, PLAYER_SIZE)) { lua_pushnil(Ls); return 1; }
+    x = *(float*)(pp + PLAYER_OFS_X);
+    y = *(float*)(pp + PLAYER_OFS_Y);
+    id = world_tile_id_at(x, y);
+    if (id < 0) { lua_pushnil(Ls); return 1; }
+    world_push_tile_table(Ls, id, world_tile_is_solid(x, y), (double)x, (double)y);
+    return 1;
+}
+
+/* Resolve a glyph (string) or raw id (number) argument to a tile type, or -1. */
+static int world_resolve_type_arg(lua_State* Ls, int idx) {
+    if (lua_isnumber(Ls, idx)) return (int)lua_tointeger(Ls, idx);
+    if (lua_isstring(Ls, idx)) {
+        const char* s = lua_tostring(Ls, idx);
+        return (s && s[0]) ? world_glyph_to_type(s[0]) : -1;
+    }
+    return -1;
+}
+
+/* Copy the engine tile-property row (solid/deadly/etc, 0x2C bytes at 0x55AB44)
+ * from one tile type to another. Making a custom kill tile behave like spikes
+ * ('X') gives it native deadliness AND spawn-avoidance (the engine's
+ * find_good_spot won't respawn players onto a deadly tile) for free. */
+static int lua_world_copy_tile_props(lua_State* Ls) {
+    int from = world_resolve_type_arg(Ls, 1);
+    int to   = world_resolve_type_arg(Ls, 2);
+    unsigned char* base = (unsigned char*)(uintptr_t)0x55AB44u;
+    unsigned char* src;
+    unsigned char* dst;
+    if (from < 0 || from > 255 || to < 0 || to > 255) { lua_pushboolean(Ls, 0); return 1; }
+    src = base + (size_t)from * 0x2Cu;
+    dst = base + (size_t)to   * 0x2Cu;
+    if (IsBadReadPtr(src, 0x2C) || IsBadWritePtr(dst, 0x2C)) { lua_pushboolean(Ls, 0); return 1; }
+    memcpy(dst, src, 0x2C);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+/* Camera + view dimensions, so Lua can project world->screen (kept in Lua so the
+ * projection can be tuned without a rebuild). */
+static int lua_world_view(lua_State* Ls) {
+    volatile float* gh = (volatile float*)(uintptr_t)ADDR_GAME_H;
+    lua_newtable(Ls);
+    lua_push_field_number(Ls, "cam_x", p_camera_x ? (double)*p_camera_x : 0.0);
+    lua_push_field_number(Ls, "cam_y", p_camera_y ? (double)*p_camera_y : 0.0);
+    lua_push_field_number(Ls, "game_w", p_game_w ? (double)*p_game_w : 0.0);
+    lua_push_field_number(Ls, "game_h", (double)*gh);
+    lua_push_field_number(Ls, "ui_w", (double)*(float*)(uintptr_t)ADDR_MAD_W);
+    lua_push_field_number(Ls, "ui_h", (double)*(float*)(uintptr_t)ADDR_MAD_H);
+    lua_push_field_int(Ls, "tile_w", p_tile_w_native ? *p_tile_w_native : 0);
+    lua_push_field_int(Ls, "tile_h", p_tile_h_native ? *p_tile_h_native : 0);
+    return 1;
+}
+
+/* World-space centers of every tile of a given glyph/type in the current room.
+ * Returns an array of { x = , y = } (world pixels). */
+static int lua_world_find_tiles(lua_State* Ls) {
+    int want = world_resolve_type_arg(Ls, 1);
+    int tw = p_tile_w_native ? *p_tile_w_native : 16;
+    int th = p_tile_h_native ? *p_tile_h_native : 16;
+    int room = p_game_active_room ? *p_game_active_room : 0;
+    int rpw = p_room_pixel_w ? *p_room_pixel_w : (33 * tw);
+    int room_w = (tw > 0) ? (rpw / tw) : 33;
+    int room_h = (p_map_tiles_h && !IsBadCodePtr((FARPROC)(void*)p_map_tiles_h)) ? p_map_tiles_h() : 12;
+    int n = 0;
+
+    lua_newtable(Ls);
+    if (want < 0 || !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile) || tw <= 0 || th <= 0) return 1;
+    if (room_w <= 0 || room_w > 64) room_w = 33;
+    if (room_h <= 0 || room_h > 64) room_h = 12;
+
+    for (int ty = 0; ty < room_h; ty++) {
+        for (int tx = 0; tx < room_w; tx++) {
+            int gc = room * room_w + tx;
+            int tp = p_map_tile(gc, ty);
+            if (tp && !IsBadReadPtr((void*)(uintptr_t)tp, 1) &&
+                (int)*(unsigned char*)(uintptr_t)tp == want) {
+                lua_newtable(Ls);
+                lua_push_field_number(Ls, "x", (double)gc * tw + tw * 0.5);
+                lua_push_field_number(Ls, "y", (double)ty * th + th * 0.5);
+                lua_rawseti(Ls, -2, ++n);
+            }
+        }
+    }
+    return 1;
+}
+
+static void world_clear_behavior_slot(int b) {
+    if (b < 0 || b >= WORLD_MAX_TILE_BEHAVIORS) return;
+    /* luaL_ref only ever returns positive refs; 0 is the registry free-list
+       sentinel and negatives are LUA_NOREF/LUA_REFNIL, so only unref > 0. */
+    if (L) {
+        if (g_tile_behaviors[b].on_enter_ref > 0) luaL_unref(L, LUA_REGISTRYINDEX, g_tile_behaviors[b].on_enter_ref);
+        if (g_tile_behaviors[b].on_stay_ref  > 0) luaL_unref(L, LUA_REGISTRYINDEX, g_tile_behaviors[b].on_stay_ref);
+        if (g_tile_behaviors[b].on_exit_ref  > 0) luaL_unref(L, LUA_REGISTRYINDEX, g_tile_behaviors[b].on_exit_ref);
+    }
+    memset(&g_tile_behaviors[b], 0, sizeof(g_tile_behaviors[b]));
+    g_tile_behaviors[b].on_enter_ref = LUA_NOREF;
+    g_tile_behaviors[b].on_stay_ref  = LUA_NOREF;
+    g_tile_behaviors[b].on_exit_ref  = LUA_NOREF;
+    g_tile_overlap_prev[0][b] = 0;
+    g_tile_overlap_prev[1][b] = 0;
+}
+
+static void world_recount_behaviors(void) {
+    int n = 0;
+    for (int i = 0; i < WORLD_MAX_TILE_BEHAVIORS; i++) if (g_tile_behaviors[i].used) n++;
+    g_tile_behavior_active = n;
+}
+
+static void lua_manager_clear_mod_tiles(int mod_index) {
+    for (int b = 0; b < WORLD_MAX_TILE_BEHAVIORS; b++) {
+        if (g_tile_behaviors[b].used && g_tile_behaviors[b].mod_index == mod_index) {
+            world_clear_behavior_slot(b);
+        }
+    }
+    world_recount_behaviors();
+}
+
+static int world_take_callback_ref(lua_State* Ls, int tbl, const char* field) {
+    int ref = LUA_NOREF;
+    lua_getfield(Ls, tbl, field);
+    if (lua_isfunction(Ls, -1)) ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    else lua_pop(Ls, 1);
+    return ref;
+}
+
+static int lua_game_register_tile(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int id = -1, match_solid = 0, slot = -1;
+    char glyph = 0;
+    int my_mod_index = mod ? (int)(mod - g_mods) : -1;
+
+    luaL_checktype(Ls, 1, LUA_TTABLE);
+
+    /* Preferred: identify the tile by the glyph the map author places. */
+    lua_getfield(Ls, 1, "glyph");
+    if (lua_isstring(Ls, -1)) {
+        const char* gs = lua_tostring(Ls, -1);
+        if (gs && gs[0]) {
+            glyph = gs[0];
+            id = world_glyph_to_type(glyph);
+            if (id < 0) { lua_pop(Ls, 1); return luaL_error(Ls, "register_tile: unknown glyph '%c'", glyph); }
+        }
+    }
+    lua_pop(Ls, 1);
+
+    /* Fallback: raw engine tile id, or "any solid". */
+    if (id < 0) {
+        lua_getfield(Ls, 1, "id");
+        if (lua_isnil(Ls, -1)) { lua_pop(Ls, 1); lua_getfield(Ls, 1, "tile_id"); }
+        if (lua_isnumber(Ls, -1)) id = (int)lua_tointeger(Ls, -1);
+        lua_pop(Ls, 1);
+    }
+
+    lua_getfield(Ls, 1, "solid");
+    match_solid = lua_toboolean(Ls, -1);
+    lua_pop(Ls, 1);
+
+    if (id < 0 && !match_solid) {
+        return luaL_error(Ls, "register_tile: needs a 'glyph', an integer 'id' (0..255), or solid=true");
+    }
+
+    /* Conflict detection: warn if a different enabled mod already claimed this
+     * tile type. Behaviors aren't hard-blocked (a map author may intend both),
+     * but the conflict is surfaced as "<modA> vs <modB>" so it can be resolved. */
+    if (!match_solid) {
+        for (int b = 0; b < WORLD_MAX_TILE_BEHAVIORS; b++) {
+            if (g_tile_behaviors[b].used && !g_tile_behaviors[b].match_solid &&
+                g_tile_behaviors[b].id == id && g_tile_behaviors[b].mod_index != my_mod_index) {
+                const char* other = (g_tile_behaviors[b].mod_index >= 0 && g_tile_behaviors[b].mod_index < g_mod_count)
+                                    ? g_mods[g_tile_behaviors[b].mod_index].id : "?";
+                LOG_WARN("tile conflict: %s:%c and %s:%c both bind tile id %d (both will fire)",
+                         mod ? mod->id : "?", glyph ? glyph : '#',
+                         other, g_tile_behaviors[b].glyph ? g_tile_behaviors[b].glyph : '#', id);
+                break;
+            }
+        }
+    }
+
+    for (int b = 0; b < WORLD_MAX_TILE_BEHAVIORS; b++) {
+        if (!g_tile_behaviors[b].used) { slot = b; break; }
+    }
+    if (slot < 0) return luaL_error(Ls, "register_tile: too many tile behaviors (max %d)", WORLD_MAX_TILE_BEHAVIORS);
+
+    world_clear_behavior_slot(slot);
+    g_tile_behaviors[slot].used = 1;
+    g_tile_behaviors[slot].mod_index = my_mod_index;
+    g_tile_behaviors[slot].id = id;
+    g_tile_behaviors[slot].match_solid = match_solid;
+    g_tile_behaviors[slot].glyph = glyph;
+    g_tile_behaviors[slot].on_enter_ref = world_take_callback_ref(Ls, 1, "on_enter");
+    g_tile_behaviors[slot].on_stay_ref  = world_take_callback_ref(Ls, 1, "on_stay");
+    g_tile_behaviors[slot].on_exit_ref  = world_take_callback_ref(Ls, 1, "on_exit");
+    world_recount_behaviors();
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+/* Fire one tile callback: cb(player_handle, tile_table). */
+static void world_fire_tile_cb(int ref, int player_idx, int tile_id, int solid, double x, double y) {
+    if (ref <= 0 || !L) return;  /* >0 == a real luaL_ref; 0/neg == none */
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    world_push_player_handle(L, player_idx);
+    world_push_tile_table(L, tile_id, solid, x, y);
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        LOG_WARN("tile behavior callback error: %s", err ? err : "(unknown)");
+        lua_pop(L, 1);
+    }
+}
+
+/* Per-tick dispatch of registered tile behaviors. Called from on_tick_post
+ * (after the native player update) so bounce/spring velocity writes survive. */
+static void lua_manager_dispatch_tiles(void) {
+    int th = 16;
+    if (!L || g_tile_behavior_active <= 0) return;
+
+    /* Only while actually in gameplay. */
+    if (!ui_state_matches_name(ui_current_state_ptr(), "game")) {
+        memset(g_tile_overlap_prev, 0, sizeof(g_tile_overlap_prev));
+        return;
+    }
+    /* Local-first: never mutate world from custom tiles during an online match. */
+    if (ggpo_net_active()) {
+        if (!g_world_online_warned) {
+            LOG_WARN("custom tile behaviors are disabled during online matches (local-first; v1)");
+            g_world_online_warned = 1;
+        }
+        memset(g_tile_overlap_prev, 0, sizeof(g_tile_overlap_prev));
+        return;
+    }
+
+    if (p_tile_h_native && ptr_readable((const void*)p_tile_h_native, sizeof(int)) && *p_tile_h_native > 0) {
+        th = *p_tile_h_native;
+    }
+
+    for (int pi = 0; pi < 2; pi++) {
+        uintptr_t pp = game_get_player_ptr(pi);
+        float x, y;
+        int ids[3];
+        int solid_any = 0;
+        int nids = 0;
+
+        if (!pp || !ptr_readable((const void*)pp, PLAYER_SIZE)) {
+            for (int b = 0; b < WORLD_MAX_TILE_BEHAVIORS; b++) g_tile_overlap_prev[pi][b] = 0;
+            continue;
+        }
+        x = *(float*)(pp + PLAYER_OFS_X);
+        y = *(float*)(pp + PLAYER_OFS_Y);
+
+        /* Sample the tile at the player point and just below the feet so behavior
+         * fires both when touching and when standing on top of a tile. */
+        ids[nids++] = world_tile_id_at(x, y);
+        ids[nids++] = world_tile_id_at(x, y + (float)th * 0.6f);
+        ids[nids++] = world_tile_id_at(x, y - (float)th * 0.4f);
+        if (world_tile_is_solid(x, y + (float)th * 0.6f)) solid_any = 1;
+
+        for (int b = 0; b < WORLD_MAX_TILE_BEHAVIORS; b++) {
+            int now, prev;
+            if (!g_tile_behaviors[b].used) { g_tile_overlap_prev[pi][b] = 0; continue; }
+
+            now = 0;
+            if (g_tile_behaviors[b].match_solid) {
+                now = solid_any;
+            } else {
+                for (int k = 0; k < nids; k++) {
+                    if (ids[k] == g_tile_behaviors[b].id) { now = 1; break; }
+                }
+            }
+            prev = g_tile_overlap_prev[pi][b];
+
+            if (now && !prev) {
+                world_fire_tile_cb(g_tile_behaviors[b].on_enter_ref, pi, g_tile_behaviors[b].id, solid_any, (double)x, (double)y);
+            } else if (now && prev) {
+                world_fire_tile_cb(g_tile_behaviors[b].on_stay_ref, pi, g_tile_behaviors[b].id, solid_any, (double)x, (double)y);
+            } else if (!now && prev) {
+                world_fire_tile_cb(g_tile_behaviors[b].on_exit_ref, pi, g_tile_behaviors[b].id, solid_any, (double)x, (double)y);
+            }
+            g_tile_overlap_prev[pi][b] = (unsigned char)now;
+        }
+    }
+}
+
+static void push_world_api_table(lua_State* Ls, LoadedMod* mod) {
+    (void)mod;
+    lua_newtable(Ls);
+    lua_pushcfunction(Ls, lua_world_player);         lua_setfield(Ls, -2, "player");
+    lua_pushcfunction(Ls, lua_world_tile_at_world);  lua_setfield(Ls, -2, "tile_at_world");
+    lua_pushcfunction(Ls, lua_world_player_tile);    lua_setfield(Ls, -2, "player_tile");
+    lua_pushcfunction(Ls, lua_world_online_active);  lua_setfield(Ls, -2, "online_active");
+    lua_pushcfunction(Ls, lua_world_copy_tile_props); lua_setfield(Ls, -2, "copy_tile_props");
+    lua_pushcfunction(Ls, lua_world_view);           lua_setfield(Ls, -2, "view");
+    lua_pushcfunction(Ls, lua_world_find_tiles);     lua_setfield(Ls, -2, "find_tiles");
+}
+
 static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_snapshot, 1);       lua_setfield(Ls, -2, "snapshot");
@@ -10006,6 +10666,11 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     /* map selector (online mod) */
     lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
     lua_pushcfunction(Ls, lua_game_get_map_selector); lua_setfield(Ls, -2, "get_map_selector");
+
+    /* World Control (custom content): live world read/write + tile behaviors. */
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_tile, 1); lua_setfield(Ls, -2, "register_tile");
+    push_world_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "world");
 }
 
 static int lua_online_status(lua_State* Ls) {
@@ -11729,6 +12394,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     reflist_clear(L, &mod->on_tick);
     reflist_clear(L, &mod->on_tick_post);
     reflist_clear(L, &mod->on_event);
+    lua_manager_clear_mod_tiles((int)(mod - g_mods));
     mod_ui_free(mod);
 
     if (mod->on_layout) {
@@ -11865,7 +12531,6 @@ static int mods_dir_name_ignored(const char* name) {
     if (!name || !name[0]) return 1;
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 1;
     if (name[0] == '_') return 1;
-    if (_stricmp(name, "profiles") == 0) return 1;
     return 0;
 }
 
@@ -12801,6 +13466,10 @@ void lua_manager_on_tick_post(void) {
         }
         free(refs);
     }
+
+    /* Custom-content tile behaviors run AFTER the native player update so that
+     * velocity writes (bounce/spring) survive this frame's physics. */
+    lua_manager_dispatch_tiles();
 }
 
 void lua_manager_on_frame() {
@@ -13745,6 +14414,24 @@ int lua_manager_find_mod_config_index(int mod_index, const char* key) {
     return -1;
 }
 
+int lua_manager_get_mod_config_option_count(int mod_index, int entry_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    return (e->type == LUA_CFG_ENUM) ? e->option_count : 0;
+}
+
+const char* lua_manager_get_mod_config_option(int mod_index, int entry_index, int option_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return "";
+    if (entry_index < 0 || entry_index >= m->cfg_count) return "";
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    if (e->type != LUA_CFG_ENUM) return "";
+    if (option_index < 0 || option_index >= e->option_count) return "";
+    return e->options[option_index];
+}
+
 int lua_manager_get_mod_bind_count(int mod_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     return m ? m->bind_count : 0;
@@ -13843,6 +14530,32 @@ int lua_manager_config_set_string(int mod_index, int entry_index, const char* va
     if (!value) value = "";
     strncpy(e->value, value, sizeof(e->value) - 1);
     e->value[sizeof(e->value) - 1] = '\0';
+    return mod_config_save(m);
+}
+
+int lua_manager_config_cycle_option(int mod_index, int entry_index, int delta) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    if (e->type != LUA_CFG_ENUM || e->option_count <= 0) return 0;
+    int n = e->option_count;
+    int idx = cfg_enum_find_option(e, e->value);
+    if (idx < 0) idx = 0;
+    idx = ((idx + delta) % n + n) % n;  // wrap around in both directions
+    snprintf(e->value, sizeof(e->value), "%s", e->options[idx]);
+    return mod_config_save(m);
+}
+
+int lua_manager_config_set_option(int mod_index, int entry_index, const char* value) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    if (e->type != LUA_CFG_ENUM) return 0;
+    int idx = cfg_enum_find_option(e, value);
+    if (idx < 0) return 0;
+    snprintf(e->value, sizeof(e->value), "%s", e->options[idx]);
     return mod_config_save(m);
 }
 

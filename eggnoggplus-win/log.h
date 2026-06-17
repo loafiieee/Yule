@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 void log_init();
+void log_set_console_visible(int visible);
 void log_write(const char* level, const char* fmt, ...);
 int log_set_level_name(const char* level_name);
 const char* log_get_level_name(void);

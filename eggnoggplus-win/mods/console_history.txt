@@ -9,3 +9,12 @@ help
 state.switch main
 help
 ggpo.net rngtrace on
+help
+helo
+help
+lus
+clear
+help
+mods.config.set tile_demo spike_tile_id N
+mods.config.set tile_demo spike_tile_id 5
+mods.config.set tile_demo spike_tile_id 21

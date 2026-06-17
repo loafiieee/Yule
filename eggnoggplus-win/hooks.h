@@ -105,6 +105,11 @@ void hooks_rng_trace_describe_diff(const HooksRngTrace* expected, const HooksRng
 int hooks_get_native_synth_enabled(void);
 int hooks_set_native_synth_enabled(int enabled);
 
+// Snapshot/restore the process-local waterfall ambience handles around a rollback
+// replay so the replay cannot leave a stale sound playing (phantom waterfall).
+void hooks_waterfall_audio_save(void);
+void hooks_waterfall_audio_restore(void);
+
 #ifdef __cplusplus
 }
 #endif

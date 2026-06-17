@@ -12,7 +12,9 @@
 - `Backspace` / `Delete`: edit text at cursor.
 - `PageUp` / `PageDown`: scroll console output.
 - Mouse wheel: scroll console output.
-- `Tab`: autocomplete command names.
+- `Tab`: context-aware autocomplete — completes command names, and (past the command) mod ids, config keys, bind keys, and keyword/value arguments. With multiple matches it completes the common prefix and lists them; press `Tab` again to cycle (`Shift+Tab` to cycle backward).
+- `Ctrl+R`: reverse-search command history — type to filter, `Ctrl+R` for older matches, `Enter` to accept into the input, `Esc` to cancel.
+- Unrecognized commands print a "Did you mean: …?" suggestion.
 - `Ctrl+L`: clear console output.
 - `Ctrl+C`: copy current input, or copy console output if input is empty.
 - `Ctrl+V`: paste clipboard text into input.
@@ -61,11 +63,6 @@
 - `binds.find <text>`
 - `binds.set <id> <key> <value>`
 - `binds.clear <id> <key>`
-- `profiles.list`
-- `profiles.save <name>`
-- `profiles.load <name>`
-- `profiles.delete <name>`
-- `profiles.current`
 - `reload.mods`
 - `mods.reload` (alias)
 - `reload.assets`
@@ -115,8 +112,6 @@
 - `mods.config speedhack`
 - `binds.list speedhack`
 - `binds.set speedhack dash space`
-- `profiles.save pvp`
-- `profiles.load pvp`
 - `mods.config.get speedhack max_speed`
 - `mods.config.set speedhack max_speed 3.5`
 - `mods.config.set speedhack enabled true`
@@ -150,7 +145,7 @@
 - `mods.toggle` applies the same enable/disable lifecycle immediately.
 - `mods.info` includes runtime perf/memory diagnostics for the selected mod.
 - `mods.trace` toggles per-mod event trace logging into `mods\modframework.log`.
-- `mods.config.set` supports bool/int/float/string config types.
+- `mods.config.set` supports bool/int/float/string/options config types. For an `options` key, the value must be one of the declared choices.
 - `time.scale <value>` sets a manual global timescale clamp-limited to `0.05..100`.
 - `time.scale auto` returns control back to mod-driven delta-time scaling.
 - `lua` and `lua.mod` return values are printed in the console output.

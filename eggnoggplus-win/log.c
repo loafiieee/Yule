@@ -62,6 +62,15 @@ void log_write(const char* level, const char* fmt, ...) {
     }
 }
 
+void log_set_console_visible(int visible) {
+    // Hide/show the AllocConsole window without freeing it, so stdout stays
+    // valid and the toggle is fully reversible at runtime.
+    HWND hwnd = GetConsoleWindow();
+    if (hwnd) {
+        ShowWindow(hwnd, visible ? SW_SHOW : SW_HIDE);
+    }
+}
+
 int log_set_level_name(const char* level_name) {
     if (!level_name) return 0;
     if (_stricmp(level_name, "debug") == 0) {

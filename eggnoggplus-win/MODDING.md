@@ -182,6 +182,7 @@ speed: float, 1.25
 jump_count: int[1,10], 3
 gravity: float[0.2,2.5], 1.0
 player_name: str, "Loaf"
+difficulty: options[easy, normal, hard], normal
 
 reset_stats: action
 big_red_button: action, "Reset Everything"
@@ -194,6 +195,10 @@ Rules:
   - Example: `lives: int[1,9], 3`
   - Example: `speed: float[0.25,3.0], 1.0`
   - Spaces are fine too: `speed: float[0.5, 10], 1.0`
+- `key: options[a, b, c], default` for a fixed list of choices (`enum` is an alias).
+  - The value is always one of the listed options; the default is matched
+    case-insensitively and an unknown/missing default snaps to the first option.
+  - Up to 16 options, each up to 63 characters.
 - `key: action` (or `key: action, "Label"`) for buttons.
 - Strings can be quoted (recommended if they contain spaces/commas).
 
@@ -201,6 +206,7 @@ Rules:
 
 - **bool**: click to toggle `true/false`.
 - **int/float**: click to increment.
+- **options**: click (or **←/→**) to cycle through the choices; wraps around.
 - **str**: click to edit; type; **Enter** saves; **Esc** cancels.
 - **action**: click to trigger.
 
@@ -222,6 +228,9 @@ print(config.path) -- absolute path to the config file (or "" if none)
 Notes:
 - `config.get(key, default)` returns `default` (or `nil`) if the key doesn't exist.
 - `config.set(key, value)` returns `true/false`.
+- For an `options` key, `config.get` returns the selected option string, and
+  `config.set(key, "hard")` only succeeds (returns `true`) if the value is one
+  of the declared choices (matched case-insensitively).
 - `config.on_action(key, fn)` registers a handler for action buttons.
 
 
@@ -770,6 +779,110 @@ These functions provide fast binary state save/load for rollback netcode. Unlike
 
 `full_state_size() -> number`
 - Returns the byte size that `full_state_blob()` would produce for the current game configuration.
+
+## Gameplay content: World Control (`mod.game.world`) + custom tiles
+
+The World Control API lets a mod **write** the live game world and attach custom
+behavior to it — the foundation for custom content (abilities, interactive tiles,
+and, later, custom entities/weapons). Use it from `mod.on_tick` (it runs inside
+the deterministic gameplay update).
+
+> **Local-first (v1):** custom world-writes are not part of the GGPO rollback
+> blob, so the framework **disables custom tile behaviors during online matches**
+> and ability mods should self-gate with `mod.game.world.online_active()`. Full
+> online support is a later sub-project.
+
+> **Timing matters.** The native player update runs *between* `mod.on_tick`
+> (before) and `mod.on_tick_post` (after). Velocity you write in `on_tick` is
+> overwritten by the native physics that same frame — **write velocity in
+> `on_tick_post`** so it survives. (Tile behaviors are dispatched in `on_tick_post`
+> for this reason.) Reading state is fine from either. The command bits are
+> `JUMP=0x01` (a dedicated button, *not* up), `ATTACK=0x02`, `RIGHT=0x04`,
+> `LEFT=0x08`, `UP=0x10`, `DOWN=0x20`, `MENU=0x40`; `-y` is up.
+
+### Player handle
+
+```lua
+local p = mod.game.world.player(0)   -- 0 or 1
+if p.valid then
+  -- live reads (snapshot at the moment player() was called)
+  -- p.x p.y p.prev_x p.prev_y p.vx p.vy p.facing p.room p.state_id
+  -- p.cmd_bits p.prev_cmd_bits p.has_sword p.grounded p.ceiling p.wall_left p.wall_right
+  p:set_velocity(nil, -6)   -- nil keeps a component; -y is up
+end
+```
+
+Write methods (each writes native memory immediately; call with `:`):
+
+| Method | Effect |
+| --- | --- |
+| `p:set_pos(x, y)` | move |
+| `p:teleport(x, y)` | move and clear interpolation (no tearing) |
+| `p:set_velocity(vx, vy)` | set velocity (`nil` keeps that component) |
+| `p:add_velocity(dvx, dvy)` | add to velocity |
+| `p:knockback(dvx, dvy)` | alias of `add_velocity` |
+| `p:bounce(vy)` | set vertical velocity (launch); defaults to `-6` |
+| `p:set_facing(sign)` | face left (`-1`) or right (`+1`) |
+| `p:set_has_sword(bool)` | give/remove the sword |
+| `p:kill()` / `p:hurt()` | kill the player (native death + respawn) |
+
+### World / tile helpers
+
+```lua
+mod.game.world.player_tile(i)        -> { id, solid, x, y } | nil   -- tile under player i
+mod.game.world.tile_at_world(x, y)   -> { id, solid, x, y } | nil   -- tile at a world pixel
+mod.game.world.online_active()       -> bool                        -- true during a GGPO match
+mod.game.world.find_tiles(glyph)     -> { {x=,y=}, ... }   -- world centers of matching tiles in the current room
+mod.game.world.view()                -> { cam_x, cam_y, game_w, game_h, ui_w, ui_h, tile_w, tile_h }  -- for world->screen
+mod.game.world.copy_tile_props(a, b) -> bool   -- copy tile a's engine property row onto tile b
+```
+
+**Spawn-safety / making a tile deadly.** The engine won't respawn a player onto a
+deadly tile (e.g. spikes). `copy_tile_props("X", "_")` copies the spike tile's
+property row onto your `_` tile, so it becomes deadly *and* spawn-avoided for free
+— that's how you "define a tile as unsafe to spawn on".
+
+**Drawing custom tile visuals.** Use `find_tiles(glyph)` + `view()` to project each
+tile to screen and draw with `mod.ui.rect`/`mod.ui.draw_sprite` from `on_frame`
+(animate by varying color/sprite over time). See `mods/tile_demo` for the
+projection helper and animated spring/kill markers.
+
+`id` is the engine tile id (0..255) under that point; `solid` is the engine's
+collision test. Use `player_tile` to discover the id of a tile you want to react
+to.
+
+### Custom tile behaviors
+
+```lua
+mod.game.register_tile({
+  glyph = "!",                     -- the glyph you place in a custom map ...
+  -- id = 7,                       -- ... or the raw engine tile type ...
+  -- solid = true,                 -- ... or any solid tile
+  on_enter = function(p, t) end,   -- player p first overlaps a matching tile
+  on_stay  = function(p, t) end,   -- each tick while overlapping
+  on_exit  = function(p, t) end,   -- player leaves
+})
+-- p: a world player handle; t: { id, solid, x, y } of the triggering tile.
+```
+
+Identify tiles by the **glyph** the map author places (e.g. `"!"`, `"_"`); the
+framework maps it to the engine tile type. Behavior is **scoped to the owning
+mod** and, if another enabled mod claims the same tile type, the framework logs a
+conflict warning (`modA:! and modB:_ both bind tile id N`) so it can be resolved.
+Note the engine has a fixed set of tile types and many glyphs share a type, so
+choose a glyph not otherwise used for normal terrain in your map.
+
+The framework samples the tile at each player's position (and just below/above)
+every tick (in `on_tick_post`) and fires the edge callbacks; registrations are
+cleared when the mod unloads/reloads. Example — a spring and a hazard:
+
+```lua
+mod.game.register_tile({ glyph = "!", on_enter = function(p) p:bounce(-6) end })
+mod.game.register_tile({ glyph = "_", on_enter = function(p) p:kill() end })
+```
+
+See `mods/tile_demo` + the `Content Demo` map (spring `!` and kill `_` tiles) and
+`mods/abilities_demo` (dash + double jump) for working examples.
 
 ## Audio API (`mod.audio`)
 

@@ -1,0 +1,10 @@
+{
+    "id": "tile_demo",
+    "name": "Tile Demo",
+    "version": "1.0",
+    "author": "Framework",
+    "description": "Custom tile behaviors via mod.game.register_tile: a ground-bounce, plus configurable bounce/spike tiles and a tile-id inspector. Local-first.",
+    "api_version": 1,
+    "entry": "main.lua",
+    "config": "config.cfg"
+}

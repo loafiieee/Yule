@@ -67,7 +67,6 @@ enum {
   LUA_CFG_FLOAT  = 3,
   LUA_CFG_STRING = 4,
   LUA_CFG_ACTION = 5,
-  LUA_CFG_ENUM   = 6,  // fixed list of string options: options[a,b,c]
 };
 
 // Config
@@ -77,8 +76,6 @@ const char* lua_manager_get_mod_config_key(int mod_index, int entry_index);
 const char* lua_manager_get_mod_config_label(int mod_index, int entry_index);
 const char* lua_manager_get_mod_config_value_str(int mod_index, int entry_index);
 int         lua_manager_find_mod_config_index(int mod_index, const char* key);
-int         lua_manager_get_mod_config_option_count(int mod_index, int entry_index);
-const char* lua_manager_get_mod_config_option(int mod_index, int entry_index, int option_index);
 
 // Input bindings
 int         lua_manager_get_mod_bind_count(int mod_index);
@@ -95,8 +92,6 @@ int lua_manager_config_toggle_bool(int mod_index, int entry_index);
 int lua_manager_config_increment_int(int mod_index, int entry_index, int delta);
 int lua_manager_config_increment_float(int mod_index, int entry_index, double delta);
 int lua_manager_config_set_string(int mod_index, int entry_index, const char* value);
-int lua_manager_config_cycle_option(int mod_index, int entry_index, int delta);
-int lua_manager_config_set_option(int mod_index, int entry_index, const char* value);
 
 // Actions
 void lua_manager_config_trigger_action(int mod_index, int entry_index);

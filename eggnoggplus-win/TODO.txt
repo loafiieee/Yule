@@ -1,7 +1,10 @@
 Later:
 
 - API for adding content to gameplay, like more weapons than just a sword, custom map tiles, anything.
+- Add list of options for mod config (Example:
+name: options[option1, option2, option3], default
+)
+- Remove mod profiles
 - Improve console
+- Add features to mod menu such as options for hiding framework log console, fixing sounds (currently the sounds do not mute when starting the game with sounds off in the settings, you have to enable them then disable them again to mute them)
 - Beautify basically every menu. add animations, better readability, etc
-- Add mod support in some form to online
-- cosmetics (MUCH MUCH LATER)

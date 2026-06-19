@@ -2442,14 +2442,7 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
         g_net.dropped_inputs++;
         return 1;
     }
-    /* Keep the persistent waterfall ambience handles stable across the rollback:
-     * the muted replay below re-runs game_update and would otherwise leave them
-     * pointing at a stale/cleared sound slot, heard as a waterfall in rooms with
-     * no waterfall. Snapshot now, restore after the replay loop. */
-    hooks_waterfall_audio_save();
-
     if (!ggpo_ext_load_game_state(blob, h->state_len, err, err_cap)) {
-        hooks_waterfall_audio_restore();
         return 0;
     }
 
@@ -2461,7 +2454,6 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
         uint32_t remote_cmd = 0;
 
         if (!ggpo_net_save_pre_state(f, &rh, NULL, err, err_cap)) {
-            hooks_waterfall_audio_restore();
             return 0;
         }
         memset(&inputs, 0, sizeof(inputs));
@@ -2470,7 +2462,6 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
         inputs.player_cmd[g_net.local_player] = local_cmd;
         inputs.player_cmd[g_net.remote_player] = remote_cmd;
         if (!ggpo_net_replay_frame(f, arg0, 1, &checksum, err, err_cap)) {
-            hooks_waterfall_audio_restore();
             return 0;
         }
         rh->local_cmd = local_cmd;
@@ -2479,8 +2470,6 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
         rh->post_checksum = checksum;
         ggpo_net_capture_history_summary(rh);
     }
-
-    hooks_waterfall_audio_restore();
 
     g_net.last_checksum = checksum;
     g_net.rollbacks++;

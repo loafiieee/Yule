@@ -85,7 +85,6 @@
 #include "custom_maps.h"
 #include "log.h"
 #include "net_ext.h"
-#include "fwsettings.h"
 
 extern char* SDL_GetClipboardText(void);
 extern int SDL_SetClipboardText(const char* text);
@@ -178,11 +177,6 @@ extern void SDL_free(void* mem);
 #define ADDR_SCORE_PLAYER1            0x55A318u
 #define ADDR_GAME_TICKS               0x547BA0u
 #define ADDR_NATIVE_SYNTH_ENABLED     0x54C0CAu
-/* _game_settings sound flag (DAT_0055a170): 1=sound on, 0=off. Loaded from
- * settings.nogg in app_state_init, but the engine force-enables the synth there
- * AFTER the load and never re-applies the setting, so it only takes effect once
- * main_update_settings runs (an options toggle). We apply it once at startup. */
-#define ADDR_SOUND_SETTING            0x55A170u
 #define ADDR_SEED                     0x542074u
 #define ADDR_MRAND_SEED               0x496DA0u
 #define ADDR_MRAND                    0x405080u
@@ -253,6 +247,8 @@ extern void SDL_free(void* mem);
 #define CONSOLE_HISTORY_MAX     64
 #define CONSOLE_BG_DOWNSAMPLE    4
 #define CONSOLE_MAX_MATCHES       32
+#define PROFILE_NAME_MAX          64
+#define PROFILE_PATH_MAX        MAX_PATH
 #define MAX_CUSTOM_STATES         16
 #define CUSTOM_STATE_NAME_MAX     64
 #define GGPO_SELFTEST_FRAMES_PER_TICK 2
@@ -292,14 +288,7 @@ typedef enum RowKind {
     ROW_BIND,
     ROW_BACK,
     ROW_INFO,
-    ROW_FW_HEADER,   // "Framework" section title (non-selectable)
-    ROW_FW_TOGGLE,   // framework on/off option (cfg_index = FwToggle id)
-    ROW_FW_ACTION,   // framework button (cfg_index = FwAction id)
 } RowKind;
-
-// Framework-section row identifiers (stored in MenuRow.cfg_index; mod_index = -1).
-enum { FW_TOGGLE_HIDE_CONSOLE = 0 };
-enum { FW_ACTION_RELOAD_MODS = 0 };
 
 typedef enum CaptureKind {
     CAPTURE_NONE = 0,
@@ -670,6 +659,7 @@ static CaptureKind g_capture_kind = CAPTURE_NONE;
 static int g_capture_mod = -1;
 static int g_capture_cfg = -1;
 static char g_capture_buf[CAPTURE_BUF_SIZE];
+static char g_active_profile_name[PROFILE_NAME_MAX];
 static int g_console_history_loaded = 0;
 static float g_ui_scale = 1.0f;
 
@@ -917,9 +907,6 @@ static void __cdecl mods_entry_leave(void);
 static void console_push_line_rgb(const char* text, float r, float g, float b);
 static void console_set_input(const char* s);
 static void console_insert_text(const char* text);
-static int  console_find_mod_index_by_id(const char* id);
-static int  console_find_cfg_index_by_key(int mod_index, const char* key);
-static void console_compl_reset(void);
 static const char* console_stristr(const char* haystack, const char* needle);
 static char* console_parse_token(char** inout_cursor);
 static int console_try_parse_long(const char* s, long* out_value);
@@ -1146,53 +1133,6 @@ static void online_clear_waterfall_audio_state(const char* reason) {
                   (reason && reason[0]) ? reason : "unknown",
                   (unsigned int)fx,
                   count);
-    }
-}
-
-/*
- * Protect the waterfall ambience across a rollback. The waterfall is a persistent
- * native sound whose handle (_fx_15991), per-room count, and the slot's "active"
- * flag (+0x2c) live in process-local audio memory that is NOT real gameplay state.
- * A rollback re-runs game_update for the replayed frames (with the synth muted),
- * and that replay mutates these handles - leaving them pointing at a stale/cleared
- * slot. The next LIVE frame then drives the waterfall from those corrupted handles,
- * which is heard as waterfall noise in rooms that have no waterfall. We snapshot the
- * live handles before the rollback and put them back afterwards, so the rollback is
- * transparent to the ambience and the live frame keeps managing the real sound.
- */
-static uintptr_t g_wf_saved_fx = 0u;
-static int       g_wf_saved_count = 0;
-static uint32_t  g_wf_saved_active = 0u;
-static int       g_wf_saved_has_active = 0;
-
-void hooks_waterfall_audio_save(void) {
-    g_wf_saved_fx = 0u;
-    g_wf_saved_count = 0;
-    g_wf_saved_active = 0u;
-    g_wf_saved_has_active = 0;
-    if (g_game_waterfall_fx && !IsBadReadPtr((const void*)g_game_waterfall_fx, sizeof(uintptr_t))) {
-        g_wf_saved_fx = *g_game_waterfall_fx;
-    }
-    if (g_game_waterfall_count && !IsBadReadPtr((const void*)g_game_waterfall_count, sizeof(int))) {
-        g_wf_saved_count = *g_game_waterfall_count;
-    }
-    if (g_wf_saved_fx && g_wf_saved_fx < UINTPTR_MAX - 0x2cu &&
-        !IsBadReadPtr((const void*)(g_wf_saved_fx + 0x2cu), sizeof(uint32_t))) {
-        g_wf_saved_active = *(uint32_t*)(g_wf_saved_fx + 0x2cu);
-        g_wf_saved_has_active = 1;
-    }
-}
-
-void hooks_waterfall_audio_restore(void) {
-    if (g_game_waterfall_fx && !IsBadWritePtr((void*)g_game_waterfall_fx, (SIZE_T)sizeof(uintptr_t))) {
-        *g_game_waterfall_fx = g_wf_saved_fx;
-    }
-    if (g_game_waterfall_count && !IsBadWritePtr((void*)g_game_waterfall_count, (SIZE_T)sizeof(int))) {
-        *g_game_waterfall_count = g_wf_saved_count;
-    }
-    if (g_wf_saved_has_active && g_wf_saved_fx && g_wf_saved_fx < UINTPTR_MAX - 0x2cu &&
-        !IsBadWritePtr((void*)(g_wf_saved_fx + 0x2cu), (SIZE_T)sizeof(uint32_t))) {
-        *(uint32_t*)(g_wf_saved_fx + 0x2cu) = g_wf_saved_active;
     }
 }
 
@@ -1770,45 +1710,6 @@ typedef unsigned    (__cdecl *fn_rng_rnd5050_t)(void);
 static uint32_t g_cosmetic_rng_seed = 0x1ED37A11u;
 static volatile int g_cosmetic_rng_depth = 0;
 
-/*
- * Audio-thread RNG isolation (the "toggle sound = desync" / map-dependent fix).
- *
- * The native synth's per-voice DSP callbacks run from SDL's audio callback
- * (mixaudio@0x414d70 -> synth_effects_update@0x408600 -> the effect callback),
- * i.e. on a SEPARATE SDL audio thread. Several of those callbacks draw
- * frnd/rnd/rndsign for waveform variation, and the vanilla RNG reads+writes the
- * single shared _mrand_seed. So the audio thread was asynchronously advancing the
- * GAMEPLAY rng an unpredictable number of times per frame - count depends on how
- * many voices are live (=> map/scene dependent), it stops entirely when sound is
- * off (=> toggling sound flips it), and the timing races the sim thread. That
- * corrupts the deterministic simulation and shows up as rng/things/players
- * desyncs. (The prior code wrapped two callbacks with a seed-swap, but that only
- * covered 2 of N voices AND still wrote _mrand_seed from the audio thread.)
- *
- * Fix: the audio thread must NEVER touch _mrand_seed. Detect "not the sim thread"
- * and serve those draws from a private audio seed that reproduces the game's exact
- * LCG (so the audio stays bit-identical to vanilla) without reading/writing
- * _mrand_seed. The sim thread (whoever runs game_update) keeps the real RNG.
- * Lock-free: the gameplay seed is touched only by the sim thread, the audio seed
- * only by the audio thread.
- */
-static volatile DWORD g_sim_thread_id = 0;             /* thread that runs game_update */
-static uint32_t       g_audio_thread_rng_seed = 0x2545F491u; /* private to the audio thread */
-
-static int hooks_on_audio_thread(void) {
-    DWORD sim = g_sim_thread_id;
-    return sim != 0 && GetCurrentThreadId() != sim;
-}
-
-/* One step of the native mad RNG LCG (matches mrand/rnd/frnd @0x405080..0x405224),
- * on the private audio seed. Callers shift/mask the result exactly like vanilla. */
-static uint32_t hooks_audio_rng_step(void) {
-    uint32_t s = g_audio_thread_rng_seed * 0x41c64e6du + 0x3039u;
-    s = (s >> 1) ^ s ^ ((uint32_t)(-(int32_t)(s & 1u)) & 0xd0000001u);
-    g_audio_thread_rng_seed = s;
-    return s;
-}
-
 static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
     uint32_t c = (uint32_t)caller;
     /*
@@ -1826,49 +1727,15 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
     if (c >= 0x0043E1B0u && c < 0x0043E360u) return 1; /* _puzzley_action   */
     if (c >= 0x0043E450u && c < 0x0043EB10u) return 1; /* _crowd_action     */
     if (c >= 0x0043EE20u && c < 0x0043F4B0u) return 1; /* _waterfall_action */
-    /*
-     * Self-contained cosmetic SOUND helpers that draw frnd/rnd purely for sfx
-     * pitch/variation off the shared gameplay _mrand_seed. Each is gated by
-     * state that is intentionally NOT synced/rolled-back (the wall-clock
-     * _mad_ticks debounce, or the camera-shake intensity which is canonicalized
-     * out of the checksum), so the two peers draw a different NUMBER of times
-     * and the gameplay seed drifts - surfacing as desyncs on death/respawn/
-     * score (when these fire). Isolated by whole-function address range
-     * (bounds from objdump); verified each range contains ONLY cosmetic RNG, no
-     * gameplay/particle/tilemap draws. This is the actual death-desync fix:
-     *   do_cheer is called straight from player_die (ghidra 20839) before the
-     *   dropped-sword spawn frnd, so an unisolated cheer draw corrupts the very
-     *   next gameplay draw -> the dropped sword (a "thing") diverges.
-     */
-    if (c >= 0x004224E0u && c < 0x004227C0u) return 1; /* do_cheer  (frnd/rnd cheer pitch) - player_die + score */
-    if (c >= 0x0041EF40u && c < 0x0041EFB0u) return 1; /* do_whistle (rnd whistle pitch) */
-    if (c >= 0x004222A0u && c < 0x00422460u) return 1; /* game_update_camera (frnd x2 screen shake) */
-    /*
-     * "creepy" room ambience inside player_update_movement (sound_creepy@0x4240f3):
-     * rnd5050 + 5 frnd to randomize the sfx, gated ONLY by a wall-clock dedup
-     * (_mad_ticks - __last__14917 < 0xf, ghidra 21704), so it fires on different
-     * frames per peer and drifts the gameplay seed (residual death-free desyncs
-     * near ambience tiles). The enclosing function is mixed gameplay/cosmetic, so
-     * isolate ONLY the creepy draws by return address, NOT the whole function. The
-     * adjacent thump/jump sounds are gameplay-triggered (deterministic) and left
-     * alone. Main path 0x4240ff..0x424193; the rnd5050==0 branch's frnd is 0x424410. */
-    if (c >= 0x004240FFu && c < 0x00424194u) return 1;
     switch (c) {
-        case 0x00424410u: /* creepy frnd(0,45) - rnd5050()==0 branch */
-        /* Cosmetic RNG draws inline in game_update (a mixed gameplay/cosmetic fn,
-         * so isolated per call site, not by range). Verified against objdump:
-         * each is a sound pitch/pan draw stored into a sound object, gated by the
-         * (non-synced) crowd/chant timers. Waterfall sound pitch/volume stored
-         * into the _fx_15991 sound object (ADDR_WATERFALL_FX 0x541E44 +0x3c/+0x44).
-         * NB: 0x42CA16/0x42CA2C are NOT here despite a prior comment calling them
-         * "crowd ambient pan" - disasm shows they are rnd(0,32)/rnd(0,11) feeding
-         * map_tile@0x42ca33 (gameplay tile-decoration that writes the checksummed
-         * tilemap), so they MUST stay on the gameplay seed. The real crowd-murmur
-         * pan rnd(-10,10) is 0x42dc79/0x42dca5 below. */
-        case 0x0042C801u: /* frnd(0,2)   - crowd cheer colour trigger */
-        case 0x0042C9B8u: /* frnd(0.9,1) - chant sound pitch (sound_noise@0x42c971) */
-        case 0x0042DC79u: /* rnd(-10,10) - crowd murmur sound pan */
-        case 0x0042DCA5u: /* rnd(-10,10) - crowd murmur sound pan */
+        /* Cosmetic RNG draws inside game_update (a mixed gameplay/cosmetic fn,
+         * so isolated per call site, not by range). Crowd cheer/ambient gated by
+         * the crowd/chant timers + real-time audio clock; waterfall sound pitch/
+         * volume stored into the _fx_15991 sound object (ADDR_WATERFALL_FX
+         * 0x541E44 +0x3c/+0x44), verified in disasm @0x42d185/0x42d206/0x42d242. */
+        case 0x0042C801u: /* frnd(0,2)  - crowd cheer colour trigger */
+        case 0x0042CA16u: /* rnd(-10,10) - crowd ambient sound pan   */
+        case 0x0042CA2Cu: /* rnd(-10,10) - crowd ambient sound pan   */
         case 0x0042D19Cu: /* frnd(-1,1)  - waterfall sound randomize */
         case 0x0042D23Eu: /* frnd(1,0.5) - waterfall sound randomize */
             return 1;
@@ -1878,46 +1745,41 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
 }
 
 #ifdef HOOKS_INTELLISENSE
-static uint32_t __cdecl hooked_mrand(void) { return 0; }
+static void hooked_mrand(void) { }
 static int __cdecl hooked_rnd(int a, int b) { (void)a; (void)b; return 0; }
 static long double __cdecl hooked_frnd(float a, float b) { (void)a; (void)b; return 0.0L; }
 static unsigned __cdecl hooked_rnd5050(void) { return 0; }
-static long double __cdecl hooked_rndsign(void) { return 0.0L; }
+static void hooked_rndsign(void) { }
 #else
-/*
- * All five RNG hooks are C wrappers (reached via the detour's jmp, so
- * __builtin_return_address(0) is the original draw site). Two isolation layers:
- *   1. AUDIO THREAD: any draw off the sim thread is the synth running on SDL's
- *      audio thread - serve it from the private audio seed, never touch _mrand_seed.
- *   2. SIM-thread COSMETIC call sites (hooks_rng_caller_is_cosmetic): swap in the
- *      private cosmetic seed around the real draw so visuals stay random but the
- *      gameplay seed is untouched.
- * The trace records only NON-cosmetic sim-thread draws so a desync dump isn't
- * flooded. Everything else passes straight through on the real gameplay seed.
- * (mrand/rndsign used to be naked tail-jumps; converted to C so they can take the
- * audio-thread branch like rnd/frnd/rnd5050.)
- */
-static uint32_t __cdecl hooked_mrand(void) {
-    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
-    if (hooks_on_audio_thread()) return hooks_audio_rng_step() >> 16;
-    hooks_rng_trace_record_from_hook(1u, caller);
-    if (!g_hooks_rng_mrand_trampoline) return 0;
-    return ((uint32_t (__cdecl*)(void))g_hooks_rng_mrand_trampoline)();
+static void __attribute__((naked)) hooked_mrand(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $1\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_mrand_trampoline\n\t"
+    );
 }
 
+/*
+ * rnd/frnd/rnd5050 are C wrappers (not naked tail-jumps) so that, for the cosmetic
+ * call sites in hooks_rng_caller_is_cosmetic, we can swap the gameplay seed for a
+ * private cosmetic seed around the real draw. Reached via the detour's jmp, so
+ * __builtin_return_address(0) is the original caller (the draw site). The trace
+ * records only NON-cosmetic draws so a desync dump isn't flooded by cosmetic spray.
+ * Non-cosmetic callers pass straight through unchanged. Same isolation pattern as
+ * hooked_sound_sword_ching. mrand/rndsign have no cosmetic callers and stay naked.
+ */
 static int __cdecl hooked_rnd(int lo, int hi) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     fn_rng_rnd_t real = (fn_rng_rnd_t)g_hooks_rng_rnd_trampoline;
-    int cosmetic;
+    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
     int result;
-    if (hooks_on_audio_thread()) {
-        /* rnd(lo,hi): base + (seed>>16) % (|hi-lo|+1), matching rnd @0x4050b0 */
-        uint32_t s = hooks_audio_rng_step();
-        int base = (hi <= lo) ? hi : lo;
-        uint32_t span = (uint32_t)((hi >= lo) ? (hi - lo) : (lo - hi));
-        return (int)((s >> 16) % (span + 1u)) + base;
-    }
-    cosmetic = hooks_rng_caller_is_cosmetic(caller);
     /* Trace only non-cosmetic draws so a desync dump isn't flooded by isolated
      * cosmetic spray; cosmetic draws no longer touch the gameplay seed anyway. */
     if (!cosmetic) hooks_rng_trace_record_from_hook(2u, caller);
@@ -1938,15 +1800,8 @@ static int __cdecl hooked_rnd(int lo, int hi) {
 static long double __cdecl hooked_frnd(float lo, float hi) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     fn_rng_frnd_t real = (fn_rng_frnd_t)g_hooks_rng_frnd_trampoline;
-    int cosmetic;
+    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
     long double result;
-    if (hooks_on_audio_thread()) {
-        /* frnd(lo,hi): (seed>>16)*(hi-lo)/65535 + lo, matching frnd @0x405170 */
-        uint32_t s = hooks_audio_rng_step();
-        return ((long double)(s >> 16) * ((long double)hi - (long double)lo)) / 65535.0L
-               + (long double)lo;
-    }
-    cosmetic = hooks_rng_caller_is_cosmetic(caller);
     if (!cosmetic) hooks_rng_trace_record_from_hook(3u, caller);
     if (!real) return 0.0L;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
@@ -1965,13 +1820,8 @@ static long double __cdecl hooked_frnd(float lo, float hi) {
 static unsigned __cdecl hooked_rnd5050(void) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     fn_rng_rnd5050_t real = (fn_rng_rnd5050_t)g_hooks_rng_rnd5050_trampoline;
-    int cosmetic;
+    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
     unsigned result;
-    if (hooks_on_audio_thread()) {
-        /* rnd5050(): (seed>>16)&1, matching rnd5050 @0x405210 */
-        return (hooks_audio_rng_step() >> 16) & 1u;
-    }
-    cosmetic = hooks_rng_caller_is_cosmetic(caller);
     if (!cosmetic) hooks_rng_trace_record_from_hook(4u, caller);
     if (!real) return 0;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
@@ -1987,16 +1837,19 @@ static unsigned __cdecl hooked_rnd5050(void) {
     return real();
 }
 
-static long double __cdecl hooked_rndsign(void) {
-    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
-    if (hooks_on_audio_thread()) {
-        /* rndsign(): (seed & 0x10000) ? -1 : 1, matching rndsign @0x4052c0 */
-        uint32_t s = hooks_audio_rng_step();
-        return (s & 0x10000u) ? -1.0L : 1.0L;
-    }
-    hooks_rng_trace_record_from_hook(5u, caller);
-    if (!g_hooks_rng_rndsign_trampoline) return 0.0L;
-    return ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
+static void __attribute__((naked)) hooked_rndsign(void) {
+    __asm__ __volatile__(
+        "pushfl\n\t"
+        "pushal\n\t"
+        "movl 36(%esp), %eax\n\t"
+        "pushl %eax\n\t"
+        "pushl $5\n\t"
+        "call _hooks_rng_trace_record_from_hook\n\t"
+        "addl $8, %esp\n\t"
+        "popal\n\t"
+        "popfl\n\t"
+        "jmp *_g_hooks_rng_rndsign_trampoline\n\t"
+    );
 }
 #endif
 
@@ -2531,24 +2384,37 @@ static int console_apply_config_value(int idx, int cfg_idx, const char* value) {
         ok = lua_manager_config_increment_float(idx, cfg_idx, want - cur);
     } else if (type == LUA_CFG_STRING) {
         ok = lua_manager_config_set_string(idx, cfg_idx, value);
-    } else if (type == LUA_CFG_ENUM) {
-        ok = lua_manager_config_set_option(idx, cfg_idx, value);
     }
     return ok;
 }
 
-static void console_run_reload_mods(void); // defined later, reused by the menu
-
-// "Hide log console" framework toggle: persisted in mods/modframework.cfg and
-// applied to the AllocConsole window. value 1 = console hidden.
-static int fw_get_hide_console(void) {
-    return fwsettings_get_int("hide_log_console", 1) ? 1 : 0;
+static void profile_ensure_dir(void) {
+    CreateDirectoryA("mods", NULL);
+    CreateDirectoryA("mods\\profiles", NULL);
 }
 
-static void fw_set_hide_console(int hide) {
-    hide = hide ? 1 : 0;
-    fwsettings_set_int("hide_log_console", hide);
-    log_set_console_visible(hide ? 0 : 1);
+static int profile_sanitize_name(const char* src, char* dst, size_t dst_sz) {
+    size_t pos = 0;
+    if (!dst || dst_sz == 0) return 0;
+    dst[0] = '\0';
+    if (!src || !src[0]) return 0;
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        if (isalnum(c) || c == '_' || c == '-' || c == '.') {
+            if (pos + 1 >= dst_sz) break;
+            dst[pos++] = (char)c;
+        }
+    }
+    dst[pos] = '\0';
+    return pos > 0;
+}
+
+static int profile_build_path(const char* name, char* out, size_t out_sz) {
+    char clean[PROFILE_NAME_MAX];
+    if (!profile_sanitize_name(name, clean, sizeof(clean))) return 0;
+    profile_ensure_dir();
+    snprintf(out, out_sz, "mods\\profiles\\%s.profile", clean);
+    return 1;
 }
 
 static void rebuild_rows(void) {
@@ -2648,7 +2514,6 @@ static void rebuild_rows(void) {
                         case LUA_CFG_BOOL: safe_copy(value, sizeof(value), str_bool_true(raw_value) ? "ON" : "OFF"); break;
                         case LUA_CFG_ACTION: safe_copy(value, sizeof(value), "[Run]"); break;
                         case LUA_CFG_STRING: snprintf(value, sizeof(value), "\"%s\"", raw_value); break;
-                        case LUA_CFG_ENUM: snprintf(value, sizeof(value), "< %s >", raw_value); break;
                         default: safe_copy(value, sizeof(value), raw_value); break;
                     }
                     rows_add(ROW_CONFIG, 1, mi, ci, label, value);
@@ -2677,14 +2542,6 @@ static void rebuild_rows(void) {
     }
 
     rows_add(ROW_DIVIDER, 0, -1, -1, "", "");
-
-    // Framework options: QOL controls, just above Back.
-    rows_add(ROW_FW_HEADER, 0, -1, -1, "Options", "");
-    rows_add(ROW_FW_TOGGLE, 1, -1, FW_TOGGLE_HIDE_CONSOLE,
-             "  Hide log console", fw_get_hide_console() ? "ON" : "OFF");
-    rows_add(ROW_FW_ACTION, 1, -1, FW_ACTION_RELOAD_MODS,
-             "  Reload mods", "[Run]");
-
     rows_add(ROW_BACK, 1, -1, -1, "Back", "");
 
     int found = -1;
@@ -2747,11 +2604,6 @@ static void apply_adjustment_on_selected(int delta) {
     MenuRow* row = &g_rows[g_selected_row];
     if (row->kind == ROW_MOD_HEADER) {
         mods_toggle_collapsed(row->mod_index);
-    } else if (row->kind == ROW_FW_TOGGLE) {
-        if (row->cfg_index == FW_TOGGLE_HIDE_CONSOLE) {
-            int cur = fw_get_hide_console();
-            fw_set_hide_console(delta > 0 ? 1 : (delta < 0 ? 0 : !cur));
-        }
     } else if (row->kind == ROW_MOD_TOGGLE) {
         int enabled = lua_manager_get_mod_enabled(row->mod_index);
         lua_manager_set_mod_enabled(row->mod_index, delta > 0 ? 1 : (delta < 0 ? 0 : !enabled));
@@ -2763,8 +2615,6 @@ static void apply_adjustment_on_selected(int delta) {
             lua_manager_config_increment_int(row->mod_index, row->cfg_index, delta);
         } else if (type == LUA_CFG_FLOAT) {
             lua_manager_config_increment_float(row->mod_index, row->cfg_index, (double)delta * 0.1);
-        } else if (type == LUA_CFG_ENUM) {
-            lua_manager_config_cycle_option(row->mod_index, row->cfg_index, delta > 0 ? 1 : -1);
         }
     }
 
@@ -2778,21 +2628,6 @@ static void activate_selected(void) {
     MenuRow* row = &g_rows[g_selected_row];
     if (row->kind == ROW_BACK) {
         mods_go_back();
-        return;
-    }
-
-    if (row->kind == ROW_FW_TOGGLE) {
-        if (row->cfg_index == FW_TOGGLE_HIDE_CONSOLE) {
-            fw_set_hide_console(!fw_get_hide_console());
-        }
-        rebuild_rows();
-        return;
-    }
-    if (row->kind == ROW_FW_ACTION) {
-        if (row->cfg_index == FW_ACTION_RELOAD_MODS) {
-            console_run_reload_mods();
-        }
-        rebuild_rows();
         return;
     }
 
@@ -2814,8 +2649,6 @@ static void activate_selected(void) {
             lua_manager_config_trigger_action(row->mod_index, row->cfg_index);
         } else if (type == LUA_CFG_STRING) {
             begin_string_capture(row->mod_index, row->cfg_index);
-        } else if (type == LUA_CFG_ENUM) {
-            lua_manager_config_cycle_option(row->mod_index, row->cfg_index, 1);
         }
     }
 
@@ -2957,6 +2790,7 @@ static const char* k_console_commands[] = {
     "mods.count", "mods.list", "mods.find", "mods.info", "mods.trace", "mods.enable", "mods.disable", "mods.toggle",
     "mods.config", "mods.config.find", "mods.config.get", "mods.config.set", "mods.config.action",
     "binds.list", "binds.find", "binds.set", "binds.clear",
+    "profiles.list", "profiles.save", "profiles.load", "profiles.delete", "profiles.current",
     "reload.mods", "mods.reload", "reload.assets",
     "online.hub",
     "ggpo.net",
@@ -2965,7 +2799,7 @@ static const char* k_console_commands[] = {
 };
 
 static void console_history_path(char* out, size_t out_sz) {
-    CreateDirectoryA("mods", NULL);
+    profile_ensure_dir();
     snprintf(out, out_sz, "mods\\console_history.txt");
 }
 
@@ -3029,423 +2863,53 @@ static int console_common_prefix_len(const char* a, const char* b) {
     return n;
 }
 
-// =====================================================================
-// Context-aware tab completion + reverse history search
-// =====================================================================
-
-#define CONSOLE_COMPL_MAX  64
-#define CONSOLE_COMPL_ITEM 96
-
-static char g_compl_items[CONSOLE_COMPL_MAX][CONSOLE_COMPL_ITEM];
-static int  g_compl_count = 0;
-static int  g_compl_index = -1;        // applied candidate while cycling
-static int  g_compl_active = 0;        // a Tab cycle is in progress
-static int  g_compl_token_start = -1;  // offset where the completed token starts
-
-static int  g_console_search_active = 0;
-static char g_console_search_query[CONSOLE_INPUT_BUF];
-static char g_console_search_saved[CONSOLE_INPUT_BUF];
-static int  g_console_search_index = -1; // history index of the current match
-
-static void console_compl_reset(void) {
-    g_compl_active = 0;
-    g_compl_index = -1;
-    g_compl_count = 0;
-    g_compl_token_start = -1;
-}
-
-static void console_compl_add(const char* s) {
-    if (!s || !s[0]) return;
-    if (g_compl_count >= CONSOLE_COMPL_MAX) return;
-    for (int i = 0; i < g_compl_count; i++) {
-        if (_stricmp(g_compl_items[i], s) == 0) return;
-    }
-    safe_copy(g_compl_items[g_compl_count], CONSOLE_COMPL_ITEM, s);
-    g_compl_count++;
-}
-
-static void console_compl_add_pref(const char* s, const char* prefix, int plen) {
-    if (!s) return;
-    if (plen > 0 && _strnicmp(s, prefix, (size_t)plen) != 0) return;
-    console_compl_add(s);
-}
-
-// Copy the Nth whitespace-delimited token of the full input line into out.
-static void console_input_token(int index, char* out, size_t outsz) {
-    const char* s = g_console_input;
-    int i = 0, t = 0;
-    out[0] = '\0';
-    while (s[i]) {
-        while (s[i] && isspace((unsigned char)s[i])) i++;
-        if (!s[i]) break;
-        int start = i;
-        while (s[i] && !isspace((unsigned char)s[i])) i++;
-        if (t == index) {
-            int len = i - start;
-            if (len > (int)outsz - 1) len = (int)outsz - 1;
-            memcpy(out, s + start, (size_t)len);
-            out[len] = '\0';
-            return;
-        }
-        t++;
-    }
-}
-
-// Locate the token under the cursor. Returns its arg index (0 = command),
-// and fills cmd (token 0), prefix (token text up to the cursor), *tok_start.
-static int console_compl_context(char* cmd, size_t cmdsz, char* prefix, size_t prefixsz, int* tok_start) {
-    const char* s = g_console_input;
-    int cur = g_console_cursor;
-    int i, in_tok = 0, start = 0, token_no = -1;
-
-    if (cur < 0) cur = 0;
-    console_input_token(0, cmd, cmdsz);
-
-    for (i = 0; i < cur; i++) {
-        if (!isspace((unsigned char)s[i])) {
-            if (!in_tok) { in_tok = 1; start = i; token_no++; }
-        } else {
-            in_tok = 0;
-        }
-    }
-
-    int cur_start, arg_index;
-    if (in_tok) { cur_start = start; arg_index = token_no; }
-    else        { cur_start = cur;   arg_index = token_no + 1; }
-
-    int plen = cur - cur_start;
-    if (plen < 0) plen = 0;
-    if (plen > (int)prefixsz - 1) plen = (int)prefixsz - 1;
-    memcpy(prefix, s + cur_start, (size_t)plen);
-    prefix[plen] = '\0';
-    *tok_start = cur_start;
-    return arg_index;
-}
-
-static void console_compl_mod_ids(const char* prefix, int plen, int allow_all) {
-    if (allow_all) console_compl_add_pref("all", prefix, plen);
-    int n = lua_manager_get_mod_count();
-    for (int i = 0; i < n; i++) {
-        const char* id = lua_manager_get_mod_id(i);
-        if (id && id[0]) console_compl_add_pref(id, prefix, plen);
-    }
-}
-
-static void console_compl_cfg_keys(const char* mod_id, const char* prefix, int plen) {
-    int idx = console_find_mod_index_by_id(mod_id);
-    if (idx < 0) return;
-    int n = lua_manager_get_mod_config_count(idx);
-    for (int i = 0; i < n; i++) {
-        const char* k = lua_manager_get_mod_config_key(idx, i);
-        if (k && k[0]) console_compl_add_pref(k, prefix, plen);
-    }
-}
-
-static void console_compl_bind_keys(const char* mod_id, const char* prefix, int plen) {
-    int idx = console_find_mod_index_by_id(mod_id);
-    if (idx < 0) return;
-    int n = lua_manager_get_mod_bind_count(idx);
-    for (int i = 0; i < n; i++) {
-        const char* k = lua_manager_get_mod_bind_key(idx, i);
-        if (k && k[0]) console_compl_add_pref(k, prefix, plen);
-    }
-}
-
-// Complete the value of `mods.config.set <id> <key> <value>` for bool/options.
-static void console_compl_cfg_values(const char* mod_id, const char* key, const char* prefix, int plen) {
-    int idx = console_find_mod_index_by_id(mod_id);
-    if (idx < 0) return;
-    int ci = console_find_cfg_index_by_key(idx, key);
-    if (ci < 0) return;
-    int type = lua_manager_get_mod_config_type(idx, ci);
-    if (type == LUA_CFG_BOOL) {
-        static const char* k[] = { "true", "false", "on", "off" };
-        for (int i = 0; i < 4; i++) console_compl_add_pref(k[i], prefix, plen);
-    } else if (type == LUA_CFG_ENUM) {
-        int n = lua_manager_get_mod_config_option_count(idx, ci);
-        for (int i = 0; i < n; i++) {
-            console_compl_add_pref(lua_manager_get_mod_config_option(idx, ci, i), prefix, plen);
-        }
-    }
-}
-
-static void console_compl_keywords(const char* const* kws, int n, const char* prefix, int plen) {
-    for (int i = 0; i < n; i++) console_compl_add_pref(kws[i], prefix, plen);
-}
-
-static int console_cmd_eq(const char* cmd, const char* a) { return _stricmp(cmd, a) == 0; }
-
-static void console_build_candidates(const char* cmd, int arg_index, const char* prefix) {
-    int plen = (int)strlen(prefix);
-    char tok1[CONSOLE_COMPL_ITEM];
-    char tok2[CONSOLE_COMPL_ITEM];
-
-    g_compl_count = 0;
-
-    if (arg_index == 0) {
-        for (int i = 0; i < (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0])); i++)
-            console_compl_add_pref(k_console_commands[i], prefix, plen);
-        return;
-    }
-
-    console_input_token(1, tok1, sizeof(tok1));
-    console_input_token(2, tok2, sizeof(tok2));
-
-    if (console_cmd_eq(cmd,"mods.enable") || console_cmd_eq(cmd,"mods.disable") || console_cmd_eq(cmd,"mods.toggle")) {
-        if (arg_index == 1) console_compl_mod_ids(prefix, plen, 1);
-    } else if (console_cmd_eq(cmd,"mods.info") || console_cmd_eq(cmd,"mods.config") || console_cmd_eq(cmd,"mods.cfg") ||
-               console_cmd_eq(cmd,"binds.list") || console_cmd_eq(cmd,"lua.mod") || console_cmd_eq(cmd,"eval.mod")) {
-        if (arg_index == 1) console_compl_mod_ids(prefix, plen, 0);
-    } else if (console_cmd_eq(cmd,"mods.trace")) {
-        if (arg_index == 1) console_compl_mod_ids(prefix, plen, 1);
-        else if (arg_index == 2) { static const char* k[] = {"on","off"}; console_compl_keywords(k,2,prefix,plen); }
-    } else if (console_cmd_eq(cmd,"mods.config.get") || console_cmd_eq(cmd,"mods.cfg.get") ||
-               console_cmd_eq(cmd,"mods.config.action") || console_cmd_eq(cmd,"mods.cfg.action")) {
-        if (arg_index == 1) console_compl_mod_ids(prefix, plen, 0);
-        else if (arg_index == 2) console_compl_cfg_keys(tok1, prefix, plen);
-    } else if (console_cmd_eq(cmd,"mods.config.set") || console_cmd_eq(cmd,"mods.cfg.set")) {
-        if (arg_index == 1) console_compl_mod_ids(prefix, plen, 0);
-        else if (arg_index == 2) console_compl_cfg_keys(tok1, prefix, plen);
-        else if (arg_index == 3) console_compl_cfg_values(tok1, tok2, prefix, plen);
-    } else if (console_cmd_eq(cmd,"binds.set") || console_cmd_eq(cmd,"binds.clear")) {
-        if (arg_index == 1) console_compl_mod_ids(prefix, plen, 0);
-        else if (arg_index == 2) console_compl_bind_keys(tok1, prefix, plen);
-    } else if (console_cmd_eq(cmd,"log.level")) {
-        static const char* k[] = {"debug","info","warn","error"}; if (arg_index == 1) console_compl_keywords(k,4,prefix,plen);
-    } else if (console_cmd_eq(cmd,"console.copy")) {
-        static const char* k[] = {"output","input"}; if (arg_index == 1) console_compl_keywords(k,2,prefix,plen);
-    } else if (console_cmd_eq(cmd,"state.switch")) {
-        static const char* k[] = {"main","main_initial","options","options_paused","mods","mods_entry","online","console","return"};
-        if (arg_index == 1) console_compl_keywords(k,9,prefix,plen);
-    } else if (console_cmd_eq(cmd,"state.return")) {
-        static const char* k[] = {"main","main_initial","options","options_paused","mods","mods_entry"};
-        if (arg_index == 1) console_compl_keywords(k,6,prefix,plen);
-    } else if (console_cmd_eq(cmd,"time.scale")) {
-        static const char* k[] = {"auto"}; if (arg_index == 1) console_compl_keywords(k,1,prefix,plen);
-    } else if (console_cmd_eq(cmd,"ggpo.local")) {
-        static const char* k[] = {"toggle","on","off","status"}; if (arg_index == 1) console_compl_keywords(k,4,prefix,plen);
-    } else if (console_cmd_eq(cmd,"ggpo.net")) {
-        if (arg_index == 1) {
-            static const char* k[] = {"host","join","delay","advantage","predict","highping","smoothping","correction","sim","status","off"};
-            console_compl_keywords(k,11,prefix,plen);
-        } else if (arg_index == 2 && console_cmd_eq(tok1,"correction")) {
-            static const char* k[] = {"on","off"}; console_compl_keywords(k,2,prefix,plen);
-        }
-    }
-}
-
-// Replace the token at tok_start (extending to its end) with `replacement`.
-static void console_compl_apply(int tok_start, const char* replacement, int add_space) {
-    char buf[CONSOLE_INPUT_BUF];
-    const char* s = g_console_input;
-    int token_end = tok_start;
-    while (s[token_end] && !isspace((unsigned char)s[token_end])) token_end++;
-    int has_tail = (s[token_end] != '\0');
-    snprintf(buf, sizeof(buf), "%.*s%s%s%s",
-             tok_start, s, replacement,
-             (add_space && !has_tail) ? " " : "",
-             s + token_end);
-    int new_cursor = tok_start + (int)strlen(replacement) + ((add_space && !has_tail) ? 1 : 0);
-    safe_copy(g_console_input, sizeof(g_console_input), buf);
-    if (new_cursor > (int)strlen(g_console_input)) new_cursor = (int)strlen(g_console_input);
-    g_console_cursor = new_cursor;
-}
-
-static void console_autocomplete(int reverse) {
-    char cmd[CONSOLE_COMPL_ITEM];
+static void console_autocomplete(void) {
     char prefix[128];
-    int tok_start = 0;
-    int arg_index;
+    int prefix_len = 0;
+    int match_count = 0;
+    const char* first_match = NULL;
+    int common_len = 0;
 
-    if (g_console_search_active) return;
-
-    // Repeated Tab cycles through an already-built candidate list.
-    if (g_compl_active && g_compl_count > 1) {
-        if (reverse) g_compl_index = (g_compl_index - 1 + g_compl_count) % g_compl_count;
-        else         g_compl_index = (g_compl_index + 1) % g_compl_count;
-        console_compl_apply(g_compl_token_start, g_compl_items[g_compl_index], 0);
-        return;
+    while (prefix_len < g_console_cursor && prefix_len < (int)sizeof(prefix) - 1) {
+        char c = g_console_input[prefix_len];
+        if (!c || isspace((unsigned char)c)) break;
+        prefix[prefix_len++] = c;
     }
-
-    arg_index = console_compl_context(cmd, sizeof(cmd), prefix, sizeof(prefix), &tok_start);
-    console_build_candidates(cmd, arg_index, prefix);
-    g_compl_token_start = tok_start;
-
-    if (g_compl_count == 0) { console_compl_reset(); return; }
-
-    if (g_compl_count == 1) {
-        console_compl_apply(tok_start, g_compl_items[0], 1);
-        console_compl_reset();
-        return;
-    }
-
-    // Multiple matches: extend to the common prefix, list them, arm cycling.
-    int common = (int)strlen(g_compl_items[0]);
-    for (int i = 1; i < g_compl_count; i++) {
-        int c = console_common_prefix_len(g_compl_items[0], g_compl_items[i]);
-        if (c < common) common = c;
-    }
-    if (common > (int)strlen(prefix)) {
-        char partial[CONSOLE_COMPL_ITEM];
-        if (common > CONSOLE_COMPL_ITEM - 1) common = CONSOLE_COMPL_ITEM - 1;
-        memcpy(partial, g_compl_items[0], (size_t)common);
-        partial[common] = '\0';
-        console_compl_apply(tok_start, partial, 0);
-    }
-    console_push_line_rgb("Matches (Tab to cycle):", 0.62f, 0.86f, 1.00f);
-    for (int i = 0; i < g_compl_count && i < CONSOLE_MAX_MATCHES; i++) {
-        char out[CONSOLE_LINE_TEXT];
-        snprintf(out, sizeof(out), "   %s", g_compl_items[i]);
-        console_push_line_rgb(out, 0.78f, 0.84f, 0.94f);
-    }
-    if (g_compl_count > CONSOLE_MAX_MATCHES) {
-        char out[64];
-        snprintf(out, sizeof(out), "   ...and %d more", g_compl_count - CONSOLE_MAX_MATCHES);
-        console_push_line_rgb(out, 0.56f, 0.62f, 0.74f);
-    }
-    g_compl_active = 1;
-    g_compl_index = -1;
-}
-
-// ---- reverse history search (Ctrl+R) ----
-static int console_search_find(int from_index) {
-    if (g_console_search_query[0] == '\0') {
-        return (from_index >= 0 && from_index < g_console_history_count) ? from_index : -1;
-    }
-    for (int i = from_index; i >= 0; i--) {
-        if (i < g_console_history_count && console_stristr(g_console_history[i], g_console_search_query)) return i;
-    }
-    return -1;
-}
-
-static void console_search_requery(void) {
-    g_console_search_index = console_search_find(g_console_history_count - 1);
-}
-
-static void console_search_begin(void) {
-    g_console_search_active = 1;
-    g_console_search_query[0] = '\0';
-    safe_copy(g_console_search_saved, sizeof(g_console_search_saved), g_console_input);
-    console_compl_reset();
-    console_search_requery();
-}
-
-static void console_search_step_older(void) {
-    int start = (g_console_search_index < 0) ? g_console_history_count - 1 : g_console_search_index - 1;
-    int m = console_search_find(start);
-    if (m >= 0) g_console_search_index = m;
-}
-
-static void console_search_type(const char* text) {
-    size_t qlen;
-    if (!text) return;
-    qlen = strlen(g_console_search_query);
-    for (const char* p = text; *p; p++) {
-        if (qlen + 1 >= sizeof(g_console_search_query)) break;
-        g_console_search_query[qlen++] = *p;
-    }
-    g_console_search_query[qlen] = '\0';
-    console_search_requery();
-}
-
-static void console_search_backspace(void) {
-    size_t qlen = strlen(g_console_search_query);
-    if (qlen > 0) g_console_search_query[qlen - 1] = '\0';
-    console_search_requery();
-}
-
-static void console_search_accept(void) {
-    if (g_console_search_index >= 0 && g_console_search_index < g_console_history_count) {
-        console_set_input(g_console_history[g_console_search_index]);
-    }
-    g_console_search_active = 0;
-    g_console_search_query[0] = '\0';
-    g_console_search_index = -1;
-}
-
-static void console_search_cancel(void) {
-    console_set_input(g_console_search_saved);
-    g_console_search_active = 0;
-    g_console_search_query[0] = '\0';
-    g_console_search_index = -1;
-}
-
-// ---- "did you mean?" for unknown commands ----
-static int console_levenshtein(const char* a, const char* b) {
-    int la = (int)strlen(a), lb = (int)strlen(b);
-    int prev[40], cur[40];
-    if (la > 39) la = 39;
-    if (lb > 39) lb = 39;
-    for (int j = 0; j <= lb; j++) prev[j] = j;
-    for (int i = 1; i <= la; i++) {
-        cur[0] = i;
-        for (int j = 1; j <= lb; j++) {
-            int cost = (tolower((unsigned char)a[i-1]) == tolower((unsigned char)b[j-1])) ? 0 : 1;
-            int del = prev[j] + 1, ins = cur[j-1] + 1, sub = prev[j-1] + cost;
-            int m = del < ins ? del : ins;
-            if (sub < m) m = sub;
-            cur[j] = m;
-        }
-        for (int j = 0; j <= lb; j++) prev[j] = cur[j];
-    }
-    return prev[lb];
-}
-
-static void console_suggest_commands(const char* cmd) {
-    const char* best[3] = { NULL, NULL, NULL };
-    int bestd[3] = { 99, 99, 99 };
-    int clen = (int)strlen(cmd);
-    int thresh = (clen <= 4) ? 2 : 3;
+    prefix[prefix_len] = '\0';
+    if (strchr(g_console_input, ' ')) return;
 
     for (int i = 0; i < (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0])); i++) {
-        const char* c = k_console_commands[i];
-        int d = console_levenshtein(cmd, c);
-        if (clen >= 2 && _strnicmp(c, cmd, (size_t)clen) == 0) d = 0; // favor prefix matches
-        if (d > thresh) continue;
-        for (int s = 0; s < 3; s++) {
-            if (d < bestd[s]) {
-                for (int t = 2; t > s; t--) { bestd[t] = bestd[t-1]; best[t] = best[t-1]; }
-                bestd[s] = d; best[s] = c;
-                break;
-            }
+        const char* cmd = k_console_commands[i];
+        if (_strnicmp(cmd, prefix, (size_t)prefix_len) != 0) continue;
+        if (!first_match) {
+            first_match = cmd;
+            common_len = (int)strlen(cmd);
+        } else {
+            int cur = console_common_prefix_len(first_match, cmd);
+            if (cur < common_len) common_len = cur;
+        }
+        match_count++;
+        if (match_count <= CONSOLE_MAX_MATCHES) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "  %s", cmd);
+            if (match_count == 1) console_push_line_rgb("Matches:", 0.72f, 0.90f, 1.00f);
+            console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
         }
     }
 
-    if (!best[0]) return;
-    {
-        char list[256] = "";
-        char out[CONSOLE_LINE_TEXT];
-        for (int s = 0; s < 3 && best[s]; s++) {
-            if (s) strncat(list, ", ", sizeof(list) - strlen(list) - 1);
-            strncat(list, best[s], sizeof(list) - strlen(list) - 1);
-        }
-        snprintf(out, sizeof(out), "Did you mean: %s?", list);
-        console_push_line_rgb(out, 0.88f, 0.82f, 0.52f);
+    if (!first_match) return;
+    if (match_count == 1) {
+        char full[CONSOLE_INPUT_BUF];
+        snprintf(full, sizeof(full), "%s ", first_match);
+        console_set_input(full);
+        return;
     }
-}
-
-// One-line usage hint shown in the footer while typing a known command.
-static const char* console_usage_for(const char* cmd) {
-    static const struct { const char* name; const char* usage; } u[] = {
-        {"mods.enable","mods.enable <id|all>"}, {"mods.disable","mods.disable <id|all>"},
-        {"mods.toggle","mods.toggle <id|all>"}, {"mods.info","mods.info <id>"},
-        {"mods.trace","mods.trace <id|all> [on|off]"}, {"mods.find","mods.find <text>"},
-        {"mods.config","mods.config <id>"}, {"mods.config.get","mods.config.get <id> <key>"},
-        {"mods.config.set","mods.config.set <id> <key> <value>"}, {"mods.config.action","mods.config.action <id> <key>"},
-        {"binds.list","binds.list [id]"}, {"binds.find","binds.find <text>"},
-        {"binds.set","binds.set <id> <key> <value>"}, {"binds.clear","binds.clear <id> <key>"},
-        {"log.level","log.level [debug|info|warn|error]"}, {"log.tail","log.tail [lines]"},
-        {"state.switch","state.switch <name>"}, {"state.return","state.return [name]"},
-        {"time.scale","time.scale [value|auto]"}, {"ggpo.net","ggpo.net <host|join|delay|...|status|off>"},
-        {"echo","echo <text>"}, {"lua","lua <code>"}, {"lua.mod","lua.mod <id> <code>"},
-        {"lua.file","lua.file <path>"}, {"input.override","input.override <player> <mask> [frames] [replace]"},
-        {"input.clear","input.clear <player>"}, {"history","history [count]"},
-    };
-    if (!cmd || !cmd[0]) return NULL;
-    for (int i = 0; i < (int)(sizeof(u) / sizeof(u[0])); i++) {
-        if (_stricmp(cmd, u[i].name) == 0) return u[i].usage;
+    if (common_len > prefix_len) {
+        char partial[128];
+        memcpy(partial, first_match, (size_t)common_len);
+        partial[common_len] = '\0';
+        console_set_input(partial);
     }
-    return NULL;
 }
 
 static void console_reset_history_nav(void) {
@@ -3459,7 +2923,6 @@ static void console_set_input(const char* s) {
     safe_copy(g_console_input, sizeof(g_console_input), s ? s : "");
     len = strlen(g_console_input);
     g_console_cursor = (int)len;
-    console_compl_reset();
 }
 
 static void console_detach_from_history(void) {
@@ -3507,7 +2970,6 @@ static void console_insert_text(const char* text) {
     }
     if (ins_len <= 0) return;
     console_detach_from_history();
-    console_compl_reset();
     memmove(g_console_input + g_console_cursor + ins_len,
             g_console_input + g_console_cursor,
             len - (size_t)g_console_cursor + 1);
@@ -3519,7 +2981,6 @@ static void console_backspace(void) {
     size_t len = strlen(g_console_input);
     if (g_console_cursor <= 0 || len <= 0) return;
     console_detach_from_history();
-    console_compl_reset();
     memmove(g_console_input + g_console_cursor - 1,
             g_console_input + g_console_cursor,
             len - (size_t)g_console_cursor + 1);
@@ -3530,7 +2991,6 @@ static void console_delete(void) {
     size_t len = strlen(g_console_input);
     if ((size_t)g_console_cursor >= len) return;
     console_detach_from_history();
-    console_compl_reset();
     memmove(g_console_input + g_console_cursor,
             g_console_input + g_console_cursor + 1,
             len - (size_t)g_console_cursor);
@@ -3735,7 +3195,6 @@ static const char* console_cfg_type_name(int type) {
         case LUA_CFG_FLOAT: return "float";
         case LUA_CFG_STRING: return "string";
         case LUA_CFG_ACTION: return "action";
-        case LUA_CFG_ENUM: return "options";
         default: return "unknown";
     }
 }
@@ -3885,6 +3344,11 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  binds.find <text>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  binds.set <id> <key> <value>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  binds.clear <id> <key>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.list", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.save <name>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.load <name>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.delete <name>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  profiles.current", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.mods", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
@@ -3930,6 +3394,10 @@ static void console_show_help(const char* topic) {
     }
     if (_stricmp(t, "binds.set") == 0) {
         console_push_line_rgb("binds.set <id> <key> <value>: set a named mod bind (example values: space, a, left, escape).", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "profiles.save") == 0 || _stricmp(t, "profiles.load") == 0) {
+        console_push_line_rgb("profiles.save/load <name>: persist enabled states, config values, and bind values.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "mods.toggle") == 0) {
@@ -4670,12 +4138,6 @@ static void console_set_mod_config_value(const char* id, const char* key, const 
         ok = lua_manager_config_increment_float(idx, cfg_idx, want - cur);
     } else if (type == LUA_CFG_STRING) {
         ok = lua_manager_config_set_string(idx, cfg_idx, value);
-    } else if (type == LUA_CFG_ENUM) {
-        ok = lua_manager_config_set_option(idx, cfg_idx, value);
-        if (!ok) {
-            console_push_line_rgb("Value is not one of the declared options.", 0.98f, 0.76f, 0.40f);
-            return;
-        }
     } else if (type == LUA_CFG_ACTION) {
         console_push_line_rgb("Use mods.config.action for action config keys.", 0.98f, 0.76f, 0.40f);
         return;
@@ -6081,7 +5543,145 @@ static void console_set_bind_cmd(const char* args, int clear_only) {
     console_show_binds(lua_manager_get_mod_id(idx));
 }
 
+static int console_profile_save_named(const char* name) {
+    char clean[PROFILE_NAME_MAX];
+    char path[PROFILE_PATH_MAX];
+    FILE* f;
+    if (!profile_sanitize_name(name, clean, sizeof(clean)) || !profile_build_path(name, path, sizeof(path))) return 0;
+    f = fopen(path, "w");
+    if (!f) return 0;
+    fprintf(f, "# modframework profile v1\n");
+    for (int mi = 0; mi < lua_manager_get_mod_count(); mi++) {
+        fprintf(f, "mod %s %d\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_enabled(mi));
+        for (int ci = 0; ci < lua_manager_get_mod_config_count(mi); ci++) {
+            fprintf(f, "cfg %s %s %s\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_config_key(mi, ci), lua_manager_get_mod_config_value_str(mi, ci));
+        }
+        for (int bi = 0; bi < lua_manager_get_mod_bind_count(mi); bi++) {
+            const char* val = lua_manager_get_mod_bind_value_str(mi, bi);
+            fprintf(f, "bind %s %s %s\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_bind_key(mi, bi), (val && val[0]) ? val : "none");
+        }
+    }
+    fclose(f);
+    safe_copy(g_active_profile_name, sizeof(g_active_profile_name), clean);
+    return 1;
+}
 
+static int console_profile_load_named(const char* name) {
+    char path[PROFILE_PATH_MAX];
+    char line[768];
+    FILE* f;
+    char clean[PROFILE_NAME_MAX];
+    if (!profile_sanitize_name(name, clean, sizeof(clean)) || !profile_build_path(name, path, sizeof(path))) return 0;
+    f = fopen(path, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof(line), f)) {
+        char* cursor;
+        char* kind;
+        char* id;
+        char* key;
+        char* value;
+        console_strip_crlf(line);
+        cursor = trim_ws(line);
+        if (!cursor[0] || cursor[0] == '#') continue;
+        kind = console_parse_token(&cursor);
+        id = console_parse_token(&cursor);
+        if (!kind || !id) continue;
+        if (_stricmp(kind, "mod") == 0) {
+            long enabled = 0;
+            int idx = console_find_mod_index_by_id(id);
+            key = console_parse_token(&cursor);
+            if (idx >= 0 && key && console_try_parse_long(key, &enabled)) lua_manager_set_mod_enabled(idx, enabled ? 1 : 0);
+            continue;
+        }
+        key = console_parse_token(&cursor);
+        value = cursor ? trim_ws(cursor) : "";
+        if (!key || !key[0]) continue;
+        if (_stricmp(kind, "cfg") == 0) {
+            int idx = console_find_mod_index_by_id(id);
+            int cfg_idx = (idx >= 0) ? lua_manager_find_mod_config_index(idx, key) : -1;
+            if (idx >= 0 && cfg_idx >= 0) (void)console_apply_config_value(idx, cfg_idx, value ? value : "");
+        } else if (_stricmp(kind, "bind") == 0) {
+            int idx = console_find_mod_index_by_id(id);
+            int bind_idx = (idx >= 0) ? console_find_bind_index_by_key(idx, key) : -1;
+            if (idx >= 0 && bind_idx >= 0) (void)console_apply_bind_value(idx, bind_idx, value ? value : "none");
+        }
+    }
+    fclose(f);
+    safe_copy(g_active_profile_name, sizeof(g_active_profile_name), clean);
+    return 1;
+}
+
+static void console_profiles_list(void) {
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    profile_ensure_dir();
+    h = FindFirstFileA("mods\\profiles\\*.profile", &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        console_push_line_rgb("(no profiles)", 0.62f, 0.70f, 0.82f);
+        return;
+    }
+    do {
+        char out[CONSOLE_LINE_TEXT];
+        safe_copy(out, sizeof(out), fd.cFileName);
+        {
+            char* ext = strstr(out, ".profile");
+            if (ext) *ext = '\0';
+        }
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+
+static void console_profiles_save_cmd(const char* name) {
+    char out[CONSOLE_LINE_TEXT];
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: profiles.save <name>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_profile_save_named(name)) {
+        console_push_line_rgb("profiles.save: failed", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    snprintf(out, sizeof(out), "profiles.save: %s", g_active_profile_name);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_profiles_load_cmd(const char* name) {
+    char out[CONSOLE_LINE_TEXT];
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: profiles.load <name>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!console_profile_load_named(name)) {
+        console_push_line_rgb("profiles.load: failed", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    rebuild_rows();
+    snprintf(out, sizeof(out), "profiles.load: %s", g_active_profile_name);
+    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
+}
+
+static void console_profiles_delete_cmd(const char* name) {
+    char path[PROFILE_PATH_MAX];
+    if (!name || !name[0]) {
+        console_push_line_rgb("Usage: profiles.delete <name>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    if (!profile_build_path(name, path, sizeof(path)) || !DeleteFileA(path)) {
+        console_push_line_rgb("profiles.delete: failed", 0.98f, 0.45f, 0.45f);
+        return;
+    }
+    if (g_active_profile_name[0] && _stricmp(g_active_profile_name, name) == 0) {
+        g_active_profile_name[0] = '\0';
+    }
+    console_push_line_rgb("profiles.delete: ok", 0.64f, 0.92f, 0.66f);
+}
+
+static void console_profiles_current(void) {
+    char out[CONSOLE_LINE_TEXT];
+    snprintf(out, sizeof(out), "profiles.current: %s", g_active_profile_name[0] ? g_active_profile_name : "(none)");
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+}
 
 static void console_execute_input(void) {
     char work[CONSOLE_INPUT_BUF];
@@ -6208,6 +5808,16 @@ static void console_execute_input(void) {
         console_set_bind_cmd(arg, 0);
     } else if (_stricmp(cmd, "binds.clear") == 0) {
         console_set_bind_cmd(arg, 1);
+    } else if (_stricmp(cmd, "profiles.list") == 0) {
+        console_profiles_list();
+    } else if (_stricmp(cmd, "profiles.save") == 0) {
+        console_profiles_save_cmd(arg);
+    } else if (_stricmp(cmd, "profiles.load") == 0) {
+        console_profiles_load_cmd(arg);
+    } else if (_stricmp(cmd, "profiles.delete") == 0) {
+        console_profiles_delete_cmd(arg);
+    } else if (_stricmp(cmd, "profiles.current") == 0) {
+        console_profiles_current();
     } else if (_stricmp(cmd, "reload.mods") == 0) {
         console_run_reload_mods();
     } else if (_stricmp(cmd, "mods.reload") == 0) {
@@ -6250,7 +5860,6 @@ static void console_execute_input(void) {
         char out[CONSOLE_LINE_TEXT];
         snprintf(out, sizeof(out), "Unknown command: %s (type 'help')", cmd);
         console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
-        console_suggest_commands(cmd);
     }
 
     console_set_input("");
@@ -9916,25 +9525,6 @@ int hooks_console_active(void) {
 }
 
 void hooks_console_on_pre_swap(void) {
-    /*
-     * One-shot: apply the saved sound on/off setting at startup. The vanilla
-     * engine loads DAT_0055a170 from settings.nogg but force-calls
-     * mad_enable_synth(1) right after (app_state_init), so the actual synth flag
-     * (ADDR_NATIVE_SYNTH_ENABLED) stays ON regardless of the saved setting until
-     * the player toggles sound in Options. We sync the flag from the setting on
-     * the first frame the game has a live state (init + settings load complete).
-     */
-    {
-        static int g_startup_sound_applied = 0;
-        if (!g_startup_sound_applied && p_state_current && p_state_current() != NULL) {
-            const volatile int* sound_setting = (const volatile int*)(uintptr_t)ADDR_SOUND_SETTING;
-            int want_on = (*sound_setting != 0);
-            hooks_set_native_synth_enabled(want_on);
-            g_startup_sound_applied = 1;
-            LOG_INFO("hooks: applied startup sound setting (%s)", want_on ? "on" : "off");
-        }
-    }
-
     if (!g_console_open_pending) return;
 
     g_console_bg_ready = 0;
@@ -9965,8 +9555,7 @@ int hooks_console_textinput(const char* text) {
     }
     if (!is_console_state_active()) return 0;
     if (text && text[0]) {
-        if (g_console_search_active) console_search_type(text);
-        else console_insert_text(text);
+        console_insert_text(text);
     }
     return 1;
 }
@@ -10140,20 +9729,6 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
 
     if (!is_console_state_active()) return 0;
 
-    if (g_console_search_active) {
-        if (sym == SDLK_ESCAPE) { console_search_cancel(); return 1; }
-        if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) { console_search_accept(); return 1; }
-        if (sym == SDLK_BACKSPACE) { console_search_backspace(); return 1; }
-        if ((mod & KMOD_CTRL) && (sym == 'r' || sym == 'R')) { console_search_step_older(); return 1; }
-        if (sym == SDLK_TAB) { console_search_accept(); return 1; }
-        if (sym == SDLK_LEFT || sym == SDLK_RIGHT || sym == SDLK_HOME || sym == SDLK_END ||
-            sym == SDLK_UP || sym == SDLK_DOWN || sym == SDLK_DELETE) {
-            console_search_accept();  // accept, then let the navigation key act normally
-        } else {
-            return 1;                 // other keys (incl. modifiers) ignored; text via textinput
-        }
-    }
-
     if (mod & KMOD_CTRL) {
         if (sym == 'v' || sym == 'V') {
             console_paste_clipboard();
@@ -10176,10 +9751,6 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
             g_console_cursor = (int)strlen(g_console_input);
             return 1;
         }
-        if (sym == 'r' || sym == 'R') {
-            console_search_begin();
-            return 1;
-        }
     }
 
     switch (sym) {
@@ -10191,7 +9762,7 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
             console_execute_input();
             return 1;
         case SDLK_TAB:
-            console_autocomplete((mod & KMOD_SHIFT) != 0);
+            console_autocomplete();
             return 1;
         case SDLK_BACKSPACE:
             console_backspace();
@@ -10201,19 +9772,15 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
             return 1;
         case SDLK_LEFT:
             if (g_console_cursor > 0) g_console_cursor--;
-            console_compl_reset();
             return 1;
         case SDLK_RIGHT:
             if ((size_t)g_console_cursor < strlen(g_console_input)) g_console_cursor++;
-            console_compl_reset();
             return 1;
         case SDLK_HOME:
             g_console_cursor = 0;
-            console_compl_reset();
             return 1;
         case SDLK_END:
             g_console_cursor = (int)strlen(g_console_input);
-            console_compl_reset();
             return 1;
         case SDLK_UP:
             console_history_step(-1);
@@ -10773,8 +10340,6 @@ static void render_rows(void) {
                         else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
                     } else if (type == LUA_CFG_ACTION) {
                         vr = 0.62f; vg = 0.72f; vb = 0.84f;
-                    } else if (type == LUA_CFG_ENUM) {
-                        vr = 0.58f; vg = 0.80f; vb = 0.82f;  /* teal: cyclable choice */
                     }
                 }
                 if (selected) {
@@ -10798,31 +10363,6 @@ static void render_rows(void) {
                 } else {
                     draw_text_right_scaled(right_x, y, g_ui_scale * 0.92f, vr, vg, vb, row->right);
                 }
-            } break;
-
-            case ROW_FW_HEADER: {
-                draw_text_scaled(label_x, y, g_ui_scale * 1.02f, 0.76f, 0.82f, 0.88f, row->left);
-            } break;
-
-            case ROW_FW_TOGGLE:
-            case ROW_FW_ACTION: {
-                float lr = selected ? sel_r : base_r;
-                float lg = selected ? sel_g : base_g;
-                float lb = selected ? sel_b : base_b;
-                float vr, vg, vb;
-                if (row->kind == ROW_FW_TOGGLE) {
-                    if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.48f; vg = 0.88f; vb = 0.58f; }
-                    else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
-                } else { /* ROW_FW_ACTION: button tint, matches LUA_CFG_ACTION */
-                    vr = 0.62f; vg = 0.72f; vb = 0.84f;
-                }
-                if (selected) {
-                    vr = clampf(vr + 0.04f, 0.0f, 1.0f);
-                    vg = clampf(vg + 0.04f, 0.0f, 1.0f);
-                    vb = clampf(vb + 0.04f, 0.0f, 1.0f);
-                }
-                draw_text_scaled(option_x, y, g_ui_scale * 0.96f, lr, lg, lb, row->left);
-                draw_text_right_scaled(right_x, y, g_ui_scale * 0.92f, vr, vg, vb, row->right);
             } break;
 
             case ROW_BACK: {
@@ -11180,14 +10720,10 @@ static void console_render_ui(void) {
     glPushMatrix();
     glLoadIdentity();
 
-    console_draw_rect(panel_x, panel_y, panel_w, panel_h, 0.03f, 0.05f, 0.08f, 0.85f);
-    /* title bar + accent underline */
-    console_draw_rect(panel_x, panel_y, panel_w, 32.0f * ui, 0.08f, 0.12f, 0.20f, 0.94f);
-    console_draw_rect(panel_x, panel_y + (32.0f * ui), panel_w, 1.5f * ui, 0.32f, 0.66f, 0.84f, 0.85f);
-    /* input bar + accent overline */
-    console_draw_rect(panel_x, panel_y + panel_h - (42.0f * ui), panel_w, 42.0f * ui, 0.02f, 0.04f, 0.06f, 0.94f);
-    console_draw_rect(panel_x, panel_y + panel_h - (42.0f * ui), panel_w, 1.5f * ui, 0.32f, 0.66f, 0.84f, 0.55f);
-    glColor4f(0.34f, 0.46f, 0.62f, 0.9f);
+    console_draw_rect(panel_x, panel_y, panel_w, panel_h, 0.03f, 0.05f, 0.08f, 0.82f);
+    console_draw_rect(panel_x, panel_y, panel_w, 32.0f * ui, 0.07f, 0.11f, 0.18f, 0.92f);
+    console_draw_rect(panel_x, panel_y + panel_h - (42.0f * ui), panel_w, 42.0f * ui, 0.02f, 0.04f, 0.06f, 0.92f);
+    glColor4f(0.35f, 0.42f, 0.56f, 0.9f);
     glBegin(GL_LINE_LOOP);
     glVertex2f(panel_x, panel_y);
     glVertex2f(panel_x + panel_w, panel_y);
@@ -11244,45 +10780,24 @@ static void console_render_ui(void) {
         size_t in_len = strlen(g_console_input);
         int avail_chars;
         int start_idx = 0;
-        int caret_on = (((unsigned)GetTickCount() / 530u) & 1u) == 0u;
-        float ix = (float)((int)(panel_x + (14.0f * ui) + 0.5f));
-        float iy = (float)((int)(input_y + 0.5f));
-
         if (g_console_cursor < 0) g_console_cursor = 0;
         if ((size_t)g_console_cursor > in_len) g_console_cursor = (int)in_len;
         avail_chars = (int)((panel_w - (36.0f * ui)) / (6.0f * text_scale));
         if (avail_chars < 12) avail_chars = 12;
-
-        if (g_console_search_active) {
-            char line[CONSOLE_INPUT_BUF + 64];
-            const char* match = (g_console_search_index >= 0 && g_console_search_index < g_console_history_count)
-                                ? g_console_history[g_console_search_index] : "";
-            snprintf(line, sizeof(line), "(reverse-search) '%s': %s", g_console_search_query, match);
-            if ((int)strlen(line) > avail_chars + 2) line[avail_chars + 2] = '\0';
-            draw_text_scaled(ix, iy, text_scale, 0.60f, 0.88f, 1.00f, line);
-        } else {
-            char caret = caret_on ? '|' : ' ';
-            if (g_console_cursor > avail_chars - 4) start_idx = g_console_cursor - (avail_chars - 4);
-            if (start_idx < 0) start_idx = 0;
-            snprintf(input_line, sizeof(input_line), "> %.*s%c%s",
-                     g_console_cursor - start_idx, g_console_input + start_idx, caret, g_console_input + g_console_cursor);
-            if ((int)strlen(input_line) > avail_chars + 2) input_line[avail_chars + 2] = '\0';
-            draw_text_scaled(ix, iy, text_scale, 0.95f, 0.88f, 0.40f, input_line);
+        if (g_console_cursor > avail_chars - 4) {
+            start_idx = g_console_cursor - (avail_chars - 4);
         }
-
-        if (panel_w > 600.0f) {
-            const char* hint;
-            char tok0[CONSOLE_COMPL_ITEM];
-            if (g_console_search_active) {
-                hint = "Enter=use  Ctrl+R=older  Esc=cancel";
-            } else {
-                const char* usage;
-                console_input_token(0, tok0, sizeof(tok0));
-                usage = console_usage_for(tok0);
-                hint = usage ? usage : "Tab=complete  Ctrl+R=search  Ctrl+C/V=copy  Wheel=scroll";
-            }
-            draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), iy, text_scale,
-                                   0.62f, 0.70f, 0.84f, hint);
+        if (start_idx < 0) start_idx = 0;
+        snprintf(input_line, sizeof(input_line), "> %.*s|%s",
+                 g_console_cursor - start_idx, g_console_input + start_idx, g_console_input + g_console_cursor);
+        if ((int)strlen(input_line) > avail_chars + 2) {
+            input_line[avail_chars + 2] = '\0';
+        }
+        draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
+                         0.95f, 0.88f, 0.40f, input_line);
+        if (panel_w > 640.0f) {
+            draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
+                                   0.66f, 0.74f, 0.86f, "Tab=complete  Ctrl+C/V=copy/paste  Wheel=scroll");
         }
     }
 }
@@ -11290,10 +10805,6 @@ static void console_render_ui(void) {
 static void __cdecl console_enter(void) {
     capture_clear();
     g_console_scroll = 0;
-    console_compl_reset();
-    g_console_search_active = 0;
-    g_console_search_query[0] = '\0';
-    g_console_search_index = -1;
     console_history_load();
     if (g_console_line_count == 0) {
         console_push_line_rgb("Type 'help' for a list of commands.", 0.72f, 0.90f, 1.00f);
@@ -12337,11 +11848,6 @@ static void __cdecl hooked_game_update(int arg0) {
         : p_game_update;
     void* state_ptr = p_state_current ? p_state_current() : NULL;
 
-    /* Authoritative: game_update IS the sim thread. Used by the RNG hooks to tell
-     * sim draws (real gameplay seed) from synth draws on the SDL audio thread
-     * (private audio seed). Cheap unconditional store. */
-    g_sim_thread_id = GetCurrentThreadId();
-
     if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
         if (real_update) real_update(arg0);
         return;
@@ -12505,11 +12011,6 @@ void hooks_init(void) {
     static int done = 0;
     if (done) return;
     done = 1;
-
-    /* Runs during DLL load on the main thread; seed the sim-thread id so the RNG
-     * hooks can tell sim draws from audio-thread synth draws even before the first
-     * game_update (which re-affirms it authoritatively). */
-    g_sim_thread_id = GetCurrentThreadId();
 
 
 
@@ -12694,17 +12195,16 @@ void hooks_init(void) {
         g_hooks_rng_rndsign_trampoline = g_rng_rndsign_detour.trampoline;
     }
 
-    /*
-     * respawn_warble + synth_effect_whistling are synth DSP voice callbacks that
-     * run on the SDL audio thread. They are now covered generically by the
-     * audio-thread branch in hooked_rnd/frnd/rnd5050/mrand/rndsign (their internal
-     * draws are served from the private audio seed), so we no longer wrap them
-     * individually. The old wrappers also swapped _mrand_seed from the audio thread,
-     * which RACED the sim thread - exactly the bug we are removing. Intentionally
-     * not installed. sound_sword_ching below stays: it is a MAIN-thread trigger
-     * (player_block_sword_at_ex), so its pitch frnd must be isolated on the sim
-     * thread and that wrapper is race-free.
-     */
+    if (!install_detour(&g_respawn_warble_detour, (void*)(uintptr_t)ADDR_RESPAWN_WARBLE, (void*)&hooked_respawn_warble, 12)) {
+        LOG_WARN("hooks_init: failed to detour respawn_warble (audio RNG may affect gameplay RNG)");
+    } else {
+        p_respawn_warble_trampoline = (fn_synth_callback_t)g_respawn_warble_detour.trampoline;
+    }
+    if (!install_detour(&g_synth_effect_whistling_detour, (void*)(uintptr_t)ADDR_SYNTH_EFFECT_WHISTLING, (void*)&hooked_synth_effect_whistling, 6)) {
+        LOG_WARN("hooks_init: failed to detour synth_effect_whistling (audio RNG may affect gameplay RNG)");
+    } else {
+        p_synth_effect_whistling_trampoline = (fn_synth_callback_t)g_synth_effect_whistling_detour.trampoline;
+    }
     if (!install_detour(&g_sound_sword_ching_detour, (void*)(uintptr_t)ADDR_SOUND_SWORD_CHING, (void*)&hooked_sound_sword_ching, 6)) {
         LOG_WARN("hooks_init: failed to detour sound_sword_ching (audio RNG may affect gameplay RNG)");
     } else {

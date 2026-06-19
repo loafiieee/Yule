@@ -3,7 +3,6 @@
 #include "hooks.h"
 #include "lua_manager.h"
 #include "custom_maps.h"
-#include "fwsettings.h"
 
 
 #include <stdint.h>
@@ -710,13 +709,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         real_PollEvent  = (SDL_PollEvent_t)    GetProcAddress(real_sdl, "SDL_PollEvent");
         init_stubs();
         log_init();
-        // Apply the persisted "hide log console" preference as early as
-        // possible (right after AllocConsole, before the game window appears)
-        // so a hidden console doesn't flash on screen at launch.
-        fwsettings_init();
-        if (fwsettings_get_int("hide_log_console", 1)) {
-            log_set_console_visible(0);
-        }
         LOG_INFO("Mod framework initializing...");
         lua_manager_init();
 

@@ -1104,35 +1104,17 @@ my_state = { counter = 0 }
 
 …without clobbering other mods.
 
-### Sandbox / isolation policy (important)
+### Isolation policy (important)
 
-Mods run in an **allowlist sandbox** so a malicious mod can't damage your system.
-Each mod's environment only sees a vetted set of globals plus its injected APIs:
-
-- **Available:** `math`, `string`, `table`, `coroutine`, `bit`, and safe value
-  globals (`pairs`, `ipairs`, `pcall`, `tostring`, `type`, `setmetatable`,
-  `print`, `select`, `error`, `assert`, …), plus a minimal `os` (`time`, `clock`,
-  `date`, `difftime`), and the framework APIs (`mod`, `config`, `storage`,
-  `interop`, `mod.ui`, `mod.game`, `mod.audio`, …).
-- **Blocked (unreachable from a mod):** `io`, `os.execute`/`os.remove`/`os.rename`,
-  `package`/`require`, `dofile`/`loadfile`/`loadstring`/`load`, `debug`, `ffi`,
-  `jit`, `getfenv`/`setfenv`, and the real `_G`. So mods can't touch the
-  filesystem (outside scoped APIs), run shell commands, load native code, or
-  escape the sandbox.
-- File access for mods is confined: use `storage` (per-mod) and
-  `mod.dofile("lib/foo.lua")` (relative to the mod folder; `..`/absolute paths are
-  rejected).
-
-Remaining caveats: all mods still share one Lua VM, so a mod can affect
-**stability/performance** (infinite loops, heavy allocations) and could overwrite
-shared library tables — treat that as a robustness concern, not a security hole.
-Trusted/official mods that genuinely need more (e.g. network/filesystem) will be
-granted it via a future `mod.json` capability declaration.
+The framework uses a **trusted-mod** model:
+- Mods get isolated global tables, but all mods run inside one shared Lua VM/runtime.
+- Standard Lua libraries are available.
+- This is not a security sandbox; treat installed mods as trusted code.
+- A mod can still impact process stability/performance (infinite loops, heavy allocations, etc.).
 
 ### Multi-file mods
 
-Prefer `mod.dofile("lib/foo.lua")` so extra scripts run in the same (sandboxed)
-environment. Paths must stay inside your mod folder.
+Prefer `mod.dofile("lib/foo.lua")` so extra scripts run in the same environment.
 
 ---
 

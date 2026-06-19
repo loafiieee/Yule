@@ -5100,7 +5100,7 @@ static void print_ggpo_net_status(void) {
         LOG_INFO("%s", out);
         snprintf(out,
                  sizeof(out),
-                 "ggpo.net.stats: tx=%u rx=%u pred=%u rb=%u late=%u drop=%u adv_stall=%u pred_stall=%u ts_stall=%u silence=%u desync=%u corr_tx=%u corr_rx=%u corr_req=%u stale_req=%u dup_chunk=%u corr_id=%u applied_id=%u",
+                 "ggpo.net.stats: tx=%u rx=%u pred=%u rb=%u late=%u drop=%u adv_stall=%u pred_stall=%u silence=%u desync=%u corr_tx=%u corr_rx=%u corr_req=%u stale_req=%u dup_chunk=%u corr_id=%u applied_id=%u",
                  (unsigned int)ggpo_net_packets_sent(),
                  (unsigned int)ggpo_net_packets_received(),
                  (unsigned int)ggpo_net_prediction_count(),
@@ -5109,7 +5109,6 @@ static void print_ggpo_net_status(void) {
                  (unsigned int)ggpo_net_dropped_input_count(),
                  (unsigned int)ggpo_net_frame_advantage_stall_count(),
                  (unsigned int)ggpo_net_prediction_stall_count(),
-                 (unsigned int)ggpo_net_timesync_stall_count(),
                  (unsigned int)ggpo_net_peer_silence_ticks(),
                  (unsigned int)ggpo_net_desync_count(),
                  (unsigned int)ggpo_net_corrections_sent(),
@@ -5173,7 +5172,6 @@ static void stop_ggpo_net(const char* source) {
     uint32_t desync = ggpo_net_desync_count();
     uint32_t stalls = ggpo_net_frame_advantage_stall_count();
     uint32_t pred_stalls = ggpo_net_prediction_stall_count();
-    uint32_t ts_stalls = ggpo_net_timesync_stall_count();
     if (!ggpo_net_active()) {
         print_ggpo_net_status();
         return;
@@ -5181,7 +5179,7 @@ static void stop_ggpo_net(const char* source) {
     ggpo_net_stop();
     snprintf(out,
              sizeof(out),
-             "ggpo.net: stopped from %s after %u frame(s), checksum=%u tx=%u rx=%u pred=%u rb=%u adv_stall=%u pred_stall=%u ts_stall=%u desync=%u",
+             "ggpo.net: stopped from %s after %u frame(s), checksum=%u tx=%u rx=%u pred=%u rb=%u adv_stall=%u pred_stall=%u desync=%u",
              (source && source[0]) ? source : "unknown",
              (unsigned int)frames,
              (unsigned int)checksum,
@@ -5191,7 +5189,6 @@ static void stop_ggpo_net(const char* source) {
              (unsigned int)rb,
              (unsigned int)stalls,
              (unsigned int)pred_stalls,
-             (unsigned int)ts_stalls,
              (unsigned int)desync);
     console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
     LOG_INFO("%s", out);

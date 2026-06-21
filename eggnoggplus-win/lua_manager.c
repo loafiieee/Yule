@@ -137,6 +137,13 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_GAME_ACTIVE_ROOM      0x541E08u
 #define ADDR_LEADER                0x541E0Cu
 #define ADDR_CROWD_SOUND_LAST_TICK 0x541E40u
+/* Five more sfx debounce timers packed into the checksummed transient region.
+ * All are wall-clock (_mad_ticks) stamps, so they diverge between peers and
+ * shift when sound is toggled -> false "changed=transient" desyncs. Verified
+ * via ghidra _last_.* symbols. _B stops at 12 bytes, BEFORE 0x541F04
+ * (_danger_count, which IS gameplay and must stay in the checksum). */
+#define ADDR_SOUND_DEDUP_TIMERS_A  0x541E10u  /* _last_.15333 (sword-block), _last_.14917 (creepy) */
+#define ADDR_SOUND_DEDUP_TIMERS_B  0x541EF8u  /* _last_.15487 (sword_ching), _last_.15039, _last_.14573 (do_cheer) */
 #define ADDR_WATERFALL_FX          0x541E44u
 #define ADDR_CHANT_STEP            0x541F60u
 #define ADDR_CHANT_TIMER           0x541F64u
@@ -666,6 +673,9 @@ typedef struct DiscoveredMod {
 // Config model
 // =============================
 
+#define CFG_MAX_OPTIONS 16
+#define CFG_OPTION_LEN  64
+
 typedef struct ConfigEntry {
     char key[64];
     char label[64];
@@ -675,6 +685,8 @@ typedef struct ConfigEntry {
     int  has_max;
     double min_value;
     double max_value;
+    char options[CFG_MAX_OPTIONS][CFG_OPTION_LEN];  // valid values for LUA_CFG_OPTIONS
+    int  option_count;
 } ConfigEntry;
 
 typedef struct ConfigAction {
@@ -1883,6 +1895,7 @@ static const char* type_to_string(int type) {
         case LUA_CFG_FLOAT:  return "float";
         case LUA_CFG_STRING: return "str";
         case LUA_CFG_ACTION: return "action";
+        case LUA_CFG_OPTIONS: return "options";
         default: return "none";
     }
 }
@@ -1894,11 +1907,36 @@ static int string_to_type(const char* t) {
     if (_stricmp(t, "float") == 0 || _stricmp(t, "number") == 0 || _stricmp(t, "double") == 0) return LUA_CFG_FLOAT;
     if (_stricmp(t, "str") == 0 || _stricmp(t, "string") == 0) return LUA_CFG_STRING;
     if (_stricmp(t, "action") == 0 || _stricmp(t, "button") == 0) return LUA_CFG_ACTION;
+    if (_stricmp(t, "options") == 0 || _stricmp(t, "option") == 0 || _stricmp(t, "enum") == 0) return LUA_CFG_OPTIONS;
     return LUA_CFG_NONE;
+}
+
+/* Index of `value` within e->options (case-insensitive), or -1 if absent. */
+static int cfg_option_index(const ConfigEntry* e, const char* value) {
+    if (!e || !value) return -1;
+    for (int i = 0; i < e->option_count; i++) {
+        if (_stricmp(e->options[i], value) == 0) return i;
+    }
+    return -1;
 }
 
 static void clamp_cfg_value(ConfigEntry* e) {
     if (!e) return;
+
+    if (e->type == LUA_CFG_OPTIONS) {
+        /* Snap to a declared option: keep the canonical spelling, or fall back
+         * to the first option if the current value is not in the list. */
+        int idx = cfg_option_index(e, e->value);
+        if (idx >= 0) {
+            snprintf(e->value, sizeof(e->value), "%s", e->options[idx]);
+        } else if (e->option_count > 0) {
+            snprintf(e->value, sizeof(e->value), "%s", e->options[0]);
+        } else {
+            e->value[0] = '\0';
+        }
+        return;
+    }
+
     if (e->type != LUA_CFG_INT && e->type != LUA_CFG_FLOAT) return;
 
     double v = atof(e->value);
@@ -1918,10 +1956,12 @@ static int parse_type_and_bounds(const char* type_src,
                                  int* out_has_min,
                                  double* out_min,
                                  int* out_has_max,
-                                 double* out_max) {
-    char type_buf[64];
-    char base[32];
-    char bounds[48];
+                                 double* out_max,
+                                 char (*out_options)[CFG_OPTION_LEN],
+                                 int* out_option_count) {
+    char type_buf[256];
+    char base[64];
+    char bounds[256];
     char* lb = NULL;
     char* rb = NULL;
 
@@ -1935,6 +1975,7 @@ static int parse_type_and_bounds(const char* type_src,
     *out_has_max = 0;
     *out_min = 0.0;
     *out_max = 0.0;
+    if (out_option_count) *out_option_count = 0;
 
     lb = strchr(type_buf, '[');
     rb = lb ? strchr(lb + 1, ']') : NULL;
@@ -1960,6 +2001,33 @@ static int parse_type_and_bounds(const char* type_src,
 
     *out_type = string_to_type(base);
     if (*out_type == LUA_CFG_NONE) return 0;
+
+    if (*out_type == LUA_CFG_OPTIONS) {
+        /* The brackets hold a comma-separated list of allowed values. */
+        char* cursor = bounds;
+        int count = 0;
+        if (!out_options || !out_option_count) return 0;
+        while (*cursor && count < CFG_MAX_OPTIONS) {
+            char* comma = strchr(cursor, ',');
+            char item[CFG_OPTION_LEN];
+            size_t len = comma ? (size_t)(comma - cursor) : strlen(cursor);
+            if (len >= sizeof(item)) len = sizeof(item) - 1;
+            memcpy(item, cursor, len);
+            item[len] = '\0';
+            str_trim(item);
+            unquote_inplace(item);
+            str_trim(item);
+            if (item[0]) {
+                strncpy(out_options[count], item, CFG_OPTION_LEN - 1);
+                out_options[count][CFG_OPTION_LEN - 1] = '\0';
+                count++;
+            }
+            if (!comma) break;
+            cursor = comma + 1;
+        }
+        *out_option_count = count;
+        return count > 0;   /* options[] with no entries is invalid */
+    }
 
     if (bounds[0] && (*out_type == LUA_CFG_INT || *out_type == LUA_CFG_FLOAT)) {
         char bcopy[48];
@@ -2004,6 +2072,13 @@ static void format_type_with_bounds(const ConfigEntry* e, char* out, size_t outs
         if (e->has_min) snprintf(minbuf, sizeof(minbuf), "%.6g", e->min_value);
         if (e->has_max) snprintf(maxbuf, sizeof(maxbuf), "%.6g", e->max_value);
         snprintf(out, outsz, "%s[%s,%s]", base, minbuf, maxbuf);
+    } else if (e->type == LUA_CFG_OPTIONS) {
+        size_t pos = (size_t)snprintf(out, outsz, "%s[", base);
+        for (int i = 0; i < e->option_count && pos < outsz; i++) {
+            pos += (size_t)snprintf(out + pos, outsz - pos, "%s%s",
+                                    (i > 0) ? ", " : "", e->options[i]);
+        }
+        if (pos < outsz) snprintf(out + pos, outsz - pos, "]");
     } else {
         snprintf(out, outsz, "%s", base);
     }
@@ -2424,7 +2499,7 @@ static int mod_config_load(LoadedMod* mod) {
         if (!rest[0]) continue;
 
         // Split on first comma
-        char type_str[64] = {0};
+        char type_str[256] = {0};
         char value_str[256] = {0};
 
         char* comma = find_top_level_comma(rest);
@@ -2441,15 +2516,17 @@ static int mod_config_load(LoadedMod* mod) {
         str_trim(value_str);
         unquote_inplace(value_str);
 
+        ConfigEntry e;
+        memset(&e, 0, sizeof(e));
+
         int type = LUA_CFG_NONE;
         int has_min = 0;
         int has_max = 0;
         double min_value = 0.0;
         double max_value = 0.0;
-        if (!parse_type_and_bounds(type_str, &type, &has_min, &min_value, &has_max, &max_value)) continue;
+        if (!parse_type_and_bounds(type_str, &type, &has_min, &min_value, &has_max, &max_value,
+                                   e.options, &e.option_count)) continue;
 
-        ConfigEntry e;
-        memset(&e, 0, sizeof(e));
         strncpy(e.key, key, sizeof(e.key) - 1);
         strncpy(e.label, key, sizeof(e.label) - 1);
         e.type = type;
@@ -5152,6 +5229,11 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define PLAYER_COLLIDE_WALL_LEFT    0x08
 
 #define THING_SIZE                  0x15C
+/* Hard cap on the native thing pool. game_get_thing_count() clamps to this, and
+ * the rollback state buffers are sized for it so a mid-round growth in the live
+ * thing count can never overflow a capture (the "destination buffer too small"
+ * match-abort bug). */
+#define GAME_THING_COUNT_MAX        128
 #define THING_OFS_ACTIVE            0x00
 #define THING_OFS_TYPE              0x01
 #define THING_OFS_X                 0x24
@@ -5365,7 +5447,7 @@ static int game_get_thing_count(void) {
     if (bytes <= 0) return 0;
     int n = (int)(bytes / THING_SIZE);
     if (n < 0) n = 0;
-    if (n > 128) n = 128;
+    if (n > GAME_THING_COUNT_MAX) n = GAME_THING_COUNT_MAX;
     return n;
 }
 
@@ -6092,6 +6174,11 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     full_state_zero_transient_range(hdr, ADDR_LEADER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_WATERFALL_FX, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_CROWD_SOUND_LAST_TICK, sizeof(uint32_t));
+    /* The other five sfx debounce timers (wall-clock, non-synced) - excluding
+     * them from the checksum stops sound-timing/toggle "changed=transient"
+     * false desyncs. Stops before _danger_count (0x541F04), which is gameplay. */
+    full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_TIMERS_A, 8u);
+    full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_TIMERS_B, 12u);
     full_state_zero_transient_range(hdr, ADDR_CHANT_STEP, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CHANT_TIMER, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CROWD_TIMER, sizeof(int));
@@ -6587,6 +6674,7 @@ static int lua_cfg_get(lua_State* Ls) {
             lua_pushnumber(Ls, atof(e->value));
             return 1;
         case LUA_CFG_STRING:
+        case LUA_CFG_OPTIONS:
             lua_pushstring(Ls, e->value);
             return 1;
         default:
@@ -6634,6 +6722,13 @@ static int lua_cfg_set(lua_State* Ls) {
             const char* s = luaL_checkstring(Ls, 2);
             strncpy(e->value, s, sizeof(e->value) - 1);
             e->value[sizeof(e->value) - 1] = '\0';
+            break;
+        }
+        case LUA_CFG_OPTIONS: {
+            const char* s = luaL_checkstring(Ls, 2);
+            int oi = cfg_option_index(e, s);
+            if (oi < 0) { lua_pushboolean(Ls, 0); return 1; }  /* reject values not in the list */
+            snprintf(e->value, sizeof(e->value), "%s", e->options[oi]);
             break;
         }
         default:
@@ -13407,7 +13502,13 @@ int lua_manager_get_mod_conflict_count(int mod_index) {
 }
 
 size_t lua_manager_game_state_size(void) {
-    return full_state_blob_size_for_thing_count(game_get_thing_count());
+    /* Size for the MAX thing count, not the live one. The rollback buffers are
+     * allocated once from this value at match setup; the live thing count then
+     * grows as the round spawns actors, so sizing to the live count let an early
+     * capture overflow the buffer -> "destination buffer too small" -> the match
+     * aborted right at the start. Sizing to the cap also makes state_size (and
+     * thus the build_id handshake) deterministic and identical on both peers. */
+    return full_state_blob_size_for_thing_count(GAME_THING_COUNT_MAX);
 }
 
 int lua_manager_game_state_save(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap) {
@@ -13736,6 +13837,22 @@ const char* lua_manager_get_mod_config_value_str(int mod_index, int entry_index)
     return m->cfg_entries[entry_index].value;
 }
 
+int lua_manager_get_mod_config_option_count(int mod_index, int entry_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
+    return m->cfg_entries[entry_index].option_count;
+}
+
+const char* lua_manager_get_mod_config_option(int mod_index, int entry_index, int option_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return "";
+    if (entry_index < 0 || entry_index >= m->cfg_count) return "";
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    if (option_index < 0 || option_index >= e->option_count) return "";
+    return e->options[option_index];
+}
+
 int lua_manager_find_mod_config_index(int mod_index, const char* key) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m || !key || !key[0]) return -1;
@@ -13843,6 +13960,32 @@ int lua_manager_config_set_string(int mod_index, int entry_index, const char* va
     if (!value) value = "";
     strncpy(e->value, value, sizeof(e->value) - 1);
     e->value[sizeof(e->value) - 1] = '\0';
+    return mod_config_save(m);
+}
+
+int lua_manager_config_cycle_option(int mod_index, int entry_index, int delta) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    if (e->type != LUA_CFG_OPTIONS || e->option_count <= 0) return 0;
+    int cur = cfg_option_index(e, e->value);
+    if (cur < 0) cur = 0;
+    /* wrap around so left/right cycling is continuous */
+    int next = ((cur + delta) % e->option_count + e->option_count) % e->option_count;
+    snprintf(e->value, sizeof(e->value), "%s", e->options[next]);
+    return mod_config_save(m);
+}
+
+int lua_manager_config_set_option(int mod_index, int entry_index, const char* value) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    if (!m) return 0;
+    if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
+    ConfigEntry* e = &m->cfg_entries[entry_index];
+    if (e->type != LUA_CFG_OPTIONS) return 0;
+    int idx = cfg_option_index(e, value);
+    if (idx < 0) return 0;   /* reject values not in the declared list */
+    snprintf(e->value, sizeof(e->value), "%s", e->options[idx]);
     return mod_config_save(m);
 }
 

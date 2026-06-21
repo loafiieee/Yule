@@ -2442,34 +2442,47 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
         g_net.dropped_inputs++;
         return 1;
     }
+    /* Snapshot the live waterfall ambience so the state-load + muted replay
+     * below cannot leave the audio handles pointing at a stale voice slot
+     * (the "waterfall in rooms with no waterfall" bug). Restored on every exit
+     * path after this point. Audio-only: canonicalized out of the checksum. */
+    hooks_waterfall_audio_save();
+
+    int rb_ok = 1;
     if (!ggpo_ext_load_game_state(blob, h->state_len, err, err_cap)) {
-        return 0;
+        rb_ok = 0;
+    } else {
+        for (uint32_t f = start; f < end; f++) {
+            GgpoNetHistoryEntry* rh = NULL;
+            int predicted = 0;
+            GgpoFrameInputs inputs;
+            uint32_t local_cmd = 0;
+            uint32_t remote_cmd = 0;
+
+            if (!ggpo_net_save_pre_state(f, &rh, NULL, err, err_cap)) {
+                rb_ok = 0;
+                break;
+            }
+            memset(&inputs, 0, sizeof(inputs));
+            ggpo_net_get_input(g_net.local_inputs, f, &local_cmd);
+            remote_cmd = ggpo_net_predict_remote(f, &predicted);
+            inputs.player_cmd[g_net.local_player] = local_cmd;
+            inputs.player_cmd[g_net.remote_player] = remote_cmd;
+            if (!ggpo_net_replay_frame(f, arg0, 1, &checksum, err, err_cap)) {
+                rb_ok = 0;
+                break;
+            }
+            rh->local_cmd = local_cmd;
+            rh->remote_cmd = remote_cmd;
+            rh->remote_predicted = predicted;
+            rh->post_checksum = checksum;
+            ggpo_net_capture_history_summary(rh);
+        }
     }
 
-    for (uint32_t f = start; f < end; f++) {
-        GgpoNetHistoryEntry* rh = NULL;
-        int predicted = 0;
-        GgpoFrameInputs inputs;
-        uint32_t local_cmd = 0;
-        uint32_t remote_cmd = 0;
+    hooks_waterfall_audio_restore();
 
-        if (!ggpo_net_save_pre_state(f, &rh, NULL, err, err_cap)) {
-            return 0;
-        }
-        memset(&inputs, 0, sizeof(inputs));
-        ggpo_net_get_input(g_net.local_inputs, f, &local_cmd);
-        remote_cmd = ggpo_net_predict_remote(f, &predicted);
-        inputs.player_cmd[g_net.local_player] = local_cmd;
-        inputs.player_cmd[g_net.remote_player] = remote_cmd;
-        if (!ggpo_net_replay_frame(f, arg0, 1, &checksum, err, err_cap)) {
-            return 0;
-        }
-        rh->local_cmd = local_cmd;
-        rh->remote_cmd = remote_cmd;
-        rh->remote_predicted = predicted;
-        rh->post_checksum = checksum;
-        ggpo_net_capture_history_summary(rh);
-    }
+    if (!rb_ok) return 0;
 
     g_net.last_checksum = checksum;
     g_net.rollbacks++;

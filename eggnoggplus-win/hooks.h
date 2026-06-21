@@ -105,6 +105,13 @@ void hooks_rng_trace_describe_diff(const HooksRngTrace* expected, const HooksRng
 int hooks_get_native_synth_enabled(void);
 int hooks_set_native_synth_enabled(int enabled);
 
+// Snapshot/restore the persistent waterfall ambience around a rollback so the
+// muted state-load + replay does not corrupt the live ambient audio handles
+// (fixes "waterfall plays in rooms with no waterfall" online). Audio-only:
+// these fields are canonicalized out of the rollback checksum.
+void hooks_waterfall_audio_save(void);
+void hooks_waterfall_audio_restore(void);
+
 #ifdef __cplusplus
 }
 #endif

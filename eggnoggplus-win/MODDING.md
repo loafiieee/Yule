@@ -182,6 +182,7 @@ speed: float, 1.25
 jump_count: int[1,10], 3
 gravity: float[0.2,2.5], 1.0
 player_name: str, "Loaf"
+difficulty: options[easy, normal, hard], normal
 
 reset_stats: action
 big_red_button: action, "Reset Everything"
@@ -194,6 +195,10 @@ Rules:
   - Example: `lives: int[1,9], 3`
   - Example: `speed: float[0.25,3.0], 1.0`
   - Spaces are fine too: `speed: float[0.5, 10], 1.0`
+- `key: options[a, b, c], default` for a fixed list of choices (an enum/dropdown).
+  - The value is always one of the listed options; the default after the comma must be one of them (otherwise the first option is used).
+  - Example: `quality: options[low, medium, high], medium`
+  - Read it from Lua with `config.get("quality")` (returns the chosen string).
 - `key: action` (or `key: action, "Label"`) for buttons.
 - Strings can be quoted (recommended if they contain spaces/commas).
 
@@ -202,6 +207,7 @@ Rules:
 - **bool**: click to toggle `true/false`.
 - **int/float**: click to increment.
 - **str**: click to edit; type; **Enter** saves; **Esc** cancels.
+- **options**: click (or press right) to cycle to the next choice; press left for the previous. Shown as `< value >`.
 - **action**: click to trigger.
 
 ### The `config` API (Lua)

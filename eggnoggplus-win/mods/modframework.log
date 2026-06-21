@@ -1,78 +1,433 @@
-[14:10:04] [INFO] Mod framework initializing...
-[14:10:04] [INFO] Mod framework API version: 1
-[14:10:04] [INFO] Scanning mods/ folder...
-[14:10:04] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
-[14:10:04] [INFO]   When 8 is pressed, test crash handler by crashing the game.
-[14:10:04] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
-[14:10:04] [INFO] [mod:crash] armed=false
-[14:10:04] [INFO] Loaded mod: crash
-[14:10:04] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
-[14:10:04] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[14:10:04] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
-[14:10:04] [INFO] [mod:poc_speedhack] speed=1
-[14:10:04] [INFO] Loaded mod: poc_speedhack
-[14:10:04] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[14:10:04] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[14:10:04] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[14:10:04] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[14:10:04] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[14:10:04] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[14:10:04] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[14:10:04] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[14:10:04] [INFO] Loaded mod: texture_pack_test
-[14:10:04] [INFO] Done. 3 mod folder(s) scanned, 3 candidate manifest(s), 3 mod(s) loaded.
-[14:10:04] [INFO] [maps] scanning maps/ for custom maps
-[14:10:04] [INFO] [maps][example_map] scanning folder: maps\example_map
-[14:10:04] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[14:10:04] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[14:10:04] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[14:10:04] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[14:10:04] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[14:10:04] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[14:10:04] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
-[14:10:04] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[14:10:04] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[14:10:04] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[14:10:04] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[14:10:04] [INFO] [maps] registry ready: 2 custom maps (was 0)
-[14:10:04] [INFO] hooks_init: custom MODS menu ready
-[14:10:05] [INFO] [maps][example_map] applying custom map for selector index 5
-[14:10:18] [INFO] ONLINE HUB: enter
-[14:10:23] [INFO] online.hub: Settings saved.
-[14:10:24] [INFO] online.hub: Connecting to online server...
-[14:10:24] [INFO] online.hub: Connected. Authenticating...
-[14:10:24] [INFO] online.hub: Logged in.
-[14:10:24] [INFO] online.hub: Joining casual queue...
-[14:10:24] [INFO] online.hub: Match found: loaf on Vanilla 3
-[14:10:27] [INFO] ONLINE HUB: leave
-[14:10:27] [INFO] ggpo.net: local build fingerpr[14:10:27] [INFO] ggpo.net: local build fingerprint build=2D[14:10:27] [INFO] ggpo.net: hosting udp port=531[14:10:27] [INFO] ggpo.net: joining deferred local_port=53152 input_delay=1 max_advantage=2[14:10:27] [INFO] ggpo.net: hosting from online server mat[14:10:27] [INFO] ggpo.net: joining from online server match waiting for pe[14:10:27] [INFO] online.p2p: sent UDP discovery probe match=47 server=eggnogg.loafiieee.c[14:10:27] [INFO] online.p[14:10:27] [INFO] ggpo.net: set peer endpoint 127.0.0.1:53152 mode=host local_port=53151
-[14:10:27] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=5[14:10:27] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=53151
-[14:10:27] [WARN] ggpo.net: initial state differs; using host state local_size=144296 remote_size=144296 local_checksum=455746826 remote_checksum=1001192449[14:10:27] [INFO] ggpo.net: remote state sync ack received
-[14:10:27] [INFO] ggpo.net: start state loaded checksum=1001192449 input_delay=1
-[14:10:27] [INFO] ggpo.net: waiting for remote frame 0 input
-[14:10:30] [ERROR] ggpo.net: desync detail frame=127 changed=things player_diff=- thing_slots=3 local{full=1844556913 header=3633042845 transient=1763977337 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1331258877 p0=3461410970 p1=720839366 things=440113960 tilemap=4237208340 room=4 ticks=825 rng=1014995355 seed=42048 thing_count=16 map=2 score=0-0 round_end=0} remote{full=4259523037 header=3633042845 transient=1763977337 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1331258877 p0=3461410970 p1=720839366 things=2796659704 tilemap=4237208340 room=4 ticks=825 rng=1045479755 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
-[14:10:30] [ERROR] ggpo.net: recoverable desync frame=127 local=1844556913 remote=4259523037 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000021 remote_predicted=0 local_frame=129 remote_frame=128 corr_id=0 corr_frame=0 applied_id=0
-[14:10:30] [WARN] ggpo.net: host correction queued id=1 frame=129 checksum=1357453744 chunks=120/161 mode=delta reason=confirmed frame checksum mismatch
-[14:10:30] [WARN] online.match: desync snapshot count=1 frame=127 local_crc=1844556913 remote_crc=4259523037 net_frame=130 remote_frame=129 room=4 old_room=4 resumed=0 waterfall_count=4 waterfall_fx=0x004EC880 start=0 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=1947678009 local_player=0 active_match=1 pending=0
-[14:10:30] [INFO] ggpo.net: correction ack received id=1 checksum=1357453744 frame=129
-[14:10:32] [ERROR] ggpo.net: desync detail frame=253 changed=transient,players,things player_diff=p0 thing_slots=1 local{full=3127577737 header=2981058097 transient=2574881519 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3555544512 p0=722560127 p1=2246747360 things=20635241 tilemap=4237208340 room=4 ticks=951 rng=1049154974 seed=42048 thing[14:10:32] [INFO] ggpo.net: receiving correction delta state id=2 frame=254 size=144296 checksum=3127577737 chunks=123/161
-[14:10:32] [WARN] ggpo.net: correction applied id=2 frame=254 checksum=3127577737 chunks=123/123 mode=delta total=2 dup=55
-[14:10:33] [ERROR] ggpo.net: desync detail frame=304 changed=things player_diff=- thing_slots=4 local{full=4008410097 header=967703697 transient=540942107 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2289498891 p0=969881583 p1=1830349957 things=1843289229 tilemap=4237208340 room=4 ticks=1002 rng=89876090 seed=42048 thing_count=16 map=2 score=0-0 round_end=0} remote{full=3716922392 header=967703697 transient=540942107 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2289498891 p0=969881583 p1=1830349957 things=4272039678 tilemap=4237208340 room=4 ticks=1002 rng=77817536 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
-[14:10:33] [ERROR] ggpo.net: recoverable desync frame=304 local=4008410097 remote=3716922392 reason=confirmed frame checksum mismatch local_cmd=0x00000004 remote_cmd=0x00000000 remote_predicted=0 local_frame=305 remote_frame=306 corr_id=2 corr_fram[14:10:33] [WARN] ggpo.net: peer requested correction request_frame=305 remote_frame=305 last_corr_frame=254 ack_id=2 total=1
-[14:10:33] [WARN] ggpo.ne[14:10:33] [WARN] online.match: desync snapshot count=2 frame=304 local_crc=4008410097 remote_crc=3716922392 net_fr[14:10:33] [INFO] ggpo.net: correction ack received id=3 checksum=3921926690 frame=310
-[14:10:36] [ERROR] ggpo.net: desync detail frame=456 changed=things player_diff=- thing_slots=4 local{full=1917014280 header=3142028588 transient=3418350911 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3074142477 p0=1301924120 p1=1003586233 things=3870367972 tilemap=4237208340 room=3 ticks=1154 rng=727225542 seed=42048 thing_count=16 map=2 score=0[14:10:36] [INFO] ggpo.net: receiving correction delta state id=4 frame=457 size=144296 checksum=1917014280 chunks=121/161
-[14:10:36] [WARN] ggpo.net: correction applied id=4 frame=457 checksum=1917014280 chunks=121/121 mode=delta total=4 dup=80
-[14:10:57] [INFO] ggpo.net: peer disconnected
-[14:10:57] [ERROR] ggpo.net: failed (peer disconnected)
-[14:10:59] [INFO] [mod:crash] Unloaded
-[14:10:59] [INFO] [mod:poc_speedhack] Unloaded
-[14:10:59] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
-ocal_frame=457 remote_frame=457 corr_id=3 corr_frame=310 applied_id=0
-[14:10:36] [WARN] ggpo.net: host correction queued id=4 frame=457 checksum=1917014280 chunks=121/161 mode=delta reason=confirmed frame checksum mismatch
-[14:10:36] [WARN] online.match: desync snapshot count=3 frame=456 local_crc=1917014280 remote_crc=3072598418 net_frame=458 remote_frame=462 room=3 old_room=3 resumed=0 waterfall_count=2 waterfall_fx=0x004EC750 start=0 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=2288139799 local_player=0 active_match=1 pending=0
-[14:10:36] [INFO] ggpo.net: correction ack received id=4 checksum=1917014280 frame=457
-[14:10:57] [INFO] online.match: completion match=47 local_player=0 winner=1 result=loss end=600 leader=0x00542338 loser=0x005421DC score=0-0 target=0
-[14:10:57] [INFO] ggpo.net: stopped from online match complete after 1741 frame(s), checksum=671251819 tx=4596 rx=3754 pred=1096 rb=61 adv_stall=0 pred_stall=0 desync=3
-[14:11:00] [INFO] [mod:crash] Unloaded
-[14:11:00] [INFO] [mod:poc_speedhack] Unloaded
-[14:11:00] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[11:28:20] [INFO] Mod framework initializing...
+[11:28:20] [INFO] Mod framework API version: 1
+[11:28:20] [INFO] Scanning mods/ folder...
+[11:28:20] [INFO] Loading mod: crash (Crash Test) v1.0.0 by loaf
+[11:28:20] [INFO]   When 8 is pressed, test crash handler by crashing the game.
+[11:28:20] [INFO] [mod:crash] Loaded! id=crash name=Crash Test
+[11:28:20] [INFO] [mod:crash] armed=false
+[11:28:20] [INFO] Loaded mod: crash
+[11:28:20] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[11:28:20] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[11:28:20] [INFO] [mod:options_demo] Loaded options demo
+[11:28:20] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[11:28:20] [INFO] Loaded mod: options_demo
+[11:28:20] [INFO] Loading mod: poc_speedhack (Speed Hack) vuwu by Loafiieee
+[11:28:20] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[11:28:20] [INFO] [mod:poc_speedhack] Loaded! id=poc_speedhack name=Speed Hack
+[11:28:20] [INFO] [mod:poc_speedhack] speed=1
+[11:28:20] [INFO] Loaded mod: poc_speedhack
+[11:28:20] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[11:28:20] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[11:28:20] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[11:28:20] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[11:28:20] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[11:28:20] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[11:28:20] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[11:28:20] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[11:28:20] [INFO] Loaded mod: texture_pack_test
+[11:28:20] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[11:28:20] [INFO] [maps] scanning maps/ for custom maps
+[11:28:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[11:28:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[11:28:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[11:28:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[11:28:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[11:28:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[11:28:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[11:28:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[11:28:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[11:28:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[11:28:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[11:28:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[11:28:20] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[11:28:20] [INFO] hooks_init: custom MODS menu ready
+[11:28:31] [INFO] ONLINE HUB: enter
+[11:28:37] [INFO] online.hub: Settings saved.
+[11:28:38] [INFO] online.hub: Connecting to onl[11:28:39] [INFO] online.hub: Connecting to online server...
+[11:28:39] [I[11:28:41] [INFO] online.hub: Logged in.
+[11:28:42] [INFO] online.hub: Joining casual queue...
+[11:28:42] [INFO] online.hub: Match found: loaf[11:28:42] [INFO] [11:28:45] [INFO] [maps][big_jump] applying cust[11:28:45] [INFO] [maps][big_jump] applying custom map for selecto[11:28:45] [INFO] ggpo.net: local build fingerpr[11:28:45] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:28:45] [INFO] ggpo.net: joining deferred local_port=61226 input_delay=1 max_advantage=20 max_prediction=24 state_size=173768 checksum=2611494896
+[11:28:45] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=61226 player=1 delay=1 adv=20 predcap=24 corr=on state_size=173768
+[11:28:45] [INFO] online.[11:28:45] [INFO] ggpo.net: set peer endpoint 127.0.0.1:61226 mode=host local_port=61225
+[11:28:45] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=61226
+[11:28:45] [WARN] ggpo.net: initial state differs; using host state local_size=173768 remote_size=173768 local_checksum=1428711499 remote_checksum=2611494896
+[11:28:45] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:28:45] [INFO] ggpo.net: remote state sync ack received
+[11:28:45] [INFO] ggpo.net: start state loaded checksum=1428711499 input_delay=1
+[11:28:45] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:28:48] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=74 remote_frame=53
+[11:28:49] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=55 current=79
+[11:28:49] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=55 current=79)
+[11:28:49] [INFO] online.hub: Match found: loaf on Example Map
+[11:28:[11:28:52] [INFO] [maps][examp[11:28:52] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:28:[11:28:52] [INFO] ggpo.net: receiving correction state id=1 frame=106 size=141128 checksum=1852306907 chunks=157/157
+[11:28:52] [WARN] ggpo.net: correction applied id=1 frame=106 checksum=1852306907 chunks=157/157 mode=full total=1 dup=127
+[11:28:57] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:28:57] [INFO] ONLINE HUB: enter
+[11:28:59] [INFO] online.hub: Match found: loaf2 on Vanilla 4
+[11:29:01] [INFO] ONLINE HUB: leave
+[11:29:01] [INFO] ggpo.net: receiving correction state id=2 frame=414 size=147464 checksum=3175283042 chunks=164/164
+[11:29:01] [WARN] ggpo.net: correction applied id=2 frame=414 checksum=3175283042 chunks=164/164 mode=full total=2 dup=127
+[11:29:05] [INFO] ONLINE HUB: enter
+[11:29:06] [INFO] online.hub: Match found: loaf2 on Example Map
+[11:29:08] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:29:08] [INFO] ONLINE HUB: leave
+[11:29:08] [INFO] ggpo.net: receiving correction state id=3 frame=601 size=141128 checksum=3095140917 chunks=157/157
+[11:29:08] [WARN] ggpo.net: correction applied id=3 frame=601 checksum=3095140917 chunks=157/157 mode=full total=3 dup=127
+[11:29:16] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:29:16] [INFO] ONLINE HUB: enter
+[11:29:20] [INFO] online.hub: Match found: loaf2 on Vanilla 5
+[11:29:22] [INFO] ONLINE HUB: leave
+[11:29:22] [INFO] ggpo.net: receiving correction state id=4 frame=1161 size=131624 checksum=1418885449 chunks=147/147
+[11:29:22] [WARN] ggpo.net: correction applied id=4 frame=1161 checksum=1418885449 chunks=147/147 mode=full total=4 dup=222
+[11:29:46] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=2526 remote_frame=2505
+[11:29:47] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=2507 current=2531
+[11:29:47] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=2507 current=2531)
+[11:29:50] [INFO] ggpo.net: peer disconnected
+[11:29:50] [ERROR] ggpo.net: failed (peer disconnected)
+[11:29:54] [INFO] online.hub: Match found: loaf2 on Example Map
+[11:29:54] [INFO] ONLINE HUB: enter
+[11:29:57] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:29:57] [INFO] ONLINE HUB: leave
+[11:29:57] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:29:57] [INFO] ggpo.net: hosting udp port=51765 input_delay=1 max_advantage=20 max_prediction=24 state_size=180104 checksum=3414271243
+[11:29:57] [INFO] ggpo.net: hosting from online server match udp=51765 player=0 delay=1 adv=20 predcap=24 corr=on state_size=180104
+[11:29:57] [INFO] online.p2p: sent UDP discovery probe match=29 server=eggnogg.loafiieee.com:47778 local_udp=51765
+[11:29:57] [INFO] ggpo.net: set peer endpoint 127.0.0.1:51764 mode=host local_port=51765
+[11:29:57] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=51764
+[11:29:57] [WARN] ggpo.net: initial state differs; using host state local_size=180104 remote_size=180104 local_checksum=3414271243 remote_checksum=3261841098
+[11:29:57] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:29:57] [INFO] ggpo.net: remote state sync ack received
+[11:29:57] [INFO] ggpo.net: start state loaded checksum=3414271243 input_delay=1
+[11:29:57] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:29:58] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:29:59] [INFO] ONLINE HUB: enter
+[11:30:00] [INFO] online.hub: Match found: loaf2 on Vanilla 3
+[11:30:03] [INFO] ONLINE HUB: leave
+[11:30:03] [WARN] ggpo.net: peer requested correction request_frame=93 remote_frame=93 last_corr_frame=0 ack_id=0 total=1
+[11:30:03] [WARN] ggpo.net: host correction queued id=1 frame=80 checksum=2182788323 chunks=161/161 mode=full reason=peer resync request
+[11:30:03] [INFO] ggpo.net: correction ack received id=1 checksum=2182788323 frame=80
+[11:30:33] [INFO] ggpo.net: stopped from online match complete after 1849 frame(s), checksum=3272592983 tx=4098 rx=3802 pred=1715 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:30:33] [INFO] ONLINE HUB: enter
+[11:30:34] [INFO] online.hub: Match found: loaf2 on Example Map
+[11:30:37] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:30:37] [INFO] ONLINE HUB: leave
+[11:30:37] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:30:37] [INFO] ggpo.net: hosting udp port=57682 input_delay=1 max_advantage=20 max_prediction=24 state_size=180104 checksum=83568960
+[11:30:37] [INFO] ggpo.net: hosting from online server match udp=57682 player=0 delay=1 adv=20 predcap=24 corr=on state_size=180104
+[11:30:37] [INFO] online.p2p: sent UDP discovery probe match=31 server=eggnogg.loafiieee.com:47778 local_udp=57682
+[11:30:37] [INFO] ggpo.net: set peer endpoint 127.0.0.1:57683 mode=host local_port=57682
+[11:30:37] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=57683
+[11:30:37] [WARN] ggpo.net: initial state differs; using host state local_size=180104 remote_size=180104 local_checksum=83568960 remote_checksum=2824262441
+[11:30:37] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:30:37] [INFO] ggpo.net: remote state sync ack received
+[11:30:37] [INFO] ggpo.net: start state loaded checksum=83568960 input_delay=1
+[11:30:37] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:30:41] [INFO] ggpo.net: peer disconnected
+[11:30:41] [ERROR] ggpo.net: failed (peer disconnected)
+[11:30:43] [INFO] online.hub: Match found: loaf2 on Vanilla 3
+[11:30:43] [INFO] ONLINE HUB: enter
+[11:30:46] [INFO] ONLINE HUB: leave
+[11:30:46] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:30:46] [INFO] ggpo.net: hosting udp port=60268 input_delay=1 max_advantage=20 max_prediction=24 state_size=183272 checksum=4091928385
+[11:30:46] [INFO] ggpo.net: hosting from online server match udp=60268 player=0 delay=1 adv=20 predcap=24 corr=on state_size=183272
+[11:30:46] [INFO] online.p2p: sent UDP discovery probe match=32 server=eggnogg.loafiieee.com:47778 local_udp=60268
+[11:30:46] [INFO] ggpo.net: set peer endpoint 127.0.0.1:60267 mode=host local_port=60268
+[11:30:46] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=60267
+[11:30:46] [WARN] ggpo.net: initial state differs; using host state local_size=183272 remote_size=183272 local_checksum=4091928385 remote_checksum=631994340
+[11:30:46] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:30:46] [INFO] ggpo.net: remote state sync ack received
+[11:30:46] [INFO] ggpo.net: start state loaded checksum=4091928385 input_delay=1
+[11:30:46] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:30:49] [INFO] ONLINE HUB: enter
+[11:30:51] [INFO] online.hub: Match found: loaf2 on Example Map
+[11:30:53] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:30:53] [INFO] ONLINE HUB: leave
+[11:30:53] [WARN] ggpo.net: peer requested correction request_frame=186 remote_frame=186 last_corr_frame=0 ack_id=0 total=1
+[11:30:53] [WARN] ggpo.net: host correction queued id=1 frame=171 checksum=925760206 chunks=157/157 mode=full reason=peer resync request
+[11:30:54] [INFO] ggpo.net: correction ack received id=1 checksum=925760206 frame=171
+[11:35:00] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:35:01] [INFO] ONLINE HUB: enter
+[11:35:02] [INFO] online.hub: Match found: loaf2 on Vanilla 5
+[11:35:05] [INFO] ONLINE HUB: leave
+[11:35:05] [WARN] ggpo.net: peer requested correction request_frame=14994 remote_frame=14994 last_corr_frame=171 ack_id=1 total=2
+[11:35:05] [WARN] ggpo.net: host correction queued id=2 frame=14981 checksum=2957374674 chunks=147/147 mode=full reason=peer resync request
+[11:35:05] [INFO] ggpo.net: correction ack received id=2 checksum=2957374674 frame=14981
+[11:35:16] [INFO] ggpo.net: stopped from online match complete after 15622 frame(s), checksum=2812930834 tx=31845 rx=31366 pred=15407 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:35:17] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:35:19] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:36:19] [INFO] ONLINE HUB: enter
+[11:36:20] [INFO] online.hub: Match found: loaf2 on The Big Jump
+[11:36:22] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:36:22] [INFO] ONLINE HUB: leave
+[11:36:22] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:36:22] [INFO] ggpo.net: joining deferred local_port=54562 input_delay=1 max_advantage=20 max_prediction=24 state_size=173768 checksum=919289044
+[11:36:22] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=54562 player=1 delay=1 adv=20 predcap=24 corr=on state_size=173768
+[11:36:22] [INFO] online.p2p: sent UDP discovery probe match=35 server=eggnogg.loafiieee.com:47778 local_udp=54562
+[11:36:22] [INFO] ggpo.net: set peer endpoint 127.0.0.1:54563 mode=join local_port=54562
+[11:36:22] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=54563
+[11:36:22] [WARN] ggpo.net: initial state differs; using host state local_size=173768 remote_size=173768 local_checksum=919289044 remote_checksum=2362707718
+[11:36:22] [INFO] ggpo.net: receiving host state id=0 frame=0 size=134792 checksum=2362707718 chunks=150/150
+[11:36:22] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[11:36:23] [INFO] ggpo.net: host state synced size=134792 checksum=2362707718 chunks=150
+[11:36:23] [INFO] ggpo.net: start state loaded checksum=2362707718 input_delay=1
+[11:36:23] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:36:33] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:36:34] [INFO] ONLINE HUB: enter
+[11:36:35] [INFO] online.hub: Match found: loaf2 on Vanilla 4
+[11:36:37] [INFO] ONLINE HUB: leave
+[11:36:37] [INFO] ggpo.net: receiving correction state id=1 frame=652 size=147464 checksum=3824240188 chunks=164/164
+[11:36:38] [WARN] ggpo.net: correction applied id=1 frame=652 checksum=3824240188 chunks=164/164 mode=full total=1 dup=0
+[11:36:40] [INFO] ONLINE HUB: enter
+[11:36:41] [INFO] online.hub: Match found: loaf2 on Vanilla 2
+[11:36:43] [INFO] ONLINE HUB: leave
+[11:36:43] [INFO] ggpo.net: receiving correction state id=2 frame=783 size=141128 checksum=3470997393 chunks=157/157
+[11:36:43] [WARN] ggpo.net: correction applied id=2 frame=783 checksum=3470997393 chunks=157/157 mode=full total=2 dup=0
+[11:36:46] [INFO] ONLINE HUB: enter
+[11:36:47] [INFO] online.hub: Match found: loaf2 on Example Map
+[11:36:50] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:36:50] [INFO] ONLINE HUB: leave
+[11:36:50] [INFO] ggpo.net: receiving correction delta state id=3 frame=935 size=141128 checksum=1472171272 chunks=21/157
+[11:36:50] [WARN] ggpo.net: correction applied id=3 frame=935 checksum=1472171272 chunks=21/21 mode=delta total=3 dup=0
+[11:36:51] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:36:51] [INFO] ONLINE HUB: enter
+[11:36:52] [INFO] online.hub: Challenge declined.
+[11:36:54] [INFO] online.hub: Challenge declined.
+[11:36:56] [INFO] online.hub: Match found: loaf2 on Vanilla 2
+[11:36:58] [INFO] ONLINE HUB: leave
+[11:36:58] [INFO] ggpo.net: receiving correction delta state id=4 frame=1187 size=141128 checksum=2183287143 chunks=20/157
+[11:36:58] [WARN] ggpo.net: correction applied id=4 frame=1187 checksum=2183287143 chunks=20/20 mode=delta total=4 dup=0
+[11:37:01] [INFO] ONLINE HUB: enter
+[11:37:03] [INFO] online.hub: Match found: loaf2 on The Big Jump
+[11:37:05] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:37:05] [INFO] ONLINE HUB: leave
+[11:37:05] [INFO] ggpo.net: receiving correction state id=5 frame=1341 size=134792 checksum=1770144913 chunks=150/150
+[11:37:05] [WARN] ggpo.net: correction applied id=5 frame=1341 checksum=1770144913 chunks=150/150 mode=full total=5 dup=0
+[11:37:06] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:37:07] [INFO] ONLINE HUB: enter
+[11:37:08] [INFO] online.hub: Challenge declined.
+[11:37:09] [INFO] online.hub: Match found: loaf2 on Vanilla 5
+[11:37:12] [INFO] ONLINE HUB: leave
+[11:37:12] [INFO] ggpo.net: receiving correction state id=6 frame=1489 size=131624 checksum=2816032193 chunks=147/147
+[11:37:12] [WARN] ggpo.net: correction applied id=6 frame=1489 checksum=2816032193 chunks=147/147 mode=full total=6 dup=95
+[11:37:15] [INFO] ONLINE HUB: enter
+[11:37:16] [INFO] online.hub: Match found: loaf2 on Vanilla 3
+[11:37:18] [INFO] ONLINE HUB: leave
+[11:37:18] [INFO] ggpo.net: receiving correction state id=7 frame=1632 size=144296 checksum=14772350 chunks=161/161
+[11:37:19] [WARN] ggpo.net: correction applied id=7 frame=1632 checksum=14772350 chunks=161/161 mode=full total=7 dup=95
+[11:37:49] [INFO] ggpo.net: stopped from online match complete after 3420 frame(s), checksum=2148776614 tx=6522 rx=7633 pred=98 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:37:49] [INFO] ONLINE HUB: enter
+[11:37:50] [INFO] online.hub: Match found: loaf2 on Vanilla 2
+[11:37:53] [INFO] ONLINE HUB: leave
+[11:37:53] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:37:53] [INFO] ggpo.net: joining deferred local_port=57130 input_delay=1 max_advantage=20 max_prediction=24 state_size=180104 checksum=3240501666
+[11:37:53] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=57130 player=1 delay=1 adv=20 predcap=24 corr=on state_size=180104
+[11:37:53] [INFO] online.p2p: sent UDP discovery probe match=43 server=eggnogg.loafiieee.com:47778 local_udp=57130
+[11:37:53] [INFO] ggpo.net: set peer endpoint 127.0.0.1:57131 mode=join local_port=57130
+[11:37:53] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=57131
+[11:37:53] [WARN] ggpo.net: initial state differs; using host state local_size=180104 remote_size=180104 local_checksum=3240501666 remote_checksum=4236255409
+[11:37:53] [INFO] ggpo.net: receiving host state id=0 frame=0 size=141128 checksum=4236255409 chunks=157/157
+[11:37:53] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[11:37:53] [INFO] ggpo.net: host state synced size=141128 checksum=4236255409 chunks=157
+[11:37:53] [INFO] ggpo.net: start state loaded checksum=4236255409 input_delay=1
+[11:37:53] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:37:57] [INFO] ggpo.net: peer disconnected
+[11:37:57] [ERROR] ggpo.net: failed (peer disconnected)
+[11:37:59] [INFO] online.hub: Match found: loaf2 on Vanilla 5
+[11:37:59] [INFO] ONLINE HUB: enter
+[11:38:01] [INFO] ONLINE HUB: leave
+[11:38:01] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:38:01] [INFO] ggpo.net: hosting udp port=53439 input_delay=1 max_advantage=20 max_prediction=24 state_size=170600 checksum=3400673496
+[11:38:01] [INFO] ggpo.net: hosting from online server match udp=53439 player=0 delay=1 adv=20 predcap=24 corr=on state_size=170600
+[11:38:01] [INFO] online.p2p: sent UDP discovery probe match=44 server=eggnogg.loafiieee.com:47778 local_udp=53439
+[11:38:01] [INFO] ggpo.net: set peer endpoint 127.0.0.1:53438 mode=host local_port=53439
+[11:38:01] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=53438
+[11:38:01] [WARN] ggpo.net: initial state differs; using host state local_size=170600 remote_size=170600 local_checksum=3400673496 remote_checksum=1339259659
+[11:38:01] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:38:01] [INFO] ggpo.net: remote state sync ack received
+[11:38:01] [INFO] ggpo.net: start state loaded checksum=3400673496 input_delay=1
+[11:38:02] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:38:21] [INFO] ggpo.net: stopped from online match complete after 1145 frame(s), checksum=666485511 tx=2489 rx=2335 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:38:22] [INFO] ONLINE HUB: enter
+[11:38:23] [INFO] online.hub: Match found: loaf2 on The Big Jump
+[11:38:26] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:38:26] [INFO] ONLINE HUB: leave
+[11:38:26] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:38:26] [INFO] ggpo.net: joining deferred local_port=54561 input_delay=1 max_advantage=20 max_prediction=24 state_size=173768 checksum=3954985542
+[11:38:26] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=54561 player=1 delay=1 adv=20 predcap=24 corr=on state_size=173768
+[11:38:26] [INFO] online.p2p: sent UDP discovery probe match=45 server=eggnogg.loafiieee.com:47778 local_udp=54561
+[11:38:26] [INFO] ggpo.net: set peer endpoint 127.0.0.1:54562 mode=join local_port=54561
+[11:38:26] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=54562
+[11:38:26] [WARN] ggpo.net: initial state differs; using host state local_size=173768 remote_size=173768 local_checksum=3954985542 remote_checksum=1648908596
+[11:38:26] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[11:38:26] [INFO] ggpo.net: receiving host state id=0 frame=0 size=134792 checksum=1648908596 chunks=150/150
+[11:38:26] [INFO] ggpo.net: host state synced size=134792 checksum=1648908596 chunks=150
+[11:38:26] [INFO] ggpo.net: start state loaded checksum=1648908596 input_delay=1
+[11:38:26] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:38:33] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:38:34] [INFO] ggpo.net: stopped from online match complete after 398 frame(s), checksum=3189159307 tx=837 rx=994 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:38:34] [INFO] ONLINE HUB: enter
+[11:38:35] [INFO] online.hub: Match found: loaf2 on Vanilla 4
+[11:38:38] [INFO] ONLINE HUB: leave
+[11:38:38] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:38:38] [INFO] ggpo.net: joining deferred local_port=59766 input_delay=1 max_advantage=20 max_prediction=24 state_size=186440 checksum=2503521521
+[11:38:38] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=59766 player=1 delay=1 adv=20 predcap=24 corr=on state_size=186440
+[11:38:38] [INFO] online.p2p: sent UDP discovery probe match=46 server=eggnogg.loafiieee.com:47778 local_udp=59766
+[11:38:38] [INFO] ggpo.net: set peer endpoint 127.0.0.1:59767 mode=join local_port=59766
+[11:38:38] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=59767
+[11:38:38] [WARN] ggpo.net: initial state differs; using host state local_size=186440 remote_size=186440 local_checksum=2503521521 remote_checksum=3329044195
+[11:38:38] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[11:38:38] [INFO] ggpo.net: receiving host state id=0 frame=0 size=147464 checksum=3329044195 chunks=164/164
+[11:38:38] [INFO] ggpo.net: host state synced size=147464 checksum=3329044195 chunks=164
+[11:38:38] [INFO] ggpo.net: start state loaded checksum=3329044195 input_delay=1
+[11:38:38] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:38:40] [INFO] ONLINE HUB: enter
+[11:38:44] [INFO] ONLINE HUB: leave
+[11:38:45] [INFO] ggpo.net: stopped from online match complete after 59 frame(s), checksum=3945611472 tx=163 rx=334 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:38:45] [INFO] [mod:crash] Unloaded
+[11:38:45] [INFO] [mod:poc_speedhack] Unloaded
+[11:38:45] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+:35] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=647 remote_frame=626
+[11:36:35] [INFO] online.hub: Match found: loaf on Vanilla 4
+[11:36:35] [INFO] ONLINE HUB: enter
+[11:36:37] [INFO] ONLINE HUB: leave
+[11:36:37] [ERROR] ggpo.net: desync detail frame=627 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2 local{full=1540868888 header=1559295181 transient=2863970918 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2222475127 p0=3975845634 p1=1333458060 things=2282033265 tilemap=2124049686 room=1 ticks=25915 rng=2708344700 seed=24317 thing_count=16 map=6 score=0-0 round_end=0} remote{full=4213660945 header=1128512094 transient=1989950286 thing_info=2348746994 room_info=2932909348 particles=789665624 players=3285299522 p0=1536229748 p1=131750190 things=1753394890 tilemap=3074341813 room=5 ticks=25951 rng=178040713 seed=62729 thing_count=16 map=3 score=0-0 round_end=0}
+[11:36:37] [ERROR] ggpo.net: recoverable desync frame=627 local=1540868888 remote=4213660945 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=652 remote_frame=628 corr_id=0 corr_frame=0 applied_id=0
+[11:36:37] [WARN] ggpo.net: host correction queued id=1 frame=652 checksum=3824240188 chunks=164/164 mode=full reason=confirmed frame checksum mismatch
+[11:36:37] [WARN] online.match: desync snapshot count=1 frame=627 local_crc=1540868888 remote_crc=4213660945 net_frame=653 remote_frame=641 room=5 old_room=5 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=89 end=0 round_end=0 score=0-0 target=0 map=3 seed=62729 mrand=178040713 local_player=0 active_match=1 pending=0
+[11:36:38] [INFO] ggpo.net: correction ack received id=1 checksum=3824240188 frame=652
+[11:36:41] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=778 remote_frame=757
+[11:36:41] [INFO] online.hub: Match found: loaf on Vanilla 2
+[11:36:41] [INFO] ONLINE HUB: enter
+[11:36:43] [INFO] ONLINE HUB: leave
+[11:36:43] [ERROR] ggpo.net: desync detail frame=758 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2,3,4,5,6 local{full=570920114 header=60230823 transient=1527855571 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1350779731 p0=4148938216 p1=3494031483 things=1313179890 tilemap=3074341813 room=5 ticks=26046 rng=3041440060 seed=62729 thing_count=16 map=3 score=0-0 round_end=0} remote{full=313760627 header=689035677 transient=3975041850 thing_info=2348746994 room_info=2932909348 particles=789665624 players=4278839695 p0=2088659190 p1=1265138156 things=974013347 tilemap=1879169939 room=3 ticks=26078 rng=3177043688 seed=55176 thing_count=16 map=1 score=0-0 round_end=0}
+[11:36:43] [ERROR] ggpo.net: recoverable desync frame=758 local=570920114 remote=313760627 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=783 remote_frame=759 corr_id=1 corr_frame=652 applied_id=0
+[11:36:43] [WARN] ggpo.net: host correction queued id=2 frame=783 checksum=3470997393 chunks=157/157 mode=full reason=confirmed frame checksum mismatch
+[11:36:43] [WARN] online.match: desync snapshot count=2 frame=758 local_crc=570920114 remote_crc=313760627 net_frame=784 remote_frame=771 room=3 old_room=3 resumed=0 waterfall_count=8 waterfall_fx=0x00000000 start=89 end=0 round_end=0 score=0-0 target=0 map=1 seed=55176 mrand=3177043688 local_player=0 active_match=1 pending=0
+[11:36:43] [INFO] ggpo.net: correction ack received id=2 checksum=3470997393 frame=783
+[11:36:47] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=930 remote_frame=909
+[11:36:47] [INFO] online.hub: Match found: loaf on Example Map
+[11:36:47] [INFO] ONLINE HUB: enter
+[11:36:50] [INFO] [maps][example_map] applying custom map for selector index 5
+[11:36:50] [INFO] ONLINE HUB: leave
+[11:36:50] [ERROR] ggpo.net: desync detail frame=910 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2,3,4,5,6 local{full=1777639377 header=3578480004 transient=60435634 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2023712370 p0=245583811 p1=2118366616 things=1601976651 tilemap=1879169939 room=3 ticks=26198 rng=2838629619 seed=55176 thing_count=16 map=1 score=0-0 round_end=0} remote{full=1898802175 header=2958173890 transient=4161784280 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2643206249 p0=977139942 p1=860359815 things=3300430129 tilemap=3906499066 room=3 ticks=26233 rng=917292668 seed=42048 thing_count=16 map=5 score=0-0 round_end=0}
+[11:36:50] [ERROR] ggpo.net: recoverable desync frame=910 local=1777639377 remote=1898802175 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=935 remote_frame=911 corr_id=2 corr_frame=783 applied_id=0
+[11:36:50] [WARN] ggpo.net: host correction queued id=3 frame=935 checksum=1472171272 chunks=21/157 mode=delta reason=confirmed frame checksum mismatch
+[11:36:50] [WARN] online.match: desync snapshot count=3 frame=910 local_crc=1777639377 remote_crc=1898802175 net_frame=936 remote_frame=924 room=3 old_room=3 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=89 end=0 round_end=0 score=0-0 target=0 map=5 seed=42048 mrand=917292668 local_player=0 active_match=1 pending=0
+[11:36:50] [INFO] ggpo.net: correction ack received id=3 checksum=1472171272 frame=935
+[11:36:52] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=1007 remote_frame=986
+[11:36:53] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=988 current=1012
+[11:36:53] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=988 current=1012)
+[11:36:56] [INFO] online.hub: Match found: loaf on Vanilla 2
+[11:36:56] [INFO] ONLINE HUB: enter
+[11:36:58] [INFO] ONLINE HUB: leave
+[11:36:58] [ERROR] ggpo.net: desync detail frame=987 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2,3,4,5,6 local{full=1104578509 header=2562827996 transient=4071555083 thing_info=2348746994 room_info=2932909348 particles=789665624 players=4170219277 p0=3170178385 p1=2215804897 things=1897237497 tilemap=3906499066 room=3 ticks=26275 rng=1447103311 seed=42048 thing_count=16 map=5 score=0-0 round_end=0} remote{full=1972773095 header=960913850 transient=2502667568 thing_info=2348746994 room_info=2932909348 particles=789665624 players=4278839695 p0=2088659190 p1=1265138156 things=3729360566 tilemap=3417390065 room=3 ticks=26303 rng=3431211726 seed=50043 thing_count=16 map=1 score=0-0 round_end=0}
+[11:36:58] [ERROR] ggpo.net: recoverable desync frame=987 local=1104578509 remote=1972773095 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1187 remote_frame=988 corr_id=3 corr_frame=935 applied_id=0
+[11:36:58] [WARN] ggpo.net: host correction queued id=4 frame=1187 checksum=2183287143 chunks=20/157 mode=delta reason=confirmed frame checksum mismatch
+[11:36:58] [WARN] online.match: desync snapshot count=4 frame=987 local_crc=1104578509 remote_crc=1972773095 net_frame=1187 remote_frame=1002 room=3 old_room=-1 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=90 end=0 round_end=0 score=0-0 target=0 map=1 seed=50043 mrand=1003841428 local_player=0 active_match=1 pending=0
+[11:36:58] [INFO] ggpo.net: correction ack received id=4 checksum=2183287143 frame=1187
+[11:37:02] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=1336 remote_frame=1315
+[11:37:03] [INFO] online.hub: Match found: loaf on The Big Jump
+[11:37:03] [INFO] ONLINE HUB: enter
+[11:37:05] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:37:05] [INFO] ONLINE HUB: leave
+[11:37:05] [ERROR] ggpo.net: desync detail frame=1316 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2,3,4,5,6 local{full=2908350619 header=33793645 transient=339477745 thing_info=2348746994 room_info=2932909348 particles=789665624 players=303075656 p0=1043848403 p1=1819017766 things=2164401266 tilemap=3417390065 room=3 ticks=26604 rng=4220547112 seed=50043 thing_count=16 map=1 score=0-0 round_end=0} remote{full=2369304287 header=1348214974 transient=2308877110 thing_info=2348746994 room_info=2932909348 particles=789665624 players=755455489 p0=2145154793 p1=4112752372 things=2392750848 tilemap=554977110 room=1 ticks=26639 rng=941013628 seed=42048 thing_count=16 map=6 score=0-0 round_end=0}
+[11:37:05] [ERROR] ggpo.net: recoverable desync frame=1316 local=2908350619 remote=2369304287 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1341 remote_frame=1317 corr_id=4 corr_frame=1187 applied_id=0
+[11:37:05] [WARN] ggpo.net: host correction queued id=5 frame=1341 checksum=1770144913 chunks=150/150 mode=full reason=confirmed frame checksum mismatch
+[11:37:05] [WARN] online.match: desync snapshot count=5 frame=1316 local_crc=2908350619 remote_crc=2369304287 net_frame=1342 remote_frame=1325 room=1 old_room=1 resumed=0 waterfall_count=11 waterfall_fx=0x00000000 start=89 end=0 round_end=0 score=0-0 target=0 map=6 seed=42048 mrand=941013628 local_player=0 active_match=1 pending=0
+[11:37:05] [INFO] ggpo.net: correction ack received id=5 checksum=1770144913 frame=1341
+[11:37:08] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=1439 remote_frame=1418
+[11:37:09] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=1420 current=1444
+[11:37:09] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=1420 current=1444)
+[11:37:10] [INFO] online.hub: Match found: loaf on Vanilla 5
+[11:37:10] [INFO] ONLINE HUB: enter
+[11:37:12] [INFO] ONLINE HUB: leave
+[11:37:12] [ERROR] ggpo.net: desync detail frame=1419 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2 local{full=4009152062 header=3480813823 transient=1383201364 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2280187977 p0=1894087969 p1=3546619567 things=3595663242 tilemap=554977110 room=1 ticks=26707 rng=3623125904 seed=42048 thing_count=16 map=6 score=0-0 round_end=0} remote{full=2180360592 header=3423500917 transient=1290603743 thing_info=2348746994 room_info=2932909348 particles=789665624 players=2133259078 p0=911562683 p1=538462494 things=768864778 tilemap=662331774 room=0 ticks=26738 rng=1308535501 seed=57505 thing_count=16 map=4 score=0-0 round_end=1}
+[11:37:12] [ERROR] ggpo.net: recoverable desync frame=1419 local=4009152062 remote=2180360592 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1489 remote_frame=1420 corr_id=5 corr_frame=1341 applied_id=0
+[11:37:12] [WARN] ggpo.net: host correction queued id=6 frame=1489 checksum=2816032193 chunks=147/147 mode=full reason=confirmed frame checksum mismatch
+[11:37:12] [WARN] online.match: desync snapshot count=6 frame=1419 local_crc=4009152062 remote_crc=2180360592 net_frame=1489 remote_frame=1433 room=0 old_room=-1 resumed=0 waterfall_count=0 waterfall_fx=0x00000000 start=90 end=0 round_end=1 score=0-0 target=7 map=4 seed=57505 mrand=3666232849 local_player=0 active_match=1 pending=0
+[11:37:12] [INFO] ggpo.net: correction ack received id=6 checksum=2816032193 frame=1489
+[11:37:15] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=1627 remote_frame=1606
+[11:37:16] [INFO] online.hub: Match found: loaf on Vanilla 3
+[11:37:16] [INFO] ONLINE HUB: enter
+[11:37:18] [INFO] ONLINE HUB: leave
+[11:37:18] [ERROR] ggpo.net: desync detail frame=1607 changed=header,transient,players,things,tilemap player_diff=p0,p1 thing_slots=1,2 local{full=3828469609 header=2513438827 transient=829424663 thing_info=2348746994 room_info=2932909348 particles=789665624 players=685135477 p0=801628083 p1=2673926655 things=360878004 tilemap=662331774 room=0 ticks=26895 rng=126785150 seed=57505 thing_count=16 map=4 score=0-0 round_end=1} remote{full=455637906 header=327948826 transient=351239246 thing_info=2348746994 room_info=2932909348 particles=789665624 players=1468082671 p0=3119708095 p1=3006062425 things=1701052979 tilemap=4237208340 room=4 ticks=26931 rng=79933560 seed=42048 thing_count=16 map=2 score=0-0 round_end=0}
+[11:37:18] [ERROR] ggpo.net: recoverable desync frame=1607 local=3828469609 remote=455637906 reason=confirmed frame checksum mismatch local_cmd=0x00000000 remote_cmd=0x00000000 remote_predicted=0 local_frame=1632 remote_frame=1608 corr_id=6 corr_frame=1489 applied_id=0
+[11:37:18] [WARN] ggpo.net: host correction queued id=7 frame=1632 checksum=14772350 chunks=161/161 mode=full reason=confirmed frame checksum mismatch
+[11:37:18] [WARN] online.match: desync snapshot count=7 frame=1607 local_crc=3828469609 remote_crc=455637906 net_frame=1633 remote_frame=1620 room=4 old_room=4 resumed=0 waterfall_count=4 waterfall_fx=0x00000000 start=89 end=0 round_end=0 score=0-0 target=0 map=2 seed=42048 mrand=79933560 local_player=0 active_match=1 pending=0
+[11:37:19] [INFO] ggpo.net: correction ack received id=7 checksum=14772350 frame=1632
+[11:37:49] [INFO] ggpo.net: peer disconnected
+[11:37:49] [ERROR] ggpo.net: failed (peer disconnected)
+[11:37:50] [INFO] online.hub: Match found: loaf on Vanilla 2
+[11:37:50] [INFO] ONLINE HUB: enter
+[11:37:53] [INFO] ONLINE HUB: leave
+[11:37:53] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:37:53] [INFO] ggpo.net: hosting udp port=57131 input_delay=1 max_advantage=20 max_prediction=24 state_size=180104 checksum=4236255409
+[11:37:53] [INFO] ggpo.net: hosting from online server match udp=57131 player=0 delay=1 adv=20 predcap=24 corr=on state_size=180104
+[11:37:53] [INFO] online.p2p: sent UDP discovery probe match=43 server=eggnogg.loafiieee.com:47778 local_udp=57131
+[11:37:53] [INFO] ggpo.net: set peer endpoint 127.0.0.1:57130 mode=host local_port=57131
+[11:37:53] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=57130
+[11:37:53] [WARN] ggpo.net: initial state differs; using host state local_size=180104 remote_size=180104 local_checksum=4236255409 remote_checksum=3240501666
+[11:37:53] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:37:53] [INFO] ggpo.net: remote state sync ack received
+[11:37:53] [INFO] ggpo.net: start state loaded checksum=4236255409 input_delay=1
+[11:37:53] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:37:57] [INFO] ggpo.net: stopped from online match complete after 163 frame(s), checksum=271057639 tx=525 rx=378 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
+[11:37:57] [INFO] ONLINE HUB: enter
+[11:37:59] [INFO] online.hub: Match found: loaf on Vanilla 5
+[11:38:01] [INFO] ONLINE HUB: leave
+[11:38:01] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:38:01] [INFO] ggpo.net: joining deferred local_port=53438 input_delay=1 max_advantage=20 max_prediction=24 state_size=170600 checksum=1339259659
+[11:38:01] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=53438 player=1 delay=1 adv=20 predcap=24 corr=on state_size=170600
+[11:38:01] [INFO] online.p2p: sent UDP discovery probe match=44 server=eggnogg.loafiieee.com:47778 local_udp=53438
+[11:38:01] [INFO] ggpo.net: set peer endpoint 127.0.0.1:53439 mode=join local_port=53438
+[11:38:01] [INFO] ggpo.net: connected mode=join local_player=1 remote_player=0 peer_port=53439
+[11:38:01] [WARN] ggpo.net: initial state differs; using host state local_size=170600 remote_size=170600 local_checksum=1339259659 remote_checksum=3400673496
+[11:38:01] [INFO] ggpo.net: waiting for host state sync local_synced=0 remote_synced=1
+[11:38:01] [INFO] ggpo.net: receiving host state id=0 frame=0 size=131624 checksum=3400673496 chunks=147/147
+[11:38:01] [INFO] ggpo.net: host state synced size=131624 checksum=3400673496 chunks=147
+[11:38:01] [INFO] ggpo.net: start state loaded checksum=3400673496 input_delay=1
+[11:38:01] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:38:21] [INFO] ggpo.net: peer disconnected
+[11:38:21] [ERROR] ggpo.net: failed (peer disconnected)
+[11:38:23] [INFO] online.hub: Match found: loaf on The Big Jump
+[11:38:23] [INFO] ONLINE HUB: enter
+[11:38:26] [INFO] [maps][big_jump] applying custom map for selector index 6
+[11:38:26] [INFO] ONLINE HUB: leave
+[11:38:26] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:38:26] [INFO] ggpo.net: hosting udp port=54562 input_delay=1 max_advantage=20 max_prediction=24 state_size=173768 checksum=1648908596
+[11:38:26] [INFO] ggpo.net: hosting from online server match udp=54562 player=0 delay=1 adv=20 predcap=24 corr=on state_size=173768
+[11:38:26] [INFO] online.p2p: sent UDP discovery probe match=45 server=eggnogg.loafiieee.com:47778 local_udp=54562
+[11:38:26] [INFO] ggpo.net: set peer endpoint 127.0.0.1:54561 mode=host local_port=54562
+[11:38:26] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=54561
+[11:38:26] [WARN] ggpo.net: initial state differs; using host state local_size=173768 remote_size=173768 local_checksum=1648908596 remote_checksum=3954985542
+[11:38:26] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:38:26] [INFO] ggpo.net: remote state sync ack received
+[11:38:26] [INFO] ggpo.net: start state loaded checksum=1648908596 input_delay=1
+[11:38:26] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:38:34] [INFO] ggpo.net: peer disconnected
+[11:38:34] [ERROR] ggpo.net: failed (peer disconnected)
+[11:38:35] [INFO] online.hub: Match found: loaf on Vanilla 4
+[11:38:35] [INFO] ONLINE HUB: enter
+[11:38:38] [INFO] ONLINE HUB: leave
+[11:38:38] [INFO] ggpo.net: local build fingerprint build=716C8E3A exe=632C561E dll=DDBE167D correction=on
+[11:38:38] [INFO] ggpo.net: hosting udp port=59767 input_delay=1 max_advantage=20 max_prediction=24 state_size=186440 checksum=3329044195
+[11:38:38] [INFO] ggpo.net: hosting from online server match udp=59767 player=0 delay=1 adv=20 predcap=24 corr=on state_size=186440
+[11:38:38] [INFO] online.p2p: sent UDP discovery probe match=46 server=eggnogg.loafiieee.com:47778 local_udp=59767
+[11:38:38] [INFO] ggpo.net: set peer endpoint 127.0.0.1:59766 mode=host local_port=59767
+[11:38:38] [INFO] ggpo.net: connected mode=host local_player=0 remote_player=1 peer_port=59766
+[11:38:38] [WARN] ggpo.net: initial state differs; using host state local_size=186440 remote_size=186440 local_checksum=3329044195 remote_checksum=2503521521
+[11:38:38] [INFO] ggpo.net: waiting for host state sync local_synced=1 remote_synced=0
+[11:38:38] [INFO] ggpo.net: remote state sync ack received
+[11:38:38] [INFO] ggpo.net: start state loaded checksum=3329044195 input_delay=1
+[11:38:38] [INFO] ggpo.net: waiting for remote frame 0 input
+[11:38:40] [WARN] ggpo.net: frame advantage wait exceeded 60 ticks; resuming prediction local_frame=79 remote_frame=58
+[11:38:41] [WARN] ggpo.net: prediction wait exceeded 60 ticks; continuing past predcap=24 oldest_missing=60 current=84
+[11:38:41] [WARN] ggpo.net: predicting remote input for 24+ frames (oldest_missing=60 current=84)
+[11:38:45] [INFO] ggpo.net: peer disconnected
+[11:38:45] [ERROR] ggpo.net: failed (peer disconnected)
+[11:38:46] [INFO] online.hub: Online match ended.
+[11:38:47] [INFO] [mod:crash] Unloaded
+[11:38:47] [INFO] [mod:poc_speedhack] Unloaded
+[11:38:47] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

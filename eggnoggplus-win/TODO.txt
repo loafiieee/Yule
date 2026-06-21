@@ -8,3 +8,5 @@ name: options[option1, option2, option3], default
 - Improve console
 - Add features to mod menu such as options for hiding framework log console, fixing sounds (currently the sounds do not mute when starting the game with sounds off in the settings, you have to enable them then disable them again to mute them)
 - Beautify basically every menu. add animations, better readability, etc
+- Reverse engineer the custom cursor used in vanilla menus so that we can use them for custom menus if wanted
+- Expand the UI library even more

@@ -12,7 +12,7 @@
 - `Backspace` / `Delete`: edit text at cursor.
 - `PageUp` / `PageDown`: scroll console output.
 - Mouse wheel: scroll console output.
-- `Tab`: autocomplete command names.
+- `Tab`: autocomplete commands **and arguments** (mod ids, config keys, bind keys, config values, state names, log levels). A single match completes silently; multiple matches are listed and extended to the common prefix.
 - `Ctrl+L`: clear console output.
 - `Ctrl+C`: copy current input, or copy console output if input is empty.
 - `Ctrl+V`: paste clipboard text into input.
@@ -29,6 +29,7 @@
 - `clear`
 - `history [count]`
 - `echo <text>`
+- `find <text>` (alias: `console.find`) — search the console output and reprint matching lines
 - `console.stats`
 - `console.copy [output|input]`
 
@@ -61,11 +62,6 @@
 - `binds.find <text>`
 - `binds.set <id> <key> <value>`
 - `binds.clear <id> <key>`
-- `profiles.list`
-- `profiles.save <name>`
-- `profiles.load <name>`
-- `profiles.delete <name>`
-- `profiles.current`
 - `reload.mods`
 - `mods.reload` (alias)
 - `reload.assets`
@@ -115,8 +111,6 @@
 - `mods.config speedhack`
 - `binds.list speedhack`
 - `binds.set speedhack dash space`
-- `profiles.save pvp`
-- `profiles.load pvp`
 - `mods.config.get speedhack max_speed`
 - `mods.config.set speedhack max_speed 3.5`
 - `mods.config.set speedhack enabled true`

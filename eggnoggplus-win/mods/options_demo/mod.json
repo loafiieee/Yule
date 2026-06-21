@@ -1,0 +1,10 @@
+{
+    "id": "options_demo",
+    "name": "Options Demo",
+    "version": "1.0",
+    "author": "framework",
+    "description": "Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.",
+    "api_version": 1,
+    "entry": "main.lua",
+    "config": "config.cfg"
+}

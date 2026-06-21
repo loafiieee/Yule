@@ -177,6 +177,8 @@ extern void SDL_free(void* mem);
 #define ADDR_SCORE_PLAYER1            0x55A318u
 #define ADDR_GAME_TICKS               0x547BA0u
 #define ADDR_NATIVE_SYNTH_ENABLED     0x54C0CAu
+#define ADDR_AUDIO_STREAM_INITED      0x54C0C8u   /* DAT_0054c0c8: >0 once mad_init_audio_stream ran */
+#define ADDR_SOUND_SETTING            0x55A170u   /* DAT_0055a170: saved "sound on" setting (0=off) */
 #define ADDR_SEED                     0x542074u
 #define ADDR_MRAND_SEED               0x496DA0u
 #define ADDR_MRAND                    0x405080u
@@ -247,8 +249,6 @@ extern void SDL_free(void* mem);
 #define CONSOLE_HISTORY_MAX     64
 #define CONSOLE_BG_DOWNSAMPLE    4
 #define CONSOLE_MAX_MATCHES       32
-#define PROFILE_NAME_MAX          64
-#define PROFILE_PATH_MAX        MAX_PATH
 #define MAX_CUSTOM_STATES         16
 #define CUSTOM_STATE_NAME_MAX     64
 #define GGPO_SELFTEST_FRAMES_PER_TICK 2
@@ -288,7 +288,11 @@ typedef enum RowKind {
     ROW_BIND,
     ROW_BACK,
     ROW_INFO,
+    ROW_FW_TOGGLE,   // framework-level toggle (cfg_index = FW_SETTING_*)
 } RowKind;
+
+// Framework-level settings shown at the top of the mods menu (cfg_index of a ROW_FW_TOGGLE row).
+#define FW_SETTING_LOG_CONSOLE 0
 
 typedef enum CaptureKind {
     CAPTURE_NONE = 0,
@@ -600,6 +604,8 @@ static volatile float* g_game_h_native = (volatile float*)(uintptr_t)ADDR_GAME_H
 static volatile int* g_player_clr_index = (volatile int*)(uintptr_t)ADDR_PLAYER_CLR_INDEX;
 static volatile float* g_player_colours = (volatile float*)(uintptr_t)ADDR_PLAYER_COLOURS;
 static volatile unsigned char* g_native_synth_enabled = (volatile unsigned char*)(uintptr_t)ADDR_NATIVE_SYNTH_ENABLED;
+static volatile signed char* g_audio_stream_inited = (volatile signed char*)(uintptr_t)ADDR_AUDIO_STREAM_INITED;
+static volatile int* g_sound_setting = (volatile int*)(uintptr_t)ADDR_SOUND_SETTING;
 static volatile uint32_t* g_native_seed = (volatile uint32_t*)(uintptr_t)ADDR_SEED;
 static volatile uint32_t* g_native_mrand_seed = (volatile uint32_t*)(uintptr_t)ADDR_MRAND_SEED;
 
@@ -659,7 +665,6 @@ static CaptureKind g_capture_kind = CAPTURE_NONE;
 static int g_capture_mod = -1;
 static int g_capture_cfg = -1;
 static char g_capture_buf[CAPTURE_BUF_SIZE];
-static char g_active_profile_name[PROFILE_NAME_MAX];
 static int g_console_history_loaded = 0;
 static float g_ui_scale = 1.0f;
 
@@ -909,6 +914,7 @@ static void console_set_input(const char* s);
 static void console_insert_text(const char* text);
 static const char* console_stristr(const char* haystack, const char* needle);
 static char* console_parse_token(char** inout_cursor);
+static int console_find_mod_index_by_id(const char* id);
 static int console_try_parse_long(const char* s, long* out_value);
 static int console_try_parse_double(const char* s, double* out_value);
 static int console_try_parse_bool(const char* s, int* out_value);
@@ -1133,6 +1139,60 @@ static void online_clear_waterfall_audio_state(const char* reason) {
                   (reason && reason[0]) ? reason : "unknown",
                   (unsigned int)fx,
                   count);
+    }
+}
+
+/* Snapshot/restore the persistent waterfall ambience around a rollback. The
+ * waterfall fx handle (0x541E44), per-room count (0x542038) and the audio
+ * voice-slot active flag (*(fx+0x2c)) are PROCESS-LOCAL audio state. A rollback
+ * loads an older full-state blob and muted-replays frames; that mutates these
+ * handles, so the next live frame drives the waterfall from a stale/cleared
+ * voice slot -> the waterfall is heard in rooms with no waterfall. We snapshot
+ * the live values before the rollback and restore them after, making the
+ * rollback transparent to the ambience; the next live game_update re-derives the
+ * correct waterfall from the current room's tiles (as vanilla always does).
+ * Safe by construction: these fields are canonicalized OUT of the rollback
+ * checksum, so this can neither cause nor hide a desync. */
+static uintptr_t g_waterfall_saved_fx = 0u;
+static int       g_waterfall_saved_count = 0;
+static uint32_t  g_waterfall_saved_slot_flag = 0u;
+static int       g_waterfall_saved_slot_valid = 0;
+static int       g_waterfall_saved = 0;
+
+void hooks_waterfall_audio_save(void) {
+    g_waterfall_saved_fx = 0u;
+    g_waterfall_saved_count = 0;
+    g_waterfall_saved_slot_flag = 0u;
+    g_waterfall_saved_slot_valid = 0;
+
+    if (g_game_waterfall_fx && !IsBadReadPtr((const void*)g_game_waterfall_fx, sizeof(uintptr_t))) {
+        g_waterfall_saved_fx = *g_game_waterfall_fx;
+    }
+    if (g_game_waterfall_count && !IsBadReadPtr((const void*)g_game_waterfall_count, sizeof(int))) {
+        g_waterfall_saved_count = *g_game_waterfall_count;
+    }
+    if (g_waterfall_saved_fx && g_waterfall_saved_fx < UINTPTR_MAX - 0x2cu &&
+        !IsBadReadPtr((const void*)(g_waterfall_saved_fx + 0x2cu), sizeof(uint32_t))) {
+        g_waterfall_saved_slot_flag = *(volatile uint32_t*)(g_waterfall_saved_fx + 0x2cu);
+        g_waterfall_saved_slot_valid = 1;
+    }
+    g_waterfall_saved = 1;
+}
+
+void hooks_waterfall_audio_restore(void) {
+    if (!g_waterfall_saved) return;
+    g_waterfall_saved = 0;
+
+    if (g_game_waterfall_fx && !IsBadWritePtr((void*)g_game_waterfall_fx, (SIZE_T)sizeof(uintptr_t))) {
+        *g_game_waterfall_fx = g_waterfall_saved_fx;
+    }
+    if (g_game_waterfall_count && !IsBadWritePtr((void*)g_game_waterfall_count, (SIZE_T)sizeof(int))) {
+        *g_game_waterfall_count = g_waterfall_saved_count;
+    }
+    if (g_waterfall_saved_slot_valid && g_waterfall_saved_fx &&
+        g_waterfall_saved_fx < UINTPTR_MAX - 0x2cu &&
+        !IsBadWritePtr((void*)(g_waterfall_saved_fx + 0x2cu), (SIZE_T)sizeof(uint32_t))) {
+        *(volatile uint32_t*)(g_waterfall_saved_fx + 0x2cu) = g_waterfall_saved_slot_flag;
     }
 }
 
@@ -2384,42 +2444,21 @@ static int console_apply_config_value(int idx, int cfg_idx, const char* value) {
         ok = lua_manager_config_increment_float(idx, cfg_idx, want - cur);
     } else if (type == LUA_CFG_STRING) {
         ok = lua_manager_config_set_string(idx, cfg_idx, value);
+    } else if (type == LUA_CFG_OPTIONS) {
+        ok = lua_manager_config_set_option(idx, cfg_idx, value);
     }
     return ok;
-}
-
-static void profile_ensure_dir(void) {
-    CreateDirectoryA("mods", NULL);
-    CreateDirectoryA("mods\\profiles", NULL);
-}
-
-static int profile_sanitize_name(const char* src, char* dst, size_t dst_sz) {
-    size_t pos = 0;
-    if (!dst || dst_sz == 0) return 0;
-    dst[0] = '\0';
-    if (!src || !src[0]) return 0;
-    while (*src) {
-        unsigned char c = (unsigned char)*src++;
-        if (isalnum(c) || c == '_' || c == '-' || c == '.') {
-            if (pos + 1 >= dst_sz) break;
-            dst[pos++] = (char)c;
-        }
-    }
-    dst[pos] = '\0';
-    return pos > 0;
-}
-
-static int profile_build_path(const char* name, char* out, size_t out_sz) {
-    char clean[PROFILE_NAME_MAX];
-    if (!profile_sanitize_name(name, clean, sizeof(clean))) return 0;
-    profile_ensure_dir();
-    snprintf(out, out_sz, "mods\\profiles\\%s.profile", clean);
-    return 1;
 }
 
 static void rebuild_rows(void) {
     RowKey keep = selected_key();
     rows_clear();
+
+    // Framework settings (apply to the mod framework itself, not a specific mod).
+    rows_add(ROW_INFO, 0, -1, -1, "Framework", "");
+    rows_add(ROW_FW_TOGGLE, 1, -1, FW_SETTING_LOG_CONSOLE,
+             "  Show log console", log_console_visible() ? "ON" : "OFF");
+    rows_add(ROW_DIVIDER, 0, -1, -1, "", "");
 
     int mod_count = lua_manager_get_mod_count();
     if (mod_count <= 0) {
@@ -2514,6 +2553,7 @@ static void rebuild_rows(void) {
                         case LUA_CFG_BOOL: safe_copy(value, sizeof(value), str_bool_true(raw_value) ? "ON" : "OFF"); break;
                         case LUA_CFG_ACTION: safe_copy(value, sizeof(value), "[Run]"); break;
                         case LUA_CFG_STRING: snprintf(value, sizeof(value), "\"%s\"", raw_value); break;
+                        case LUA_CFG_OPTIONS: snprintf(value, sizeof(value), "< %s >", raw_value); break;
                         default: safe_copy(value, sizeof(value), raw_value); break;
                     }
                     rows_add(ROW_CONFIG, 1, mi, ci, label, value);
@@ -2615,6 +2655,12 @@ static void apply_adjustment_on_selected(int delta) {
             lua_manager_config_increment_int(row->mod_index, row->cfg_index, delta);
         } else if (type == LUA_CFG_FLOAT) {
             lua_manager_config_increment_float(row->mod_index, row->cfg_index, (double)delta * 0.1);
+        } else if (type == LUA_CFG_OPTIONS) {
+            lua_manager_config_cycle_option(row->mod_index, row->cfg_index, (delta < 0) ? -1 : 1);
+        }
+    } else if (row->kind == ROW_FW_TOGGLE) {
+        if (row->cfg_index == FW_SETTING_LOG_CONSOLE) {
+            log_set_console_visible(delta > 0 ? 1 : (delta < 0 ? 0 : !log_console_visible()));
         }
     }
 
@@ -2649,6 +2695,12 @@ static void activate_selected(void) {
             lua_manager_config_trigger_action(row->mod_index, row->cfg_index);
         } else if (type == LUA_CFG_STRING) {
             begin_string_capture(row->mod_index, row->cfg_index);
+        } else if (type == LUA_CFG_OPTIONS) {
+            lua_manager_config_cycle_option(row->mod_index, row->cfg_index, 1);
+        }
+    } else if (row->kind == ROW_FW_TOGGLE) {
+        if (row->cfg_index == FW_SETTING_LOG_CONSOLE) {
+            log_set_console_visible(!log_console_visible());
         }
     }
 
@@ -2784,13 +2836,12 @@ static void console_copy_cmd(const char* arg) {
 }
 
 static const char* k_console_commands[] = {
-    "help", "commands", "clear", "history", "echo", "console.stats", "console.copy",
+    "help", "commands", "clear", "history", "echo", "find", "console.find", "console.stats", "console.copy",
     "state", "state.last", "state.return", "state.switch", "sys.info", "ui.size",
     "time.scale", "framework.api",
     "mods.count", "mods.list", "mods.find", "mods.info", "mods.trace", "mods.enable", "mods.disable", "mods.toggle",
     "mods.config", "mods.config.find", "mods.config.get", "mods.config.set", "mods.config.action",
     "binds.list", "binds.find", "binds.set", "binds.clear",
-    "profiles.list", "profiles.save", "profiles.load", "profiles.delete", "profiles.current",
     "reload.mods", "mods.reload", "reload.assets",
     "online.hub",
     "ggpo.net",
@@ -2799,7 +2850,7 @@ static const char* k_console_commands[] = {
 };
 
 static void console_history_path(char* out, size_t out_sz) {
-    profile_ensure_dir();
+    CreateDirectoryA("mods", NULL);
     snprintf(out, out_sz, "mods\\console_history.txt");
 }
 
@@ -2863,52 +2914,185 @@ static int console_common_prefix_len(const char* a, const char* b) {
     return n;
 }
 
+#define CONSOLE_CAND_MAX 128
+#define CONSOLE_CAND_LEN 96
+
+static int console_cmd_in_list(const char* cmd, const char* const* list, int count) {
+    for (int i = 0; i < count; i++) if (_stricmp(cmd, list[i]) == 0) return 1;
+    return 0;
+}
+
+/* Build argument-completion candidates for `cmd` at argument position
+ * `arg_index` (1 = first arg). arg1/arg2 are earlier args, for context. */
+static int console_build_arg_candidates(char cands[][CONSOLE_CAND_LEN], int max,
+                                        const char* cmd, int arg_index,
+                                        const char* arg1, const char* arg2) {
+    int n = 0;
+    #define CAND_ADD(s) do { const char* _s = (s); if (n < max && _s && _s[0]) { safe_copy(cands[n], CONSOLE_CAND_LEN, _s); n++; } } while (0)
+
+    static const char* const mod_id_cmds[] = {
+        "mods.info","mods.enable","mods.disable","mods.toggle","mods.trace",
+        "mods.config","mods.cfg","mods.config.get","mods.cfg.get",
+        "mods.config.set","mods.cfg.set","mods.config.action","mods.cfg.action",
+        "binds.list","binds.set","binds.clear","lua.mod","eval.mod"
+    };
+    static const char* const cfg_key_cmds[] = {
+        "mods.config.get","mods.cfg.get","mods.config.set","mods.cfg.set",
+        "mods.config.action","mods.cfg.action"
+    };
+    static const char* const bind_key_cmds[] = { "binds.set", "binds.clear" };
+    static const char* const all_cmds[] = { "mods.enable", "mods.disable", "mods.toggle", "mods.trace" };
+
+    if (arg_index == 1 && _stricmp(cmd, "state.switch") == 0) {
+        static const char* const states[] = {"main","main_initial","options","options_paused","mods","mods_entry","online","console","return"};
+        for (int i = 0; i < (int)(sizeof(states)/sizeof(states[0])); i++) CAND_ADD(states[i]);
+        return n;
+    }
+    if (arg_index == 1 && _stricmp(cmd, "state.return") == 0) {
+        static const char* const states[] = {"main","main_initial","options","options_paused","mods","mods_entry"};
+        for (int i = 0; i < (int)(sizeof(states)/sizeof(states[0])); i++) CAND_ADD(states[i]);
+        return n;
+    }
+    if (arg_index == 1 && _stricmp(cmd, "log.level") == 0) {
+        CAND_ADD("debug"); CAND_ADD("info"); CAND_ADD("warn"); CAND_ADD("error");
+        return n;
+    }
+
+    if (arg_index == 1 && console_cmd_in_list(cmd, mod_id_cmds, (int)(sizeof(mod_id_cmds)/sizeof(mod_id_cmds[0])))) {
+        if (console_cmd_in_list(cmd, all_cmds, (int)(sizeof(all_cmds)/sizeof(all_cmds[0])))) CAND_ADD("all");
+        for (int mi = 0; mi < lua_manager_get_mod_count(); mi++) CAND_ADD(lua_manager_get_mod_id(mi));
+        return n;
+    }
+
+    if (arg_index == 2 && console_cmd_in_list(cmd, cfg_key_cmds, (int)(sizeof(cfg_key_cmds)/sizeof(cfg_key_cmds[0])))) {
+        int idx = console_find_mod_index_by_id(arg1);
+        if (idx >= 0) for (int ci = 0; ci < lua_manager_get_mod_config_count(idx); ci++) CAND_ADD(lua_manager_get_mod_config_key(idx, ci));
+        return n;
+    }
+    if (arg_index == 2 && console_cmd_in_list(cmd, bind_key_cmds, (int)(sizeof(bind_key_cmds)/sizeof(bind_key_cmds[0])))) {
+        int idx = console_find_mod_index_by_id(arg1);
+        if (idx >= 0) for (int bi = 0; bi < lua_manager_get_mod_bind_count(idx); bi++) CAND_ADD(lua_manager_get_mod_bind_key(idx, bi));
+        return n;
+    }
+
+    if (arg_index == 3 && (_stricmp(cmd, "mods.config.set") == 0 || _stricmp(cmd, "mods.cfg.set") == 0)) {
+        int idx = console_find_mod_index_by_id(arg1);
+        int ci = (idx >= 0) ? lua_manager_find_mod_config_index(idx, arg2) : -1;
+        if (ci >= 0) {
+            int type = lua_manager_get_mod_config_type(idx, ci);
+            if (type == LUA_CFG_BOOL) { CAND_ADD("true"); CAND_ADD("false"); }
+            else if (type == LUA_CFG_OPTIONS) {
+                int oc = lua_manager_get_mod_config_option_count(idx, ci);
+                for (int oi = 0; oi < oc; oi++) CAND_ADD(lua_manager_get_mod_config_option(idx, ci, oi));
+            }
+        }
+        return n;
+    }
+
+    #undef CAND_ADD
+    return n;
+}
+
 static void console_autocomplete(void) {
-    char prefix[128];
-    int prefix_len = 0;
-    int match_count = 0;
+    char buf[CONSOLE_INPUT_BUF];
+    char ctx[CONSOLE_INPUT_BUF];
+    char cands[CONSOLE_CAND_MAX][CONSOLE_CAND_LEN];
+    int  match_idx[CONSOLE_CAND_MAX];
+    char* toks[8];
+    int upto = g_console_cursor;
+    int tok_start;
+    const char* partial;
+    int partial_len;
+    int ntok = 0;
+    int arg_index;
+    int ncand = 0;
     const char* first_match = NULL;
     int common_len = 0;
+    int match_count = 0;
 
-    while (prefix_len < g_console_cursor && prefix_len < (int)sizeof(prefix) - 1) {
-        char c = g_console_input[prefix_len];
-        if (!c || isspace((unsigned char)c)) break;
-        prefix[prefix_len++] = c;
+    if (upto < 0) upto = 0;
+    if (upto > (int)sizeof(buf) - 1) upto = (int)sizeof(buf) - 1;
+    memcpy(buf, g_console_input, (size_t)upto);
+    buf[upto] = '\0';
+
+    /* The token being completed runs from the last whitespace up to the cursor. */
+    tok_start = upto;
+    while (tok_start > 0 && !isspace((unsigned char)buf[tok_start - 1])) tok_start--;
+    partial = buf + tok_start;
+    partial_len = upto - tok_start;
+
+    /* Tokenize everything before the current token: token 0 is the command. */
+    memcpy(ctx, buf, (size_t)tok_start);
+    ctx[tok_start] = '\0';
+    {
+        char* cur = ctx;
+        char* t;
+        while (ntok < 8 && (t = console_parse_token(&cur)) != NULL) toks[ntok++] = t;
     }
-    prefix[prefix_len] = '\0';
-    if (strchr(g_console_input, ' ')) return;
+    arg_index = ntok;  /* 0 = completing the command itself */
 
-    for (int i = 0; i < (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0])); i++) {
-        const char* cmd = k_console_commands[i];
-        if (_strnicmp(cmd, prefix, (size_t)prefix_len) != 0) continue;
-        if (!first_match) {
-            first_match = cmd;
-            common_len = (int)strlen(cmd);
-        } else {
-            int cur = console_common_prefix_len(first_match, cmd);
-            if (cur < common_len) common_len = cur;
+    if (arg_index == 0) {
+        int total = (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0]));
+        for (int i = 0; i < total && ncand < CONSOLE_CAND_MAX; i++) {
+            safe_copy(cands[ncand], CONSOLE_CAND_LEN, k_console_commands[i]);
+            ncand++;
         }
+    } else {
+        ncand = console_build_arg_candidates(cands, CONSOLE_CAND_MAX,
+                                             toks[0], arg_index,
+                                             (ntok > 1) ? toks[1] : "",
+                                             (ntok > 2) ? toks[2] : "");
+    }
+    if (ncand == 0) return;
+
+    for (int i = 0; i < ncand; i++) {
+        if (_strnicmp(cands[i], partial, (size_t)partial_len) != 0) continue;
+        if (!first_match) { first_match = cands[i]; common_len = (int)strlen(cands[i]); }
+        else { int c = console_common_prefix_len(first_match, cands[i]); if (c < common_len) common_len = c; }
+        if (match_count < CONSOLE_CAND_MAX) match_idx[match_count] = i;
         match_count++;
-        if (match_count <= CONSOLE_MAX_MATCHES) {
+    }
+    if (!first_match) return;
+
+    /* Only list when ambiguous; a single match completes silently. */
+    if (match_count > 1) {
+        int show = (match_count < CONSOLE_MAX_MATCHES) ? match_count : CONSOLE_MAX_MATCHES;
+        console_push_line_rgb("Matches:", 0.72f, 0.90f, 1.00f);
+        for (int k = 0; k < show; k++) {
             char out[CONSOLE_LINE_TEXT];
-            snprintf(out, sizeof(out), "  %s", cmd);
-            if (match_count == 1) console_push_line_rgb("Matches:", 0.72f, 0.90f, 1.00f);
+            snprintf(out, sizeof(out), "  %s", cands[match_idx[k]]);
             console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
         }
+        if (match_count > show) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "  ... and %d more", match_count - show);
+            console_push_line_rgb(out, 0.55f, 0.60f, 0.70f);
+        }
     }
 
-    if (!first_match) return;
-    if (match_count == 1) {
-        char full[CONSOLE_INPUT_BUF];
-        snprintf(full, sizeof(full), "%s ", first_match);
-        console_set_input(full);
-        return;
-    }
-    if (common_len > prefix_len) {
-        char partial[128];
-        memcpy(partial, first_match, (size_t)common_len);
-        partial[common_len] = '\0';
-        console_set_input(partial);
+    /* Apply the completion: prefix (before token) + completion + suffix (after cursor). */
+    {
+        char completion[CONSOLE_CAND_LEN];
+        char newbuf[CONSOLE_INPUT_BUF];
+        const char* suffix = g_console_input + g_console_cursor;
+        int single = (match_count == 1);
+        int new_cursor;
+        if (single) {
+            safe_copy(completion, sizeof(completion), first_match);
+        } else if (common_len > partial_len) {
+            int cl = common_len;
+            if (cl >= (int)sizeof(completion)) cl = (int)sizeof(completion) - 1;
+            memcpy(completion, first_match, (size_t)cl);
+            completion[cl] = '\0';
+        } else {
+            return;  /* ambiguous with no further common prefix */
+        }
+        snprintf(newbuf, sizeof(newbuf), "%.*s%s%s%s",
+                 tok_start, buf, completion, single ? " " : "", suffix);
+        new_cursor = tok_start + (int)strlen(completion) + (single ? 1 : 0);
+        safe_copy(g_console_input, sizeof(g_console_input), newbuf);
+        if (new_cursor > (int)strlen(g_console_input)) new_cursor = (int)strlen(g_console_input);
+        g_console_cursor = new_cursor;
     }
 }
 
@@ -3195,6 +3379,7 @@ static const char* console_cfg_type_name(int type) {
         case LUA_CFG_FLOAT: return "float";
         case LUA_CFG_STRING: return "string";
         case LUA_CFG_ACTION: return "action";
+        case LUA_CFG_OPTIONS: return "options";
         default: return "unknown";
     }
 }
@@ -3317,6 +3502,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  clear", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  history [count]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  echo <text>", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  find <text>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  console.stats", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  console.copy [output|input]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state", 0.87f, 0.87f, 0.87f);
@@ -3344,11 +3530,6 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  binds.find <text>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  binds.set <id> <key> <value>", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  binds.clear <id> <key>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  profiles.list", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  profiles.save <name>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  profiles.load <name>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  profiles.delete <name>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  profiles.current", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.mods", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
@@ -3394,10 +3575,6 @@ static void console_show_help(const char* topic) {
     }
     if (_stricmp(t, "binds.set") == 0) {
         console_push_line_rgb("binds.set <id> <key> <value>: set a named mod bind (example values: space, a, left, escape).", 0.72f, 0.90f, 1.00f);
-        return;
-    }
-    if (_stricmp(t, "profiles.save") == 0 || _stricmp(t, "profiles.load") == 0) {
-        console_push_line_rgb("profiles.save/load <name>: persist enabled states, config values, and bind values.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "mods.toggle") == 0) {
@@ -3530,6 +3707,48 @@ static void console_show_console_stats(void) {
 
 static void console_echo(const char* text) {
     console_push_line_rgb((text && text[0]) ? text : "", 0.80f, 0.83f, 0.90f);
+}
+
+/* Search the console scrollback for lines containing `query` (case-insensitive)
+ * and reprint the matches. Matches are snapshotted before printing because
+ * pushing result lines mutates the output ring buffer. */
+static void console_find_in_output(const char* query) {
+    char hits[64][CONSOLE_LINE_TEXT];
+    int hit_count = 0;
+    int total = 0;
+    int count;
+    if (!query || !query[0]) {
+        console_push_line_rgb("Usage: find <text>", 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    count = g_console_line_count;
+    for (int i = 0; i < count; i++) {
+        ConsoleLine* line = console_line_at_oldest_index(i);
+        if (!line || !console_stristr(line->text, query)) continue;
+        total++;
+        if (hit_count < 64) safe_copy(hits[hit_count++], CONSOLE_LINE_TEXT, line->text);
+    }
+    if (total == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "find: no lines matching '%s'", query);
+        console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+        return;
+    }
+    {
+        char hdr[CONSOLE_LINE_TEXT];
+        snprintf(hdr, sizeof(hdr), "find '%s': %d match(es)", query, total);
+        console_push_line_rgb(hdr, 0.72f, 0.90f, 1.00f);
+    }
+    for (int i = 0; i < hit_count; i++) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "  %s", hits[i]);
+        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
+    }
+    if (total > hit_count) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "  ... and %d more", total - hit_count);
+        console_push_line_rgb(out, 0.55f, 0.60f, 0.70f);
+    }
 }
 
 static void console_show_state(void) {
@@ -4138,6 +4357,22 @@ static void console_set_mod_config_value(const char* id, const char* key, const 
         ok = lua_manager_config_increment_float(idx, cfg_idx, want - cur);
     } else if (type == LUA_CFG_STRING) {
         ok = lua_manager_config_set_string(idx, cfg_idx, value);
+    } else if (type == LUA_CFG_OPTIONS) {
+        ok = lua_manager_config_set_option(idx, cfg_idx, value);
+        if (!ok) {
+            char opts[CONSOLE_LINE_TEXT];
+            size_t pos = 0;
+            int n = lua_manager_get_mod_config_option_count(idx, cfg_idx);
+            opts[0] = '\0';
+            for (int i = 0; i < n && pos < sizeof(opts); i++) {
+                pos += (size_t)snprintf(opts + pos, sizeof(opts) - pos, "%s%s",
+                                        (i > 0) ? ", " : "",
+                                        lua_manager_get_mod_config_option(idx, cfg_idx, i));
+            }
+            snprintf(out, sizeof(out), "Value must be one of: %s", opts);
+            console_push_line_rgb(out, 0.98f, 0.76f, 0.40f);
+            return;
+        }
     } else if (type == LUA_CFG_ACTION) {
         console_push_line_rgb("Use mods.config.action for action config keys.", 0.98f, 0.76f, 0.40f);
         return;
@@ -5543,146 +5778,6 @@ static void console_set_bind_cmd(const char* args, int clear_only) {
     console_show_binds(lua_manager_get_mod_id(idx));
 }
 
-static int console_profile_save_named(const char* name) {
-    char clean[PROFILE_NAME_MAX];
-    char path[PROFILE_PATH_MAX];
-    FILE* f;
-    if (!profile_sanitize_name(name, clean, sizeof(clean)) || !profile_build_path(name, path, sizeof(path))) return 0;
-    f = fopen(path, "w");
-    if (!f) return 0;
-    fprintf(f, "# modframework profile v1\n");
-    for (int mi = 0; mi < lua_manager_get_mod_count(); mi++) {
-        fprintf(f, "mod %s %d\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_enabled(mi));
-        for (int ci = 0; ci < lua_manager_get_mod_config_count(mi); ci++) {
-            fprintf(f, "cfg %s %s %s\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_config_key(mi, ci), lua_manager_get_mod_config_value_str(mi, ci));
-        }
-        for (int bi = 0; bi < lua_manager_get_mod_bind_count(mi); bi++) {
-            const char* val = lua_manager_get_mod_bind_value_str(mi, bi);
-            fprintf(f, "bind %s %s %s\n", lua_manager_get_mod_id(mi), lua_manager_get_mod_bind_key(mi, bi), (val && val[0]) ? val : "none");
-        }
-    }
-    fclose(f);
-    safe_copy(g_active_profile_name, sizeof(g_active_profile_name), clean);
-    return 1;
-}
-
-static int console_profile_load_named(const char* name) {
-    char path[PROFILE_PATH_MAX];
-    char line[768];
-    FILE* f;
-    char clean[PROFILE_NAME_MAX];
-    if (!profile_sanitize_name(name, clean, sizeof(clean)) || !profile_build_path(name, path, sizeof(path))) return 0;
-    f = fopen(path, "r");
-    if (!f) return 0;
-    while (fgets(line, sizeof(line), f)) {
-        char* cursor;
-        char* kind;
-        char* id;
-        char* key;
-        char* value;
-        console_strip_crlf(line);
-        cursor = trim_ws(line);
-        if (!cursor[0] || cursor[0] == '#') continue;
-        kind = console_parse_token(&cursor);
-        id = console_parse_token(&cursor);
-        if (!kind || !id) continue;
-        if (_stricmp(kind, "mod") == 0) {
-            long enabled = 0;
-            int idx = console_find_mod_index_by_id(id);
-            key = console_parse_token(&cursor);
-            if (idx >= 0 && key && console_try_parse_long(key, &enabled)) lua_manager_set_mod_enabled(idx, enabled ? 1 : 0);
-            continue;
-        }
-        key = console_parse_token(&cursor);
-        value = cursor ? trim_ws(cursor) : "";
-        if (!key || !key[0]) continue;
-        if (_stricmp(kind, "cfg") == 0) {
-            int idx = console_find_mod_index_by_id(id);
-            int cfg_idx = (idx >= 0) ? lua_manager_find_mod_config_index(idx, key) : -1;
-            if (idx >= 0 && cfg_idx >= 0) (void)console_apply_config_value(idx, cfg_idx, value ? value : "");
-        } else if (_stricmp(kind, "bind") == 0) {
-            int idx = console_find_mod_index_by_id(id);
-            int bind_idx = (idx >= 0) ? console_find_bind_index_by_key(idx, key) : -1;
-            if (idx >= 0 && bind_idx >= 0) (void)console_apply_bind_value(idx, bind_idx, value ? value : "none");
-        }
-    }
-    fclose(f);
-    safe_copy(g_active_profile_name, sizeof(g_active_profile_name), clean);
-    return 1;
-}
-
-static void console_profiles_list(void) {
-    WIN32_FIND_DATAA fd;
-    HANDLE h;
-    profile_ensure_dir();
-    h = FindFirstFileA("mods\\profiles\\*.profile", &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        console_push_line_rgb("(no profiles)", 0.62f, 0.70f, 0.82f);
-        return;
-    }
-    do {
-        char out[CONSOLE_LINE_TEXT];
-        safe_copy(out, sizeof(out), fd.cFileName);
-        {
-            char* ext = strstr(out, ".profile");
-            if (ext) *ext = '\0';
-        }
-        console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
-}
-
-static void console_profiles_save_cmd(const char* name) {
-    char out[CONSOLE_LINE_TEXT];
-    if (!name || !name[0]) {
-        console_push_line_rgb("Usage: profiles.save <name>", 0.98f, 0.76f, 0.40f);
-        return;
-    }
-    if (!console_profile_save_named(name)) {
-        console_push_line_rgb("profiles.save: failed", 0.98f, 0.45f, 0.45f);
-        return;
-    }
-    snprintf(out, sizeof(out), "profiles.save: %s", g_active_profile_name);
-    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
-}
-
-static void console_profiles_load_cmd(const char* name) {
-    char out[CONSOLE_LINE_TEXT];
-    if (!name || !name[0]) {
-        console_push_line_rgb("Usage: profiles.load <name>", 0.98f, 0.76f, 0.40f);
-        return;
-    }
-    if (!console_profile_load_named(name)) {
-        console_push_line_rgb("profiles.load: failed", 0.98f, 0.45f, 0.45f);
-        return;
-    }
-    rebuild_rows();
-    snprintf(out, sizeof(out), "profiles.load: %s", g_active_profile_name);
-    console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
-}
-
-static void console_profiles_delete_cmd(const char* name) {
-    char path[PROFILE_PATH_MAX];
-    if (!name || !name[0]) {
-        console_push_line_rgb("Usage: profiles.delete <name>", 0.98f, 0.76f, 0.40f);
-        return;
-    }
-    if (!profile_build_path(name, path, sizeof(path)) || !DeleteFileA(path)) {
-        console_push_line_rgb("profiles.delete: failed", 0.98f, 0.45f, 0.45f);
-        return;
-    }
-    if (g_active_profile_name[0] && _stricmp(g_active_profile_name, name) == 0) {
-        g_active_profile_name[0] = '\0';
-    }
-    console_push_line_rgb("profiles.delete: ok", 0.64f, 0.92f, 0.66f);
-}
-
-static void console_profiles_current(void) {
-    char out[CONSOLE_LINE_TEXT];
-    snprintf(out, sizeof(out), "profiles.current: %s", g_active_profile_name[0] ? g_active_profile_name : "(none)");
-    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
-}
-
 static void console_execute_input(void) {
     char work[CONSOLE_INPUT_BUF];
     char* cmd;
@@ -5719,6 +5814,8 @@ static void console_execute_input(void) {
         console_show_history(arg);
     } else if (_stricmp(cmd, "echo") == 0) {
         console_echo(arg);
+    } else if (_stricmp(cmd, "find") == 0 || _stricmp(cmd, "console.find") == 0) {
+        console_find_in_output(arg);
     } else if (_stricmp(cmd, "console.stats") == 0) {
         console_show_console_stats();
     } else if (_stricmp(cmd, "console.copy") == 0) {
@@ -5808,16 +5905,6 @@ static void console_execute_input(void) {
         console_set_bind_cmd(arg, 0);
     } else if (_stricmp(cmd, "binds.clear") == 0) {
         console_set_bind_cmd(arg, 1);
-    } else if (_stricmp(cmd, "profiles.list") == 0) {
-        console_profiles_list();
-    } else if (_stricmp(cmd, "profiles.save") == 0) {
-        console_profiles_save_cmd(arg);
-    } else if (_stricmp(cmd, "profiles.load") == 0) {
-        console_profiles_load_cmd(arg);
-    } else if (_stricmp(cmd, "profiles.delete") == 0) {
-        console_profiles_delete_cmd(arg);
-    } else if (_stricmp(cmd, "profiles.current") == 0) {
-        console_profiles_current();
     } else if (_stricmp(cmd, "reload.mods") == 0) {
         console_run_reload_mods();
     } else if (_stricmp(cmd, "mods.reload") == 0) {
@@ -9670,7 +9757,19 @@ int hooks_console_mousebutton(int x, int y, int button, int down) {
 int hooks_console_keydown(int sym, int scancode, int mod) {
     (void)scancode;
 
-    if (sym == SDLK_F5 || sym == SDLK_F6 || sym == SDLK_F7 || sym == SDLK_F9 || sym == SDLK_F10) {
+    /* During an online match, swallow ALL function keys (F1-F12, syms
+     * 0x4000003A..0x40000045) so the vanilla debug hotkeys (and our own dev
+     * hotkeys below) cannot fire mid-match and desync or cheat. In normal
+     * (offline) play they fall through to the game so its debug keys work as
+     * usual - previously F5/F9/F10 were swallowed in every mode, which is what
+     * disabled them offline. */
+    if (sym >= 0x4000003A && sym <= 0x40000045 && ggpo_net_active()) {
+        return 1;
+    }
+
+    /* F6/F7 are the framework's reserved local host/join test hotkeys; keep them
+     * consumed in all modes so the vanilla game never sees them (unchanged). */
+    if (sym == SDLK_F6 || sym == SDLK_F7) {
         return 1;
     }
 
@@ -10318,13 +10417,14 @@ static void render_rows(void) {
             } break;
 
             case ROW_MOD_TOGGLE:
+            case ROW_FW_TOGGLE:
             case ROW_CONFIG:
             case ROW_BIND: {
                 float lr = selected ? sel_r : base_r;
                 float lg = selected ? sel_g : base_g;
                 float lb = selected ? sel_b : base_b;
                 float vr = dim_r, vg = dim_g, vb = dim_b;
-                if (row->kind == ROW_MOD_TOGGLE) {
+                if (row->kind == ROW_MOD_TOGGLE || row->kind == ROW_FW_TOGGLE) {
                     if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.48f; vg = 0.88f; vb = 0.58f; }
                     else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
                 } else if (row->kind == ROW_BIND) {
@@ -11843,6 +11943,19 @@ finish_without_live_restore:
 }
 
 static void __cdecl hooked_game_update(int arg0) {
+    /* Launch-mute fix: vanilla app_state_init force-calls mad_enable_synth(1)
+     * and defaults DAT_0055a170=1, THEN loads settings.nogg (which overwrites
+     * the saved "sound" value into DAT_0055a170) but never re-applies it to the
+     * synth-enabled flag (DAT_0054c0ca). So launching with sound saved OFF still
+     * plays audio until main_update_settings runs on an options toggle (the
+     * "enable then disable to mute" bug). Sync the synth flag to the saved
+     * setting exactly once, after the audio stream is initialized. */
+    static int g_launch_synth_synced = 0;
+    if (!g_launch_synth_synced && g_audio_stream_inited && *g_audio_stream_inited > 0) {
+        if (g_sound_setting) hooks_set_native_synth_enabled(*g_sound_setting != 0);
+        g_launch_synth_synced = 1;
+    }
+
     fn_game_update_t real_update = p_game_update_trampoline
         ? p_game_update_trampoline
         : p_game_update;

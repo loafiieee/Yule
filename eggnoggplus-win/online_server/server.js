@@ -19,6 +19,11 @@ const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
+// Recently chosen map keys (most-recent last). Used to even out random map
+// selection so the pool cycles through every option before any repeats, instead
+// of pure-uniform random which clusters and looks biased over a short series.
+const RECENT_MAP_KEYS = [];
+const RECENT_MAP_MAX = 64;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MATCH_SINGLE_REPORT_GRACE_MS = Number.parseInt(process.env.MATCH_SINGLE_REPORT_GRACE_MS || "750", 10);
 const MATCH_STALE_MS = Number.parseInt(process.env.MATCH_STALE_MS || `${10 * 60 * 1000}`, 10);
@@ -249,7 +254,22 @@ function chooseSharedMap(a, b, options = {}) {
     });
   }
   if (!shared.length) return null;
-  return shared[crypto.randomInt(0, shared.length)];
+
+  // Even-distribution pick: exclude the maps used in the last (poolSize - 1)
+  // selections so we cycle through the whole shared pool before any map repeats.
+  // This still uses an unbiased random among the remaining candidates - it just
+  // removes the clustering of pure-uniform random that reads as "some maps come
+  // up more often than others". Falls back to the full pool if all are recent.
+  let pool = shared;
+  if (shared.length > 1) {
+    const avoid = new Set(RECENT_MAP_KEYS.slice(-(shared.length - 1)));
+    const filtered = shared.filter((m) => !avoid.has(m.key));
+    if (filtered.length) pool = filtered;
+  }
+  const chosen = pool[crypto.randomInt(0, pool.length)];
+  RECENT_MAP_KEYS.push(chosen.key);
+  if (RECENT_MAP_KEYS.length > RECENT_MAP_MAX) RECENT_MAP_KEYS.shift();
+  return chosen;
 }
 
 function send(client, obj) {

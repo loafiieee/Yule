@@ -171,8 +171,14 @@ void luna_force_crash_report(unsigned int exit_code);
  * cosmetic - excluded from the rollback checksum so render/timing drift does
  * not trigger false-positive desyncs.
  */
-#define ADDR_COLOUR_LERP_BLOCK     0x541F70u
-#define COLOUR_LERP_BLOCK_BYTES    (0x54202Cu - 0x541F70u)
+/* The room colour-transition block runs _colourspecial2(0x541F6C) .. _oldcolour1
+ * (ends 0x54202C). It was previously started at 0x541F70, leaving the first 4
+ * bytes of _colourspecial2 IN the checksum - those drift on render timing
+ * (non-deterministic even in single-process replay), which was the F3 loopback
+ * failure at transient offset 0x541F6C and the "changed=transient" online
+ * desyncs. Start at 0x541F6C so the whole cosmetic colour block is excluded. */
+#define ADDR_COLOUR_LERP_BLOCK     0x541F6Cu
+#define COLOUR_LERP_BLOCK_BYTES    (0x54202Cu - 0x541F6Cu)
 #define ADDR_THINGS                0x542080u
 #define ADDR_THING_INFO            0x543640u
 #define ADDR_ROOM_INFO             0x543700u

@@ -24,6 +24,11 @@
 #define GGPO_NET_DEFAULT_MAX_PREDICTION 24
 #define GGPO_NET_DEFAULT_MAX_FRAME_ADVANTAGE 20
 #define GGPO_NET_DEFAULT_INPUT_DELAY 1
+/* Extra frames of one-shot input delay added on top of the measured one-way
+ * latency, to absorb RTT jitter so the peer's input usually arrives before we
+ * simulate its frame (fewer mispredictions -> fewer prediction stalls/rollbacks
+ * -> less slow-mo and jitter on jittery internet links). */
+#define GGPO_NET_AUTO_DELAY_JITTER_MARGIN 2u
 #define GGPO_NET_TIMEOUT_TICKS 600
 #define GGPO_NET_CORRECTION_TIMEOUT_TICKS 2400
 #define GGPO_NET_MAX_BLOCK_TICKS 60
@@ -905,10 +910,15 @@ static void ggpo_net_record_peer_timing(uint32_t peer_send_tick, uint32_t our_ti
     if (g_net.rtt_sample_count < 0xFFFFFFFFu) g_net.rtt_sample_count++;
 }
 
-/* One-shot at match start: raise the local input delay to cover roughly half of
- * the measured one-way latency, so the peer's inputs land before we simulate
- * their frame (fewer mispredictions/rollbacks). Never lowers below the
- * configured value; clamped to GGPO_NET_MAX_INPUT_DELAY. */
+/* One-shot at match start: raise the local input delay to cover the full
+ * measured one-way latency plus a small jitter margin, so the peer's inputs land
+ * before we simulate their frame. This keeps prediction (and the prediction
+ * stalls + rollbacks it triggers) rare, which is the main cause of the
+ * cross-network slow-mo (both peers stalling on prediction) and the jitter (the
+ * behind peer eating rollbacks). Previously it only covered ~RTT/4, far too low
+ * for internet links. Stays ONE-SHOT (never changed mid-match, to avoid the
+ * input-hole desync), never lowers below the configured value, and is clamped to
+ * GGPO_NET_MAX_INPUT_DELAY. */
 static void ggpo_net_apply_auto_input_delay(void) {
     uint32_t one_way;
     uint32_t target;
@@ -917,7 +927,7 @@ static void ggpo_net_apply_auto_input_delay(void) {
     if (g_net.rtt_sample_count == 0u) return; /* no RTT yet -> keep configured value */
     g_net.auto_input_delay_applied = 1;
     one_way = (g_net.rtt_ema_ticks + 1u) / 2u;
-    target = (one_way + 1u) / 2u;
+    target = one_way + GGPO_NET_AUTO_DELAY_JITTER_MARGIN;
     if (target > (uint32_t)GGPO_NET_MAX_INPUT_DELAY) target = (uint32_t)GGPO_NET_MAX_INPUT_DELAY;
     if (target > g_net.input_delay) {
         LOG_INFO("ggpo.net: auto input delay %u->%u (rtt~%u ticks, one_way~%u, samples=%u)",

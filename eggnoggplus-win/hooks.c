@@ -1770,6 +1770,40 @@ typedef unsigned    (__cdecl *fn_rng_rnd5050_t)(void);
 static uint32_t g_cosmetic_rng_seed = 0x1ED37A11u;
 static volatile int g_cosmetic_rng_depth = 0;
 
+/*
+ * Audio-thread RNG isolation (desync fix).
+ *
+ * The native synth's per-voice DSP callbacks run on SDL's AUDIO thread
+ * (mixaudio -> synth_effects_update -> effect callbacks) and draw frnd/rnd/
+ * rnd5050, which read+write the SHARED gameplay seed _mrand_seed. That advances
+ * the gameplay RNG a non-deterministic number of times (it depends on the live
+ * voice count and races the sim thread), so the two peers' seeds drift and
+ * gameplay draws (e.g. dropped-sword angle on a kill) diverge -> desync on
+ * death/respawn/teleport.
+ *
+ * Fix: the audio thread must NEVER touch _mrand_seed. We record the sim thread's
+ * id and, for any RNG draw NOT on the sim thread, serve it from a private audio
+ * seed that reproduces the native mad LCG bit-for-bit (so audio stays identical)
+ * without ever reading/writing _mrand_seed. Lock-free: the gameplay seed is
+ * touched only by the sim thread, the audio seed only by the audio thread.
+ */
+static volatile DWORD g_sim_thread_id = 0;
+static uint32_t       g_audio_thread_rng_seed = 0x2545F491u;
+
+static int hooks_on_audio_thread(void) {
+    DWORD sim = g_sim_thread_id;
+    return sim != 0 && GetCurrentThreadId() != sim;
+}
+
+/* One step of the native mad RNG LCG (matches mrand/rnd/frnd @0x405080..0x405224)
+ * on the private audio seed. Callers shift/mask the result exactly like vanilla. */
+static uint32_t hooks_audio_rng_step(void) {
+    uint32_t s = g_audio_thread_rng_seed * 0x41c64e6du + 0x3039u;
+    s = (s >> 1) ^ s ^ ((uint32_t)(-(int32_t)(s & 1u)) & 0xd0000001u);
+    g_audio_thread_rng_seed = s;
+    return s;
+}
+
 static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
     uint32_t c = (uint32_t)caller;
     /*
@@ -1787,15 +1821,55 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
     if (c >= 0x0043E1B0u && c < 0x0043E360u) return 1; /* _puzzley_action   */
     if (c >= 0x0043E450u && c < 0x0043EB10u) return 1; /* _crowd_action     */
     if (c >= 0x0043EE20u && c < 0x0043F4B0u) return 1; /* _waterfall_action */
+    /*
+     * Sim-thread cosmetic SOUND / screen-shake draws gated by NON-synced state
+     * (wall-clock _mad_ticks debounce timers, or the local camera). They run a
+     * different number of times on each peer, so on the shared gameplay seed
+     * they drift it -> the desync on kill (do_cheer fires from player_die),
+     * score, respawn and teleport (the camera jumps -> shake). Disasm-verified
+     * (objdump) that each range's rnd/frnd only feed sound (sound_noise ->
+     * synth_effect, do_whistle -> synth_effect) or the camera shake, never
+     * map_tile / particle / thing, so routing them to the private cosmetic seed
+     * cannot change gameplay - it only stops them perturbing the gameplay seed.
+     */
+    if (c >= 0x004224E0u && c < 0x004227C0u) return 1; /* _do_cheer   (cheer-on-kill sound)   */
+    if (c >= 0x0041EF40u && c < 0x0041EFB0u) return 1; /* _do_whistle (whistle sound)         */
+    if (c >= 0x004222A0u && c < 0x00422460u) return 1; /* _game_update_camera (screen shake)  */
+    if (c >= 0x004240FFu && c < 0x00424194u) return 1; /* _sound_creepy (ambience pitch)      */
+    /* _dust_particle: per-particle update for player skid/landing dust. The dust
+     * lives in a NON-checksummed cosmetic particle buffer, so the number of live
+     * dust particles legitimately differs between peers (different camera / spawn
+     * timing). Each one drew frnd+rndsign from the gameplay seed, so that varying
+     * count drifted the seed -> "changed=things" desyncs that surface on
+     * respawns/landings. Disasm-verified the range only calls frnd/rndsign/
+     * room_particle + map reads (map_coord_tile), never map_tile/thing writes.
+     * (Found via rngtrace diff: p0 ran 3x 3@0041DEDB 5@0041DEE4, p1 ran 2x.) */
+    if (c >= 0x0041DEB0u && c < 0x0041DF90u) return 1; /* _dust_particle (skid dust)          */
+    /* The rest of the cosmetic particle-effect subsystem. Each draws frnd/rnd/
+     * rnd5050 to position/spread particles whose COUNT is camera/timing-gated
+     * (non-synced), so on the gameplay seed they drift it -> "changed=things"
+     * desyncs that surface in combat. Disasm-verified each range only calls the
+     * cosmetic particle spawners (particle_effect_sprite / room_particle) + map
+     * READS, never thing_new / map_tile writes, and these particles are NOT in
+     * the checksummed particle pool (it still matched after isolating dust).
+     * Ranges are bounded to EXCLUDE the gameplay functions sitting between them
+     * (is_tip_crossed_hand, update_fistfight_points, try_throw_sword, etc.). */
+    if (c >= 0x0041D200u && c < 0x0041DD80u) return 1; /* _room_particle + _game_particle_blood */
+    if (c >= 0x0041E130u && c < 0x0041E320u) return 1; /* _sparks_ex                          */
+    if (c >= 0x0041F330u && c < 0x0041F420u) return 1; /* _sword_sparks_ex                    */
+    if (c >= 0x0041FCB0u && c < 0x0041FD30u) return 1; /* _debug_particle + _game_particle    */
     switch (c) {
         /* Cosmetic RNG draws inside game_update (a mixed gameplay/cosmetic fn,
-         * so isolated per call site, not by range). Crowd cheer/ambient gated by
-         * the crowd/chant timers + real-time audio clock; waterfall sound pitch/
-         * volume stored into the _fx_15991 sound object (ADDR_WATERFALL_FX
-         * 0x541E44 +0x3c/+0x44), verified in disasm @0x42d185/0x42d206/0x42d242. */
+         * so isolated per call site, not by range). Crowd cheer colour + the
+         * waterfall sound pitch/volume stored into the _fx_15991 sound object
+         * (ADDR_WATERFALL_FX 0x541E44 +0x3c/+0x44), verified @0x42d185/0x42d206/
+         * 0x42d242. NB: 0x42CA16/0x42CA2C were previously (mis)listed here as
+         * "crowd ambient sound pan" but disasm shows they are rnd() args feeding
+         * map_tile @0x42ca33 = GAMEPLAY tile-deco - they MUST stay on the gameplay
+         * seed (both peers compute the same tiles), so they are deliberately NOT
+         * isolated. Isolating them leaked the (non-synced) cosmetic seed into the
+         * checksummed tilemap. */
         case 0x0042C801u: /* frnd(0,2)  - crowd cheer colour trigger */
-        case 0x0042CA16u: /* rnd(-10,10) - crowd ambient sound pan   */
-        case 0x0042CA2Cu: /* rnd(-10,10) - crowd ambient sound pan   */
         case 0x0042D19Cu: /* frnd(-1,1)  - waterfall sound randomize */
         case 0x0042D23Eu: /* frnd(1,0.5) - waterfall sound randomize */
             return 1;
@@ -1805,25 +1879,19 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
 }
 
 #ifdef HOOKS_INTELLISENSE
-static void hooked_mrand(void) { }
+static uint32_t __cdecl hooked_mrand(void) { return 0; }
 static int __cdecl hooked_rnd(int a, int b) { (void)a; (void)b; return 0; }
 static long double __cdecl hooked_frnd(float a, float b) { (void)a; (void)b; return 0.0L; }
 static unsigned __cdecl hooked_rnd5050(void) { return 0; }
-static void hooked_rndsign(void) { }
+static long double __cdecl hooked_rndsign(void) { return 0.0L; }
 #else
-static void __attribute__((naked)) hooked_mrand(void) {
-    __asm__ __volatile__(
-        "pushfl\n\t"
-        "pushal\n\t"
-        "movl 36(%esp), %eax\n\t"
-        "pushl %eax\n\t"
-        "pushl $1\n\t"
-        "call _hooks_rng_trace_record_from_hook\n\t"
-        "addl $8, %esp\n\t"
-        "popal\n\t"
-        "popfl\n\t"
-        "jmp *_g_hooks_rng_mrand_trampoline\n\t"
-    );
+/* C (not naked) so it can take the audio-thread branch like rnd/frnd/rnd5050. */
+static uint32_t __cdecl hooked_mrand(void) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    if (hooks_on_audio_thread()) return hooks_audio_rng_step() >> 16;
+    hooks_rng_trace_record_from_hook(1u, caller);
+    if (!g_hooks_rng_mrand_trampoline) return 0;
+    return ((uint32_t (__cdecl*)(void))g_hooks_rng_mrand_trampoline)();
 }
 
 /*
@@ -1838,8 +1906,16 @@ static void __attribute__((naked)) hooked_mrand(void) {
 static int __cdecl hooked_rnd(int lo, int hi) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     fn_rng_rnd_t real = (fn_rng_rnd_t)g_hooks_rng_rnd_trampoline;
-    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    int cosmetic;
     int result;
+    if (hooks_on_audio_thread()) {
+        /* rnd(lo,hi): base + (seed>>16) % (|hi-lo|+1), matching rnd @0x4050b0 */
+        uint32_t s = hooks_audio_rng_step();
+        int base = (hi <= lo) ? hi : lo;
+        uint32_t span = (uint32_t)((hi >= lo) ? (hi - lo) : (lo - hi));
+        return (int)((s >> 16) % (span + 1u)) + base;
+    }
+    cosmetic = hooks_rng_caller_is_cosmetic(caller);
     /* Trace only non-cosmetic draws so a desync dump isn't flooded by isolated
      * cosmetic spray; cosmetic draws no longer touch the gameplay seed anyway. */
     if (!cosmetic) hooks_rng_trace_record_from_hook(2u, caller);
@@ -1860,8 +1936,15 @@ static int __cdecl hooked_rnd(int lo, int hi) {
 static long double __cdecl hooked_frnd(float lo, float hi) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     fn_rng_frnd_t real = (fn_rng_frnd_t)g_hooks_rng_frnd_trampoline;
-    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    int cosmetic;
     long double result;
+    if (hooks_on_audio_thread()) {
+        /* frnd(lo,hi): (seed>>16)*(hi-lo)/65535 + lo, matching frnd @0x405170 */
+        uint32_t s = hooks_audio_rng_step();
+        return ((long double)(s >> 16) * ((long double)hi - (long double)lo)) / 65535.0L
+               + (long double)lo;
+    }
+    cosmetic = hooks_rng_caller_is_cosmetic(caller);
     if (!cosmetic) hooks_rng_trace_record_from_hook(3u, caller);
     if (!real) return 0.0L;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
@@ -1880,8 +1963,13 @@ static long double __cdecl hooked_frnd(float lo, float hi) {
 static unsigned __cdecl hooked_rnd5050(void) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     fn_rng_rnd5050_t real = (fn_rng_rnd5050_t)g_hooks_rng_rnd5050_trampoline;
-    int cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    int cosmetic;
     unsigned result;
+    if (hooks_on_audio_thread()) {
+        /* rnd5050(): (seed>>16)&1, matching rnd5050 @0x405210 */
+        return (hooks_audio_rng_step() >> 16) & 1u;
+    }
+    cosmetic = hooks_rng_caller_is_cosmetic(caller);
     if (!cosmetic) hooks_rng_trace_record_from_hook(4u, caller);
     if (!real) return 0;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
@@ -1897,19 +1985,17 @@ static unsigned __cdecl hooked_rnd5050(void) {
     return real();
 }
 
-static void __attribute__((naked)) hooked_rndsign(void) {
-    __asm__ __volatile__(
-        "pushfl\n\t"
-        "pushal\n\t"
-        "movl 36(%esp), %eax\n\t"
-        "pushl %eax\n\t"
-        "pushl $5\n\t"
-        "call _hooks_rng_trace_record_from_hook\n\t"
-        "addl $8, %esp\n\t"
-        "popal\n\t"
-        "popfl\n\t"
-        "jmp *_g_hooks_rng_rndsign_trampoline\n\t"
-    );
+/* C (not naked) so it can take the audio-thread branch. */
+static long double __cdecl hooked_rndsign(void) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    if (hooks_on_audio_thread()) {
+        /* rndsign(): (seed & 0x10000) ? -1 : 1, matching rndsign @0x4052c0 */
+        uint32_t s = hooks_audio_rng_step();
+        return (s & 0x10000u) ? -1.0L : 1.0L;
+    }
+    hooks_rng_trace_record_from_hook(5u, caller);
+    if (!g_hooks_rng_rndsign_trampoline) return 0.0L;
+    return ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
 }
 #endif
 
@@ -1928,23 +2014,15 @@ int hooks_set_native_synth_enabled(int enabled) {
 static uint32_t g_audio_rng_seed = 0xA53C9E21u;
 static volatile int g_audio_rng_wrap_depth = 0;
 
+/* These synth voice callbacks run on the SDL audio thread. Their RNG draws are
+ * now isolated by the audio-thread branch in the RNG hooks (served from the
+ * private audio seed, never touching _mrand_seed), so this is a straight
+ * pass-through. It used to swap the gameplay seed in/out around the callback,
+ * but doing that FROM the audio thread was exactly the race that desynced
+ * matches on death/respawn/teleport. */
 static int hooks_call_synth_callback_with_audio_rng(fn_synth_callback_t callback, void* effect) {
-    int result = 0;
-    uint32_t game_seed = 0;
-
     if (!callback) return 0;
-    if (!g_native_mrand_seed || g_audio_rng_wrap_depth > 0) {
-        return callback(effect);
-    }
-
-    game_seed = *g_native_mrand_seed;
-    g_audio_rng_wrap_depth++;
-    *g_native_mrand_seed = g_audio_rng_seed;
-    result = callback(effect);
-    g_audio_rng_seed = *g_native_mrand_seed;
-    *g_native_mrand_seed = game_seed;
-    g_audio_rng_wrap_depth--;
-    return result;
+    return callback(effect);
 }
 
 static int __cdecl hooked_respawn_warble(void* effect) {
@@ -8676,6 +8754,25 @@ static void online_hub_open(void) {
 
 static void __cdecl online_hub_enter(void) {
     void* last = p_state_last ? p_state_last() : (void*)(uintptr_t)ADDR_MAIN_STATE;
+    int abandoned = 0;
+
+    /* Entering the hub means we are no longer in a match. Cut any lingering P2P
+     * session and clear match state immediately so a fresh queue can't start on
+     * top of a stale connection (which caused cross-match weirdness when leaving
+     * a game and re-queuing within the ~1.5s abandon grace). If a live match was
+     * still unreported, this counts as a forfeit/loss. The launch sequence is
+     * exempt: it routes through the hub with g_online_pending_match active and
+     * the active match not yet begun, so we must not tear that down. */
+    if (!g_online_pending_match.active) {
+        if (g_online_active_match.active && !g_online_active_match.result_reported) {
+            g_online_active_match.result_reported = 1;
+            online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+            abandoned = 1;
+        }
+        if (ggpo_net_active()) stop_ggpo_net("left match to hub");
+        online_clear_match_state();
+    }
+
     online_hub_load();
     if (!last || last == (void*)&g_online_hub_state || last == (void*)&g_console_state) {
         last = (void*)(uintptr_t)ADDR_MAIN_STATE;
@@ -8684,10 +8781,12 @@ static void __cdecl online_hub_enter(void) {
     g_online_capture_active = 0;
     online_hub_apply_net_settings();
     online_hub_rebuild_rows();
-    if (!g_online_pending_match.active && !g_online_result.active) {
+    if (abandoned) {
+        online_hub_set_status("Left the match - counted as a loss.");
+    } else if (!g_online_pending_match.active && !g_online_result.active) {
         online_hub_set_status("");
     }
-    LOG_INFO("ONLINE HUB: enter");
+    LOG_INFO("ONLINE HUB: enter%s", abandoned ? " (abandoned live match; P2P closed)" : "");
 }
 
 static void __cdecl online_hub_update(void) {
@@ -11632,6 +11731,9 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
     void* state_ptr = NULL;
     int is_game_state = 0;
 
+    /* Mark the sim thread for audio-thread RNG isolation (see hooks_on_audio_thread). */
+    g_sim_thread_id = GetCurrentThreadId();
+
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
     online_monitor_active_match_state(state_ptr);
@@ -11943,6 +12045,10 @@ finish_without_live_restore:
 }
 
 static void __cdecl hooked_game_update(int arg0) {
+    /* Record the simulation thread so the RNG hooks can tell audio-thread draws
+     * apart and keep them off the gameplay seed (audio-thread RNG isolation). */
+    g_sim_thread_id = GetCurrentThreadId();
+
     /* Launch-mute fix: vanilla app_state_init force-calls mad_enable_synth(1)
      * and defaults DAT_0055a170=1, THEN loads settings.nogg (which overwrites
      * the saved "sound" value into DAT_0055a170) but never re-applies it to the

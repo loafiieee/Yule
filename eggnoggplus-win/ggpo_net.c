@@ -394,8 +394,11 @@ static void ggpo_net_clear_rollback_history(void);
 /* Per-frame RNG trace ring (diagnostic, populated only when rngtrace is on).
  * Stored in RAM with no I/O during play; dumped to the log when a desync fires
  * so two same-machine instances can be diffed frame-by-frame. */
-#define GGPO_NET_RNG_RING        256u
-#define GGPO_NET_RNG_FRAME_DRAWS 28u
+/* Enlarged so two same-machine instances retain from match start through the
+ * first desync (the ~256 ring evicted the clean sync->diverge moment, and combat
+ * frames hit the 28-draw cap). Only allocated when rngtrace is on. */
+#define GGPO_NET_RNG_RING        1024u
+#define GGPO_NET_RNG_FRAME_DRAWS 64u
 typedef struct GgpoNetRngFrame {
     int valid;
     uint32_t frame;
@@ -3217,8 +3220,9 @@ static void ggpo_net_dump_rng_ring(uint32_t desync_frame) {
         uint32_t i;
         if (!slot->valid || slot->frame != f || slot->count == 0u) continue;
         off += snprintf(buf + off, sizeof(buf) - (size_t)off,
-                        "ggpo.rngtrace f=%u p=%d cmd=%08X/%08X s=%u->%u n=%u%s:",
+                        "ggpo.rngtrace f=%u d=%u p=%d cmd=%08X/%08X s=%u->%u n=%u%s:",
                         (unsigned int)f,
+                        (unsigned int)desync_frame,
                         g_net.local_player,
                         (unsigned int)slot->local_cmd,
                         (unsigned int)slot->remote_cmd,

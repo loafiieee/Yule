@@ -186,6 +186,7 @@ extern void SDL_free(void* mem);
 #define ADDR_FRND                     0x405170u
 #define ADDR_RND5050                  0x405210u
 #define ADDR_RNDSIGN                  0x4052C0u
+#define ADDR_ONEIN                    0x4053F0u
 #define ADDR_RESPAWN_WARBLE           0x41BB70u
 #define ADDR_SYNTH_EFFECT_WHISTLING   0x41BBD0u
 #define ADDR_SOUND_SWORD_CHING        0x425D70u
@@ -650,6 +651,8 @@ static Detour g_rng_rnd_detour;
 static Detour g_rng_frnd_detour;
 static Detour g_rng_rnd5050_detour;
 static Detour g_rng_rndsign_detour;
+static Detour g_onein_detour;
+static void*  g_hooks_onein_trampoline = NULL;
 static Detour g_respawn_warble_detour;
 static Detour g_synth_effect_whistling_detour;
 static Detour g_sound_sword_ching_detour;
@@ -1766,6 +1769,7 @@ void __cdecl hooks_rng_trace_record_from_hook(uint32_t kind, uintptr_t caller) {
 typedef long double (__cdecl *fn_rng_frnd_t)(float, float);
 typedef int         (__cdecl *fn_rng_rnd_t)(int, int);
 typedef unsigned    (__cdecl *fn_rng_rnd5050_t)(void);
+typedef int         (__cdecl *fn_onein_t)(int);
 
 static uint32_t g_cosmetic_rng_seed = 0x1ED37A11u;
 static volatile int g_cosmetic_rng_depth = 0;
@@ -1858,6 +1862,30 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
     if (c >= 0x0041E130u && c < 0x0041E320u) return 1; /* _sparks_ex                          */
     if (c >= 0x0041F330u && c < 0x0041F420u) return 1; /* _sword_sparks_ex                    */
     if (c >= 0x0041FCB0u && c < 0x0041FD30u) return 1; /* _debug_particle + _game_particle    */
+    /* Inline cosmetic particle/sound effect block inside the player-update fn
+     * (player_is_win_condition.part.38). Disasm-verified this sub-range only
+     * calls particle_effect_sprite + sound_fm/sound_pulse (+ frnd/math), no
+     * thing_new/map_tile, so the frnd draws here (0x41F661/0x41F83B/0x41F8C6/
+     * 0x41F934) are movement particles/sound, not gameplay. The surrounding
+     * gameplay draws are outside this sub-range and stay on the gameplay seed. */
+    if (c >= 0x0041F640u && c < 0x0041F940u) return 1; /* player-update cosmetic fx block      */
+    /* The two biggest inline cosmetic-effect families, found via frame-0 rngtrace
+     * diff: at the FIRST divergence one peer drew an extra `onein` (the gate of a
+     * cosmetic spawn) on the gameplay seed because the spawner runs a non-synced
+     * number of times (camera-derived visible range / cosmetic anim), even though
+     * seed+ticks+room all matched. These two whole functions' RNG draws are ALL
+     * cosmetic (disasm + decompiler verified: every rnd/frnd/onein/mrand result
+     * feeds particle_effect_sprite / sparks_ex / sound objects, NEVER the player
+     * struct, map_tile or thing_new - the interleaved gameplay calls player_die/
+     * poll_cmds/sword_update_movement are CALLS whose own draws live elsewhere).
+     * Combined with the onein detour (below) this routes the gate AND the body of
+     * each effect to the private seed, so a non-synced spawn count can no longer
+     * drift the gameplay seed. (player_update_logic 0x42a8e0..0x42b770;
+     * game_update ambient-decoration spawner drips/dust/bats/bubbles/leaves
+     * 0x42d970..0x42eb80 - bounded below the tilemap-deco rnd @0x42ca11/0x42ca27
+     * which MUST stay on the gameplay seed.) */
+    if (c >= 0x0042A8E0u && c < 0x0042B770u) return 1; /* _player_update_logic (sparks/dust)  */
+    if (c >= 0x0042D970u && c < 0x0042EB80u) return 1; /* _game_update ambient decoration      */
     switch (c) {
         /* Cosmetic RNG draws inside game_update (a mixed gameplay/cosmetic fn,
          * so isolated per call site, not by range). Crowd cheer colour + the
@@ -1884,6 +1912,7 @@ static int __cdecl hooked_rnd(int a, int b) { (void)a; (void)b; return 0; }
 static long double __cdecl hooked_frnd(float a, float b) { (void)a; (void)b; return 0.0L; }
 static unsigned __cdecl hooked_rnd5050(void) { return 0; }
 static long double __cdecl hooked_rndsign(void) { return 0.0L; }
+static int __cdecl hooked_onein(int n) { (void)n; return 0; }
 #else
 /* C (not naked) so it can take the audio-thread branch like rnd/frnd/rnd5050. */
 static uint32_t __cdecl hooked_mrand(void) {
@@ -1917,8 +1946,10 @@ static int __cdecl hooked_rnd(int lo, int hi) {
     }
     cosmetic = hooks_rng_caller_is_cosmetic(caller);
     /* Trace only non-cosmetic draws so a desync dump isn't flooded by isolated
-     * cosmetic spray; cosmetic draws no longer touch the gameplay seed anyway. */
-    if (!cosmetic) hooks_rng_trace_record_from_hook(2u, caller);
+     * cosmetic spray; cosmetic draws no longer touch the gameplay seed anyway.
+     * Also skip when depth>0 (we're inside a cosmetic seed-swap, e.g. onein's
+     * nested rnd) so the trace shows only true gameplay-seed draws. */
+    if (!cosmetic && g_cosmetic_rng_depth == 0) hooks_rng_trace_record_from_hook(2u, caller);
     if (!real) return 0;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
         uint32_t game_seed = *g_native_mrand_seed;
@@ -1945,7 +1976,7 @@ static long double __cdecl hooked_frnd(float lo, float hi) {
                + (long double)lo;
     }
     cosmetic = hooks_rng_caller_is_cosmetic(caller);
-    if (!cosmetic) hooks_rng_trace_record_from_hook(3u, caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0) hooks_rng_trace_record_from_hook(3u, caller);
     if (!real) return 0.0L;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
         uint32_t game_seed = *g_native_mrand_seed;
@@ -1970,7 +2001,7 @@ static unsigned __cdecl hooked_rnd5050(void) {
         return (hooks_audio_rng_step() >> 16) & 1u;
     }
     cosmetic = hooks_rng_caller_is_cosmetic(caller);
-    if (!cosmetic) hooks_rng_trace_record_from_hook(4u, caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0) hooks_rng_trace_record_from_hook(4u, caller);
     if (!real) return 0;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
         uint32_t game_seed = *g_native_mrand_seed;
@@ -1996,6 +2027,38 @@ static long double __cdecl hooked_rndsign(void) {
     hooks_rng_trace_record_from_hook(5u, caller);
     if (!g_hooks_rng_rndsign_trampoline) return 0.0L;
     return ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
+}
+
+/*
+ * onein(n) = (rnd(1,|n|) == 1). The shared 1-in-N gate helper: it draws ONE rnd
+ * from the gameplay seed, and is called by BOTH gameplay (mapgen) and cosmetic
+ * code (ambient-decoration spawner, player sparks, blood). Range isolation can't
+ * catch it because the rnd it draws always reports caller 0x405419 (inside onein).
+ * So we detour onein itself and classify by its REAL caller: cosmetic callers run
+ * onein with the gameplay seed swapped out for the private cosmetic seed (same
+ * synchronous sim-thread swap as the rnd/frnd hooks; depth>0 makes the nested rnd
+ * reuse the swapped seed without re-swapping or tracing). Gameplay callers pass
+ * straight through. This is what stops the frame-143 "extra onein" from drifting
+ * the gameplay seed when one peer's cosmetic spawner runs an extra time.
+ */
+static int __cdecl hooked_onein(int n) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    fn_onein_t real = (fn_onein_t)g_hooks_onein_trampoline;
+    int cosmetic;
+    int result;
+    if (!real) return 0;
+    cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
+        uint32_t game_seed = *g_native_mrand_seed;
+        g_cosmetic_rng_depth++;
+        *g_native_mrand_seed = g_cosmetic_rng_seed;
+        result = real(n);
+        g_cosmetic_rng_seed = *g_native_mrand_seed;
+        *g_native_mrand_seed = game_seed;
+        g_cosmetic_rng_depth--;
+        return result;
+    }
+    return real(n);
 }
 #endif
 
@@ -12412,6 +12475,13 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour rndsign (RNG tracing disabled for rndsign)");
     } else {
         g_hooks_rng_rndsign_trampoline = g_rng_rndsign_detour.trampoline;
+    }
+    /* onein: relocate 8 bytes (sub esp,8 + mov eax,1) - clean instruction boundary
+     * at 0x4053F8. Routes cosmetic onein gates to the private seed (see hooked_onein). */
+    if (!install_detour(&g_onein_detour, (void*)(uintptr_t)ADDR_ONEIN, (void*)&hooked_onein, 8)) {
+        LOG_WARN("hooks_init: failed to detour onein (cosmetic gate RNG may drift the gameplay seed)");
+    } else {
+        g_hooks_onein_trampoline = g_onein_detour.trampoline;
     }
 
     if (!install_detour(&g_respawn_warble_detour, (void*)(uintptr_t)ADDR_RESPAWN_WARBLE, (void*)&hooked_respawn_warble, 12)) {

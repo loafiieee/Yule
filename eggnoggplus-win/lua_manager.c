@@ -6335,18 +6335,6 @@ static int full_state_rollback_summary_from_canonical_blob(const void* src, size
         out_summary->thing_slot_crc[i] = full_state_crc32(things + ((size_t)i * (size_t)THING_SIZE), THING_SIZE);
     }
     out_summary->tilemap_crc = full_state_crc32(things + things_len, tilemap_len);
-    {
-        /* 16 equal byte-bands of the tilemap, CRC each (frame-accurate region
-         * localization for non-RNG tilemap desyncs). */
-        const uint8_t* tm = things + things_len;
-        size_t band = tilemap_len / 16u;
-        for (int b = 0; b < 16; b++) {
-            size_t off = (size_t)b * band;
-            size_t len = (b == 15) ? (tilemap_len - off) : band;
-            out_summary->tilemap_band_crc[b] = (tilemap_len > 0)
-                ? full_state_crc32(tm + off, len) : 0u;
-        }
-    }
     out_summary->active_room = (uint32_t)hdr->active_room;
     out_summary->native_game_ticks = hdr->native_game_ticks;
     out_summary->rng_seed = hdr->rng_seed;

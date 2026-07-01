@@ -168,11 +168,6 @@ typedef struct LuaGameStateRollbackSummary {
     uint32_t player0_crc;
     uint32_t player1_crc;
     uint32_t thing_slot_crc[LUA_ROLLBACK_SUMMARY_THING_SLOTS];
-    /* Diagnostic: the tilemap split into 16 equal byte-bands, CRC each. Both peers
-     * exchange this per confirmed frame, so on a tilemap desync the detector can
-     * compare local vs remote band CRCs FOR THE SAME FRAME (no render-phase skew)
-     * to localize which region of the tilemap actually diverged. */
-    uint32_t tilemap_band_crc[16];
 } LuaGameStateRollbackSummary;
 
 size_t lua_manager_game_state_size(void);

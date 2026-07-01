@@ -21,7 +21,13 @@
 #define GGPO_NET_HISTORY_FRAMES 512
 #define GGPO_NET_PACKET_INPUTS 64
 #define GGPO_NET_PACKET_CHECKSUMS 32
-#define GGPO_NET_PACKET_SUMMARIES 4
+/* Kept small on purpose: the per-frame packet is a FIXED sizeof(GgpoNetPacket)
+ * sent ~60x/sec, and each summary is ~148 bytes. Keeping the whole packet under
+ * the ~1472-byte UDP/MTU payload avoids IP fragmentation, which on real networks
+ * (unlike loopback) turns one dropped fragment into a lost packet -> prediction
+ * stalls -> "slow/laggy" online play. Summaries are only used for desync DETAIL
+ * (diagnostic); detection uses the 4-byte checksums, so 2 is plenty. */
+#define GGPO_NET_PACKET_SUMMARIES 2
 #define GGPO_NET_DEFAULT_MAX_PREDICTION 24
 #define GGPO_NET_DEFAULT_MAX_FRAME_ADVANTAGE 20
 #define GGPO_NET_DEFAULT_INPUT_DELAY 1
@@ -1244,19 +1250,7 @@ static void ggpo_net_log_desync_summary(uint32_t frame, const GgpoNetHistoryEntr
     /* For a tilemap divergence (the non-RNG class), dump per-row/per-col tilemap
      * CRCs so both peers' dumps can be diffed to the exact diverging cell. */
     if (local->tilemap_crc != remote->tilemap_crc) {
-        /* Frame-accurate: which of the 16 tilemap bands diverged AT frame N (local
-         * vs remote summary, both for the same frame - no render skew). */
-        char bands[128];
-        int bo = 0, b;
-        bands[0] = '\0';
-        for (b = 0; b < 16; b++) {
-            if (local->tilemap_band_crc[b] != remote->tilemap_band_crc[b]) {
-                bo += snprintf(bands + bo, sizeof(bands) - (size_t)bo, "%d ", b);
-            }
-        }
-        log_dump_line("ggpo.tilemap-band-diff f=%u p=%d bands=%s", (unsigned int)frame,
-                      g_net.local_player, bands[0] ? bands : "(none/whole)");
-        /* Detector's frame-accurate post-tick raw tilemap for the cell values. */
+        /* Detector's frame-accurate post-tick raw tilemap (gated by rngtrace). */
         ggpo_net_dump_frame_tilemap(frame);
     }
     log_dump_flush();

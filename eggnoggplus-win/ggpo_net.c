@@ -1377,6 +1377,19 @@ static uint32_t ggpo_net_predict_remote(uint32_t frame, int* out_predicted) {
 static void ggpo_net_capture_history_summary(GgpoNetHistoryEntry* h) {
     char err[128];
     if (!h) return;
+    /* The rollback summary (a full extra state-save + canonicalize + ~a dozen
+     * CRC32s over the whole ~170KB state) is computed EVERY confirmed frame AND
+     * again for every rollback-replayed frame, but it is ONLY used for the desync
+     * DETAIL log (changed=... breakdown). Desync DETECTION uses the 4-byte
+     * post_checksum, not the summary. So gate it behind rngtrace: normal online
+     * play skips this per-frame cost entirely (big win on slower PCs, where the
+     * extra work dragged the sim below 60fps and both peers into slow-mo), and
+     * debugging (rngtrace on) still gets the full detail. Also stops the summary
+     * from being packed into every packet (has_summary stays 0). */
+    if (!g_net_config_rng_trace) {
+        h->has_summary = 0;
+        return;
+    }
     err[0] = '\0';
     if (lua_manager_game_state_rollback_summary(&h->summary, err, sizeof(err))) {
         h->has_summary = 1;

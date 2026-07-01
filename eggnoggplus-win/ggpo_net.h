@@ -89,6 +89,10 @@ int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap);
+/* Register an additional hole-punch candidate endpoint (e.g. the peer's public
+ * NAT address alongside its LAN address). Handshake HELLOs go to all candidates;
+ * whichever replies is adopted as the peer. Enables cross-network play. */
+int ggpo_net_add_peer_candidate(const char* host, uint16_t remote_port, char* err, size_t err_cap);
 int ggpo_net_send_server_probe(const char* host,
                                uint16_t port,
                                int match_id,

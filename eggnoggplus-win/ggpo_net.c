@@ -212,6 +212,13 @@ typedef struct GgpoNetSession {
     SOCKET sock;
     struct sockaddr_in peer_addr;
     int has_peer_addr;
+    /* ICE-style hole-punch candidates (LAN + public endpoints). Until connected we
+     * send handshake HELLOs to ALL of them; whichever address actually replies is
+     * adopted as peer_addr (ggpo_net_accept_packet_source). This is what makes
+     * cross-network play work: the server hands us both the peer's LAN address
+     * (works same-LAN) and its public/NAT address (works cross-network). */
+    struct sockaddr_in candidates[6];
+    int candidate_count;
     struct sockaddr_in probe_server_addr;
     int has_probe_server_addr;
     char probe_server_host[128];
@@ -712,6 +719,20 @@ static int ggpo_net_addr_equal(const struct sockaddr_in* a, const struct sockadd
            a->sin_family == b->sin_family &&
            a->sin_port == b->sin_port &&
            a->sin_addr.s_addr == b->sin_addr.s_addr;
+}
+
+/* Register a hole-punch candidate endpoint (deduped). Handshake HELLOs are sent
+ * to every candidate until the peer replies from one of them. */
+static void ggpo_net_add_candidate_addr(const struct sockaddr_in* addr) {
+    int i;
+    int cap = (int)(sizeof(g_net.candidates) / sizeof(g_net.candidates[0]));
+    if (!addr || addr->sin_port == 0) return;
+    for (i = 0; i < g_net.candidate_count; i++) {
+        if (ggpo_net_addr_equal(&g_net.candidates[i], addr)) return;
+    }
+    if (g_net.candidate_count < cap) {
+        g_net.candidates[g_net.candidate_count++] = *addr;
+    }
 }
 
 static uint32_t ggpo_net_rand_u32(void) {
@@ -1459,18 +1480,33 @@ static void ggpo_net_fill_packet(GgpoNetPacket* p, uint16_t type) {
     p->summary_count = summary_count;
 }
 
-static int ggpo_net_send_packet(uint16_t type) {
+static int ggpo_net_send_packet_to(uint16_t type, const struct sockaddr_in* addr) {
     GgpoNetPacket p;
-    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (!addr || g_net.sock == INVALID_SOCKET) return 0;
     ggpo_net_fill_packet(&p, type);
-    return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, type != GGPO_NET_PACKET_BYE);
+    return ggpo_net_send_bytes(&p, (int)sizeof(p), addr, type != GGPO_NET_PACKET_BYE);
 }
 
+static int ggpo_net_send_packet(uint16_t type) {
+    if (!g_net.has_peer_addr) return 0;
+    return ggpo_net_send_packet_to(type, &g_net.peer_addr);
+}
+
+/* Before a connection exists, hole-punch by sending HELLO to EVERY candidate
+ * endpoint (LAN + public). Whichever one the peer's packets come back from is
+ * adopted as peer_addr. Once connected we only talk to the working peer_addr. */
 static void ggpo_net_send_handshake_burst(uint32_t count) {
-    if (!g_net.active || g_net.connected || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
+    if (!g_net.active || g_net.connected || g_net.sock == INVALID_SOCKET) return;
     if (count == 0u) count = 1u;
     for (uint32_t i = 0; i < count; i++) {
-        (void)ggpo_net_send_packet(GGPO_NET_PACKET_HELLO);
+        int sent_any = 0;
+        for (int c = 0; c < g_net.candidate_count; c++) {
+            if (ggpo_net_send_packet_to(GGPO_NET_PACKET_HELLO, &g_net.candidates[c])) sent_any = 1;
+        }
+        /* Fall back to peer_addr if no candidates were registered (older path). */
+        if (!sent_any && g_net.has_peer_addr) {
+            (void)ggpo_net_send_packet_to(GGPO_NET_PACKET_HELLO, &g_net.peer_addr);
+        }
     }
 }
 
@@ -3248,27 +3284,54 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
     if (!ggpo_net_resolve_peer(host, remote_port, &addr, err, err_cap)) {
         return 0;
     }
+    /* Always register as a hole-punch candidate. */
+    ggpo_net_add_candidate_addr(&addr);
     if (g_net.has_peer_addr) {
         if (ggpo_net_addr_equal(&g_net.peer_addr, &addr)) {
-            return 1;
-        }
-        if (g_net.connected) {
+            /* already our primary; just (re)punch. */
+        } else if (g_net.connected) {
             ggpo_net_set_err(err, err_cap, "already connected to a different peer");
             return 0;
+        } else {
+            /* Not connected yet: keep peer_addr as-is (it may have been learned
+             * from an actual reply via accept_packet_source, which is
+             * authoritative). This new endpoint is now a candidate we also punch. */
+            changed = 1;
         }
-        changed = 1;
+    } else {
+        g_net.peer_addr = addr;
+        g_net.has_peer_addr = 1;
+        g_net.remote_port = remote_port;
     }
-    g_net.peer_addr = addr;
-    g_net.has_peer_addr = 1;
-    g_net.remote_port = remote_port;
-    LOG_INFO("ggpo.net: %s peer endpoint %s:%u mode=%s local_port=%u",
-             changed ? "updated" : "set",
+    LOG_INFO("ggpo.net: %s peer endpoint %s:%u mode=%s local_port=%u candidates=%d",
+             changed ? "candidate" : "set",
              host ? host : "",
              (unsigned int)remote_port,
              ggpo_net_mode_name(),
-             (unsigned int)g_net.local_port);
+             (unsigned int)g_net.local_port,
+             g_net.candidate_count);
     g_net.last_handshake_burst_tick = 0u;
     ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST * 2u);
+    return 1;
+}
+
+int ggpo_net_add_peer_candidate(const char* host, uint16_t remote_port, char* err, size_t err_cap) {
+    struct sockaddr_in addr;
+    if (!g_net.active || g_net.sock == INVALID_SOCKET) {
+        ggpo_net_set_err(err, err_cap, "net session is not active");
+        return 0;
+    }
+    if (remote_port == 0 || !host || !host[0]) return 0;
+    if (!ggpo_net_resolve_peer(host, remote_port, &addr, err, err_cap)) return 0;
+    ggpo_net_add_candidate_addr(&addr);
+    /* Seed peer_addr if we don't have one yet (so sends have a default target). */
+    if (!g_net.has_peer_addr) {
+        g_net.peer_addr = addr;
+        g_net.has_peer_addr = 1;
+        g_net.remote_port = remote_port;
+    }
+    g_net.last_handshake_burst_tick = 0u;
+    ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST);
     return 1;
 }
 

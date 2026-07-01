@@ -263,6 +263,11 @@ extern void SDL_free(void* mem);
 #define ONLINE_DEFAULT_SERVER_PORT 47778
 #define ONLINE_ABANDON_GRACE_TICKS 90
 #define ONLINE_MATCH_COUNTDOWN_FRAMES 150
+/* If the P2P session never connects within this many ticks (~12s @60Hz) - e.g.
+ * hostile NAT that direct hole-punch can't beat - abort back to the hub with a
+ * message instead of hanging. Generous enough not to cut off a legit slow connect
+ * + initial state transfer over a real internet link. */
+#define ONLINE_CONNECT_TIMEOUT_TICKS 720
 #define ONLINE_RESULT_TOAST_FRAMES 420
 #define ONLINE_CHALLENGE_TOAST_FADE_FRAMES 30
 
@@ -939,6 +944,7 @@ static void online_hub_save(void);
 static void online_hub_apply_net_settings(void);
 static void online_hub_rebuild_rows(void);
 static void online_hub_render_ui(void);
+static int online_advance_net_gameplay_tick(int arg0);
 static void online_server_update(void);
 static void online_server_disconnect(const char* reason);
 static void online_match_pump_launch(void);
@@ -1017,6 +1023,7 @@ typedef struct OnlineActiveMatch {
     int queue_mode;
     int result_reported;
     int invalid_state_ticks;
+    int connect_wait_ticks;
     int p2p_probe_cooldown;
     int p2p_probe_logged;
     int p2p_probe_warned;
@@ -1060,6 +1067,9 @@ static int g_online_row_count = 0;
 static int g_online_selected_row = -1;
 static int g_online_scroll_row = 0;
 static char g_online_status[ONLINE_HUB_STATUS_MAX];
+/* Set when a match is aborted because P2P never connected; the hub-enter handler
+ * shows the "couldn't connect" message (which it would otherwise clear). */
+static int g_online_pending_connect_fail_status = 0;
 static int g_online_capture_active = 0;
 static OnlineHubCaptureKind g_online_capture_kind = ONLINE_CAPTURE_NONE;
 static int g_online_capture_target = 0;
@@ -3085,6 +3095,19 @@ static const char* k_console_commands[] = {
     "ggpo.net",
     "log.level", "log.tail", "input.show", "input.override", "input.clear",
     "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
+    "dev",
+};
+
+/* Developer mode: hidden until enabled via the console `dev on` command. The
+ * commands below (netcode debug harness incl. rngtrace, forced state switches,
+ * input injection, arbitrary Lua/eval, raw log tail) are diagnostic/power tools
+ * that a normal build shouldn't expose - unknown-command'd unless dev mode is on,
+ * and omitted from `commands`/autocomplete. */
+static int g_developer_mode = 0;
+static const char* k_console_dev_commands[] = {
+    "ggpo.net", "ggpo.roundtrip", "ggpo.selftest", "ggpo.local",
+    "state.switch", "input.show", "input.override", "input.clear",
+    "lua", "eval", "lua.mod", "eval.mod", "lua.file", "log.tail",
 };
 
 static void console_history_path(char* out, size_t out_sz) {
@@ -3158,6 +3181,11 @@ static int console_common_prefix_len(const char* a, const char* b) {
 static int console_cmd_in_list(const char* cmd, const char* const* list, int count) {
     for (int i = 0; i < count; i++) if (_stricmp(cmd, list[i]) == 0) return 1;
     return 0;
+}
+
+static int console_cmd_is_developer(const char* cmd) {
+    return console_cmd_in_list(cmd, k_console_dev_commands,
+                               (int)(sizeof(k_console_dev_commands) / sizeof(k_console_dev_commands[0])));
 }
 
 /* Build argument-completion candidates for `cmd` at argument position
@@ -3272,6 +3300,8 @@ static void console_autocomplete(void) {
     if (arg_index == 0) {
         int total = (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0]));
         for (int i = 0; i < total && ncand < CONSOLE_CAND_MAX; i++) {
+            /* Hide developer commands from autocomplete unless dev mode is on. */
+            if (!g_developer_mode && console_cmd_is_developer(k_console_commands[i])) continue;
             safe_copy(cands[ncand], CONSOLE_CAND_LEN, k_console_commands[i]);
             ncand++;
         }
@@ -3746,7 +3776,9 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  state", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state.last", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  state.return [main|main_initial|options|options_paused|mods|mods_entry]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>", 0.87f, 0.87f, 0.87f);
+        if (g_developer_mode) {
+            console_push_line_rgb("  state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>", 0.87f, 0.87f, 0.87f);
+        }
         console_push_line_rgb("  sys.info", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ui.size", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  time.scale [value|auto]", 0.87f, 0.87f, 0.87f);
@@ -3772,21 +3804,28 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("  mods.reload", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  reload.assets", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  online.hub", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  ggpo.net <host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.87f, 0.87f, 0.87f);
+        if (g_developer_mode) {
+            console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  ggpo.net <host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.87f, 0.87f, 0.87f);
+        }
         console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  input.override <player> <mask> [frames] [replace]", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  input.clear <player>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  lua <code>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  eval <code>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  lua.mod <id> <code>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  eval.mod <id> <code>", 0.87f, 0.87f, 0.87f);
-        console_push_line_rgb("  lua.file <path>", 0.87f, 0.87f, 0.87f);
+        if (g_developer_mode) {
+            console_push_line_rgb("  log.tail [lines]", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  input.show [player]", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  input.override <player> <mask> [frames] [replace]", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  input.clear <player>", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  lua <code>", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  eval <code>", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  lua.mod <id> <code>", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  eval.mod <id> <code>", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  lua.file <path>", 0.87f, 0.87f, 0.87f);
+        }
         console_push_line_rgb("  exit", 0.87f, 0.87f, 0.87f);
+        if (g_developer_mode) {
+            console_push_line_rgb("  dev [on|off]  (developer mode is ON)", 0.72f, 0.90f, 1.00f);
+        }
         return;
     }
 
@@ -6044,6 +6083,32 @@ static void console_execute_input(void) {
         arg = "";
     }
 
+    /* Developer-mode gate: hide debug/power commands unless enabled. Reported as
+     * an unknown command so their existence isn't advertised. */
+    if (console_cmd_is_developer(cmd) && !g_developer_mode) {
+        char out[CONSOLE_LINE_TEXT];
+        snprintf(out, sizeof(out), "Unknown command: %s (type 'help')", cmd);
+        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        console_set_input("");
+        return;
+    }
+
+    if (_stricmp(cmd, "dev") == 0) {
+        int want = g_developer_mode;
+        if (_stricmp(arg, "on") == 0 || _stricmp(arg, "1") == 0 || _stricmp(arg, "enable") == 0) want = 1;
+        else if (_stricmp(arg, "off") == 0 || _stricmp(arg, "0") == 0 || _stricmp(arg, "disable") == 0) want = 0;
+        else if (!arg[0] || _stricmp(arg, "toggle") == 0) want = !g_developer_mode;
+        g_developer_mode = want;
+        {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "developer mode: %s%s", g_developer_mode ? "ON" : "off",
+                     g_developer_mode ? " (debug commands unlocked - type 'commands')" : "");
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        }
+        console_set_input("");
+        return;
+    }
+
     if (_stricmp(cmd, "help") == 0 || _stricmp(cmd, "commands") == 0) {
         console_show_help(arg);
     } else if (_stricmp(cmd, "clear") == 0) {
@@ -6864,6 +6929,10 @@ static void online_apply_p2p_peer(const char* line) {
     if (!applies) return;
 
     if (ggpo_net_active()) {
+        char public_host[ONLINE_HUB_TEXT_MAX];
+        char lan_host[ONLINE_HUB_TEXT_MAX];
+        int public_port = 0;
+        int lan_port = 0;
         err[0] = '\0';
         if (ggpo_net_set_peer(host, (uint16_t)port, err, sizeof(err))) {
             online_hub_set_status("");
@@ -6876,6 +6945,23 @@ static void online_apply_p2p_peer(const char* line) {
                       port,
                       match_id,
                       err[0] ? err : "unknown error");
+        }
+        /* ICE-style: also register the peer's PUBLIC (NAT) endpoint and its LAN
+         * endpoint as hole-punch candidates. The server sends peer_host as its best
+         * single guess, but for cross-network play the reachable one is the public
+         * endpoint; probing all of them and adopting whichever replies is what
+         * makes hotspot/VPN/different-network connections work. */
+        public_host[0] = '\0';
+        lan_host[0] = '\0';
+        online_json_get_string(line, "peer_public_host", public_host, sizeof(public_host));
+        online_json_get_int(line, "peer_public_port", &public_port);
+        online_json_get_string(line, "peer_lan_host", lan_host, sizeof(lan_host));
+        online_json_get_int(line, "peer_lan_port", &lan_port);
+        if (public_host[0] && public_port > 0 && public_port <= 65535) {
+            (void)ggpo_net_add_peer_candidate(public_host, (uint16_t)public_port, err, sizeof(err));
+        }
+        if (lan_host[0] && lan_port > 0 && lan_port <= 65535) {
+            (void)ggpo_net_add_peer_candidate(lan_host, (uint16_t)lan_port, err, sizeof(err));
         }
     }
 }
@@ -8941,7 +9027,10 @@ static void __cdecl online_hub_enter(void) {
     g_online_capture_active = 0;
     online_hub_apply_net_settings();
     online_hub_rebuild_rows();
-    if (abandoned) {
+    if (g_online_pending_connect_fail_status) {
+        g_online_pending_connect_fail_status = 0;
+        online_hub_set_status("Couldn't connect to opponent. They may be on a network that blocks direct play (mobile hotspot / strict NAT).");
+    } else if (abandoned) {
         online_hub_set_status("Left the match - counted as a loss.");
     } else if (!g_online_pending_match.active && !g_online_result.active) {
         online_hub_set_status("");
@@ -11218,6 +11307,13 @@ static void __cdecl mods_enter(void) {
 static void __cdecl mods_update(void) {
     p_main_update_with_buttons(0);
     mods_cursor_tick();
+    /* Keep an online match ticking while the MODS menu is open mid-match (this
+     * state's update bypasses the hooked main-update that normally drives it). */
+    if (ggpo_net_active()) {
+        g_allow_paused_game_tick++;
+        (void)online_advance_net_gameplay_tick(0);
+        g_allow_paused_game_tick--;
+    }
 }
 
 static void __cdecl mods_render(void) {
@@ -11591,11 +11687,36 @@ static int online_match_state_allowed(void* state_ptr) {
            state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED;
 }
 
+/* Abort a match that never established its P2P connection (hostile NAT / peer
+ * unreachable). Release the match on the server, tear down the session, and
+ * return to the hub with an explanatory message instead of hanging forever. */
+static void online_abort_connect_timeout(void) {
+    LOG_WARN("online.match: P2P did not connect within %d ticks; aborting to hub", ONLINE_CONNECT_TIMEOUT_TICKS);
+    if (g_online_active_match.active && !g_online_active_match.result_reported) {
+        g_online_active_match.result_reported = 1;
+        online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+    }
+    if (ggpo_net_active()) stop_ggpo_net("connect timeout");
+    online_clear_match_state();
+    g_online_pending_connect_fail_status = 1;
+    online_hub_open();
+}
+
 static void online_monitor_active_match_state(void* state_ptr) {
     if (!g_online_active_match.active || g_online_active_match.result_reported) return;
     if (!ggpo_net_active()) {
         online_finish_active_match(ONLINE_MATCH_RESULT_LOSS, "P2P disconnected; reported loss.", 1);
         return;
+    }
+    /* Connect timeout: while the P2P handshake hasn't completed, count down; if it
+     * never connects, bail to the hub rather than sit at a dead versus screen. */
+    if (!ggpo_net_connected()) {
+        if (++g_online_active_match.connect_wait_ticks >= ONLINE_CONNECT_TIMEOUT_TICKS) {
+            online_abort_connect_timeout();
+            return;
+        }
+    } else {
+        g_online_active_match.connect_wait_ticks = 0;
     }
     if (online_match_state_allowed(state_ptr)) {
         g_online_active_match.invalid_state_ticks = 0;
@@ -11764,7 +11885,22 @@ static void add_online_button_to_main(void) {
     void* btn;
     static void* baseline_start_btn = NULL;
     static float baseline_start_y = 0.0f;
+    static float last_ui_w = 0.0f;
+    static float last_ui_h = 0.0f;
+    float cur_ui_w = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float cur_ui_h = p_mad_h ? p_mad_h() : BASE_UI_H;
     if (!p_button_ex) return;
+
+    /* When the window size / state changes, the native menu re-lays-out the START
+     * button (often re-using the same button object with a new position). Our
+     * baseline was captured for the OLD layout, so the ONLINE button and the
+     * shifted START button would land wrong. Drop the baseline on a size change so
+     * it re-captures against the freshly laid-out native position. */
+    if (cur_ui_w != last_ui_w || cur_ui_h != last_ui_h) {
+        last_ui_w = cur_ui_w;
+        last_ui_h = cur_ui_h;
+        baseline_start_btn = NULL;
+    }
 
     btn = online_find_button_by_action((uintptr_t)&online_hub_player_filter_proxy);
     if (!btn) {
@@ -11831,6 +11967,17 @@ static void __cdecl hooked_options_enter_paused(void) {
     add_mods_button_to_options();
 }
 
+/* True for menu/overlay states that can sit on top of a live online match. While
+ * in one of these the sim must keep advancing (online can't pause), but the local
+ * player's inputs must be neutralized so menu navigation doesn't drive the fight. */
+static int online_state_is_ingame_menu(void* st) {
+    return st == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED ||
+           st == (void*)(uintptr_t)ADDR_OPTIONS_STATE ||
+           st == (void*)&g_console_state ||
+           st == (void*)&g_mods_state ||
+           st == (void*)&g_mods_entry_state;
+}
+
 static int online_advance_net_gameplay_tick(int arg0) {
     uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
     uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
@@ -11840,7 +11987,7 @@ static int online_advance_net_gameplay_tick(int arg0) {
     int steps = 0;
     char err[512];
     char out[CONSOLE_LINE_TEXT];
-    if (state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED || state_ptr == (void*)&g_console_state) {
+    if (online_state_is_ingame_menu(state_ptr)) {
         int local_player = ggpo_net_local_player();
         if (local_player < 0 || local_player > 1) local_player = clampi(g_online_active_match.local_player, 0, 1);
         if (local_player == 0) raw0 = 0u;
@@ -11913,7 +12060,13 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
                 add_online_button_to_main();
             }
             online_monitor_active_match_state(after_update);
-            if (after_update == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED && ggpo_net_active()) {
+            /* Keep the online sim advancing while ANY menu is open mid-match (pause,
+             * options/controls, etc.), not just the pause screen - an online match
+             * can't actually pause, so both peers must keep ticking or the session
+             * stalls and drops. ggpo_net_active() is only true during a live match,
+             * and GAME_STATE advances the netcode itself, so this covers the menu
+             * overlays without double-ticking. */
+            if (ggpo_net_active() && after_update != (void*)(uintptr_t)ADDR_GAME_STATE) {
                 net_tick_attempted = 1;
                 g_allow_paused_game_tick++;
                 net_tick_result = online_advance_net_gameplay_tick(arg0);

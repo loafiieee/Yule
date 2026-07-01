@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>   /* _controlfp - log FP precision/rounding mode per peer */
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -291,6 +292,14 @@ typedef struct GgpoNetSession {
     GgpoNetInputEntry remote_inputs[GGPO_NET_HISTORY_FRAMES];
     uint32_t rollback_to;
     int rollback_pending;
+    /* Sim-only gameplay seed: snapshot of _mrand_seed taken right after each
+     * confirmed tick (and after rollback replay). Restored before the next tick's
+     * pre-state save so out-of-tick draws (render between ticks, round/stage
+     * transitions) can't drift the seed between peers. */
+    uint32_t clean_mrand_seed;
+    float clean_camera_x;
+    float clean_camera_y;
+    int have_clean_mrand_seed;
     uint32_t last_remote_cmd;
     int has_last_remote_cmd;
     int warned_initial_mismatch;
@@ -394,10 +403,11 @@ static void ggpo_net_clear_rollback_history(void);
 /* Per-frame RNG trace ring (diagnostic, populated only when rngtrace is on).
  * Stored in RAM with no I/O during play; dumped to the log when a desync fires
  * so two same-machine instances can be diffed frame-by-frame. */
-/* Enlarged so two same-machine instances retain from match start through the
- * first desync (the ~256 ring evicted the clean sync->diverge moment, and combat
- * frames hit the 28-draw cap). Only allocated when rngtrace is on. */
-#define GGPO_NET_RNG_RING        1024u
+/* Sized to span a whole round (rounds run >1024 frames; a smaller ring is partly
+ * overwritten by rollback/replay before the dump runs, so the dump came out sparse
+ * and never covered a round's start on BOTH peers -> couldn't diff the first
+ * divergence). 4096 frames * ~352B = ~1.4MB, only touched when rngtrace is on. */
+#define GGPO_NET_RNG_RING        4096u
 #define GGPO_NET_RNG_FRAME_DRAWS 64u
 typedef struct GgpoNetRngFrame {
     int valid;
@@ -413,6 +423,12 @@ typedef struct GgpoNetRngFrame {
 } GgpoNetRngFrame;
 static GgpoNetRngFrame g_rng_ring[GGPO_NET_RNG_RING];
 static uint32_t g_rng_dump_count;
+/* Last desync frame whose ring we dumped, so the dump fires at most once per
+ * frame even though recoverable_desync may be reached on both the detecting AND
+ * the awaiting-correction peer (we now dump before the awaiting-correction
+ * early-return guard so BOTH peers' rings get logged for the same round - needed
+ * to diff p=0 vs p=1 and pin a leaking RNG call site). */
+static uint32_t g_rng_last_dump_frame = 0xFFFFFFFFu;
 static void ggpo_net_record_rng_frame(uint32_t frame, uint32_t local_cmd, uint32_t remote_cmd,
                                       uint32_t seed_before, uint32_t seed_after, const HooksRngTrace* tr);
 static void ggpo_net_dump_rng_ring(uint32_t desync_frame);
@@ -843,6 +859,22 @@ static GgpoNetHistoryEntry* ggpo_net_history_slot(uint32_t frame, uint8_t** out_
     return &g_net.history[idx];
 }
 
+/* Frame-accurate tilemap dump for diagnosing non-RNG tilemap desyncs. The
+ * confirmed-frame checksum for frame N is taken over the POST-tick state, which
+ * is the saved PRE-state of frame N+1. So dumping state_blobs[N+1] gives the exact
+ * tilemap the checksum saw for frame N - no render-phase animation skew (the live
+ * tilemap moves between the two peers' dump moments). Gated by rngtrace. */
+static void ggpo_net_dump_frame_tilemap(uint32_t checksum_frame) {
+    uint32_t blob_frame = checksum_frame + 1u;
+    uint8_t* blob = NULL;
+    GgpoNetHistoryEntry* hh;
+    if (!g_net_config_rng_trace) return;
+    hh = ggpo_net_history_slot(blob_frame, &blob);
+    if (hh && hh->valid && hh->frame == blob_frame && blob) {
+        lua_manager_game_dump_tilemap_blob(g_net.local_player, checksum_frame, blob, hh->state_len);
+    }
+}
+
 static void ggpo_net_store_input(GgpoNetInputEntry* entries, uint32_t frame, uint32_t cmd) {
     GgpoNetInputEntry* e = ggpo_net_input_slot(entries, frame);
     e->valid = 1;
@@ -1181,6 +1213,53 @@ static void ggpo_net_log_desync_summary(uint32_t frame, const GgpoNetHistoryEntr
               (unsigned int)remote->score_p0,
               (unsigned int)remote->score_p1,
               (unsigned int)remote->round_end_any);
+
+    /* Mirror the diff to the append-mode dump file (the main log is "w"-truncated
+     * and gets clobbered by the second client). This is what tells us WHICH
+     * component diverged when the RNG stream itself is in sync. Gated behind
+     * rngtrace so NORMAL play does zero diagnostic file I/O - the ungated version
+     * stalled the sim thread on every desync (incl. initial-sync mismatches on
+     * match entry -> the "freeze on joining a match" + extra mispredictions). */
+    if (!g_net_config_rng_trace) return;
+    log_dump_line("ggpo.desync detail f=%u p=%d fpcw=0x%04X changed=%s pdiff=%s slots=%s "
+                  "L[hdr=%u tr=%u tinfo=%u rinfo=%u part=%u pl=%u p0=%u p1=%u th=%u tile=%u room=%u ticks=%u rng=%u] "
+                  "R[hdr=%u tr=%u tinfo=%u rinfo=%u part=%u pl=%u p0=%u p1=%u th=%u tile=%u room=%u ticks=%u rng=%u]",
+                  (unsigned int)frame, g_net.local_player,
+                  (unsigned int)(_controlfp(0, 0) & 0xFFFFu),
+                  changed, player_detail, thing_detail,
+                  (unsigned int)local->header_crc, (unsigned int)local->transient_crc,
+                  (unsigned int)local->thing_info_crc, (unsigned int)local->room_info_crc,
+                  (unsigned int)local->particle_crc, (unsigned int)local->players_crc,
+                  (unsigned int)local->player0_crc, (unsigned int)local->player1_crc,
+                  (unsigned int)local->things_crc, (unsigned int)local->tilemap_crc,
+                  (unsigned int)local->active_room, (unsigned int)local->native_game_ticks,
+                  (unsigned int)local->rng_seed,
+                  (unsigned int)remote->header_crc, (unsigned int)remote->transient_crc,
+                  (unsigned int)remote->thing_info_crc, (unsigned int)remote->room_info_crc,
+                  (unsigned int)remote->particle_crc, (unsigned int)remote->players_crc,
+                  (unsigned int)remote->player0_crc, (unsigned int)remote->player1_crc,
+                  (unsigned int)remote->things_crc, (unsigned int)remote->tilemap_crc,
+                  (unsigned int)remote->active_room, (unsigned int)remote->native_game_ticks,
+                  (unsigned int)remote->rng_seed);
+    /* For a tilemap divergence (the non-RNG class), dump per-row/per-col tilemap
+     * CRCs so both peers' dumps can be diffed to the exact diverging cell. */
+    if (local->tilemap_crc != remote->tilemap_crc) {
+        /* Frame-accurate: which of the 16 tilemap bands diverged AT frame N (local
+         * vs remote summary, both for the same frame - no render skew). */
+        char bands[128];
+        int bo = 0, b;
+        bands[0] = '\0';
+        for (b = 0; b < 16; b++) {
+            if (local->tilemap_band_crc[b] != remote->tilemap_band_crc[b]) {
+                bo += snprintf(bands + bo, sizeof(bands) - (size_t)bo, "%d ", b);
+            }
+        }
+        log_dump_line("ggpo.tilemap-band-diff f=%u p=%d bands=%s", (unsigned int)frame,
+                      g_net.local_player, bands[0] ? bands : "(none/whole)");
+        /* Detector's frame-accurate post-tick raw tilemap for the cell values. */
+        ggpo_net_dump_frame_tilemap(frame);
+    }
+    log_dump_flush();
 }
 
 static void ggpo_net_mark_desync(uint32_t frame, uint32_t local_checksum, uint32_t remote_checksum, const char* why) {
@@ -1205,6 +1284,14 @@ static void ggpo_net_mark_desync(uint32_t frame, uint32_t local_checksum, uint32
 
 static void ggpo_net_recoverable_desync(uint32_t frame, uint32_t local_checksum, uint32_t remote_checksum, const char* why) {
     GgpoNetHistoryEntry* h = &g_net.history[frame % GGPO_NET_HISTORY_FRAMES];
+    /* Dump the RNG ring BEFORE the awaiting-correction guard below, so the peer
+     * that is already awaiting a correction (because the other peer detected the
+     * same mismatch first) still logs its ring. This guarantees BOTH peers dump
+     * for the same desync round -> a clean p=0/p=1 diff. Dedup per frame. */
+    if (frame != g_rng_last_dump_frame) {
+        g_rng_last_dump_frame = frame;
+        ggpo_net_dump_rng_ring(frame);
+    }
     if (g_net.correction_enabled && (g_net.correction_active || g_net.awaiting_correction)) {
         return;
     }
@@ -1226,7 +1313,7 @@ static void ggpo_net_recoverable_desync(uint32_t frame, uint32_t local_checksum,
               (unsigned int)g_net.correction_frame,
               (unsigned int)g_net.last_correction_applied_id);
 
-    ggpo_net_dump_rng_ring(frame);
+    /* (ring dump moved above the awaiting-correction guard so both peers dump) */
 
     if (!g_net.correction_enabled) {
         ggpo_net_mark_desync(frame, local_checksum, remote_checksum, why);
@@ -1752,6 +1839,9 @@ static void ggpo_net_clear_runtime_history(void) {
     g_net.prediction_wait_start_tick = 0;
     g_net.frame_advantage_wait_cap_announced = 0;
     g_net.prediction_wait_cap_announced = 0;
+    /* Drop the sim-only seed snapshot: after a state reset the next tick must use
+     * the freshly loaded/synced seed, not a stale pre-reset snapshot. */
+    g_net.have_clean_mrand_seed = 0;
 }
 
 static void ggpo_net_clear_rollback_history(void) {
@@ -1970,7 +2060,20 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
 
     if (is_correction) {
         chunks_received = g_net.recv_state_chunks_complete;
+        /* Responder-side ring dump: if we are applying a correction we did NOT
+         * request (the host detected the desync and pushed it), we never ran our
+         * own detect/dump. Dump our ring before clearing rollback history so both
+         * peers' rings for this round reach mods/desync_dump.log. (If we DID
+         * request it, awaiting_correction is set and recoverable_desync already
+         * dumped.) */
+        if (!g_net.awaiting_correction && p->frame != g_rng_last_dump_frame) {
+            g_rng_last_dump_frame = p->frame;
+            ggpo_net_dump_rng_ring(p->frame);
+        }
         ggpo_net_clear_rollback_history();
+        /* A correction loads a fresh synced state; drop the sim-only seed snapshot
+         * so the next tick uses the corrected seed, not a stale pre-correction one. */
+        g_net.have_clean_mrand_seed = 0;
         g_net.frame = p->frame;
         g_net.correction_id = p->correction_id;
         g_net.correction_frame = p->frame;
@@ -2243,6 +2346,15 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
                      (unsigned int)g_net.correction_frame,
                      (unsigned int)p->correction_ack_id,
                      (unsigned int)g_net.correction_requests);
+            /* Responder-side ring dump: the peer requesting this correction is the
+             * one that DETECTED the desync (it dumped in recoverable_desync). We
+             * (host) skipped our own checksum compare because we entered correction
+             * handling, so dump our ring here too -> both peers' rings for the same
+             * round land in mods/desync_dump.log for a clean p=0/p=1 diff. */
+            if (request_frame != g_rng_last_dump_frame) {
+                g_rng_last_dump_frame = request_frame;
+                ggpo_net_dump_rng_ring(request_frame);
+            }
             (void)ggpo_net_prepare_host_correction("peer resync request");
         }
     }
@@ -2431,6 +2543,20 @@ static int ggpo_net_load_start_state_if_ready(char* err, size_t err_cap) {
     g_net.frame = 0;
     ggpo_net_apply_auto_input_delay();
     ggpo_net_seed_local_input_delay();
+    /* Seed the sim-only snapshot from the just-loaded synced start state so frame 0
+     * restores the synced seed even if a render frame perturbs it before the first
+     * tick (both peers loaded the same initial seed). */
+    {
+        uint32_t init_seed = 0;
+        float cx = 0.0f, cy = 0.0f;
+        if (lua_manager_game_rng_seed(&init_seed)) {
+            g_net.clean_mrand_seed = init_seed;
+            (void)lua_manager_game_camera(&cx, &cy);
+            g_net.clean_camera_x = cx;
+            g_net.clean_camera_y = cy;
+            g_net.have_clean_mrand_seed = 1;
+        }
+    }
     g_net.last_checksum = checksum;
     g_net.start_state_loaded = 1;
     LOG_INFO("ggpo.net: start state loaded checksum=%u input_delay=%u",
@@ -2481,9 +2607,30 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
             remote_cmd = ggpo_net_predict_remote(f, &predicted);
             inputs.player_cmd[g_net.local_player] = local_cmd;
             inputs.player_cmd[g_net.remote_player] = remote_cmd;
-            if (!ggpo_net_replay_frame(f, arg0, 1, &checksum, err, err_cap)) {
-                rb_ok = 0;
-                break;
+            {
+                /* Record the rngtrace for REPLAYED frames too. The trace previously
+                 * recorded only LIVE advances, so the heavy-mispredicting peer (which
+                 * does most of its work via rollback/replay) had a stale, ~sparse
+                 * ring and couldn't be diffed against the other peer. Re-recording
+                 * here re-stamps each frame with the latest (increasingly confirmed)
+                 * inputs, so both peers' rings line up for a first-divergence diff.
+                 * Diagnostic only: no-op unless rngtrace is on. */
+                int trace = g_net_config_rng_trace;
+                uint32_t seed_before = 0;
+                if (trace) { (void)lua_manager_game_rng_seed(&seed_before); hooks_rng_trace_begin(f, 0u); }
+                if (!ggpo_net_replay_frame(f, arg0, 1, &checksum, err, err_cap)) {
+                    if (trace) hooks_rng_trace_end();
+                    rb_ok = 0;
+                    break;
+                }
+                if (trace) {
+                    HooksRngTrace tr;
+                    uint32_t seed_after = 0;
+                    hooks_rng_trace_copy(&tr);
+                    hooks_rng_trace_end();
+                    (void)lua_manager_game_rng_seed(&seed_after);
+                    ggpo_net_record_rng_frame(f, local_cmd, remote_cmd, seed_before, seed_after, &tr);
+                }
             }
             rh->local_cmd = local_cmd;
             rh->remote_cmd = remote_cmd;
@@ -2496,6 +2643,21 @@ static int ggpo_net_apply_rollback_if_needed(int arg0, char* err, size_t err_cap
     hooks_waterfall_audio_restore();
 
     if (!rb_ok) return 0;
+
+    /* Sim-only seed: the post-replay seed is the new clean baseline (replay has no
+     * render/transition draws between its ticks), so the next live tick restores
+     * THIS, not a pre-rollback value. */
+    {
+        uint32_t post_seed = 0;
+        float cx = 0.0f, cy = 0.0f;
+        if (lua_manager_game_rng_seed(&post_seed)) {
+            g_net.clean_mrand_seed = post_seed;
+            (void)lua_manager_game_camera(&cx, &cy);
+            g_net.clean_camera_x = cx;
+            g_net.clean_camera_y = cy;
+            g_net.have_clean_mrand_seed = 1;
+        }
+    }
 
     g_net.last_checksum = checksum;
     g_net.rollbacks++;
@@ -3013,6 +3175,7 @@ static int ggpo_net_start_common(GgpoNetMode mode, uint16_t local_port, char* er
     g_net.auto_input_delay_applied = 0;
     memset(g_rng_ring, 0, sizeof(g_rng_ring));
     g_rng_dump_count = 0u;
+    g_rng_last_dump_frame = 0xFFFFFFFFu;
     g_net.max_frame_advantage = g_net_config_max_frame_advantage;
     g_net.max_prediction = g_net_config_max_prediction;
     g_net.sim_loss_percent = g_net_config_sim_loss_percent;
@@ -3198,21 +3361,32 @@ static void ggpo_net_record_rng_frame(uint32_t frame, uint32_t local_cmd, uint32
     }
 }
 
-/* Dump the recent ring (frames that drew RNG) around a desync. Both instances
- * write the shared modframework.log tagged p=0/p=1; align by f= and the first
- * frame whose seed_after diverges (with matching seed_before) is the offending
- * draw, identifiable by its caller list. */
+/* Dump the recent ring (frames that drew RNG) around a desync. Written to the
+ * dedicated APPEND-mode file mods/desync_dump.log (NOT the "w"-truncated main
+ * log), tagged p=0/p=1, so both clients sharing a folder accumulate their dumps
+ * without clobbering. Align two peers' lines by f= and seed0; the first frame
+ * whose seed_after diverges (with matching seed_before) is the offending draw,
+ * identifiable by its caller list. Both peers now dump the same round (detector
+ * via recoverable_desync; responder via prepare_host_correction / correction
+ * apply), so a same-seed0 p=0/p=1 pair is always available to diff. */
 static void ggpo_net_dump_rng_ring(uint32_t desync_frame) {
     uint32_t window = GGPO_NET_RNG_RING - 8u;
     uint32_t newest = g_net.frame;
     uint32_t oldest = (newest > window) ? newest - window : 0u;
     uint32_t f;
     if (!g_net_config_rng_trace) return;
-    if (g_rng_dump_count >= 6u) return; /* avoid flooding on a correction storm */
+    if (g_rng_dump_count >= 4u) return; /* cap per session: ~2 rounds of p0+p1, so a
+                                         * correction storm can't cause a cascade of
+                                         * heavy ring-dump freezes (was 16). */
     g_rng_dump_count++;
-    LOG_INFO("ggpo.rngtrace DUMP p=%d desync_frame=%u window=%u..%u",
+    LOG_INFO("ggpo.rngtrace DUMP p=%d desync_frame=%u window=%u..%u -> mods/desync_dump.log",
              g_net.local_player, (unsigned int)desync_frame,
              (unsigned int)oldest, (unsigned int)newest);
+    log_dump_line("ggpo.rngtrace DUMP p=%d desync_frame=%u sid=%u fpcw=0x%04X window=%u..%u",
+                  g_net.local_player, (unsigned int)desync_frame,
+                  (unsigned int)g_net.session_id,
+                  (unsigned int)(_controlfp(0, 0) & 0xFFFFu),
+                  (unsigned int)oldest, (unsigned int)newest);
     for (f = oldest; f <= newest; f++) {
         GgpoNetRngFrame* slot = &g_rng_ring[f % GGPO_NET_RNG_RING];
         char buf[640];
@@ -3236,8 +3410,9 @@ static void ggpo_net_dump_rng_ring(uint32_t desync_frame) {
                             (unsigned int)slot->kinds[i],
                             (unsigned int)slot->callers[i]);
         }
-        LOG_INFO("%s", buf);
+        log_dump_line("%s", buf);
     }
+    log_dump_flush();
 }
 
 int ggpo_net_advance(uint32_t raw_p0,
@@ -3479,6 +3654,15 @@ int ggpo_net_advance(uint32_t raw_p0,
         }
     }
 
+    /* Sim-only seed: undo any out-of-tick perturbation (render since the last tick,
+     * or a round/stage transition) by restoring the post-last-tick seed BEFORE we
+     * snapshot the pre-state. Otherwise save_pre_state bakes the non-synced
+     * perturbation into the checksummed state -> desync next confirmed frame. */
+    if (g_net.have_clean_mrand_seed) {
+        (void)lua_manager_game_set_rng_seed(g_net.clean_mrand_seed);
+        (void)lua_manager_game_set_camera(g_net.clean_camera_x, g_net.clean_camera_y);
+    }
+
     if (!ggpo_net_save_pre_state(g_net.frame, &h, NULL, err, err_cap)) {
         return 0;
     }
@@ -3513,6 +3697,20 @@ int ggpo_net_advance(uint32_t raw_p0,
     h->remote_predicted = predicted;
     h->post_checksum = checksum;
     ggpo_net_capture_history_summary(h);
+
+    /* Sim-only seed: snapshot the post-tick seed so the next tick can restore it
+     * (above), nullifying any out-of-tick draws that happen before then. */
+    {
+        uint32_t post_seed = 0;
+        float cx = 0.0f, cy = 0.0f;
+        if (lua_manager_game_rng_seed(&post_seed)) {
+            g_net.clean_mrand_seed = post_seed;
+            (void)lua_manager_game_camera(&cx, &cy);
+            g_net.clean_camera_x = cx;
+            g_net.clean_camera_y = cy;
+            g_net.have_clean_mrand_seed = 1;
+        }
+    }
 
     g_net.last_checksum = checksum;
     g_net.frame++;

@@ -10,3 +10,8 @@ name: options[option1, option2, option3], default
 - Beautify basically every menu. add animations, better readability, etc
 - Reverse engineer the custom cursor used in vanilla menus so that we can use them for custom menus if wanted
 - Expand the UI library even more
+- Make the online mod do the prematch work in the prematch countdown instead of at the start of gameplay
+- add exe launch arguments, such as -fullscreen, -windowed, etc
+- fix modified buttons positions upon window size changes/window state changes
+- take a look at water effects for custom maps, like the fumes and bubbles present in the big stinky (vanilla 3)
+- ensure online play continues in the background of the input config menus, like the pause menu

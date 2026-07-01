@@ -6150,6 +6150,40 @@ static void full_state_zero_player_render_colours(FullStateBlobHeader* hdr) {
     }
 }
 
+/*
+ * Exclude the cosmetic "puzzley" icon tiles from the tilemap checksum. Puzzley
+ * tiles (tile id 0x0C - _puzzley_action is registered into the tiledef table at
+ * 0x55ad74 = entry[0x0C]+0x24) are decorative tiles in some rooms (e.g. room 2)
+ * whose displayed ICON changes at random: _puzzley_action @0x43e1b0 draws
+ * rnd/rnd5050 and writes cell bytes +1 and +2 (the icon) at a NON-synced rate
+ * during render. That drifted the checksummed tilemap between peers even though
+ * gameplay and the RNG stream stayed in sync (the "changed=tilemap, rng matches"
+ * desync the user pinned to room 2's icon-changing tiles - they have no gameplay
+ * effect). Gameplay only uses the tile id (byte +0): is_tile_solid does
+ * `id=cell[0]; solid=solidtable[id]` (0x55ab46) and map_set_tile writes the whole
+ * cell from tiledef[id*0x2c]. So for puzzley cells we zero the icon bytes (1..3)
+ * in the CHECKSUM ONLY (throwaway blob); byte 0 (id) stays fully checksummed so
+ * any real tile change is still caught, and the live tiles/icons are untouched.
+ */
+#define TILE_ID_PUZZLEY 0x0Cu
+static void full_state_mask_tilemap_anim_byte(FullStateBlobHeader* hdr) {
+    uint8_t* payload;
+    uint8_t* tilemap;
+    size_t cells, i;
+    if (!hdr || hdr->tilemap_bytes == 0 || (hdr->tilemap_bytes % 4u) != 0) return;
+    payload = (uint8_t*)hdr + sizeof(*hdr);
+    tilemap = payload + ((size_t)PLAYER_SIZE * 2u) + ((size_t)hdr->thing_count * (size_t)THING_SIZE);
+    cells = (size_t)hdr->tilemap_bytes / 4u;
+    for (i = 0; i < cells; i++) {
+        uint8_t* cell = tilemap + (i * 4u);
+        if (cell[0] == TILE_ID_PUZZLEY) {
+            cell[1] = 0u;
+            cell[2] = 0u;
+            cell[3] = 0u;
+        }
+    }
+}
+
 static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len, int zero_render_colours, char* err, size_t err_cap) {
     FullStateBlobHeader* hdr = (FullStateBlobHeader*)blob;
 
@@ -6198,7 +6232,25 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     if (zero_render_colours) {
         full_state_zero_player_render_colours(hdr);
         hdr->rng_seed = 0;
-        hdr->game_old_active_room = hdr->active_room;
+        /*
+         * EXPERIMENT (2026-06-27): do NOT canonicalize game_old_active_room out
+         * of the checksum. It was previously forced to active_room here because
+         * it is camera-derived at resets and used to drift between peers - but
+         * the camera is now sim-only (snapshot/restored per tick), so in healthy
+         * play old_active_room is deterministic and matches across peers. Hiding
+         * it from the checksum made the remaining rare desync UNCORRECTABLE: the
+         * room-flip test `if (old_active_room != active_room) reset_room()`
+         * (game_update@24375) reads the RAW value, so when old_active_room alone
+         * diverged, one peer ran reset_room (frnd@0x41EBCB) every frame, churning
+         * tilemap/things - yet the checksum (with this field zeroed) matched, so
+         * the netcode never corrected it. With this line removed, old_active_room
+         * is part of the checksum; the save (5680) / restore (5938) machinery is
+         * intact, so a divergence is now detected AND fixed by a full-state
+         * correction. (active_room itself is already checksummed and not
+         * canonicalized out, so this closes the other half of the flip compare.)
+         * If this regresses into a correction storm, restore the single line:
+         *     hdr->game_old_active_room = hdr->active_room;
+         */
         hdr->camera_x = 0.0f;
         hdr->camera_y = 0.0f;
         hdr->camera_shake = 0.0f;
@@ -6231,6 +6283,8 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
          * Exclude from the checksum only; live decoration memory is untouched.
          */
         memset(hdr->room_info_state, 0, sizeof(hdr->room_info_state));
+        /* Cosmetic crowd/tile animation byte (see helper comment). */
+        full_state_mask_tilemap_anim_byte(hdr);
     }
 
     return 1;
@@ -6281,6 +6335,18 @@ static int full_state_rollback_summary_from_canonical_blob(const void* src, size
         out_summary->thing_slot_crc[i] = full_state_crc32(things + ((size_t)i * (size_t)THING_SIZE), THING_SIZE);
     }
     out_summary->tilemap_crc = full_state_crc32(things + things_len, tilemap_len);
+    {
+        /* 16 equal byte-bands of the tilemap, CRC each (frame-accurate region
+         * localization for non-RNG tilemap desyncs). */
+        const uint8_t* tm = things + things_len;
+        size_t band = tilemap_len / 16u;
+        for (int b = 0; b < 16; b++) {
+            size_t off = (size_t)b * band;
+            size_t len = (b == 15) ? (tilemap_len - off) : band;
+            out_summary->tilemap_band_crc[b] = (tilemap_len > 0)
+                ? full_state_crc32(tm + off, len) : 0u;
+        }
+    }
     out_summary->active_room = (uint32_t)hdr->active_room;
     out_summary->native_game_ticks = hdr->native_game_ticks;
     out_summary->rng_seed = hdr->rng_seed;
@@ -13713,6 +13779,117 @@ int lua_manager_game_set_rng_seed(uint32_t seed) {
     if (!ptr_writable((void*)p_mrand_seed, sizeof(uint32_t))) return 0;
     *p_mrand_seed = seed;
     return 1;
+}
+
+/* Camera scroll (camera_x/y). The active room is derived from camera_x
+ * (_game_active_room = ROUND(camera_x / room_pixel_w)), so the netcode keeps the
+ * camera sim-only (snapshot after tick, restore before next) for the same reason
+ * as the seed: out-of-tick camera updates (render/round-reset) otherwise make the
+ * room flip/reset at a different frame per peer -> reset_room + tile setup desync. */
+int lua_manager_game_camera(float* out_x, float* out_y) {
+    if (!ptr_readable((const void*)p_camera_x, sizeof(float)) ||
+        !ptr_readable((const void*)p_camera_y, sizeof(float))) return 0;
+    if (out_x) *out_x = *p_camera_x;
+    if (out_y) *out_y = *p_camera_y;
+    return 1;
+}
+
+int lua_manager_game_set_camera(float x, float y) {
+    if (!ptr_writable((void*)p_camera_x, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_y, sizeof(float))) return 0;
+    *p_camera_x = x;
+    *p_camera_y = y;
+    return 1;
+}
+
+/* Diagnostic: dump per-row and per-column CRCs of the live tilemap to the append
+ * dump file, tagged p=<player>. Diffing two peers' row CRCs gives the diverging
+ * ROW(s) and the column CRCs the diverging COLUMN(s) -> their intersection is the
+ * exact tile cell that desynced. Used to localize the non-RNG "changed=tilemap"
+ * desyncs (an animated tile handler writing the checksummed tilemap at a
+ * non-synced rate). Reads the LIVE tilemap (a few frames past the desync frame),
+ * which is fine because the divergence persists as a stuck tile. */
+void lua_manager_game_dump_tilemap_diag(int player) {
+    static uint32_t col[4096];
+    int w = 0, h = 0;
+    size_t bytes = game_get_tilemap_bytes(&w, &h);
+    const uint32_t* tiles = (const uint32_t*)game_get_tilemap_data_ptr();
+    int y, x, hh;
+    if (bytes == 0 || !tiles || w <= 0 || h <= 0) {
+        log_dump_line("tmdiag p=%d unavailable w=%d h=%d", player, w, h);
+        return;
+    }
+    hh = (h < 4096) ? h : 4096;
+    log_dump_line("tmdiag p=%d w=%d h=%d", player, w, h);
+    for (y = 0; y < h; y++) {
+        uint32_t c = full_state_crc32(tiles + (size_t)y * (size_t)w, (size_t)w * sizeof(uint32_t));
+        log_dump_line("tmrow p=%d y=%d crc=%u", player, y, (unsigned)c);
+    }
+    for (x = 0; x < w; x++) {
+        for (y = 0; y < hh; y++) col[y] = tiles[(size_t)y * (size_t)w + (size_t)x];
+        log_dump_line("tmcol p=%d x=%d crc=%u", player, x,
+                      (unsigned)full_state_crc32(col, (size_t)hh * sizeof(uint32_t)));
+    }
+    /* Raw full-uint32 tile values per row, chunked (~100 cells/line), so two
+     * peers' dumps can be diffed to the exact diverging cell AND which BYTE of
+     * the uint32 changed (the cosmetic animation byte vs the gameplay tile id) -
+     * needed to mask only the cosmetic byte out of the tilemap checksum. */
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; ) {
+            char buf[1024];
+            int off = snprintf(buf, sizeof(buf), "tmraw p=%d y=%d x0=%d:", player, y, x);
+            int n = 0;
+            for (; x < w && n < 100 && off < (int)sizeof(buf) - 10; x++, n++) {
+                off += snprintf(buf + off, sizeof(buf) - (size_t)off, "%08X ",
+                                (unsigned)tiles[(size_t)y * (size_t)w + (size_t)x]);
+            }
+            log_dump_line("%s", buf);
+        }
+    }
+    log_dump_flush();
+}
+
+/* Frame-accurate variant: dump the tilemap FROM A SAVED STATE BLOB (the exact
+ * confirmed-frame state), not the live tilemap. The live-tilemap tmdiag suffers
+ * frame skew (the two peers dump at different moments and cosmetic tiles animate
+ * every render frame), which masks the real desync-frame divergence. Both peers
+ * dumping their frame-N blob gives a clean same-frame diff. Uses live w/h for row
+ * structure (map dims don't change mid-round). */
+void lua_manager_game_dump_tilemap_blob(int player, unsigned int frame, const void* blob, size_t blob_len) {
+    const FullStateBlobHeader* hdr = (const FullStateBlobHeader*)blob;
+    const uint8_t* payload;
+    const uint32_t* tiles;
+    int w = 0, h = 0, y, x;
+    size_t tmoff;
+    (void)game_get_tilemap_bytes(&w, &h);
+    if (!blob || blob_len < sizeof(FullStateBlobHeader) || hdr->magic != FULL_STATE_BLOB_MAGIC) {
+        log_dump_line("tmblk p=%d f=%u no-blob", player, frame); return;
+    }
+    if (w <= 0 || h <= 0) { log_dump_line("tmblk p=%d f=%u no-dims", player, frame); return; }
+    payload = (const uint8_t*)blob + sizeof(FullStateBlobHeader);
+    tiles = (const uint32_t*)(payload + ((size_t)PLAYER_SIZE * 2u) + ((size_t)hdr->thing_count * (size_t)THING_SIZE));
+    tmoff = (size_t)((const uint8_t*)tiles - (const uint8_t*)blob);
+    if (tmoff + (size_t)hdr->tilemap_bytes > blob_len || hdr->tilemap_bytes < (size_t)w * (size_t)h * 4u) {
+        log_dump_line("tmblk p=%d f=%u short tmb=%u", player, frame, (unsigned)hdr->tilemap_bytes); return;
+    }
+    log_dump_line("tmblk p=%d f=%u w=%d h=%d", player, frame, w, h);
+    for (y = 0; y < h; y++) {
+        log_dump_line("tbrow p=%d f=%u y=%d crc=%u", player, frame, y,
+                      (unsigned)full_state_crc32(tiles + (size_t)y * (size_t)w, (size_t)w * sizeof(uint32_t)));
+    }
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; ) {
+            char buf[1024];
+            int off = snprintf(buf, sizeof(buf), "tbraw p=%d f=%u y=%d x0=%d:", player, frame, y, x);
+            int n = 0;
+            for (; x < w && n < 100 && off < (int)sizeof(buf) - 10; x++, n++) {
+                off += snprintf(buf + off, sizeof(buf) - (size_t)off, "%08X ",
+                                (unsigned)tiles[(size_t)y * (size_t)w + (size_t)x]);
+            }
+            log_dump_line("%s", buf);
+        }
+    }
+    log_dump_flush();
 }
 
 int lua_manager_game_native_ticks(uint32_t* out_ticks) {

@@ -106,6 +106,36 @@ int log_console_visible(void) {
     return g_console_visible;
 }
 
+static int g_log_bulk = 0;
+
+void log_begin_bulk(void) { g_log_bulk = 1; }
+void log_end_bulk(void) {
+    g_log_bulk = 0;
+    if (log_file) fflush(log_file);
+}
+
+static FILE* g_dump_file = NULL;
+
+void log_dump_line(const char* fmt, ...) {
+    va_list args;
+    char buf[1024];
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (!g_dump_file) {
+        CreateDirectoryA("mods", NULL);
+        /* Append mode: never truncate, so both clients (and successive runs)
+         * accumulate into one shared, diffable file. Delete it to start fresh. */
+        g_dump_file = fopen("mods/desync_dump.log", "a");
+        if (!g_dump_file) return;
+    }
+    fprintf(g_dump_file, "%s\n", buf);
+}
+
+void log_dump_flush(void) {
+    if (g_dump_file) fflush(g_dump_file);
+}
+
 void log_write(const char* level, const char* fmt, ...) {
     va_list args;
     char buf[1024];
@@ -123,6 +153,13 @@ void log_write(const char* level, const char* fmt, ...) {
     struct tm* tm = localtime(&t);
     char timebuf[32];
     strftime(timebuf, sizeof(timebuf), "%H:%M:%S", tm);
+
+    // Bulk mode: file only, no console write, no per-line flush. Used for large
+    // diagnostic dumps so they don't block the caller (and drop the netcode link).
+    if (g_log_bulk) {
+        if (log_file) fprintf(log_file, "[%s] [%s] %s\n", timebuf, level, buf);
+        return;
+    }
 
     printf("[%s] [%s] %s\n", timebuf, level, buf);
     if (log_file) {

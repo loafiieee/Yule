@@ -1633,6 +1633,9 @@ static void format_bytes_compact(unsigned int bytes, char* out, size_t out_sz) {
 
 static volatile int g_hooks_rng_trace_active = 0;
 static HooksRngTrace g_hooks_rng_trace;
+/* Armed the first time rngtrace turns on (begin called); gates the out-of-tick
+ * draw logger below so normal play (rngtrace off) is never touched. */
+static volatile int g_hooks_rng_trace_enabled = 0;
 
 static const char* hooks_rng_kind_name(uint32_t kind) {
     switch (kind) {
@@ -1685,6 +1688,7 @@ void hooks_rng_trace_begin(uint32_t frame, uint32_t phase) {
     g_hooks_rng_trace.frame = frame;
     g_hooks_rng_trace.phase = phase;
     g_hooks_rng_trace_active = 1;
+    g_hooks_rng_trace_enabled = 1;
 }
 
 void hooks_rng_trace_end(void) {
@@ -1738,9 +1742,29 @@ void hooks_rng_trace_describe_diff(const HooksRngTrace* expected, const HooksRng
              got ? (unsigned int)got->overflow : 0u);
 }
 
+/* Out-of-tick (render-time) gameplay-seed draw logger. Draws that happen between
+ * the per-tick trace windows (e.g. particle DRAW callbacks during render) still
+ * advance the shared seed; render runs at a NON-synced rate, so any such draw can
+ * drift the seed between peers (the last leak diffed to the gap between ticks).
+ * We log each unique caller once so the cosmetic ones can be isolated. */
+static uintptr_t g_hooks_oot_seen[64];
+static uint32_t  g_hooks_oot_seen_count = 0;
+static void hooks_rng_oot_note(uint32_t kind, uintptr_t caller) {
+    uint32_t i;
+    for (i = 0; i < g_hooks_oot_seen_count; i++) {
+        if (g_hooks_oot_seen[i] == caller) return;
+    }
+    if (g_hooks_oot_seen_count < 64u) g_hooks_oot_seen[g_hooks_oot_seen_count++] = caller;
+    LOG_INFO("ggpo.rngtrace OUT-OF-TICK gameplay-seed draw kind=%u caller=%08X",
+             (unsigned int)kind, (unsigned int)caller);
+}
+
 void __cdecl hooks_rng_trace_record_from_hook(uint32_t kind, uintptr_t caller) {
     uint32_t index;
-    if (!g_hooks_rng_trace_active) return;
+    if (!g_hooks_rng_trace_active) {
+        if (g_hooks_rng_trace_enabled) hooks_rng_oot_note(kind, caller);
+        return;
+    }
     index = g_hooks_rng_trace.count++;
     if (index < HOOKS_RNG_TRACE_CAPACITY) {
         g_hooks_rng_trace.events[index].kind = kind;
@@ -1773,6 +1797,10 @@ typedef int         (__cdecl *fn_onein_t)(int);
 
 static uint32_t g_cosmetic_rng_seed = 0x1ED37A11u;
 static volatile int g_cosmetic_rng_depth = 0;
+/* Declared here (used by hooked_sound_sword_ching below) so the rng-hook trace
+ * skips can also exclude draws isolated via the audio-seed swap - otherwise
+ * sound_sword_ching's frnd shows up as a false-positive gameplay-seed draw. */
+static volatile int g_audio_rng_wrap_depth = 0;
 
 /*
  * Audio-thread RNG isolation (desync fix).
@@ -1838,8 +1866,20 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
      */
     if (c >= 0x004224E0u && c < 0x004227C0u) return 1; /* _do_cheer   (cheer-on-kill sound)   */
     if (c >= 0x0041EF40u && c < 0x0041EFB0u) return 1; /* _do_whistle (whistle sound)         */
+    if (c >= 0x0041F060u && c < 0x0041F110u) return 1; /* _slide_sound (sliding-sound pitch)   */
     if (c >= 0x004222A0u && c < 0x00422460u) return 1; /* _game_update_camera (screen shake)  */
     if (c >= 0x004240FFu && c < 0x00424194u) return 1; /* _sound_creepy (ambience pitch)      */
+    /* Cosmetic particle-spawn loop INSIDE player_update_movement (a mixed gameplay
+     * fn, so isolated per sub-range, NOT whole). The frnds @0x423EA6/0x423F1A/
+     * 0x423F38/0x423F59/0x423F71 all write the spawned particle (disasm: esi = the
+     * particle_effect_sprite return @0x423EED, fstp [esi+0xc]/[esi+0x2c]/[esi+0x44]
+     * = particle velocity/lifetime), never the player struct. The loop's iteration
+     * COUNT is non-synced (cosmetic), so on the gameplay seed it drifted it ->
+     * desync with the RNG stream otherwise in sync. The gameplay draws in this fn
+     * (landing-bounce rnd @0x424380 feeding player Y, ~0x424300 block) are ABOVE
+     * this range and stay on the gameplay seed. (Found via both-peer rngtrace diff:
+     * frame 2033 same seed, p1 drew n=164 vs p0 n=163 in this 0x423F.. loop.) */
+    if (c >= 0x00423E90u && c < 0x00423F90u) return 1; /* player_update_movement trail particles */
     /* _dust_particle: per-particle update for player skid/landing dust. The dust
      * lives in a NON-checksummed cosmetic particle buffer, so the number of live
      * dust particles legitimately differs between peers (different camera / spawn
@@ -1849,6 +1889,30 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
      * room_particle + map reads (map_coord_tile), never map_tile/thing writes.
      * (Found via rngtrace diff: p0 ran 3x 3@0041DEDB 5@0041DEE4, p1 ran 2x.) */
     if (c >= 0x0041DEB0u && c < 0x0041DF90u) return 1; /* _dust_particle (skid dust)          */
+    /* _drip_particle: per-particle update for water drips (the registered drip
+     * update cb, sibling of _dust_particle). Like dust, drips live in a
+     * NON-checksummed cosmetic buffer so the live count differs between peers
+     * (camera/timing), and each drip drew rnd5050+2x frnd from the gameplay seed
+     * for splash/pip variation -> that varying count drifted the seed ->
+     * "changed=things" desyncs. Disasm-verified [0x41F970,0x41FB50) only calls
+     * room_particle + sound_pip + map READS (map_coord_tile/map_pixels_h), never
+     * map_tile/thing writes. (Found via rngtrace diff: frame 65 same seed, p1 ran
+     * an extra 4@0041FA23 3@0041FB15 3@0041FB38 that p0 ran on a different frame.) */
+    if (c >= 0x0041F970u && c < 0x0041FB50u) return 1; /* _drip_particle (water drips)        */
+    /* _bug_particle: per-particle update for ambient flying insects (cosmetic
+     * decoration, sibling of dust/drip). NB: its frnd draw @0x41EBCB was for a
+     * LONG time misattributed to "reset_room" (reset_room is actually the tiny fn
+     * @0x41E990; 0x41EBCB is inside _bug_particle @0x41EA40). The "reset_room /
+     * room-flip" desync hunt was chasing THIS cosmetic leak all along. Bugs live
+     * in a NON-checksummed buffer so their count differs between peers (camera/
+     * timing); the per-bug frnd drifted the gameplay seed -> downstream the
+     * gameplay tile-deco draws (0x42CA16/0x42CA2C feeding map_tile) then produced
+     * different tiles -> "changed=tilemap" desyncs. Disasm-verified [0x41EA40,
+     * 0x41ECC0) only calls frnd + math (sign/normalize/calc_angle/pow) +
+     * room_particle + map READS (map_pixels_h/tile_h/map_coord_tile) +
+     * tile_vert_lighting (render), never map_tile/thing/player writes. (Found via
+     * rngtrace diff: frame 587 same seed, p0 ran extra 3@0041EBCB that p1 didn't.) */
+    if (c >= 0x0041EA40u && c < 0x0041ECC0u) return 1; /* _bug_particle (flying insects)      */
     /* The rest of the cosmetic particle-effect subsystem. Each draws frnd/rnd/
      * rnd5050 to position/spread particles whose COUNT is camera/timing-gated
      * (non-synced), so on the gameplay seed they drift it -> "changed=things"
@@ -1882,10 +1946,13 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
      * each effect to the private seed, so a non-synced spawn count can no longer
      * drift the gameplay seed. (player_update_logic 0x42a8e0..0x42b770;
      * game_update ambient-decoration spawner drips/dust/bats/bubbles/leaves
-     * 0x42d970..0x42eb80 - bounded below the tilemap-deco rnd @0x42ca11/0x42ca27
-     * which MUST stay on the gameplay seed.) */
+     * 0x42d970..0x42f3a0 - bounded below the tilemap-deco rnd @0x42ca11/0x42ca27
+     * which MUST stay on the gameplay seed, and above at 0x42f3a0 where the
+     * cosmetic cases end and cursor/win-condition gameplay resumes (0x42f3ac
+     * main_cursors_disable). All draws in between feed sound_noise /
+     * particle_effect_sprite / water-colour particles only. */
     if (c >= 0x0042A8E0u && c < 0x0042B770u) return 1; /* _player_update_logic (sparks/dust)  */
-    if (c >= 0x0042D970u && c < 0x0042EB80u) return 1; /* _game_update ambient decoration      */
+    if (c >= 0x0042D970u && c < 0x0042F3A0u) return 1; /* _game_update ambient decoration      */
     switch (c) {
         /* Cosmetic RNG draws inside game_update (a mixed gameplay/cosmetic fn,
          * so isolated per call site, not by range). Crowd cheer colour + the
@@ -1917,9 +1984,24 @@ static int __cdecl hooked_onein(int n) { (void)n; return 0; }
 /* C (not naked) so it can take the audio-thread branch like rnd/frnd/rnd5050. */
 static uint32_t __cdecl hooked_mrand(void) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    int cosmetic;
+    uint32_t result;
     if (hooks_on_audio_thread()) return hooks_audio_rng_step() >> 16;
-    hooks_rng_trace_record_from_hook(1u, caller);
+    /* mrand DOES have cosmetic callers now (ambient decoration @0x42db8a/0x42dbb0,
+     * player sparks, case-8/9 particle seeds) - isolate them like rnd/frnd. */
+    cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0 && g_audio_rng_wrap_depth == 0) hooks_rng_trace_record_from_hook(1u, caller);
     if (!g_hooks_rng_mrand_trampoline) return 0;
+    if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
+        uint32_t game_seed = *g_native_mrand_seed;
+        g_cosmetic_rng_depth++;
+        *g_native_mrand_seed = g_cosmetic_rng_seed;
+        result = ((uint32_t (__cdecl*)(void))g_hooks_rng_mrand_trampoline)();
+        g_cosmetic_rng_seed = *g_native_mrand_seed;
+        *g_native_mrand_seed = game_seed;
+        g_cosmetic_rng_depth--;
+        return result;
+    }
     return ((uint32_t (__cdecl*)(void))g_hooks_rng_mrand_trampoline)();
 }
 
@@ -1930,7 +2012,8 @@ static uint32_t __cdecl hooked_mrand(void) {
  * __builtin_return_address(0) is the original caller (the draw site). The trace
  * records only NON-cosmetic draws so a desync dump isn't flooded by cosmetic spray.
  * Non-cosmetic callers pass straight through unchanged. Same isolation pattern as
- * hooked_sound_sword_ching. mrand/rndsign have no cosmetic callers and stay naked.
+ * hooked_sound_sword_ching, and as mrand/rndsign/onein (which gained cosmetic
+ * callers once the ambient-decoration + player-spark ranges were isolated).
  */
 static int __cdecl hooked_rnd(int lo, int hi) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
@@ -1949,7 +2032,7 @@ static int __cdecl hooked_rnd(int lo, int hi) {
      * cosmetic spray; cosmetic draws no longer touch the gameplay seed anyway.
      * Also skip when depth>0 (we're inside a cosmetic seed-swap, e.g. onein's
      * nested rnd) so the trace shows only true gameplay-seed draws. */
-    if (!cosmetic && g_cosmetic_rng_depth == 0) hooks_rng_trace_record_from_hook(2u, caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0 && g_audio_rng_wrap_depth == 0) hooks_rng_trace_record_from_hook(2u, caller);
     if (!real) return 0;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
         uint32_t game_seed = *g_native_mrand_seed;
@@ -1976,7 +2059,7 @@ static long double __cdecl hooked_frnd(float lo, float hi) {
                + (long double)lo;
     }
     cosmetic = hooks_rng_caller_is_cosmetic(caller);
-    if (!cosmetic && g_cosmetic_rng_depth == 0) hooks_rng_trace_record_from_hook(3u, caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0 && g_audio_rng_wrap_depth == 0) hooks_rng_trace_record_from_hook(3u, caller);
     if (!real) return 0.0L;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
         uint32_t game_seed = *g_native_mrand_seed;
@@ -2001,7 +2084,7 @@ static unsigned __cdecl hooked_rnd5050(void) {
         return (hooks_audio_rng_step() >> 16) & 1u;
     }
     cosmetic = hooks_rng_caller_is_cosmetic(caller);
-    if (!cosmetic && g_cosmetic_rng_depth == 0) hooks_rng_trace_record_from_hook(4u, caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0 && g_audio_rng_wrap_depth == 0) hooks_rng_trace_record_from_hook(4u, caller);
     if (!real) return 0;
     if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
         uint32_t game_seed = *g_native_mrand_seed;
@@ -2019,13 +2102,27 @@ static unsigned __cdecl hooked_rnd5050(void) {
 /* C (not naked) so it can take the audio-thread branch. */
 static long double __cdecl hooked_rndsign(void) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    int cosmetic;
+    long double result;
     if (hooks_on_audio_thread()) {
         /* rndsign(): (seed & 0x10000) ? -1 : 1, matching rndsign @0x4052c0 */
         uint32_t s = hooks_audio_rng_step();
         return (s & 0x10000u) ? -1.0L : 1.0L;
     }
-    hooks_rng_trace_record_from_hook(5u, caller);
+    /* rndsign also has cosmetic callers now (ambient case-7 bats, player sparks). */
+    cosmetic = hooks_rng_caller_is_cosmetic(caller);
+    if (!cosmetic && g_cosmetic_rng_depth == 0 && g_audio_rng_wrap_depth == 0) hooks_rng_trace_record_from_hook(5u, caller);
     if (!g_hooks_rng_rndsign_trampoline) return 0.0L;
+    if (g_native_mrand_seed && g_cosmetic_rng_depth == 0 && cosmetic) {
+        uint32_t game_seed = *g_native_mrand_seed;
+        g_cosmetic_rng_depth++;
+        *g_native_mrand_seed = g_cosmetic_rng_seed;
+        result = ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
+        g_cosmetic_rng_seed = *g_native_mrand_seed;
+        *g_native_mrand_seed = game_seed;
+        g_cosmetic_rng_depth--;
+        return result;
+    }
     return ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
 }
 
@@ -2075,7 +2172,7 @@ int hooks_set_native_synth_enabled(int enabled) {
 }
 
 static uint32_t g_audio_rng_seed = 0xA53C9E21u;
-static volatile int g_audio_rng_wrap_depth = 0;
+/* g_audio_rng_wrap_depth moved up near g_cosmetic_rng_depth (used by the trace skips). */
 
 /* These synth voice callbacks run on the SDL audio thread. Their RNG draws are
  * now isolated by the audio-thread branch in the RNG hooks (served from the

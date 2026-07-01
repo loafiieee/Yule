@@ -168,6 +168,11 @@ typedef struct LuaGameStateRollbackSummary {
     uint32_t player0_crc;
     uint32_t player1_crc;
     uint32_t thing_slot_crc[LUA_ROLLBACK_SUMMARY_THING_SLOTS];
+    /* Diagnostic: the tilemap split into 16 equal byte-bands, CRC each. Both peers
+     * exchange this per confirmed frame, so on a tilemap desync the detector can
+     * compare local vs remote band CRCs FOR THE SAME FRAME (no render-phase skew)
+     * to localize which region of the tilemap actually diverged. */
+    uint32_t tilemap_band_crc[16];
 } LuaGameStateRollbackSummary;
 
 size_t lua_manager_game_state_size(void);
@@ -181,6 +186,14 @@ int lua_manager_game_state_canonicalize_rollback(void* blob, size_t blob_len, ch
 const char* lua_manager_game_state_offset_name(size_t offset);
 int lua_manager_game_rng_seed(uint32_t* out_seed);
 int lua_manager_game_set_rng_seed(uint32_t seed);
+int lua_manager_game_camera(float* out_x, float* out_y);
+int lua_manager_game_set_camera(float x, float y);
+/* Diagnostic: dump per-row/per-column tilemap CRCs (tagged p=<player>) to the
+ * append dump file, to localize non-RNG "changed=tilemap" desyncs. */
+void lua_manager_game_dump_tilemap_diag(int player);
+/* Frame-accurate variant: dump the tilemap from a SAVED state blob (same frame on
+ * both peers -> clean diff, no cosmetic-animation frame skew). */
+void lua_manager_game_dump_tilemap_blob(int player, unsigned int frame, const void* blob, size_t blob_len);
 int lua_manager_game_native_ticks(uint32_t* out_ticks);
 int lua_manager_game_set_native_ticks(uint32_t ticks);
 

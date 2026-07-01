@@ -41,3 +41,8 @@
 [11:45:03] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
 [11:45:03] [INFO] [maps] registry ready: 2 custom maps (was 0)
 [11:45:03] [INFO] hooks_init: custom MODS menu ready
+[11:45:04] [INFO] ONLINE HUB: enter
+[11:45:06] [INFO] online.hub: Settings saved.
+[11:45:07] [INFO] online.hub: Connecting to online server...
+[11:45:07] [INFO] online.hub: Connected. Authenticating...
+[11:45:07] [INFO] online.hub: Logged in.

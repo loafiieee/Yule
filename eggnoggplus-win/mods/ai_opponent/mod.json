@@ -1,0 +1,11 @@
+{
+    "id": "ai_opponent",
+    "name": "AI Opponent",
+    "version": "0.1.0",
+    "author": "modframework",
+    "description": "Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).",
+    "api_version": 1,
+    "entry": "main.lua",
+    "config": "config.cfg",
+    "storage": "storage.cfg"
+}

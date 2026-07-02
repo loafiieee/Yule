@@ -700,7 +700,15 @@ end
 - Overwrites the native game tick counter. Mostly useful for low-level sync tools.
 
 `native_state() -> table`
-- Returns a small table with `game_ticks`, `rng_seed`, and `game_level`.
+- Returns a small table with `game_ticks`, `rng_seed`, `game_level`, `score_p0`, `score_p1`, `score_target`, and `leader` (`0`/`1` = leading player index, `-1` = none).
+
+`register_bot_provider() -> true`
+- Marks the calling mod as a bot provider. While at least one enabled mod has registered, the main menu's mode-cycling PLAY button offers the **VS AI** and **TRAIN AI** modes.
+
+`ai_match() -> nil | table`
+- Returns the AI-match flag armed by the main menu, or `nil` when no AI match is active.
+- Table fields: `active` (always `true`), `ai_player` (`0` or `1` — the player the bot should drive; the opposite of whoever activated the menu button), `training` (`true` for TRAIN AI mode, where the bot drives both players).
+- The flag clears automatically when the game returns to the main menu. It is never armed while an online session is active or pending.
 
 `simulate_ticks([count=1 [,arg0=0]]) -> ok, ran`
 - Runs the native gameplay update loop immediately without re-entering Lua `on_tick(...)`.

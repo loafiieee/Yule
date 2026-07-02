@@ -69,6 +69,12 @@ void hooks_set_raw_input_blocked(int player_index, int blocked);
 int hooks_get_raw_input_blocked(int player_index);
 void hooks_sync_mad_ticks_to_game_clock(void);
 
+// AI match flag: armed by the main-menu mode button, read by Lua bot mods,
+// cleared automatically when the main menu becomes current again.
+void hooks_arm_ai_match(int ai_player, int training);
+void hooks_clear_ai_match(void);
+void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training);
+
 // Command inspection helpers.
 uint32_t hooks_peek_player_cmds_raw(int player_index, int mode);
 uint32_t hooks_peek_player_cmds_effective(int player_index, int mode);

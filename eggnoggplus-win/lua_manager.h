@@ -13,6 +13,10 @@ extern "C" {
 // Framework API version (bump on breaking Lua API changes)
 int lua_manager_framework_api(void);
 
+// True when any enabled mod has called mod.game.register_bot_provider().
+// Gates the VS AI / TRAIN modes on the main-menu mode button.
+int lua_manager_has_bot_provider(void);
+
 typedef struct LuaModDiagnostics {
     int trace_events;
     int on_frame_handlers;

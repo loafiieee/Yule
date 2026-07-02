@@ -548,6 +548,7 @@ struct LoadedMod {
     int  enabled;
     int  error_count;
     int  trace_events;
+    int  bot_provider;  /* set via mod.game.register_bot_provider() */
 
     ModPerfCounter perf_frame;
     ModPerfCounter perf_tick;
@@ -8482,6 +8483,24 @@ static int lua_game_native_state(lua_State* Ls) {
         lua_pushnil(Ls);
         lua_setfield(Ls, -2, "game_level");
     }
+    if (ptr_readable((const void*)p_score_p0, sizeof(int))) {
+        lua_push_field_int(Ls, "score_p0", *p_score_p0);
+    }
+    if (ptr_readable((const void*)p_score_p1, sizeof(int))) {
+        lua_push_field_int(Ls, "score_p1", *p_score_p1);
+    }
+    if (ptr_readable((const void*)p_score_target, sizeof(int))) {
+        lua_push_field_int(Ls, "score_target", *p_score_target);
+    }
+    {
+        int leader = -1;
+        if (ptr_readable((const void*)p_game_leader, sizeof(uintptr_t))) {
+            uintptr_t lead = *p_game_leader;
+            if (lead && lead == game_get_player_ptr(0)) leader = 0;
+            else if (lead && lead == game_get_player_ptr(1)) leader = 1;
+        }
+        lua_push_field_int(Ls, "leader", leader);
+    }
     return 1;
 }
 
@@ -8715,6 +8734,24 @@ static int lua_game_poll_cmds_raw(lua_State* Ls) {
     int mode = (int)luaL_optinteger(Ls, 2, 1);
     uint32_t cmd = hooks_peek_player_cmds_raw(player_index, mode);
     lua_pushinteger(Ls, (lua_Integer)cmd);
+    return 1;
+}
+
+static int lua_game_register_bot_provider(lua_State* Ls) {
+    LoadedMod* mod = (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+    if (mod) mod->bot_provider = 1;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_ai_match(lua_State* Ls) {
+    int active = 0, ai_player = 1, training = 0;
+    hooks_get_ai_match(&active, &ai_player, &training);
+    if (!active) { lua_pushnil(Ls); return 1; }
+    lua_newtable(Ls);
+    lua_push_field_bool(Ls, "active", 1);
+    lua_push_field_int(Ls, "ai_player", ai_player);
+    lua_push_field_bool(Ls, "training", training);
     return 1;
 }
 
@@ -10154,6 +10191,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_block_raw_input, 1); lua_setfield(Ls, -2, "block_raw_input");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_snapshot, 1); lua_setfield(Ls, -2, "apply_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_bot_provider, 1); lua_setfield(Ls, -2, "register_bot_provider");
+    lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
     lua_game_push_command_constants(Ls);
     lua_pushcfunction(Ls, lua_game_camera);                                              lua_setfield(Ls, -2, "camera");
     lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_solid");
@@ -13288,6 +13327,13 @@ static int enable_single_mod_runtime(int mod_index) {
 
 int lua_manager_framework_api(void) {
     return MOD_API_VERSION;
+}
+
+int lua_manager_has_bot_provider(void) {
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        if (g_mods[mi].enabled && g_mods[mi].bot_provider) return 1;
+    }
+    return 0;
 }
 
 int lua_manager_get_mod_count(void) {

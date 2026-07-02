@@ -146,6 +146,12 @@ extern void SDL_free(void* mem);
 #define ADDR_OPTIONS_ENTER            0x4381F0u
 #define ADDR_OPTIONS_ENTER_PAUSED     0x438200u
 #define ADDR_MAIN_PLAYER_POLL_CMDS    0x433F90u
+/* Native window control (the game's own F11 fullscreen / F1 window-size logic,
+ * which sets up the GL viewport correctly - used to apply -fullscreen/-windowed
+ * launch args instead of a raw SDL flag). All __cdecl. */
+#define ADDR_MAIN_SET_FULLSCREEN      0x430AA0u
+#define ADDR_MAIN_SET_WINDOW          0x4309E0u
+#define ADDR_MAIN_IS_FULLSCREEN       0x430AE0u
 #define ADDR_MAPGEN_INIT              0x437D30u
 #define ADDR_HIGH_WATER_ACTION        0x43C730u
 #define ADDR_GAME_WATER_HI_COLOUR     0x420100u
@@ -209,7 +215,9 @@ extern void SDL_free(void* mem);
 #define BASE_UI_H         720.0f
 #define MODS_CURSOR_ROW_Y_FACTOR   0.50f
 #define MODS_CURSOR_ROW_Y_NUDGE    0.0f
-#define MODS_CURSOR_OUTER_PAD_X   22.0f
+#define MODS_CURSOR_OUTER_PAD_X   34.0f  /* push swords clear of the inset panel */
+#define MODS_FOOTER_Y_OFF         48.0f  /* "Back" footer baseline below list_bottom (panel ends ~+10); low enough the sword tops clear the panel */
+#define MODS_BACK_SWORD_Y_OFF      8.0f  /* extra drop for the Back swords only (keeps text put) */
 
 #define MODS_BTN_GRID_X      1.0f
 #define MODS_BTN_GRID_Y      0.0f
@@ -573,6 +581,13 @@ static fn_mad_dim_t                  p_mad_w = (fn_mad_dim_t)(uintptr_t)ADDR_MAD
 static fn_mad_dim_t                  p_mad_h = (fn_mad_dim_t)(uintptr_t)ADDR_MAD_H;
 static fn_void_void_t                p_options_enter = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER;
 static fn_void_void_t                p_options_enter_paused = (fn_void_void_t)(uintptr_t)ADDR_OPTIONS_ENTER_PAUSED;
+typedef void (__cdecl *fn_set_fullscreen_t)(int);
+typedef void (__cdecl *fn_set_window_t)(int, int);
+typedef int  (__cdecl *fn_is_fullscreen_t)(void);
+static fn_set_fullscreen_t           p_main_set_fullscreen = (fn_set_fullscreen_t)(uintptr_t)ADDR_MAIN_SET_FULLSCREEN;
+static fn_set_window_t               p_main_set_window = (fn_set_window_t)(uintptr_t)ADDR_MAIN_SET_WINDOW;
+static fn_is_fullscreen_t            p_main_is_fullscreen = (fn_is_fullscreen_t)(uintptr_t)ADDR_MAIN_IS_FULLSCREEN;
+extern void* g_proxy_sdl_window;
 static fn_void_void_t                p_mapgen_init = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_INIT;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
@@ -707,6 +722,11 @@ static volatile int g_tick_input_replace[2] = { 0, 0 };
 static volatile uint32_t g_input_override_mask[2] = { 0, 0 };
 static volatile int g_input_override_frames[2] = { 0, 0 };
 static volatile int g_input_override_replace[2] = { 0, 0 };
+
+/* --- AI match flag (armed by the main-menu mode button, consumed by Lua bots) --- */
+static volatile int g_ai_match_active = 0;
+static volatile int g_ai_match_player = 1;
+static volatile int g_ai_match_training = 0;
 
 static volatile uint32_t g_last_raw_cmd[2] = { 0, 0 };
 static volatile uint32_t g_last_effective_cmd[2] = { 0, 0 };
@@ -847,6 +867,11 @@ static void mods_cursor_tick(void) {
     if (g_rows[g_selected_row].kind == ROW_BACK) {
         left_x  = L.center_x - (84.0f * L.ui);
         right_x = L.center_x + (84.0f * L.ui);
+        /* Back is drawn as a footer below the panel; flank it there (swords
+           dropped a touch more than the text so their tops clear the panel). */
+        row_y = (L.list_bottom + (MODS_FOOTER_Y_OFF * L.ui))
+              + (L.row_h * MODS_CURSOR_ROW_Y_FACTOR)
+              + (MODS_BACK_SWORD_Y_OFF * L.ui);
     }
 
     g_cursor_tx[0] = left_x;
@@ -945,6 +970,7 @@ static void online_hub_apply_net_settings(void);
 static void online_hub_rebuild_rows(void);
 static void online_hub_render_ui(void);
 static int online_advance_net_gameplay_tick(int arg0);
+static int online_state_is_ingame_menu(void* st);
 static void online_server_update(void);
 static void online_server_disconnect(const char* reason);
 static void online_match_pump_launch(void);
@@ -2459,6 +2485,23 @@ static void mods_calc_layout(ModsLayout* L) {
     L->row_h = 34.0f * L->ui;
     if (L->row_h < 12.0f) L->row_h = 12.0f;
 }
+/* The mods list ends with a divider + a "Back" action. Back is rendered as a
+ * footer BELOW the panel (not as a scrolling row), so the scroll/selection math
+ * works over just the content rows. Returns the count of scrollable content rows. */
+static int mods_content_row_count(void) {
+    int n = g_row_count;
+    if (n > 0 && g_rows[n - 1].kind == ROW_BACK) {
+        n--;                                                   /* drop Back */
+        if (n > 0 && g_rows[n - 1].kind == ROW_DIVIDER) n--;   /* and its divider */
+    }
+    return n;
+}
+
+static int mods_back_row_index(void) {
+    if (g_row_count > 0 && g_rows[g_row_count - 1].kind == ROW_BACK) return g_row_count - 1;
+    return -1;
+}
+
 static int visible_rows_capacity(void) {
     ModsLayout L;
     mods_calc_layout(&L);
@@ -2502,11 +2545,19 @@ static int find_mod_header_row_for_index(int row_index) {
 
 static void ensure_scroll_visible(void) {
     int cap = visible_rows_capacity();
-    int max_scroll = (g_row_count > cap) ? (g_row_count - cap) : 0;
+    int content = mods_content_row_count();
+    int max_scroll = (content > cap) ? (content - cap) : 0;
     int margin = (cap >= 8) ? 2 : 1;
 
     if (g_selected_row < 0 || g_selected_row >= g_row_count) {
         g_scroll_row = clampi(g_scroll_row, 0, max_scroll);
+        return;
+    }
+
+    /* "Back" is a footer below the panel, not a scrolling row - just show the
+       bottom of the content when it's selected. */
+    if (g_selected_row >= content) {
+        g_scroll_row = max_scroll;
         return;
     }
 
@@ -9029,7 +9080,7 @@ static void __cdecl online_hub_enter(void) {
     online_hub_rebuild_rows();
     if (g_online_pending_connect_fail_status) {
         g_online_pending_connect_fail_status = 0;
-        online_hub_set_status("Couldn't connect to opponent. They may be on a network that blocks direct play (mobile hotspot / strict NAT).");
+        online_hub_set_status("Couldn't connect to opponent.");
     } else if (abandoned) {
         online_hub_set_status("Left the match - counted as a loss.");
     } else if (!g_online_pending_match.active && !g_online_result.active) {
@@ -10520,6 +10571,26 @@ int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_fram
     return frames != 0;
 }
 
+void hooks_arm_ai_match(int ai_player, int training) {
+    if (ggpo_net_active()) return;               /* never during online play */
+    g_ai_match_player = ai_player & 1;
+    g_ai_match_training = training ? 1 : 0;
+    g_ai_match_active = 1;
+    LOG_INFO("ai_match: armed (ai_player=%d training=%d)", g_ai_match_player, g_ai_match_training);
+}
+
+void hooks_clear_ai_match(void) {
+    if (g_ai_match_active) LOG_INFO("ai_match: cleared");
+    g_ai_match_active = 0;
+    g_ai_match_training = 0;
+}
+
+void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training) {
+    if (out_active) *out_active = g_ai_match_active;
+    if (out_ai_player) *out_ai_player = g_ai_match_player;
+    if (out_training) *out_training = g_ai_match_training;
+}
+
 static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override) {
     int pi = (int)(player_index & 1u);
 
@@ -10701,6 +10772,27 @@ static void render_rows(void) {
     float title_y   = 28.0f * ui;
     float help_y    = 60.0f * ui;
 
+    /* Readable backdrop panel behind the content. The sword cursors sit ~22px
+     * OUTSIDE [L.left, L.right] with their blades pointing inward, so the panel is
+     * INSET horizontally (and has no outward shadow) to stay clear of the swords -
+     * they keep drawing bright over the bare scene at the panel's edges. Tunables: */
+    {
+        const float PANEL_A       = 0.86f;  /* main panel opacity */
+        const float HEADER_BAND_A = 0.55f;  /* lighter band behind the title */
+        const float PANEL_SIDE_INSET = 16.0f; /* * ui; keep clear of the swords */
+        float px = L.left + (PANEL_SIDE_INSET * ui);
+        float pw = (L.right - L.left) - (2.0f * PANEL_SIDE_INSET * ui);
+        float pt = title_y - (16.0f * ui);
+        float pb = L.list_bottom + (10.0f * ui);
+        if (pw < 80.0f * ui) { px = L.left; pw = L.right - L.left; } /* safety */
+        if (pt < 6.0f * ui) pt = 6.0f * ui;
+        hooks_ui_fill_rect(px, pt, pw, pb - pt, 0.030f, 0.038f, 0.052f, PANEL_A);    /* panel   */
+        hooks_ui_fill_rect(px, pt, pw, (help_y - title_y) + (30.0f*ui),
+                           0.055f, 0.066f, 0.088f, HEADER_BAND_A);                   /* header  */
+        hooks_ui_stroke_rect(px, pt, pw, pb - pt, 1.5f, 0.32f, 0.42f, 0.58f, 0.45f); /* border  */
+    }
+    mods_restore_render_state();
+
     draw_text_centered_scaled(header_cx, title_y, g_ui_scale * 1.16f,
                               0.90f, 0.94f, 0.98f,
                               "MOD MANAGER");
@@ -10719,11 +10811,28 @@ static void render_rows(void) {
     }
 
     int cap = visible_rows_capacity();
+    int content = mods_content_row_count();   /* Back is a footer, not a scrolling row */
     int start_row = g_scroll_row;
     if (start_row < 0) start_row = 0;
-    if (start_row > g_row_count) start_row = g_row_count;
+    if (start_row > content) start_row = content;
     int end_row = start_row + cap;
-    if (end_row > g_row_count) end_row = g_row_count;
+    if (end_row > content) end_row = content;
+
+    /* Selection highlight bar so the current row is obvious against the panel.
+     * Aligned to the inset panel and lifted up to sit on the row text. Tunables: */
+    if (g_selected_row >= start_row && g_selected_row < end_row) {
+        const float HL_INSET = 16.0f;   /* * ui; match the panel side inset */
+        const float HL_Y_OFF = -12.5f;   /* * ui; move the bar up onto the text */
+        float sy = L.list_top + (float)(g_selected_row - start_row) * L.row_h;
+        float hx = L.left + (HL_INSET * ui);
+        float hw = (L.right - L.left) - (2.0f * HL_INSET * ui);
+        float hy = sy + (HL_Y_OFF * ui);
+        float hh = L.row_h - (10.0f * ui);
+        if (hw < 80.0f * ui) { hx = L.left; hw = L.right - L.left; }
+        hooks_ui_fill_rect(hx, hy, hw, hh, 0.11f, 0.14f, 0.21f, 0.88f);   /* row lift  */
+        hooks_ui_fill_rect(hx, hy, 3.0f*ui, hh, 0.96f, 0.80f, 0.34f, 0.95f); /* gold edge */
+        mods_restore_render_state();
+    }
 
     for (int i = start_row; i < end_row; i++) {
         float y = L.list_top + (float)(i - start_row) * L.row_h;
@@ -10847,10 +10956,27 @@ static void render_rows(void) {
         }
     }
 
+    /* "Back" footer, drawn BELOW the panel with a drop shadow so it stays readable
+       against the bare scene; its swords flank it there (see mods_cursor_tick). */
+    {
+        int back_i = mods_back_row_index();
+        if (back_i >= 0) {
+            int back_sel = (g_selected_row == back_i);
+            float fy = L.list_bottom + (MODS_FOOTER_Y_OFF * ui);
+            float rr = back_sel ? 0.96f : 0.80f;
+            float gg = back_sel ? 0.86f : 0.84f;
+            float bb = back_sel ? 0.42f : 0.90f;
+            const char* label = g_rows[back_i].left;
+            draw_text_centered_scaled(L.center_x + (2.0f * ui), fy + (2.0f * ui),
+                                      g_ui_scale * 1.00f, 0.0f, 0.0f, 0.0f, label); /* shadow */
+            draw_text_centered_scaled(L.center_x, fy, g_ui_scale * 1.00f, rr, gg, bb, label);
+        }
+    }
+
     if (g_scroll_row > 0) {
         draw_text_right_scaled(L.right - (16.0f * ui), L.list_top - (10.0f * ui), g_ui_scale * 0.92f, 0.44f, 0.50f, 0.58f, "^");
     }
-    if (g_scroll_row + cap < g_row_count) {
+    if (g_scroll_row + cap < content) {
         draw_text_right_scaled(L.right - (16.0f * ui), L.list_bottom - (10.0f * ui), g_ui_scale * 0.92f, 0.44f, 0.50f, 0.58f, "v");
     }
 
@@ -11683,8 +11809,11 @@ static int online_native_winner_player(void) {
 }
 
 static int online_match_state_allowed(void* state_ptr) {
+    /* GAME_STATE plus any in-match menu overlay (pause/options/mods/console) - the
+     * sim keeps ticking there, so these are NOT "left the match" and must not count
+     * toward the abandon/forfeit timer. */
     return state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE ||
-           state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED;
+           online_state_is_ingame_menu(state_ptr);
 }
 
 /* Abort a match that never established its P2P connection (hostile NAT / peer
@@ -11885,22 +12014,8 @@ static void add_online_button_to_main(void) {
     void* btn;
     static void* baseline_start_btn = NULL;
     static float baseline_start_y = 0.0f;
-    static float last_ui_w = 0.0f;
-    static float last_ui_h = 0.0f;
-    float cur_ui_w = p_mad_w ? p_mad_w() : BASE_UI_W;
-    float cur_ui_h = p_mad_h ? p_mad_h() : BASE_UI_H;
+    static float last_written_start_y = 0.0f;
     if (!p_button_ex) return;
-
-    /* When the window size / state changes, the native menu re-lays-out the START
-     * button (often re-using the same button object with a new position). Our
-     * baseline was captured for the OLD layout, so the ONLINE button and the
-     * shifted START button would land wrong. Drop the baseline on a size change so
-     * it re-captures against the freshly laid-out native position. */
-    if (cur_ui_w != last_ui_w || cur_ui_h != last_ui_h) {
-        last_ui_w = cur_ui_w;
-        last_ui_h = cur_ui_h;
-        baseline_start_btn = NULL;
-    }
 
     btn = online_find_button_by_action((uintptr_t)&online_hub_player_filter_proxy);
     if (!btn) {
@@ -11925,11 +12040,19 @@ static void add_online_button_to_main(void) {
         float sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
         float gap = 8.0f;
         float center_gap = (sh + gap) * 0.5f;
-        if (baseline_start_btn != start_btn) {
+        float new_start_y;
+        /* Re-capture the native START baseline when it's a new button OR when
+         * something OTHER than us moved it (i.e. the native menu re-laid-out on a
+         * window resize/state change - detected by START's y differing from the
+         * value we last wrote). This fixes both stale-baseline misalignment AND the
+         * per-resize drift a naive "recapture every resize" would cause. */
+        if (baseline_start_btn != start_btn || sy != last_written_start_y) {
             baseline_start_btn = start_btn;
             baseline_start_y = sy;
         }
-        *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y) = baseline_start_y - center_gap;
+        new_start_y = baseline_start_y - center_gap;
+        *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y) = new_start_y;
+        last_written_start_y = new_start_y;
         *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X) = sx;
         *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y) = baseline_start_y + center_gap;
         *(float*)((uint8_t*)btn + BTN_OFS_WIDTH) = sw;
@@ -12031,6 +12154,43 @@ static int online_advance_net_gameplay_tick(int arg0) {
     return advanced_any ? 1 : 0;
 }
 
+static int hooks_cmdline_has_flag(const char* flag) {
+    const char* cl = GetCommandLineA();
+    const char* p;
+    size_t flen = 0;
+    if (!cl || !flag) return 0;
+    while (flag[flen]) flen++;
+    for (p = cl; *p; p++) {
+        size_t i = 0;
+        if (p != cl && p[-1] != ' ' && p[-1] != '\t') continue; /* token start only */
+        while (i < flen && p[i] && ((p[i] | 0x20) == (flag[i] | 0x20))) i++;
+        if (i == flen && (p[i] == 0 || p[i] == ' ' || p[i] == '\t')) return 1;
+    }
+    return 0;
+}
+
+/* Apply -fullscreen/-windowed once, a few frames after the window exists, using
+ * the game's own routine so the GL viewport is set up correctly. */
+static void hooks_apply_window_launch_args(void) {
+    static int applied = 0;
+    static int settle = 30;
+    if (applied) return;
+    if (!g_proxy_sdl_window) return;      /* window not created yet */
+    if (settle-- > 0) return;             /* let GL + atlas finish initializing */
+    applied = 1;
+    if (hooks_cmdline_has_flag("-fullscreen") || hooks_cmdline_has_flag("--fullscreen")) {
+        if (p_main_set_fullscreen && (!p_main_is_fullscreen || !p_main_is_fullscreen())) {
+            p_main_set_fullscreen(1);
+            LOG_INFO("launch: -fullscreen applied");
+        }
+    } else if (hooks_cmdline_has_flag("-windowed") || hooks_cmdline_has_flag("--windowed")) {
+        if (p_main_set_fullscreen && p_main_is_fullscreen && p_main_is_fullscreen()) {
+            p_main_set_fullscreen(0);
+            LOG_INFO("launch: -windowed applied");
+        }
+    }
+}
+
 static int __cdecl hooked_main_update_with_buttons(int arg0) {
     fn_main_update_with_buttons_t real_update = p_main_update_with_buttons_trampoline
         ? p_main_update_with_buttons_trampoline
@@ -12040,6 +12200,7 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 
     /* Mark the sim thread for audio-thread RNG isolation (see hooks_on_audio_thread). */
     g_sim_thread_id = GetCurrentThreadId();
+    hooks_apply_window_launch_args();
 
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
@@ -12058,6 +12219,7 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
             if (after_update == (void*)(uintptr_t)ADDR_MAIN_STATE ||
                 after_update == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
                 add_online_button_to_main();
+                hooks_clear_ai_match();
             }
             online_monitor_active_match_state(after_update);
             /* Keep the online sim advancing while ANY menu is open mid-match (pause,

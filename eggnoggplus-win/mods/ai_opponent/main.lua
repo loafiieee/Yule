@@ -18,9 +18,9 @@ Trainer.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec,
 local SIZES = { F.N_INPUTS, 32, 16, A.COUNT }
 
 local DIFF = {
-  easy   = { react_delay = 10, epsilon = 0.10, key = "ckpt_easy" },
-  normal = { react_delay = 4,  epsilon = 0.03, key = "ckpt_normal" },
-  hard   = { react_delay = 1,  epsilon = 0.00, key = "ckpt_hard" },
+  easy   = { react_delay = 10, epsilon = 0.10, key = Trainer.CKPT_KEYS.easy },
+  normal = { react_delay = 4,  epsilon = 0.03, key = Trainer.CKPT_KEYS.normal },
+  hard   = { react_delay = 1,  epsilon = 0.00, key = Trainer.CKPT_KEYS.hard },
 }
 
 local play_policy = nil

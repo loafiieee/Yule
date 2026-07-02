@@ -74,7 +74,7 @@ function Bot.decide_mask(ai_player, policy)
   if not ctx then return nil, nil end
   local feats = d.F.extract(ctx)
   local action = d.Policy.decide(policy, feats)
-  local mask = Bot.scaffold(ai_player, ctx, d.A.mask(action))
+  local mask = Bot.scaffold(ai_player, ctx, d.A.mask(action, ctx.goal_dir))
   return mask, ctx
 end
 

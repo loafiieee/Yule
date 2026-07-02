@@ -964,6 +964,22 @@ static void start_ggpo_net_join_deferred(uint16_t local_port, const char* source
 static void stop_ggpo_net(const char* source);
 static void online_hub_open(void);
 static void online_hub_set_status(const char* msg);
+
+/* --- Main-menu mode-cycling PLAY button (PLAY / ONLINE / VS AI / TRAIN AI) --- */
+enum {
+    MENU_MODE_PLAY = 0,
+    MENU_MODE_ONLINE = 1,
+    MENU_MODE_VSAI = 2,
+    MENU_MODE_TRAIN = 3,
+    MENU_MODE_COUNT = 4
+};
+static int g_menu_mode = MENU_MODE_PLAY;
+static int g_menu_mode_loaded = 0;
+static int __cdecl menu_mode_main_filter_proxy(void* btn, int event_code);
+static int __cdecl menu_mode_arrow_up_filter_proxy(void* btn, int event_code);
+static int __cdecl menu_mode_arrow_down_filter_proxy(void* btn, int event_code);
+static void menu_mode_render_overlay(void);
+static void* online_find_button_by_action(uintptr_t action_ptr);
 static void online_hub_load(void);
 static void online_hub_save(void);
 static void online_hub_apply_net_settings(void);
@@ -9658,6 +9674,55 @@ static void online_draw_nametag(float cx, float cy, const char* text, int oppone
                            text);
 }
 
+static void menu_mode_accent(float* r, float* g, float* b) {
+    switch (g_menu_mode) {
+        case MENU_MODE_ONLINE: *r = 0.40f; *g = 0.75f; *b = 1.00f; break;   /* blue   */
+        case MENU_MODE_VSAI:   *r = 1.00f; *g = 0.55f; *b = 0.30f; break;   /* orange */
+        case MENU_MODE_TRAIN:  *r = 0.70f; *g = 0.45f; *b = 1.00f; break;   /* purple */
+        default:               *r = 0.55f; *g = 1.00f; *b = 0.60f; break;   /* green  */
+    }
+}
+
+static void menu_mode_draw_triangle(float cx, float cy, float half_w, float rows, int up,
+                                    float r, float g, float b, float a) {
+    /* pixel-art triangle from stacked 1px rects (fits the game's aesthetic) */
+    int i;
+    for (i = 0; i < (int)rows; i++) {
+        float t = (float)i / rows;
+        float w = half_w * (up ? (1.0f - t) : t) * 2.0f;
+        float y = cy + (float)i - rows * 0.5f;
+        if (w < 1.0f) continue;
+        hooks_ui_fill_rect(cx - w * 0.5f, y, w, 1.0f, r, g, b, a);
+    }
+}
+
+static void menu_mode_render_overlay(void) {
+    void* start_btn = online_find_button_by_action((uintptr_t)&menu_mode_main_filter_proxy);
+    void* up_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_up_filter_proxy);
+    void* down_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_down_filter_proxy);
+    float r, g, b;
+    if (!start_btn) return;
+    menu_mode_accent(&r, &g, &b);
+    {
+        float sx = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_X);
+        float sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
+        float sw = *(float*)((uint8_t*)start_btn + BTN_OFS_WIDTH);
+        float sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
+        /* accent underline below the label */
+        hooks_ui_fill_rect(sx - sw * 0.30f, sy + sh * 0.42f, sw * 0.60f, 2.0f, r, g, b, 0.95f);
+        if (up_btn) {
+            float ux = *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_X);
+            float uy = *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_Y);
+            menu_mode_draw_triangle(ux, uy, 7.0f, 6.0f, 1, r, g, b, 0.9f);
+        }
+        if (down_btn) {
+            float dx = *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_X);
+            float dy = *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_Y);
+            menu_mode_draw_triangle(dx, dy, 7.0f, 6.0f, 0, r, g, b, 0.9f);
+        }
+    }
+}
+
 void hooks_online_on_pre_swap(void) {
     void* state_ptr = p_state_current ? p_state_current() : NULL;
     int local_player;
@@ -9690,6 +9755,14 @@ void hooks_online_on_pre_swap(void) {
         online_challenge_toast_render();
         online_challenge_toast_tick();
         online_hub_draw_cursor();
+        mods_restore_render_state();
+        if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+        mods_restore_render_state();
+    }
+
+    if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
+        state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+        menu_mode_render_overlay();
         mods_restore_render_state();
         if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
         mods_restore_render_state();
@@ -12009,54 +12082,208 @@ static void online_match_pump_launch(void) {
     }
 }
 
-static void add_online_button_to_main(void) {
-    void* start_btn;
-    void* btn;
-    static void* baseline_start_btn = NULL;
-    static float baseline_start_y = 0.0f;
-    static float last_written_start_y = 0.0f;
-    if (!p_button_ex) return;
-
-    btn = online_find_button_by_action((uintptr_t)&online_hub_player_filter_proxy);
-    if (!btn) {
-        if (p_button_set_layout) {
-            p_button_set_layout(3.0f, 6.0f);
-        }
-        btn = p_button_ex(1.0f, 4.5f, 0u, "ONLINE", (int)(intptr_t)&online_hub_player_filter_proxy);
-        if (!btn) return;
+static const char* menu_mode_label(int mode) {
+    switch (mode) {
+        case MENU_MODE_ONLINE: return "ONLINE";
+        case MENU_MODE_VSAI:   return "VS AI";
+        case MENU_MODE_TRAIN:  return "TRAIN AI";
+        default:               return "PLAY";
     }
+}
 
-    *(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR) = (void*)&g_online_hub_state;
-    *(void**)((uint8_t*)btn + BTN_OFS_ACTION_PTR) = (void*)&online_hub_player_filter_proxy;
+static int menu_mode_available(int mode) {
+    if (mode == MENU_MODE_VSAI || mode == MENU_MODE_TRAIN) {
+        return lua_manager_has_bot_provider();
+    }
+    return 1;
+}
+
+static void menu_mode_load(void) {
+    FILE* f;
+    char line[256];
+    if (g_menu_mode_loaded) return;
+    g_menu_mode_loaded = 1;
+    f = fopen("mods/modframework.cfg", "r");
+    if (!f) return;
+    while (fgets(line, sizeof(line), f)) {
+        char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (_strnicmp(p, "main_menu_mode", 14) != 0) continue;
+        p += 14;
+        while (*p == ' ' || *p == '\t' || *p == '=' || *p == ':') p++;
+        g_menu_mode = atoi(p);
+        if (g_menu_mode < 0 || g_menu_mode >= MENU_MODE_COUNT) g_menu_mode = MENU_MODE_PLAY;
+        break;
+    }
+    fclose(f);
+}
+
+static void menu_mode_save(void) {
+    char lines[64][256];
+    int count = 0, replaced = 0;
+    FILE* f = fopen("mods/modframework.cfg", "r");
+    if (f) {
+        while (count < 64 && fgets(lines[count], sizeof(lines[count]), f)) {
+            char* p = lines[count];
+            while (*p == ' ' || *p == '\t') p++;
+            if (_strnicmp(p, "main_menu_mode", 14) == 0) {
+                snprintf(lines[count], sizeof(lines[count]), "main_menu_mode=%d\n", g_menu_mode);
+                replaced = 1;
+            }
+            count++;
+        }
+        fclose(f);
+    }
+    CreateDirectoryA("mods", NULL);
+    f = fopen("mods/modframework.cfg", "w");
+    if (!f) return;
+    for (int i = 0; i < count; i++) fputs(lines[i], f);
+    if (!replaced) fprintf(f, "main_menu_mode=%d\n", g_menu_mode);
+    fclose(f);
+}
+
+static void menu_mode_cycle(int dir) {
+    int step;
+    for (step = 0; step < MENU_MODE_COUNT; step++) {
+        g_menu_mode = (g_menu_mode + dir + MENU_MODE_COUNT) % MENU_MODE_COUNT;
+        if (menu_mode_available(g_menu_mode)) break;
+    }
+    menu_mode_save();
+    LOG_INFO("menu: mode -> %s", menu_mode_label(g_menu_mode));
+}
+
+/* captured from the native START button the first time we take it over */
+static void* g_main_start_orig_action = NULL;
+static void* g_main_start_orig_link = NULL;
+
+/* returns -1 (not activated), 0 (P1), 1 (P2). Mirrors online_hub_player_filter_proxy. */
+static int menu_mode_tag_dance_activated(void* btn) {
+    uint32_t* tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+    uint32_t old_tag = *tag_ptr;
+    int who = -1;
+    *tag_ptr = 0x11;
+    if (p_btn_player_filter(btn, 3)) who = 0;
+    if (who < 0) {
+        *tag_ptr = 0x12;
+        if (p_btn_player_filter(btn, 3)) who = 1;
+    }
+    *tag_ptr = old_tag;
+    return who;
+}
+
+/* non-activation events: same dual-selector pass-through the other proxies use */
+static int menu_mode_forward_nav(void* btn, int event_code) {
+    uint32_t* tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
+    uint32_t old_tag = *tag_ptr;
+    *tag_ptr = 0x11;
+    if (p_btn_player_filter(btn, event_code)) { *tag_ptr = old_tag; return 1; }
+    *tag_ptr = 0x12;
+    if (p_btn_player_filter(btn, event_code)) { *tag_ptr = old_tag; return 1; }
+    *tag_ptr = old_tag;
+    return 0;
+}
+
+static int __cdecl menu_mode_arrow_up_filter_proxy(void* btn, int event_code) {
+    if (!btn || !p_btn_player_filter) return 0;
+    if (event_code == 3) {
+        if (menu_mode_tag_dance_activated(btn) >= 0) menu_mode_cycle(-1);
+        return 0;  /* consume; no state switch */
+    }
+    return menu_mode_forward_nav(btn, event_code);
+}
+
+static int __cdecl menu_mode_arrow_down_filter_proxy(void* btn, int event_code) {
+    if (!btn || !p_btn_player_filter) return 0;
+    if (event_code == 3) {
+        if (menu_mode_tag_dance_activated(btn) >= 0) menu_mode_cycle(1);
+        return 0;
+    }
+    return menu_mode_forward_nav(btn, event_code);
+}
+
+static int __cdecl menu_mode_main_filter_proxy(void* btn, int event_code) {
+    if (!btn || !p_btn_player_filter) return 0;
+    if (event_code == 3) {
+        int who = menu_mode_tag_dance_activated(btn);
+        if (who < 0) return 0;
+        if (g_menu_mode == MENU_MODE_ONLINE) {
+            online_hub_open();
+            return 0;
+        }
+        if ((g_menu_mode == MENU_MODE_VSAI || g_menu_mode == MENU_MODE_TRAIN) &&
+            !ggpo_net_active() && !g_online_pending_match.active) {
+            hooks_arm_ai_match(who ^ 1, g_menu_mode == MENU_MODE_TRAIN);
+        }
+        /* PLAY / VS AI / TRAIN: run the original native START activation */
+        if (g_main_start_orig_action) {
+            fn_btn_player_filter_t orig = (fn_btn_player_filter_t)g_main_start_orig_action;
+            if (orig(btn, 3)) {
+                int nolink = 0;
+                if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_NOLINK_FLAG, (SIZE_T)sizeof(unsigned char)))
+                    nolink = (*(unsigned char*)((uint8_t*)btn + BTN_OFS_NOLINK_FLAG) != 0);
+                if (g_main_start_orig_link && !nolink && p_state_switch)
+                    p_state_switch(g_main_start_orig_link);
+            }
+        }
+        return 0;
+    }
+    return menu_mode_forward_nav(btn, event_code);
+}
+
+static void apply_main_menu_mode_button(void) {
+    void* start_btn;
+    void* up_btn;
+    void* down_btn;
+    float sx, sy, sw, sh;
+    menu_mode_load();
+    if (!p_button_ex) return;
+    if (!menu_mode_available(g_menu_mode)) g_menu_mode = MENU_MODE_PLAY;
 
     start_btn = online_find_button_by_action(MAIN_START_ACTION_PTR);
-    if (start_btn &&
-        !IsBadReadPtr((uint8_t*)start_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float)) &&
-        !IsBadWritePtr((uint8_t*)start_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float)) &&
-        !IsBadWritePtr((uint8_t*)btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
-        float sx = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_X);
-        float sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
-        float sw = *(float*)((uint8_t*)start_btn + BTN_OFS_WIDTH);
-        float sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
-        float gap = 8.0f;
-        float center_gap = (sh + gap) * 0.5f;
-        float new_start_y;
-        /* Re-capture the native START baseline when it's a new button OR when
-         * something OTHER than us moved it (i.e. the native menu re-laid-out on a
-         * window resize/state change - detected by START's y differing from the
-         * value we last wrote). This fixes both stale-baseline misalignment AND the
-         * per-resize drift a naive "recapture every resize" would cause. */
-        if (baseline_start_btn != start_btn || sy != last_written_start_y) {
-            baseline_start_btn = start_btn;
-            baseline_start_y = sy;
-        }
-        new_start_y = baseline_start_y - center_gap;
-        *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y) = new_start_y;
-        last_written_start_y = new_start_y;
-        *(float*)((uint8_t*)btn + BTN_OFS_CENTER_X) = sx;
-        *(float*)((uint8_t*)btn + BTN_OFS_CENTER_Y) = baseline_start_y + center_gap;
-        *(float*)((uint8_t*)btn + BTN_OFS_WIDTH) = sw;
-        *(float*)((uint8_t*)btn + BTN_OFS_HEIGHT) = sh;
+    if (start_btn) {
+        /* fresh native button: capture originals, take it over */
+        g_main_start_orig_action = *(void**)((uint8_t*)start_btn + BTN_OFS_ACTION_PTR);
+        g_main_start_orig_link   = *(void**)((uint8_t*)start_btn + BTN_OFS_LINK_PTR);
+        *(void**)((uint8_t*)start_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_main_filter_proxy;
+    } else {
+        start_btn = online_find_button_by_action((uintptr_t)&menu_mode_main_filter_proxy);
+    }
+    if (!start_btn) return;
+    if (IsBadWritePtr((uint8_t*)start_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) return;
+
+    /* per-mode label; ONLINE opens the hub through the proxy (no native link change) */
+    *(const char**)((uint8_t*)start_btn + BTN_OFS_LABEL_PTR) = menu_mode_label(g_menu_mode);
+
+    sx = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_X);
+    sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
+    sw = *(float*)((uint8_t*)start_btn + BTN_OFS_WIDTH);
+    sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
+
+    up_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_up_filter_proxy);
+    if (!up_btn) {
+        if (p_button_set_layout) p_button_set_layout(3.0f, 6.0f);
+        up_btn = p_button_ex(1.0f, 4.0f, 0u, "^", (int)(intptr_t)&menu_mode_arrow_up_filter_proxy);
+        if (up_btn) *(void**)((uint8_t*)up_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_arrow_up_filter_proxy;
+    }
+    down_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_down_filter_proxy);
+    if (!down_btn) {
+        if (p_button_set_layout) p_button_set_layout(3.0f, 6.0f);
+        down_btn = p_button_ex(1.0f, 5.0f, 0u, "v", (int)(intptr_t)&menu_mode_arrow_down_filter_proxy);
+        if (down_btn) *(void**)((uint8_t*)down_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_arrow_down_filter_proxy;
+    }
+
+    /* snug the arrows above/below the main button, narrow hit boxes */
+    if (up_btn && !IsBadWritePtr((uint8_t*)up_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
+        *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_X) = sx;
+        *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_Y) = sy - sh * 0.85f;
+        *(float*)((uint8_t*)up_btn + BTN_OFS_WIDTH)  = sw * 0.28f;
+        *(float*)((uint8_t*)up_btn + BTN_OFS_HEIGHT) = sh * 0.55f;
+    }
+    if (down_btn && !IsBadWritePtr((uint8_t*)down_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
+        *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_X) = sx;
+        *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_Y) = sy + sh * 0.85f;
+        *(float*)((uint8_t*)down_btn + BTN_OFS_WIDTH)  = sw * 0.28f;
+        *(float*)((uint8_t*)down_btn + BTN_OFS_HEIGHT) = sh * 0.55f;
     }
 }
 
@@ -12218,7 +12445,7 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
             int net_tick_result = 0;
             if (after_update == (void*)(uintptr_t)ADDR_MAIN_STATE ||
                 after_update == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
-                add_online_button_to_main();
+                apply_main_menu_mode_button();
                 hooks_clear_ai_match();
             }
             online_monitor_active_match_state(after_update);

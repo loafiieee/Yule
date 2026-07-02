@@ -19,6 +19,13 @@ typedef struct RgbaImage {
     void* pixels; // stbi_load buffer: w*h*4 bytes (RGBA)
 } RgbaImage;
 
+// Built-in framework glyph bytes (registered at init; usable in any native
+// label/text drawn with the 8x8 font).
+#define FONT_EXT_GLYPH_TRI_UP    0xFE
+#define FONT_EXT_GLYPH_TRI_DOWN  0xFD
+#define FONT_EXT_GLYPH_TRI_UP_STR   "\xFE"
+#define FONT_EXT_GLYPH_TRI_DOWN_STR "\xFD"
+
 void font_ext_init(void);
 void font_ext_shutdown(void);
 

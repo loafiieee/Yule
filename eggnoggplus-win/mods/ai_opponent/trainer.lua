@@ -75,7 +75,8 @@ local function begin_episode(s)
     fit_a = 0,
     tick = 0,
     was_dying = { [0] = false, [1] = false },
-    start_x = nil, best_prog = 0, start_room = nil,
+    start_x = nil, start_room = nil,
+    prev_x = nil, prev_dist = nil,
   }
 end
 
@@ -116,13 +117,33 @@ local function episode_step(s)
   e.was_dying[0], e.was_dying[1] = p_dying, o_dying
   if (ns.leader or -1) == 0 then e.fit_a = e.fit_a + 0.05 end
   e.fit_a = e.fit_a - 0.01
-  local prog = s0.player.x - e.start_x   -- player 0 goal assumed +x (see first-kill log)
-  if prog > e.best_prog then e.best_prog = prog end
+  -- per-tick goal progress: rewards moving toward the goal, PUNISHES running the
+  -- wrong way symmetrically (player 0 goal assumed +x; see first-kill log)
+  if e.prev_x then
+    local dx = s0.player.x - e.prev_x
+    if dx > 8 then dx = 8 elseif dx < -8 then dx = -8 end  -- teleport/respawn guard
+    e.fit_a = e.fit_a + 0.05 * dx
+  end
+  e.prev_x = s0.player.x
+  -- engagement: closing distance to the opponent in the same room is rewarded,
+  -- backing away from the fight costs the same amount
   local room_now = s0.player.room_index or e.start_room or 0
+  local enemy_room = s0.enemy.room_index or room_now
+  if room_now == enemy_room then
+    local dist = math.abs(s0.enemy.x - s0.player.x)
+    if e.prev_dist then
+      local closing = e.prev_dist - dist
+      if closing > 8 then closing = 8 elseif closing < -8 then closing = -8 end
+      e.fit_a = e.fit_a + 0.02 * closing
+    end
+    e.prev_dist = dist
+  else
+    e.prev_dist = nil
+  end
   if math.abs(room_now - (e.start_room or room_now)) >= 2 then ended = true end
   if e.tick >= EPISODE_TICKS then ended = true end
   if ended then
-    e.fit_a = e.fit_a + 0.5 * e.best_prog + 30 * (room_now - (e.start_room or room_now))
+    e.fit_a = e.fit_a + 30 * (room_now - (e.start_room or room_now))
   end
   return ended
 end

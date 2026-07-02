@@ -153,8 +153,36 @@ static void add_alloc_cache(const char* owner, const char* relpath, uint8_t byte
     a->byte_value = byte_value;
 }
 
+/* Built-in framework glyphs (no file backing, so hot-reload polling skips them).
+ * 1 bit per pixel, bit 7 = leftmost column; stamped white so the engine's text
+ * tint colors them like any other glyph. */
+static void register_builtin_glyph_rows(uint8_t byte_value, const uint8_t rows[8]) {
+    GlyphSlot* s = &g_slots[byte_value];
+    memset(s, 0, sizeof(*s));
+    s->used = 1;
+    safe_snprintf(s->owner, sizeof(s->owner), "_framework");
+    for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+            int on = (rows[y] >> (7 - x)) & 1;
+            int i = (y * 8 + x) * 4;
+            s->rgba[i + 0] = on ? 255 : 0;
+            s->rgba[i + 1] = on ? 255 : 0;
+            s->rgba[i + 2] = on ? 255 : 0;
+            s->rgba[i + 3] = on ? 255 : 0;
+        }
+    }
+}
+
+static void register_builtin_glyphs(void) {
+    static const uint8_t tri_up[8]   = { 0x00, 0x00, 0x10, 0x38, 0x7C, 0xFE, 0x00, 0x00 };
+    static const uint8_t tri_down[8] = { 0x00, 0x00, 0xFE, 0x7C, 0x38, 0x10, 0x00, 0x00 };
+    register_builtin_glyph_rows(FONT_EXT_GLYPH_TRI_UP, tri_up);
+    register_builtin_glyph_rows(FONT_EXT_GLYPH_TRI_DOWN, tri_down);
+}
+
 void font_ext_init(void) {
     g_next_poll_ms = GetTickCount64() + HOT_RELOAD_POLL_MS;
+    register_builtin_glyphs();
 }
 
 void font_ext_shutdown(void) {
@@ -175,6 +203,7 @@ void font_ext_reset_runtime_state(void) {
     memset(g_slots, 0, sizeof(g_slots));
     g_font_loaded = 0;
     g_next_poll_ms = GetTickCount64() + HOT_RELOAD_POLL_MS;
+    register_builtin_glyphs();
 }
 
 void font_ext_forget_owner_cache(const char* owner_mod_id) {

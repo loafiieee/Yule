@@ -230,6 +230,13 @@ extern void SDL_free(void* mem);
 #define BTN_OFS_LINK_PTR          0xE0
 #define BTN_OFS_ACTION_PTR        0xE4
 #define BTN_OFS_NOLINK_FLAG       0xBD
+/* Per-button style fields (from button_ex decompile: _btns base 0x50e3c0,
+ * stride 0x148; verified against tag +0x04 / center +0x10 / action +0xE4). */
+#define BTN_OFS_BACKING           0x08   /* backing sprite id (panel art) */
+#define BTN_OFS_FG_RGBA           0x30   /* label color, 4 floats */
+#define BTN_OFS_BG_RGBA           0x40   /* fill color, 4 floats */
+#define BTN_OFS_HI_BG_RGBA        0x50   /* highlighted fill, 4 floats */
+#define BTN_OFS_HI_FG_RGBA        0x60   /* highlighted label, 4 floats */
 
 #define MAIN_START_ACTION_PTR     0x432440u
 
@@ -978,7 +985,6 @@ static int g_menu_mode_loaded = 0;
 static int __cdecl menu_mode_main_filter_proxy(void* btn, int event_code);
 static int __cdecl menu_mode_arrow_up_filter_proxy(void* btn, int event_code);
 static int __cdecl menu_mode_arrow_down_filter_proxy(void* btn, int event_code);
-static void menu_mode_render_overlay(void);
 static void* online_find_button_by_action(uintptr_t action_ptr);
 static void online_hub_load(void);
 static void online_hub_save(void);
@@ -9683,44 +9689,12 @@ static void menu_mode_accent(float* r, float* g, float* b) {
     }
 }
 
-static void menu_mode_draw_triangle(float cx, float cy, float half_w, float rows, int up,
-                                    float r, float g, float b, float a) {
-    /* pixel-art triangle from stacked 1px rects (fits the game's aesthetic) */
-    int i;
-    for (i = 0; i < (int)rows; i++) {
-        float t = (float)i / rows;
-        float w = half_w * (up ? (1.0f - t) : t) * 2.0f;
-        float y = cy + (float)i - rows * 0.5f;
-        if (w < 1.0f) continue;
-        hooks_ui_fill_rect(cx - w * 0.5f, y, w, 1.0f, r, g, b, a);
-    }
-}
-
-static void menu_mode_render_overlay(void) {
-    void* start_btn = online_find_button_by_action((uintptr_t)&menu_mode_main_filter_proxy);
-    void* up_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_up_filter_proxy);
-    void* down_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_down_filter_proxy);
-    float r, g, b;
-    if (!start_btn) return;
-    menu_mode_accent(&r, &g, &b);
-    {
-        float sx = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_X);
-        float sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
-        float sw = *(float*)((uint8_t*)start_btn + BTN_OFS_WIDTH);
-        float sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
-        /* accent underline below the label */
-        hooks_ui_fill_rect(sx - sw * 0.30f, sy + sh * 0.42f, sw * 0.60f, 2.0f, r, g, b, 0.95f);
-        if (up_btn) {
-            float ux = *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_X);
-            float uy = *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_Y);
-            menu_mode_draw_triangle(ux, uy, 7.0f, 6.0f, 1, r, g, b, 0.9f);
-        }
-        if (down_btn) {
-            float dx = *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_X);
-            float dy = *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_Y);
-            menu_mode_draw_triangle(dx, dy, 7.0f, 6.0f, 0, r, g, b, 0.9f);
-        }
-    }
+static void btn_write_rgba(void* btn, int ofs, float r, float g, float b, float a) {
+    float* c;
+    if (!btn) return;
+    if (IsBadWritePtr((uint8_t*)btn + ofs, (SIZE_T)(sizeof(float) * 4))) return;
+    c = (float*)((uint8_t*)btn + ofs);
+    c[0] = r; c[1] = g; c[2] = b; c[3] = a;
 }
 
 void hooks_online_on_pre_swap(void) {
@@ -9755,14 +9729,6 @@ void hooks_online_on_pre_swap(void) {
         online_challenge_toast_render();
         online_challenge_toast_tick();
         online_hub_draw_cursor();
-        mods_restore_render_state();
-        if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
-        mods_restore_render_state();
-    }
-
-    if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
-        state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
-        menu_mode_render_overlay();
         mods_restore_render_state();
         if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
         mods_restore_render_state();
@@ -12258,32 +12224,57 @@ static void apply_main_menu_mode_button(void) {
     sy = *(float*)((uint8_t*)start_btn + BTN_OFS_CENTER_Y);
     sw = *(float*)((uint8_t*)start_btn + BTN_OFS_WIDTH);
     sh = *(float*)((uint8_t*)start_btn + BTN_OFS_HEIGHT);
+    (void)sw;
 
     up_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_up_filter_proxy);
     if (!up_btn) {
         if (p_button_set_layout) p_button_set_layout(3.0f, 6.0f);
-        up_btn = p_button_ex(1.0f, 4.0f, 0u, "^", (int)(intptr_t)&menu_mode_arrow_up_filter_proxy);
+        up_btn = p_button_ex(1.0f, 4.0f, 0u, FONT_EXT_GLYPH_TRI_UP_STR,
+                             (int)(intptr_t)&menu_mode_arrow_up_filter_proxy);
         if (up_btn) *(void**)((uint8_t*)up_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_arrow_up_filter_proxy;
     }
     down_btn = online_find_button_by_action((uintptr_t)&menu_mode_arrow_down_filter_proxy);
     if (!down_btn) {
         if (p_button_set_layout) p_button_set_layout(3.0f, 6.0f);
-        down_btn = p_button_ex(1.0f, 5.0f, 0u, "v", (int)(intptr_t)&menu_mode_arrow_down_filter_proxy);
+        down_btn = p_button_ex(1.0f, 5.0f, 0u, FONT_EXT_GLYPH_TRI_DOWN_STR,
+                               (int)(intptr_t)&menu_mode_arrow_down_filter_proxy);
         if (down_btn) *(void**)((uint8_t*)down_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_arrow_down_filter_proxy;
     }
 
-    /* snug the arrows above/below the main button, narrow hit boxes */
-    if (up_btn && !IsBadWritePtr((uint8_t*)up_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
-        *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_X) = sx;
-        *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_Y) = sy - sh * 0.85f;
-        *(float*)((uint8_t*)up_btn + BTN_OFS_WIDTH)  = sw * 0.28f;
-        *(float*)((uint8_t*)up_btn + BTN_OFS_HEIGHT) = sh * 0.55f;
-    }
-    if (down_btn && !IsBadWritePtr((uint8_t*)down_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
-        *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_X) = sx;
-        *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_Y) = sy + sh * 0.85f;
-        *(float*)((uint8_t*)down_btn + BTN_OFS_WIDTH)  = sw * 0.28f;
-        *(float*)((uint8_t*)down_btn + BTN_OFS_HEIGHT) = sh * 0.55f;
+    /* per-mode accent: tint the main button itself (fill + highlight fill) */
+    {
+        float r, g, b;
+        menu_mode_accent(&r, &g, &b);
+        btn_write_rgba(start_btn, BTN_OFS_BG_RGBA,    r * 0.28f, g * 0.28f, b * 0.28f, 0.92f);
+        btn_write_rgba(start_btn, BTN_OFS_HI_BG_RGBA, r * 0.80f, g * 0.80f, b * 0.80f, 0.95f);
+        btn_write_rgba(start_btn, BTN_OFS_FG_RGBA,    0.55f + r * 0.45f, 0.55f + g * 0.45f, 0.55f + b * 0.45f, 1.00f);
+        btn_write_rgba(start_btn, BTN_OFS_HI_FG_RGBA, 1.00f, 1.00f, 1.00f, 1.00f);
+
+        /* arrows: bare glyphs — no fill, no panel backing, accent-tinted labels */
+        if (up_btn && !IsBadWritePtr((uint8_t*)up_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
+            *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_X) = sx;
+            *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_Y) = sy - sh * 0.85f;
+            *(float*)((uint8_t*)up_btn + BTN_OFS_WIDTH)  = sh * 0.90f;
+            *(float*)((uint8_t*)up_btn + BTN_OFS_HEIGHT) = sh * 0.50f;
+            if (!IsBadWritePtr((uint8_t*)up_btn + BTN_OFS_BACKING, (SIZE_T)sizeof(uint32_t)))
+                *(uint32_t*)((uint8_t*)up_btn + BTN_OFS_BACKING) = 0;
+            btn_write_rgba(up_btn, BTN_OFS_BG_RGBA,    0.0f, 0.0f, 0.0f, 0.0f);
+            btn_write_rgba(up_btn, BTN_OFS_HI_BG_RGBA, 0.0f, 0.0f, 0.0f, 0.0f);
+            btn_write_rgba(up_btn, BTN_OFS_FG_RGBA,    r * 0.75f, g * 0.75f, b * 0.75f, 0.9f);
+            btn_write_rgba(up_btn, BTN_OFS_HI_FG_RGBA, 1.0f, 1.0f, 1.0f, 1.0f);
+        }
+        if (down_btn && !IsBadWritePtr((uint8_t*)down_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
+            *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_X) = sx;
+            *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_Y) = sy + sh * 0.85f;
+            *(float*)((uint8_t*)down_btn + BTN_OFS_WIDTH)  = sh * 0.90f;
+            *(float*)((uint8_t*)down_btn + BTN_OFS_HEIGHT) = sh * 0.50f;
+            if (!IsBadWritePtr((uint8_t*)down_btn + BTN_OFS_BACKING, (SIZE_T)sizeof(uint32_t)))
+                *(uint32_t*)((uint8_t*)down_btn + BTN_OFS_BACKING) = 0;
+            btn_write_rgba(down_btn, BTN_OFS_BG_RGBA,    0.0f, 0.0f, 0.0f, 0.0f);
+            btn_write_rgba(down_btn, BTN_OFS_HI_BG_RGBA, 0.0f, 0.0f, 0.0f, 0.0f);
+            btn_write_rgba(down_btn, BTN_OFS_FG_RGBA,    r * 0.75f, g * 0.75f, b * 0.75f, 0.9f);
+            btn_write_rgba(down_btn, BTN_OFS_HI_FG_RGBA, 1.0f, 1.0f, 1.0f, 1.0f);
+        }
     }
 }
 

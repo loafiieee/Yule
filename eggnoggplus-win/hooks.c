@@ -9682,10 +9682,10 @@ static void online_draw_nametag(float cx, float cy, const char* text, int oppone
 
 static void menu_mode_accent(float* r, float* g, float* b) {
     switch (g_menu_mode) {
-        case MENU_MODE_ONLINE: *r = 0.40f; *g = 0.75f; *b = 1.00f; break;   /* blue   */
-        case MENU_MODE_VSAI:   *r = 1.00f; *g = 0.55f; *b = 0.30f; break;   /* orange */
-        case MENU_MODE_TRAIN:  *r = 0.70f; *g = 0.45f; *b = 1.00f; break;   /* purple */
-        default:               *r = 0.55f; *g = 1.00f; *b = 0.60f; break;   /* green  */
+        case MENU_MODE_ONLINE: *r = 0.36f; *g = 0.92f; *b = 0.82f; break;   /* hub cyan (selected-tab accent) */
+        case MENU_MODE_VSAI:   *r = 0.70f; *g = 0.45f; *b = 1.00f; break;   /* purple */
+        case MENU_MODE_TRAIN:  *r = 0.52f; *g = 0.32f; *b = 0.98f; break;   /* deeper violet */
+        default:               *r = 1.00f; *g = 0.22f; *b = 0.26f; break;   /* vibrant red */
     }
 }
 
@@ -12245,8 +12245,8 @@ static void apply_main_menu_mode_button(void) {
     {
         float r, g, b;
         menu_mode_accent(&r, &g, &b);
-        btn_write_rgba(start_btn, BTN_OFS_BG_RGBA,    r * 0.28f, g * 0.28f, b * 0.28f, 0.92f);
-        btn_write_rgba(start_btn, BTN_OFS_HI_BG_RGBA, r * 0.80f, g * 0.80f, b * 0.80f, 0.95f);
+        btn_write_rgba(start_btn, BTN_OFS_BG_RGBA,    r * 0.55f, g * 0.55f, b * 0.55f, 0.92f);
+        btn_write_rgba(start_btn, BTN_OFS_HI_BG_RGBA, r, g, b, 0.95f);
         btn_write_rgba(start_btn, BTN_OFS_FG_RGBA,    0.55f + r * 0.45f, 0.55f + g * 0.45f, 0.55f + b * 0.45f, 1.00f);
         btn_write_rgba(start_btn, BTN_OFS_HI_FG_RGBA, 1.00f, 1.00f, 1.00f, 1.00f);
 
@@ -12254,7 +12254,7 @@ static void apply_main_menu_mode_button(void) {
         if (up_btn && !IsBadWritePtr((uint8_t*)up_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
             *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_X) = sx;
             *(float*)((uint8_t*)up_btn + BTN_OFS_CENTER_Y) = sy - sh * 0.85f;
-            *(float*)((uint8_t*)up_btn + BTN_OFS_WIDTH)  = sh * 0.90f;
+            *(float*)((uint8_t*)up_btn + BTN_OFS_WIDTH)  = sh * 0.45f;
             *(float*)((uint8_t*)up_btn + BTN_OFS_HEIGHT) = sh * 0.50f;
             if (!IsBadWritePtr((uint8_t*)up_btn + BTN_OFS_BACKING, (SIZE_T)sizeof(uint32_t)))
                 *(uint32_t*)((uint8_t*)up_btn + BTN_OFS_BACKING) = 0;
@@ -12266,7 +12266,7 @@ static void apply_main_menu_mode_button(void) {
         if (down_btn && !IsBadWritePtr((uint8_t*)down_btn + BTN_OFS_HEIGHT, (SIZE_T)sizeof(float))) {
             *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_X) = sx;
             *(float*)((uint8_t*)down_btn + BTN_OFS_CENTER_Y) = sy + sh * 0.85f;
-            *(float*)((uint8_t*)down_btn + BTN_OFS_WIDTH)  = sh * 0.90f;
+            *(float*)((uint8_t*)down_btn + BTN_OFS_WIDTH)  = sh * 0.45f;
             *(float*)((uint8_t*)down_btn + BTN_OFS_HEIGHT) = sh * 0.50f;
             if (!IsBadWritePtr((uint8_t*)down_btn + BTN_OFS_BACKING, (SIZE_T)sizeof(uint32_t)))
                 *(uint32_t*)((uint8_t*)down_btn + BTN_OFS_BACKING) = 0;

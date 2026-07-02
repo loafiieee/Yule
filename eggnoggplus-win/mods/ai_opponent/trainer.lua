@@ -155,8 +155,8 @@ function Trainer.save_checkpoints(s)
   table.sort(order, function(x, y) return (fit[x] or 0) > (fit[y] or 0) end)
   local best = s.pop.nets[order[1]]
   d.Codec.store(storage, "ckpt_hard", d.NN.serialize(best))
-  if s.pop.gen == 10 then d.Codec.store(storage, "ckpt_easy", d.NN.serialize(best)) end
-  if s.pop.gen == 40 then d.Codec.store(storage, "ckpt_normal", d.NN.serialize(best)) end
+  if s.pop.gen == 30 then d.Codec.store(storage, "ckpt_easy", d.NN.serialize(best)) end
+  if s.pop.gen == 300 then d.Codec.store(storage, "ckpt_normal", d.NN.serialize(best)) end
   local dump = {}
   for i = 1, math.min(SAVE_TOP_N, #order) do
     dump[i] = d.NN.serialize(s.pop.nets[order[i]])

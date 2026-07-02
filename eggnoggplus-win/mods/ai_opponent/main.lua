@@ -61,6 +61,7 @@ mod.on_tick(function()
       active_player, play_policy = nil, nil
       Bot.reset_scaffold()
     end
+    Trainer.match_ended()
     return
   end
   if not mod.ui.is_state("game") then return end

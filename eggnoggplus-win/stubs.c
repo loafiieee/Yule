@@ -1125,38 +1125,15 @@ __attribute__((naked)) void SDL_CreateSystemCursor() { asm("jmp *%0" : : "m"(p_S
 __attribute__((naked)) void SDL_CreateTexture() { asm("jmp *%0" : : "m"(p_SDL_CreateTexture)); }
 __attribute__((naked)) void SDL_CreateTextureFromSurface() { asm("jmp *%0" : : "m"(p_SDL_CreateTextureFromSurface)); }
 __attribute__((naked)) void SDL_CreateThread() { asm("jmp *%0" : : "m"(p_SDL_CreateThread)); }
-/* Captured main window (set when the game creates it), plus a launch-arg-aware
- * wrapper for SDL_CreateWindow so `-fullscreen` / `-windowed` / `-borderless`
- * on the command line take effect at startup. */
+/* Capture the game's main window when it's created. Fullscreen/window-size launch
+ * args are applied via the game's OWN main_set_fullscreen/main_set_window (see
+ * hooks.c) rather than raw SDL flags here - the game sets up its GL viewport for
+ * its window, so a raw fullscreen flag just makes a huge window it renders a small
+ * corner of. */
 void* g_proxy_sdl_window = NULL;
-static int proxy_cmdline_has_flag(const char* flag) {
-    const char* cl = GetCommandLineA();
-    const char* p;
-    size_t flen = 0;
-    if (!cl || !flag) return 0;
-    while (flag[flen]) flen++;
-    for (p = cl; *p; p++) {
-        size_t i = 0;
-        if (p != cl && p[-1] != ' ' && p[-1] != '\t') continue; /* token start only */
-        while (i < flen && p[i] &&
-               (char)((p[i] >= 'A' && p[i] <= 'Z') ? p[i] + 32 : p[i]) ==
-               (char)((flag[i] >= 'A' && flag[i] <= 'Z') ? flag[i] + 32 : flag[i])) i++;
-        if (i == flen && (p[i] == 0 || p[i] == ' ' || p[i] == '\t')) return 1;
-    }
-    return 0;
-}
 void* __cdecl SDL_CreateWindow(const char* title, int x, int y, int w, int h, unsigned int flags) {
     typedef void* (__cdecl *create_t)(const char*, int, int, int, int, unsigned int);
-    void* win;
-    if (proxy_cmdline_has_flag("-fullscreen") || proxy_cmdline_has_flag("--fullscreen")) {
-        flags |= 0x00001001u;              /* SDL_WINDOW_FULLSCREEN_DESKTOP */
-    } else if (proxy_cmdline_has_flag("-windowed") || proxy_cmdline_has_flag("--windowed")) {
-        flags &= ~0x00001001u;             /* clear FULLSCREEN | FULLSCREEN_DESKTOP */
-    }
-    if (proxy_cmdline_has_flag("-borderless") || proxy_cmdline_has_flag("--borderless")) {
-        flags |= 0x00000010u;              /* SDL_WINDOW_BORDERLESS */
-    }
-    win = ((create_t)p_SDL_CreateWindow)(title, x, y, w, h, flags);
+    void* win = ((create_t)p_SDL_CreateWindow)(title, x, y, w, h, flags);
     g_proxy_sdl_window = win;
     return win;
 }

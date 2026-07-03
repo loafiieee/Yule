@@ -1,23 +1,14 @@
-Done:
-
-- API for adding content to gameplay (World Control API: register_tile, native kill/tile hooks, player offsets) - baseline in; can expand later
-- Add list of options for mod config (options[a, b, c] config type)
-- Remove mod profiles
-- Improve console (arg-aware autocomplete, find/console.find, cleaner listings) - ongoing polish possible
-- Mod menu: framework-log-console hide toggle + launch-mute sound fix (sound now respects the saved setting at startup)
-- Online: cross-network play (ICE-style candidate hole-punch: LAN + public endpoints), MTU/perf fixes (smooth online)
-- Online mode connect timeout (~12s -> back to hub with a message instead of hanging)
-- Hidden developer mode (console `dev on`) - gates rngtrace/ggpo.net/state.switch/input.*/lua/eval/log.tail; hidden from help+autocomplete when off
-- Online play continues in the background of pause / options / mods menus (sim keeps ticking; local input neutralized in menus)
-- exe launch arguments: -fullscreen, -windowed, -borderless
-- Fix modified button positions on window size/state changes (re-capture layout baseline on resize)
+Known issue / not fully working:
+- Online play in the background of menus: the sim tick was added for pause/options/mods, but opening options/mods mid-match still stops the match. Needs more work (pause menu itself is fine).
 
 Later:
-
 - Expand the content API further (more weapons than just a sword, custom map tiles, etc.)
-- Beautify basically every menu. add animations, better readability, etc
 - Reverse engineer the custom cursor used in vanilla menus so that we can use them for custom menus if wanted
 - Expand the UI library even more
 - Make the online mod do the prematch work in the prematch countdown instead of at the start of gameplay
 - take a look at water effects for custom maps, like the fumes and bubbles present in the big stinky (vanilla 3)
+- General window-sizing improvement (F11 fullscreen / F1 window sizes are a little broken on some devices even in vanilla)
 - (optional) relay fallback for hostile NAT (mobile hotspot / symmetric NAT) - direct hole-punch works for normal home networks
+- v2 custom map implementation (with support for custom tiles made by the content API?)
+- per map tilesets (for custom maps)
+- ensure all mods that affect gameplay are disabled during online play

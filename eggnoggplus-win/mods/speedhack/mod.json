@@ -1,8 +1,8 @@
 {
-    "id": "poc_speedhack",
+    "id": "speedhack",
     "name": "Speed Hack",
-    "version": "uwu",
-    "author": "Loafiieee",
+    "version": "1.0.0",
+    "author": "loaf",
     "description": "Tests the framework, speedhack for demonstration purposes.",
     "api_version": 1,
     "entry": "speedhack.lua",

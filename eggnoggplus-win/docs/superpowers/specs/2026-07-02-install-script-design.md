@@ -1,172 +1,187 @@
-# EGGNOGG+ Framework Install Script — Design
+# EGGNOGG+ Framework (Yule) Install Script — Design
 
-**Date:** 2026-07-02
+**Date:** 2026-07-02 (rev 2 — hosted distribution, Yule manifest dir, owner's Steam artwork)
 **Status:** Draft for user review
 **Context:** First public release of the mod framework. The AI opponent mod ships later;
-this installer is mod-agnostic and must not need changes when new mods are added to the zip.
+this installer is mod-agnostic. Release files are hosted on the owner's server
+(`eggnogg.loafiieee.com`, which already runs the online hub backend) and downloaded by
+the script — the same hosted contract later powers patch scripts and eventually fully
+in-game updating (the framework DLL already links winhttp).
 
 ## Goal
 
-A double-clickable installer shipped inside the release zip that (1) relocates the game out
-of fragile locations like Downloads, (2) makes it launchable from the Windows search bar,
-(3) adds it to Steam as a non-Steam game with custom artwork, (4) turns off the framework
-log console by default, and (5) records a machine-readable manifest that all future
-patch/update scripts use to find and service the install automatically.
+A double-clickable installer that (1) downloads (or adopts) the game into a location
+safe from Downloads purges, (2) makes it launchable from the Windows search bar, (3)
+adds it to Steam as a non-Steam game with the owner's existing artwork, (4) turns off
+the framework log console by default, and (5) records a machine-readable manifest under
+`%LOCALAPPDATA%\Yule\` that all future update mechanisms use to find and service the
+install automatically.
 
 ## Non-goals
 
 - No uninstaller in v1 (manifest records enough to build one later).
-- No auto-update/patch script in v1 — but its **contract** (the manifest) is defined here.
+- No in-game updater in v1 — but the hosted **release channel contract** is defined here
+  so the C-side updater can adopt it unchanged later.
 - No code signing / no compiled exe.
-- No game-content changes; the installer only places files and writes configs.
 
-## Release zip layout
+## Distribution model
+
+Two artifacts, both tiny:
 
 ```
-EGGNOGG+_vX.Y.zip
-  EGGNOGG+/            <- the game folder (exe, SDL2.dll framework, SDL2_real.dll,
-                          mods/, maps/, data/, docs...)
-  INSTALL.bat          <- double-click entry point
-  install.ps1          <- the actual installer (images embedded as base64)
-  README.txt
+EGGNOGG+_installer.zip     <- what users download
+  INSTALL.bat              <- one-liner: powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+  install.ps1              <- everything (Steam artwork embedded as base64)
 ```
 
-`INSTALL.bat` is one line of boilerplate:
-`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"` — this exists
-purely to bypass PowerShell's execution policy for double-clickers.
+Game + framework files are **downloaded from the release channel** at install time.
+If an `EGGNOGG+/` folder (or `eggnoggplus.exe` alongside) sits next to the script, the
+installer instead **adopts** that local copy first and then updates it from the channel
+— this covers existing users who already have the game in Downloads, and offline/dev
+testing.
+
+## Hosted release channel (the long-term contract)
+
+Everything below `https://eggnogg.loafiieee.com/releases/`:
+
+```
+releases/
+  latest.json
+  <version>/<path...>      (e.g. 1.0/SDL2.dll, 1.0/eggnoggplus.exe, 1.0/mods/_official_cosmetics/main.lua)
+```
+
+`latest.json`:
+```json
+{
+  "channel_version": 1,
+  "version": "1.0",
+  "notes": "first public release",
+  "base": "https://eggnogg.loafiieee.com/releases/1.0/",
+  "files": [
+    { "path": "eggnoggplus.exe",          "sha256": "...", "size": 4046848, "overwrite": true },
+    { "path": "SDL2.dll",                 "sha256": "...", "size": 1206053, "overwrite": true },
+    { "path": "SDL2_real.dll",            "sha256": "...", "size": 1400000, "overwrite": true },
+    { "path": "mods/modframework.cfg",    "sha256": "...", "size": 64,      "overwrite": false },
+    { "path": "mods/<mod>/config.cfg",    "sha256": "...", "size": 120,     "overwrite": false }
+  ]
+}
+```
+
+- `overwrite: false` = install-if-missing (user-editable configs keep user edits).
+- User data is never listed: `mods/*/storage.cfg`, logs, `install.json` stay untouched.
+- Consumers (install script now; patch script and in-game updater later) all do the
+  same thing: fetch `latest.json`, compare each file's sha256 against disk, download
+  only mismatches into place, verify sha256 after download, retry once, else report.
+- **Publisher helper** (owner-side deliverable, `tools/build_release.ps1` in the repo):
+  takes a built game folder + version string → emits the uploadable `releases/<version>/`
+  tree + `latest.json` with hashes/sizes, with an exclude list (logs, storage,
+  desync dumps, ghidra/, docs/, build/, *.c/*.h sources) and the overwrite-false list.
 
 ## Installer flow (interactive, Y/n per step, defaults = yes)
 
-0. **Re-exec from temp.** The script copies itself (and nothing else) to `%TEMP%` and
-   re-launches from there. This frees it to *move* the folder it shipped in — otherwise
-   the open `.bat`/`.ps1` files lock the source folder and the move fails.
-1. **Locate the game.** The game folder is `EGGNOGG+/` next to the original script path
-   (passed to the re-exec'd copy as an argument). Sanity check: `eggnoggplus.exe` and
-   `SDL2.dll` exist; abort with a clear message if not.
-2. **[Y/n] Move to the official spot:** `%LOCALAPPDATA%\EGGNOGG+`.
-   - Same volume → `Move-Item`; cross-volume → copy, verify (file count + total bytes),
-     then delete source.
-   - Already installed there (manifest exists) → offer **Update in place** (see re-run
-     behavior) instead of a second copy.
-   - Destination exists but no manifest → ask before overwriting anything.
-   - Declining the move keeps the game where it is; all later steps use that path.
-3. **[Y/n] Start Menu shortcut** (this is what makes it show up in the Windows search
-   bar): create `%APPDATA%\Microsoft\Windows\Start Menu\Programs\EGGNOGG+.lnk` via the
-   `WScript.Shell` COM object — target `eggnoggplus.exe`, working directory = game
-   folder, icon = the exe's own icon.
-4. **[Y/n] Add to Steam** (auto-skipped with a note if no Steam installation is found in
-   the registry):
-   - If Steam is running: ask, then close it gracefully (`steam://exit` / `-shutdown`,
-     wait for process exit, hard-kill only after a timeout with a second confirmation).
-   - For **every** account folder under `<Steam>\userdata\<accountid>\config\`:
-     - **Back up** `shortcuts.vdf` to `shortcuts.vdf.bak-<timestamp>` first.
-     - Append a shortcut entry (binary VDF): AppName `EGGNOGG+`, exe + start dir =
-       install path, icon = exe. If an `EGGNOGG+` entry already exists, replace it
-       (keeps re-runs idempotent).
-     - Compute the non-Steam **appid** (CRC32 of `"<exe>""<appname>"` with the high bit
-       set — the standard shortcut appid algorithm) and write the artwork into
-       `userdata\<id>\config\grid\`:
-       | slot | file | asset |
-       |---|---|---|
-       | landscape capsule | `<appid>.png` | user-provided |
-       | portrait capsule | `<appid>p.png` | user-provided |
-       | hero banner | `<appid>_hero.png` | user-provided |
-       | logo overlay | `<appid>_logo.png` | user-provided |
-       | icon | set in the VDF entry | user-provided or exe icon |
-   - Artwork ships **embedded in install.ps1** as a base64 table:
-     ```powershell
-     $Artwork = @{
-       grid   = '<BASE64>'   # 920x430 or 460x215 png
-       gridp  = '<BASE64>'   # 600x900 png
-       hero   = '<BASE64>'   # 1920x620 png
-       logo   = '<BASE64>'   # transparent png
-       icon   = '<BASE64>'   # .ico or 256x256 png ('' = use exe icon)
-     }
-     ```
-     Placeholder `''` values mean "skip that slot" so the script works before the final
-     art exists. (Owner provides the images; a tiny helper line in the README of the
-     repo documents `[Convert]::ToBase64String([IO.File]::ReadAllBytes('x.png'))`.)
-   - Relaunch Steam afterward if the script closed it.
-5. **Log console off:** write/replace `show_log_console=0` in `mods\modframework.cfg`
-   (preserving other lines — same line-based format the framework already uses).
-   Additionally, the **release build flips the code default** in `log.c`
-   (`g_console_visible` 1 → 0) so even a wiped cfg stays quiet; developers re-enable via
-   the cfg or the mods menu toggle.
-6. **Write the manifest** (the update contract, see below), then print a summary of
-   everything done + the final install path, and pause for a keypress.
+0. **Re-exec from `%TEMP%`** so the script can move/delete the folder it shipped in
+   (the open `.bat` otherwise locks it). Original location passed as an argument.
+1. **Locate/obtain the game.**
+   - Local `EGGNOGG+/` or `eggnoggplus.exe` next to the original script → **adopt** it.
+   - Otherwise → fresh install: create the install dir and download everything from the
+     channel. (No local copy + no internet → clear abort message.)
+2. **[Y/n] Official spot:** `%LOCALAPPDATA%\EGGNOGG+`.
+   - Adopted local copy: move it there (same-volume `Move-Item`, else copy+verify+delete;
+     leftover source that can't be removed gets a `MOVED - SAFE TO DELETE.txt` marker).
+   - Fresh download: downloads straight into it (no move step needed).
+   - Existing manifest found → **maintenance mode** (see re-run behavior).
+   - Declining keeps/uses the current folder; later steps use that path.
+3. **Update from channel:** fetch `latest.json`, sync files per the contract above
+   (adopted copies get patched to current; fresh downloads verify clean). Game process
+   must not be running (detect `eggnoggplus`, prompt to close — SDL2.dll locks).
+4. **[Y/n] Start Menu shortcut** → `%APPDATA%\Microsoft\Windows\Start Menu\Programs\EGGNOGG+.lnk`
+   via `WScript.Shell` (target exe, workdir = game folder, icon = exe). This is what
+   makes it appear in the Windows search bar.
+5. **[Y/n] Add to Steam** (auto-skip with a note if no Steam in registry):
+   - If Steam is running: ask, close gracefully (`steam://exit`, wait, hard-kill only
+     after timeout + second confirmation), relaunch after.
+   - For **every** `userdata\<accountid>\config\`: back up `shortcuts.vdf` to
+     `shortcuts.vdf.bak-<timestamp>`, append-or-replace the `EGGNOGG+` entry (binary
+     VDF; exe + start dir = install path), compute the shortcut appid (CRC32 of
+     `"<exe>""<appname>"`, high bit set) and write artwork to `config\grid\`.
+   - **Artwork = the owner's existing set**, embedded in install.ps1 at build time from
+     `userdata\1423819074\config\grid\` on the dev machine: `2231133229.png`
+     (landscape), `2231133229p.png` (portrait), `2231133229_hero.png`,
+     `2231133229_logo.png`, and `2231133229.json` (logo position), renamed to the
+     computed appid at install. Icon: exe's own icon unless the source VDF entry names
+     one.
+6. **Log console off:** write/replace `show_log_console=0` in `mods\modframework.cfg`
+   (preserving other lines). Additionally the **release build flips the code default**
+   in `log.c` (`g_console_visible` 1 → 0) so a wiped cfg stays quiet; devs re-enable via
+   cfg.
+7. **Write the manifest**, print a summary + install path, pause for a keypress.
 
-Failure policy: every step is independently skippable and failure-isolated — a Steam
-hiccup must never abort the move or the manifest write. Errors print plainly and the
-script continues to the next step, recording per-step status in the manifest.
+Failure policy: steps are independently skippable and failure-isolated — a Steam hiccup
+never aborts the file sync or manifest write; per-step status lands in the manifest.
 
-## The manifest (contract for future patch/update scripts)
+## The Yule manifest (contract for updaters)
 
-Fixed, install-location-independent path — this is the ONLY thing a future script needs
-to know in advance:
+Fixed path, independent of install location — the only thing any future tool needs to
+know in advance:
 
 ```
-%LOCALAPPDATA%\EggnoggPlusFramework\install.json
+%LOCALAPPDATA%\Yule\install.json
 ```
 
 ```json
 {
   "manifest_version": 1,
   "install_dir": "C:\\Users\\me\\AppData\\Local\\EGGNOGG+",
-  "framework_version": "X.Y",
+  "framework_version": "1.0",
+  "channel_url": "https://eggnogg.loafiieee.com/releases/latest.json",
   "installed_at": "2026-07-02T09:41:00",
   "installer_version": 1,
   "moved_by_installer": true,
   "start_menu_shortcut": "C:\\...\\Programs\\EGGNOGG+.lnk",
-  "steam": {
-    "applied": true,
-    "appid": 3123456789,
-    "accounts": ["12345678"]
-  },
-  "steps": { "move": "ok", "shortcut": "ok", "steam": "ok", "log_console": "ok" }
+  "steam": { "applied": true, "appid": 3123456789, "accounts": ["1423819074"] },
+  "steps": { "obtain": "adopted", "move": "ok", "sync": "ok", "shortcut": "ok", "steam": "ok", "log_console": "ok" }
 }
 ```
 
-- A copy is also written inside the game folder (`install.json`) as a fallback so a
-  patch script dropped next to the exe can work even if the global file is gone.
-- Patch/update scripts: read `install_dir`, verify `eggnoggplus.exe` exists there, then
-  operate (swap `SDL2.dll`, add/update `mods/*`, bump `framework_version`, append to
-  `steps`/history). If the manifest is missing → fall back to asking the user for the
-  folder, then **recreate** the manifest.
-- `manifest_version` only increments on breaking schema changes; fields are add-only
-  otherwise.
+- Fallback copy written inside the game folder (`install.json`).
+- Updaters: read `install_dir` + `channel_url`, verify `eggnoggplus.exe` exists, sync
+  files per the channel contract, bump `framework_version`. Missing manifest → ask the
+  user for the folder, then recreate it. `manifest_version` bumps only on breaking
+  changes; fields are add-only otherwise.
+- The eventual in-game updater reads the same file and channel; nothing else changes.
 
 ## Re-run behavior (idempotence)
 
-Running the installer when a manifest already exists switches to maintenance mode:
-"Found existing install at `<path>`" and offers the same Y/n steps — copying the shipped
-game folder's contents **over** the existing install (preserving `mods/*/storage.cfg`,
-`*.cfg` user configs, and `maps/` additions), refreshing the shortcut, re-applying Steam
-entry/artwork, rewriting the manifest. This doubles as the v1 "update script" until a
-dedicated one ships.
+Manifest exists → maintenance mode: "Found existing install at `<path>`", then the same
+Y/n steps — channel sync (this IS the update path until a dedicated script ships),
+shortcut refresh, Steam re-apply, manifest rewrite. User data preserved per the
+channel's `overwrite` flags plus the never-listed patterns.
 
 ## Key risks & mitigations
 
-- **shortcuts.vdf corruption** (binary format, hand-rolled writer): always back up
-  first; parse minimally (find the `shortcuts` map, append/replace one entry, rewrite);
-  on any parse anomaly, restore the backup, skip the account, and continue.
-- **Deleting the folder the installer started from**: solved by the temp re-exec (step
-  0); if the source folder still can't be fully removed (e.g., user has it open in
-  Explorer/a terminal), leave it with a `MOVED - SAFE TO DELETE.txt` marker instead of
-  failing.
-- **The game is running during install**: detect `eggnoggplus` process and ask the user
-  to close it before the move step (SDL2.dll lock would break the copy).
-- **OneDrive-redirected %LOCALAPPDATA%** (rare): manifest still works since the path is
-  recorded, not assumed.
+- **shortcuts.vdf corruption**: always back up first; minimal parse (append/replace one
+  entry); on parse anomaly restore backup, skip that account, continue.
+- **Download integrity / server down**: sha256 verify + one retry per file; on failure,
+  keep whatever local copy exists and say exactly which files are stale. Adopt-mode
+  installs still complete offline (sync step reports "skipped: offline").
+- **Self-move locks**: solved by `%TEMP%` re-exec + marker-file fallback.
+- **Game running during install**: process check before sync/move, prompt to close.
+- **HTTPS on old PowerShell**: force TLS 1.2 (`[Net.ServicePointManager]::SecurityProtocol`)
+  before any download.
 
-## Testing checklist (manual, on the dev machine)
+## Testing checklist (manual, dev machine)
 
-1. Fresh install from a zip extracted in Downloads: all four steps yes → game runs from
-   `%LOCALAPPDATA%\EGGNOGG+`, appears in Windows search, appears in Steam with artwork,
-   no log console on launch, both manifests written, Downloads copy gone.
-2. Each step declined individually → later steps still work, manifest `steps` reflects
-   skips.
-3. Re-run over an existing install → maintenance mode, user cfg/storage preserved.
-4. Steam not installed / Steam running / two-account Steam.
-5. Same-volume and cross-volume (second drive) moves.
-6. Patch-script simulation: a 5-line PS snippet reads the manifest, swaps `SDL2.dll`,
-   bumps the version — documents the contract works.
+1. Fresh online install (no local game): downloads to `%LOCALAPPDATA%\EGGNOGG+`, search
+   bar finds it, Steam entry + artwork on both local accounts, no log console, both
+   manifests written.
+2. Adopt-mode from a zip in Downloads: game moved, Downloads leftover gone (or marked),
+   then patched to channel-current.
+3. Each step declined individually; offline adopt-mode install.
+4. Re-run → maintenance mode; user cfg/storage survive; edited `config.cfg` not clobbered
+   (overwrite-false), stale `SDL2.dll` replaced (overwrite-true).
+5. Steam variants: not installed / running (graceful close + relaunch) / two accounts.
+6. Publisher helper: build a channel tree from the current game folder, serve it
+   locally (`python -m http.server` or the live server), point `channel_url` at it,
+   verify end-to-end.
+7. Patch simulation: 5-line PS snippet reads the Yule manifest, syncs the channel,
+   bumps version — proves the contract.

@@ -110,6 +110,36 @@ function Test-GameRunning {
     return $null -ne (Get-Process -Name 'eggnoggplus' -ErrorAction SilentlyContinue)
 }
 
+# Wraps the embedded icon PNG into a real .ico (single 256x256 PNG-compressed
+# entry, supported since Vista) so Start Menu shortcuts get proper art - .lnk
+# icons cannot point at a bare .png.
+function New-IcoFromPngBase64([string]$b64, [string]$dest) {
+    Add-Type -AssemblyName System.Drawing
+    $srcBytes = [Convert]::FromBase64String($b64)
+    $srcMs = New-Object IO.MemoryStream (, $srcBytes)
+    $src = [System.Drawing.Image]::FromStream($srcMs)
+    $bmp = New-Object System.Drawing.Bitmap 256, 256
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+    $g.DrawImage($src, 0, 0, 256, 256)
+    $g.Dispose()
+    $pngMs = New-Object IO.MemoryStream
+    $bmp.Save($pngMs, [System.Drawing.Imaging.ImageFormat]::Png)
+    $png = $pngMs.ToArray()
+    $bmp.Dispose(); $src.Dispose()
+    $out = New-Object IO.MemoryStream
+    $bw = New-Object IO.BinaryWriter ($out)
+    $bw.Write([uint16]0); $bw.Write([uint16]1); $bw.Write([uint16]1)   # ICONDIR: reserved, type=icon, count=1
+    $bw.Write([byte]0); $bw.Write([byte]0)                             # 256x256 encoded as 0,0
+    $bw.Write([byte]0); $bw.Write([byte]0)                             # palette, reserved
+    $bw.Write([uint16]1); $bw.Write([uint16]32)                        # planes, bpp
+    $bw.Write([int]$png.Length); $bw.Write([int]22)                    # data size, offset
+    $bw.Write($png)
+    $bw.Flush()
+    [IO.File]::WriteAllBytes($dest, $out.ToArray())
+    $bw.Dispose()
+}
+
 # ------------------------------------------------------------------ crc32 ---
 
 $script:CrcTable = $null
@@ -402,12 +432,22 @@ if ($syncOk) {
 Head 'Start Menu shortcut (Windows search)'
 $shortcutPath = ''
 if (Ask-YN 'Add EGGNOGG+ to the Start Menu so it shows up in the search bar?') {
+    $iconLoc = (Join-Path $gameDir $ExeName) + ',0'
+    if ($Artwork.icon) {
+        try {
+            $icoPath = Join-Path $gameDir 'eggnoggplus.ico'
+            New-IcoFromPngBase64 $Artwork.icon $icoPath
+            $iconLoc = "$icoPath,0"
+        } catch {
+            Say "  (couldn't build the icon file: $($_.Exception.Message) - using the exe icon)" 'Yellow'
+        }
+    }
     $shortcutPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\Windows\Start Menu\Programs\EGGNOGG+.lnk'
     $wsh = New-Object -ComObject WScript.Shell
     $lnk = $wsh.CreateShortcut($shortcutPath)
     $lnk.TargetPath = Join-Path $gameDir $ExeName
     $lnk.WorkingDirectory = $gameDir
-    $lnk.IconLocation = (Join-Path $gameDir $ExeName) + ',0'
+    $lnk.IconLocation = $iconLoc
     $lnk.Save()
     $steps['shortcut'] = 'ok'
     Say 'Done - search for "eggnogg" in the Start Menu.' 'Green'

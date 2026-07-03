@@ -7,8 +7,8 @@
 # Upload the contents of dist/releases/ to https://loafiieee.com/yule/releases/ .
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [string]$GameDir = (Join-Path (Split-Path -Parent $PSScriptRoot) ''),
-    [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist'),
+    [string]$GameDir = '',
+    [string]$OutDir = '',
     [string]$ChannelBase = 'https://loafiieee.com/yule/releases',
     [string]$ArtworkDir = 'C:\Program Files (x86)\Steam\userdata\1423819074\config\grid',
     [string]$ArtworkAppId = '2231133229',
@@ -16,7 +16,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoDir = Split-Path -Parent $PSScriptRoot   # eggnoggplus-win/
+# ($PSScriptRoot is empty inside param() defaults under `powershell -File`, so
+#  path defaults are resolved here instead)
+$toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoDir = Split-Path -Parent $toolsDir       # eggnoggplus-win/
+if (-not $GameDir) { $GameDir = $repoDir }
+if (-not $OutDir)  { $OutDir = Join-Path $repoDir 'dist' }
 
 $ReleaseFiles = @('SDL2.dll', 'lua51.dll', 'libgcc_s_dw2-1.dll', 'SDL2_mixer.dll')
 

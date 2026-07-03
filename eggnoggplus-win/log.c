@@ -7,14 +7,14 @@
 
 static FILE* log_file = NULL;
 static int g_log_min_level = 1; // INFO
-static int g_console_visible = 1; // framework log console (AllocConsole window)
+static int g_console_visible = 0; // framework log console (AllocConsole window); default hidden for releases
 
 #define FRAMEWORK_CFG_PATH "mods/modframework.cfg"
 
-// Read the persisted "show_log_console" setting (default 1 = visible).
+// Read the persisted "show_log_console" setting (default 0 = hidden).
 static int read_show_log_console_setting(void) {
     FILE* f = fopen(FRAMEWORK_CFG_PATH, "r");
-    int val = 1;
+    int val = 0;
     char line[256];
     if (!f) return val;
     while (fgets(line, sizeof(line), f)) {
@@ -81,13 +81,23 @@ void log_init() {
     freopen("CONOUT$", "w", stdout);
     freopen("CONOUT$", "w", stderr);
 
-    // Log file
+    // Log file (a bare install has no mods/ yet - create it or file logging
+    // silently dies and first-boot debugging becomes impossible)
+    CreateDirectoryA("mods", NULL);
     log_file = fopen("mods/modframework.log", "w");
 
     // Honor the persisted "show framework log console" setting. We always
     // allocate the console (so logging works and the menu can re-show it live)
-    // but hide the window immediately if the user turned it off.
+    // but hide the window immediately if the user turned it off. Launch args
+    // -log / -nolog override the saved setting for this run.
     g_console_visible = read_show_log_console_setting();
+    {
+        const char* cl = GetCommandLineA();
+        if (cl) {
+            if (strstr(cl, "-nolog") || strstr(cl, "--nolog")) g_console_visible = 0;
+            else if (strstr(cl, "-log") || strstr(cl, "--log")) g_console_visible = 1;
+        }
+    }
     if (!g_console_visible) {
         HWND hwnd = GetConsoleWindow();
         if (hwnd) ShowWindow(hwnd, SW_HIDE);

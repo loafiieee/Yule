@@ -12,6 +12,7 @@ param(
     [string]$ChannelBase = 'https://loafiieee.com/yule/releases',
     [string]$ArtworkDir = 'C:\Program Files (x86)\Steam\userdata\1423819074\config\grid',
     [string]$ArtworkAppId = '2231133229',
+    [string]$IconPath = '',   # default: installer\assets\steam_icon.png (resolved below)
     [string]$Notes = ''
 )
 
@@ -20,10 +21,13 @@ $ErrorActionPreference = 'Stop'
 #  path defaults are resolved here instead)
 $toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoDir = Split-Path -Parent $toolsDir       # eggnoggplus-win/
-if (-not $GameDir) { $GameDir = $repoDir }
-if (-not $OutDir)  { $OutDir = Join-Path $repoDir 'dist' }
+if (-not $GameDir)  { $GameDir = $repoDir }
+if (-not $OutDir)   { $OutDir = Join-Path $repoDir 'dist' }
+if (-not $IconPath) { $IconPath = Join-Path $repoDir 'installer\assets\steam_icon.png' }
 
-$ReleaseFiles = @('SDL2.dll', 'lua51.dll', 'libgcc_s_dw2-1.dll', 'SDL2_mixer.dll')
+# libwinpthread-1.dll is a transitive import of libgcc_s_dw2-1.dll - without it a
+# fresh vanilla install fails to boot with "libwinpthread-1.dll is missing".
+$ReleaseFiles = @('SDL2.dll', 'lua51.dll', 'libgcc_s_dw2-1.dll', 'libwinpthread-1.dll', 'SDL2_mixer.dll')
 
 # --- sanity: the SDL2.dll being shipped must be the framework proxy ---------
 $sdl = Join-Path $GameDir 'SDL2.dll'
@@ -81,7 +85,6 @@ $slotFiles = [ordered]@{
     hero    = "$ArtworkAppId" + '_hero.png'
     logo    = "$ArtworkAppId" + '_logo.png'
     logopos = "$ArtworkAppId.json"
-    icon    = ''   # exe icon is used when empty
 }
 $artLines = @('$Artwork = @{')
 foreach ($k in $slotFiles.Keys) {
@@ -96,6 +99,13 @@ foreach ($k in $slotFiles.Keys) {
     }
     $artLines += "    $k = '$b64';"
 }
+$iconB64 = ''
+if ($IconPath -and (Test-Path -LiteralPath $IconPath)) {
+    $iconB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($IconPath))
+} else {
+    Write-Warning "icon missing ($IconPath) - installer will fall back to the exe icon"
+}
+$artLines += "    icon = '$iconB64';"
 $artLines += '}'
 $artBlock = $artLines -join "`r`n"
 $pattern = '(?s)# ==ARTWORK-BEGIN==.*?# ==ARTWORK-END=='

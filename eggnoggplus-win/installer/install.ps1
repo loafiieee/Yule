@@ -49,6 +49,20 @@ function Ask-YN([string]$question) {
     }
 }
 
+function Pick-Folder([string]$description) {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlg.Description = $description
+        $dlg.ShowNewFolderButton = $false
+        $result = $dlg.ShowDialog((New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }))
+        if ($result -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
+        return ''
+    } catch {
+        return Read-Host $description
+    }
+}
+
 function Get-Sha256([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return '' }
     return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -267,9 +281,12 @@ if ($GamePath -and (Test-Path (Join-Path $GamePath $ExeName))) {
     Say "Found your previous install." 'Green'
 } else {
     Say "I couldn't find $ExeName next to this script or from a previous install."
-    $typed = Read-Host 'Path to your EGGNOGG+ folder (blank to cancel)'
+    Say 'Pick your EGGNOGG+ folder in the dialog (the folder containing eggnoggplus.exe)...'
+    $typed = Pick-Folder "Select your EGGNOGG+ folder (the one containing $ExeName)"
     if ($typed -and (Test-Path (Join-Path $typed $ExeName))) {
         $gameDir = (Resolve-Path $typed).Path
+    } elseif ($typed) {
+        Say "No $ExeName in `"$typed`"." 'Yellow'
     }
 }
 if (-not $gameDir) {

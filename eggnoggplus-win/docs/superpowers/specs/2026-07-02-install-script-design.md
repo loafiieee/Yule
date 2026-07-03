@@ -63,6 +63,7 @@ with objdump on the built proxy):
 | `SDL2.dll` | the framework (SDL proxy) |
 | `lua51.dll` | LuaJIT, imported by the proxy |
 | `libgcc_s_dw2-1.dll` | mingw runtime, imported by proxy + lua51 |
+| `libwinpthread-1.dll` | mingw runtime, transitive import of libgcc (fresh installs fail to boot without it) |
 | `SDL2_mixer.dll` | optional, LoadLibrary'd for file-based mod SFX/music |
 
 Everything else is either the user's game (`eggnoggplus.exe`, `data/`, `SDL2_real.dll`

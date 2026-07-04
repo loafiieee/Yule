@@ -135,6 +135,9 @@ local engage = { [0] = { min_dist = nil, t = 0, force = 0, progress = false },
                  [1] = { min_dist = nil, t = 0, force = 0, progress = false } }
 
 local plan = { [0] = nil, [1] = nil }   -- cached routes (pathfinder output)
+-- fight-or-run intent state (open-lane runs with a stall fallback)
+local intent_st = { [0] = { run_x = nil, stall = 0, hunt_until = 0 },
+                    [1] = { run_x = nil, stall = 0, hunt_until = 0 } }
 
 function Bot.reset_scaffold()
   stuck[0].x, stuck[0].t, stuck[0].hold = 0, 0, 0
@@ -142,6 +145,8 @@ function Bot.reset_scaffold()
   heur_mem[0], heur_mem[1] = nil, nil
   engage[0] = { min_dist = nil, t = 0, force = 0, progress = false }
   engage[1] = { min_dist = nil, t = 0, force = 0, progress = false }
+  intent_st[0] = { run_x = nil, stall = 0, hunt_until = 0 }
+  intent_st[1] = { run_x = nil, stall = 0, hunt_until = 0 }
   plan[0], plan[1] = nil, nil
   grid.room, grid.ok = -1, false
 end
@@ -156,6 +161,43 @@ end
 
 local function is_dying_state(sid) return sid == 8 or sid == 9 end
 
+-- Fight or run? With the go, a dead enemy, or an OPEN LANE (enemy behind my
+-- run) the answer is run - engaging throws away position. But a non-leader's
+-- run can be blocked by the game (screen/room rules): if the run stalls for
+-- 1.5s, turn back into a hunter for 4s and earn the lane with a kill.
+local function decide_intent(ai_player, ctx)
+  local st = intent_st[ai_player]
+  local me, en = ctx.snap.player, ctx.snap.enemy
+  local g = ctx.goal_dir
+  local en_alive = not is_dying_state(en.state_id or 0)
+  if ctx.leader == 1 or not en_alive then
+    st.run_x, st.stall, st.hunt_until = nil, 0, 0
+    return 'run'
+  end
+  if st.hunt_until > 0 then
+    st.hunt_until = st.hunt_until - 1
+    return 'hunt'
+  end
+  local open_lane = ((en.x - me.x) * g) < 0
+  if not open_lane then
+    st.run_x, st.stall = nil, 0
+    return 'hunt'
+  end
+  if st.run_x == nil then
+    st.run_x, st.stall = me.x, 0
+  elseif ((me.x - st.run_x) * g) > 2 then
+    st.run_x, st.stall = me.x, 0
+  else
+    st.stall = st.stall + 1
+    if st.stall >= 90 then
+      st.run_x, st.stall = nil, 0
+      st.hunt_until = 240
+      return 'hunt'
+    end
+  end
+  return 'run'
+end
+
 local function plan_route(ai_player, ctx)
   if not grid.ok then plan[ai_player] = nil; return nil end
   local d = Bot._d
@@ -165,9 +207,8 @@ local function plan_route(ai_player, ctx)
 
   -- movement intent mirrors the heuristic's macro logic
   local kind, gc, gr
-  local en_alive = not is_dying_state(en.state_id or 0)
   local sx, sy = ctx.snap.nearest_sword_x, ctx.snap.nearest_sword_y
-  if ctx.leader == 1 or not en_alive then
+  if ctx.intent == 'run' then
     kind, gc, gr = 'goal', (g > 0) and grid.w or 1, sr
   elseif (not me.has_sword) and sx and math.abs(sx - me.x) < 240 and
          math.abs((sy or me.y) - me.y) < 90 then
@@ -251,6 +292,7 @@ function Bot.decide_mask(ai_player, policy)
   local d = Bot._d
   local ctx = Bot.build_ctx(ai_player)
   if not ctx then return nil, nil end
+  ctx.intent = decide_intent(ai_player, ctx)
   ctx.route = plan_route(ai_player, ctx)
   if not heur_mem[ai_player] then
     heur_mem[ai_player] = d.H.new_mem(ai_player * 7919 + 5)

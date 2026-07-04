@@ -10,6 +10,7 @@ local H = { _NN = nil }
 -- action indices (must match lib/actions.lua A.LIST order)
 local IDLE, BACK, FWD, JUMP, JUMP_BACK, JUMP_FWD = 1, 2, 3, 4, 5, 6
 local ATK, ATK_BACK, ATK_FWD, UP, DOWN, DOWN_JUMP = 7, 8, 9, 10, 11, 12
+local SLIDE_FWD, SLIDE_BACK = 13, 14   -- down+jump while running: passes hitboxes
 
 H.ENGAGE_X = 120   -- fight-context range (bot.lua uses H.is_fight for the NN arbiter)
 H.ENGAGE_Y = 60
@@ -34,14 +35,19 @@ end
 local function attack_toward(dir, g)
   if (dir >= 0) == (g >= 0) then return ATK_FWD else return ATK_BACK end
 end
+local function slide_toward(dir, g)
+  if (dir >= 0) == (g >= 0) then return SLIDE_FWD else return SLIDE_BACK end
+end
 
 -- Fight context: same room, close, both alive, and I'm armed. One source of
 -- truth for "should the combat brain (NN or scripted) be driving".
--- THE LEADER NEVER FIGHTS: with the go, reaching the goal is worth more than
--- any exchange - run mode handles blockers with pass-through moves instead.
+-- A RUNNER NEVER FIGHTS: with the go (leader) or an open lane (ctx.intent ==
+-- 'run', decided by the bot with a stall fallback), reaching the goal is
+-- worth more than any exchange - run mode slides/vaults past instead.
 function H.is_fight(ctx)
   local s = ctx.snap
   if ctx.leader == 1 then return false end
+  if ctx.intent == 'run' then return false end
   if not s.player.has_sword then return false end
   if is_dying(s.player) or is_dying(s.enemy) then return false end
   if ctx.my_room ~= ctx.enemy_room then return false end
@@ -140,10 +146,10 @@ function H.decide(ctx, mem)
     if sx and math.abs(sx - me.x) < 240 and math.abs((sy or me.y) - me.y) < 90 then
       local sdir = ((sx - me.x) >= 0) and 1 or -1
       local sdx = math.abs(sx - me.x)
-      if sdx < 10 then mem.mode = 'grab'; return DOWN, 'grab' end   -- crouch onto it
+      if sdx < 14 then mem.mode = 'grab'; return DOWN_JUMP, 'grab' end   -- crouch (down+jump) picks it up
       if ctx.route and ctx.route.kind == 'sword' and ctx.route.dir and ctx.route.dir ~= 0 then
         if ctx.route.jump then
-          return hold(mem, jump_toward(ctx.route.dir, g), 10, 'get_sword')
+          return hold(mem, jump_toward(ctx.route.dir, g), 14, 'get_sword')
         end
         return move_or_jump(ctx, mem, ctx.route.dir, g, 'get_sword')
       end
@@ -155,11 +161,13 @@ function H.decide(ctx, mem)
     end
     if same_room and en_alive and en.has_sword and adx < 70 and ady < 50 then
       local r = mem.rand()
-      if adx < 34 and r < 0.45 then
+      if adx < 34 and r < 0.40 then
         return hold(mem, jump_toward(edir, g), 5, 'disarm')          -- jump at them
-      elseif r < 0.70 then
+      elseif r < 0.60 then
         mem.mode = 'disarm'
         return attack_toward(edir, g), 'disarm'                      -- punch
+      elseif r < 0.80 then
+        return hold(mem, slide_toward(edir, g), 12, 'evade')         -- slide THROUGH them
       end
       return hold(mem, jump_toward(-edir, g), 6, 'evade')            -- hop away
     end
@@ -186,19 +194,24 @@ function H.decide(ctx, mem)
   end
 
   -- ------------------------------------------------------------ navigate ---
-  -- With the lead (or a dead enemy) advance toward the goal ABOVE ALL ELSE.
-  -- WITHOUT it, always hunt the enemy: eggnogg blocks the non-leader at the
-  -- room edge, so "running to your goal" just parks you on an invisible wall.
+  -- RUNNING (the go, an open lane, or a dead enemy): the goal ABOVE ALL ELSE.
+  -- Otherwise hunt the enemy down. (ctx.intent is decided by the bot, with a
+  -- stall fallback so a blocked run turns back into a hunt.)
+  local running = ctx.leader == 1 or ctx.intent == 'run' or not en_alive
   local dir
-  if ctx.leader == 1 or not en_alive then
+  if running then
     dir = g
-    -- blocker in my lane: swing through or vault over, but never stop running
+    -- blocker in my lane: SLIDE through their hitbox (crouch-slide passes
+    -- clean through), swing through, or vault - but never stop running
     if en_alive and same_room and (dx * g) > 0 and adx < 60 and ady < 50 then
-      if me.has_sword and mem.rand() < 0.55 then
+      local r = mem.rand()
+      if r < 0.55 then
+        return hold(mem, slide_toward(g, g), 12, 'run')      -- slide through
+      elseif me.has_sword and r < 0.80 then
         mem.mode = 'run'
-        return attack_toward(edir, g), 'run'     -- cut through them
+        return attack_toward(edir, g), 'run'                 -- cut through
       end
-      return hold(mem, jump_toward(g, g), 8, 'run')  -- vault past
+      return hold(mem, jump_toward(g, g), 8, 'run')          -- vault past
     end
   else
     dir = edir
@@ -222,7 +235,7 @@ function H.decide(ctx, mem)
     local rt = ctx.route
     if rt.jump then
       local jd = (rt.dir ~= 0) and rt.dir or dir
-      return hold(mem, jump_toward(jd, g), 10, 'navigate')
+      return hold(mem, jump_toward(jd, g), 14, 'navigate')
     end
     if rt.dir ~= 0 then
       return move_or_jump(ctx, mem, rt.dir, g, 'navigate')

@@ -4,6 +4,7 @@ local H = dofile("lib/heuristic.lua")
 H.init({ NN = NN })
 
 local R, L, J, AT, D = 0x04, 0x08, 0x01, 0x02, 0x20
+local U = 0x10
 local function has(m, bit) return (math.floor(m / bit) % 2) == 1 end
 
 local function fake_ctx(over)
@@ -123,6 +124,33 @@ for t = 1, 40 do
   if has(A.mask(abj, 1), J) then jumped = true end
 end
 check(jumped, 'blocked runner starts jumping')
+
+-- sword pickup is a CROUCH (down+jump), standing on the sword
+local mgr = H.new_mem(31)
+local ctxg = fake_ctx({ player = { has_sword = false }, enemy = { x = 400 } })
+ctxg.snap.nearest_sword_x, ctxg.snap.nearest_sword_y = 105, 50   -- sdx 5
+local agr, mode_gr = H.decide(ctxg, mgr)
+local mgr_mask = A.mask(agr, 1)
+check(mode_gr == 'grab', 'standing on sword -> grab mode')
+check(has(mgr_mask, D) and has(mgr_mask, J), 'grab presses down+jump (crouch)')
+
+-- open lane: intent run -> never a fight, even at sword range
+local ctxrun = fake_ctx({ enemy = { x = 130 } })
+ctxrun.intent = 'run'
+check(not H.is_fight(ctxrun), 'run intent suppresses fight context')
+
+-- runner with a blocker slides/vaults/cuts through - never turns around
+local slide_seen = false
+for i = 1, 60 do
+  local mrn = H.new_mem(800 + i)
+  local ctxb = fake_ctx({ enemy = { x = 140 } })
+  ctxb.intent = 'run'
+  local arn = H.decide(ctxb, mrn)
+  local mk = A.mask(arn, 1)
+  check(not has(mk, L), 'runner never turns around (' .. i .. ')')
+  if has(mk, D) and has(mk, J) and has(mk, R) then slide_seen = true end
+end
+check(slide_seen, 'runner slides through blockers')
 
 -- planned route: a jump step becomes a held jump in the route direction
 local mrt = H.new_mem(21)

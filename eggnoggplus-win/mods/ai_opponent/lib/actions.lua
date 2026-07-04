@@ -17,7 +17,9 @@ A.LIST = {
   { name = "attack_fwd",   base = AT,     fwd = true,  back = false },
   { name = "up",           base = U,      fwd = false, back = false },
   { name = "down",         base = D,      fwd = false, back = false },
-  { name = "down_jump",    base = D + J,  fwd = false, back = false },
+  { name = "down_jump",    base = D + J,  fwd = false, back = false },  -- crouch (sword pickup)
+  { name = "slide_fwd",    base = D + J,  fwd = true,  back = false },  -- slide: passes through hitboxes
+  { name = "slide_back",   base = D + J,  fwd = false, back = true  },
 }
 A.COUNT = #A.LIST
 

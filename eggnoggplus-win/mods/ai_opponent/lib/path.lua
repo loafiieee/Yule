@@ -12,7 +12,8 @@
 -- jumping stops being a probe heuristic and becomes an explicit plan step.
 local P = {}
 
-P.MAX_JUMP_UP = 3
+P.MAX_JUMP_UP = 2   -- rows a real jump reliably gains (planning 3 made fighters
+                    -- attempt jumps the physics can't complete)
 P.MAX_DROP = 8
 P.MAX_GAP = 2
 

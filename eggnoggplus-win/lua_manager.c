@@ -9008,6 +9008,21 @@ static int lua_game_map_count(lua_State* Ls) {
     return 1;
 }
 
+/* combat_ledger() - monotonic counters from the native player_die detour:
+ * deaths0/deaths1 (real deaths per player index; match-winning pit dives are
+ * NOT counted), match_ends, last_winner (player index or -1). */
+static int lua_game_combat_ledger(lua_State* Ls) {
+    uint32_t d0 = 0, d1 = 0, ends = 0;
+    int winner = -1;
+    hooks_get_combat_ledger(&d0, &d1, &ends, &winner);
+    lua_newtable(Ls);
+    lua_push_field_number(Ls, "deaths0", (lua_Number)d0);
+    lua_push_field_number(Ls, "deaths1", (lua_Number)d1);
+    lua_push_field_number(Ls, "match_ends", (lua_Number)ends);
+    lua_push_field_int(Ls, "last_winner", winner);
+    return 1;
+}
+
 static int lua_game_ai_match(lua_State* Ls) {
     int active = 0, ai_player = 1, training = 0;
     hooks_get_ai_match(&active, &ai_player, &training);
@@ -10461,6 +10476,7 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
     lua_pushcfunction(Ls, lua_game_start_match);                                         lua_setfield(Ls, -2, "start_match");
     lua_pushcfunction(Ls, lua_game_map_count);                                           lua_setfield(Ls, -2, "map_count");
+    lua_pushcfunction(Ls, lua_game_combat_ledger);                                       lua_setfield(Ls, -2, "combat_ledger");
     lua_pushcfunction(Ls, lua_game_room_tiles);                                          lua_setfield(Ls, -2, "room_tiles");
     lua_pushcfunction(Ls, lua_game_room_tile);                                           lua_setfield(Ls, -2, "room_tile");
     lua_pushcfunction(Ls, lua_game_tile_solid);                                          lua_setfield(Ls, -2, "tile_solid");

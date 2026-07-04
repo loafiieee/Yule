@@ -735,6 +735,20 @@ static volatile int g_ai_match_active = 0;
 static volatile int g_ai_match_player = 1;
 static volatile int g_ai_match_training = 0;
 
+/* --- combat ledger --------------------------------------------------------
+ * Authoritative kill/death counts from a detour on the engine's player_die
+ * (0x422830) - the single native kill path. Winning a map ALSO routes the
+ * winner through player_die (you win by leaping into the pit), so the detour
+ * classifies at the source: if the call flips the end countdown on, it was
+ * the match-winning dive, not a death. Counters are monotonic; Lua diffs. */
+#define ADDR_PLAYER_DIE 0x422830u
+typedef void (__cdecl *fn_player_die_t)(int);
+static Detour g_player_die_detour;
+static fn_player_die_t p_player_die_trampoline = NULL;
+static volatile uint32_t g_ledger_deaths[2] = { 0, 0 };
+static volatile uint32_t g_ledger_match_ends = 0;
+static volatile int g_ledger_last_winner = -1;
+
 static volatile uint32_t g_last_raw_cmd[2] = { 0, 0 };
 static volatile uint32_t g_last_effective_cmd[2] = { 0, 0 };
 static volatile int g_raw_input_blocked[2] = { 0, 0 };
@@ -10707,6 +10721,39 @@ void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training) 
     if (out_training) *out_training = g_ai_match_training;
 }
 
+static void __cdecl hooked_player_die(int player_ptr) {
+    fn_player_die_t real = p_player_die_trampoline;
+    int idx = -1;
+    int ec_before = 0;
+    int ec_after = 0;
+    if (p_player_slots) {
+        if ((uintptr_t)player_ptr == (uintptr_t)p_player_slots[0]) idx = 0;
+        else if ((uintptr_t)player_ptr == (uintptr_t)p_player_slots[1]) idx = 1;
+    }
+    if (g_game_end_countdown && !IsBadReadPtr((const void*)g_game_end_countdown, sizeof(int))) {
+        ec_before = *g_game_end_countdown;
+    }
+    if (real) real(player_ptr);
+    if (g_game_end_countdown && !IsBadReadPtr((const void*)g_game_end_countdown, sizeof(int))) {
+        ec_after = *g_game_end_countdown;
+    }
+    if (ec_before == 0 && ec_after > 0) {
+        /* this die() ended the match: the diver is the winner, not a casualty */
+        g_ledger_match_ends++;
+        g_ledger_last_winner = idx;
+    } else if (idx >= 0) {
+        g_ledger_deaths[idx]++;
+    }
+}
+
+void hooks_get_combat_ledger(uint32_t* out_d0, uint32_t* out_d1,
+                             uint32_t* out_match_ends, int* out_last_winner) {
+    if (out_d0) *out_d0 = g_ledger_deaths[0];
+    if (out_d1) *out_d1 = g_ledger_deaths[1];
+    if (out_match_ends) *out_match_ends = g_ledger_match_ends;
+    if (out_last_winner) *out_last_winner = g_ledger_last_winner;
+}
+
 static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override) {
     int pi = (int)(player_index & 1u);
 
@@ -13107,6 +13154,13 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour game_update (GGPO/gameplay tick API disabled)");
     } else {
         p_game_update_trampoline = (fn_game_update_t)g_game_update_detour.trampoline;
+    }
+
+    /* player_die prologue: push esi / push ebx / sub esp,0x34 = exactly 5 bytes */
+    if (!install_detour(&g_player_die_detour, (void*)(uintptr_t)ADDR_PLAYER_DIE, (void*)&hooked_player_die, 5)) {
+        LOG_WARN("hooks_init: failed to detour player_die (combat ledger disabled)");
+    } else {
+        p_player_die_trampoline = (fn_player_die_t)g_player_die_detour.trampoline;
     }
 
     // Detour rgba_load so we can patch data/font8x8.png pixels before it is

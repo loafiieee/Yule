@@ -1,8 +1,12 @@
 -- Human-in-the-loop trainer ("TRAIN VS ME"): the human plays normally, in real
 -- time, while the population rotates through the AI seat in fixed time slices.
--- Fitness comes from actual kills scored against / conceded to the human - the
--- signal self-play can't provide (a policy that farms the scripted fighter's
--- blind spots gets crushed here and selected out).
+-- Fitness comes from actual kills scored against / conceded to the human.
+--
+-- Kill/death detection is the framework's combat ledger - monotonic counters
+-- from a native player_die detour. Match-winning pit dives are classified at
+-- the source and never counted as deaths, so no state-machine guessing here.
+-- On match end the mod immediately hops to a random map (the online-flow
+-- recipe), so a session never falls back to the menu.
 --
 -- Shares the population storage with the self-play trainer, so the two modes
 -- interleave: bootstrap on self-play speed, then refine against the human.
@@ -16,11 +20,6 @@ local GEN_KEY = "htrainer_gen"
 
 local R = { KILL = 120, DEATH = -60, DISARM = 10, DISARM_RANGE = 48,
             MAP_WIN = 300, MAP_LOSS = -100 }
--- A dying edge only counts as a kill if no map score follows within this many
--- ticks: eggnogg's win animation runs the WINNER through the dying state
--- (you win by leaping into the pit), so an immediate score means "win-fall",
--- not a kill.
-local PENDING_TICKS = 120
 
 local st = nil
 
@@ -59,19 +58,15 @@ local function fresh_session()
     fitness = {},
     policy = nil,
     slice_t = 0,
-    tick = 0,
     fit = 0,
-    was = { me = false, en = false },
+    led_ends = nil,                  -- ledger baselines (captured on first tick)
+    d_ai = nil, d_hu = nil,
     had_sword_en = nil,
-    pending = {},                    -- deferred kill/death edges
-    ending = false,                  -- native end countdown in progress
     ai_kills = 0, human_kills = 0,   -- session scoreboard (real kills only)
     ai_wins = 0, human_wins = 0,     -- map wins
     gens_done = 0,
   }
 end
-
-local function is_dying(state_id) return state_id == 8 or state_id == 9 end
 
 local function save_progress(s)
   local order = {}
@@ -93,8 +88,8 @@ local function next_fighter(s)
   s.policy = nil
   if s.i > #s.pop.nets then
     save_progress(s)
-    mod.log(string.format("htrainer: human-gen %d done (session score you %d : %d ai)",
-                          s.pop.gen, s.human_kills, s.ai_kills))
+    mod.log(string.format("htrainer: human-gen %d done (kills you %d : %d ai, maps you %d : %d ai)",
+                          s.pop.gen, s.human_kills, s.ai_kills, s.human_wins, s.ai_wins))
     s.pop = d.EVO.next_gen(s.pop, s.fitness, MUT, s.rand)
     storage.set(GEN_KEY, tostring(s.pop.gen))
     s.fitness = {}
@@ -103,23 +98,14 @@ local function next_fighter(s)
   end
 end
 
--- commit deferred edges that were NOT followed by a map score (= real kills)
-local function commit_pending(s, force)
-  local keep = {}
-  for _, ev in ipairs(s.pending) do
-    if force or (s.tick - ev.t) >= PENDING_TICKS then
-      if ev.who == 'en' then
-        s.fit = s.fit + R.KILL
-        s.ai_kills = s.ai_kills + 1
-      else
-        s.fit = s.fit + R.DEATH
-        s.human_kills = s.human_kills + 1
-      end
-    else
-      keep[#keep + 1] = ev
-    end
+-- resync ledger baselines to "now" (discards deltas from a match transition)
+local function resync_ledger(s, led, ai_player)
+  s.led_ends = led.match_ends
+  if ai_player == 0 then
+    s.d_ai, s.d_hu = led.deaths0, led.deaths1
+  else
+    s.d_ai, s.d_hu = led.deaths1, led.deaths0
   end
-  s.pending = keep
 end
 
 function HT.tick(ai_player)
@@ -127,79 +113,79 @@ function HT.tick(ai_player)
   local s = st
   local slice_ticks = tonumber(config.get("human_slice_ticks", 1200)) or 1200
   if slice_ticks < 300 then slice_ticks = 300 end
-  s.tick = s.tick + 1
 
   if not s.policy then
     s.policy = d.Policy.new(s.pop.nets[s.i],
                             { react_delay = 0, epsilon = 0.03, seed = s.pop.gen * 31 + s.i })
     s.slice_t = 0
     s.fit = 0
-    s.was = { me = false, en = false }
     s.had_sword_en = nil
-    s.pending = {}
     d.Bot.reset_scaffold()
   end
 
+  local led = mod.game.combat_ledger()
   local snap = mod.game.snapshot(ai_player, false)
   if not (snap and snap.in_game and snap.player and snap.enemy) then return end
+  if s.led_ends == nil then resync_ledger(s, led, ai_player) end
 
-  -- Match over? (the winner's pit-fall starts the native end countdown; the
-  -- buffered dying edge belongs to the WIN, not a kill.) Award win/loss, let
-  -- the fanfare play, then hop to a random map before the menu switch fires -
-  -- same trick the online flow uses to chain matches.
-  local ec = snap.end_countdown or 0
-  if ec > 0 then
-    if not s.ending then
-      s.ending = true
-      s.pending = {}
-      local winner = snap.leader_index
-      if winner == ai_player then
-        s.fit = s.fit + R.MAP_WIN
-        s.ai_wins = s.ai_wins + 1
-      elseif winner ~= nil then
-        s.fit = s.fit + R.MAP_LOSS
-        s.human_wins = s.human_wins + 1
-      end
+  -- match over? (ledger event from the winner's dive, or the end countdown as
+  -- fallback for win paths that skip player_die) -> award, hop to a random
+  -- map IMMEDIATELY, resync baselines, carry on
+  local ended = led.match_ends > s.led_ends
+  if ended or (snap.end_countdown or 0) > 0 then
+    local winner = nil
+    if ended and led.last_winner and led.last_winner >= 0 then
+      winner = led.last_winner
+    else
+      winner = snap.leader_index
     end
-    if ec <= 20 then
-      local total = math.max(1, tonumber(mod.game.map_count()) or 1)
-      local sel = math.floor(s.rand() * total)
-      if sel >= total then sel = total - 1 end
-      mod.game.start_match(sel)
-      s.ending = false
-      s.was = { me = false, en = false }
-      s.had_sword_en = nil
-      d.Bot.reset_scaffold()
-      if s.policy then d.Policy.reset(s.policy) end
+    if winner == ai_player then
+      s.fit = s.fit + R.MAP_WIN
+      s.ai_wins = s.ai_wins + 1
+    elseif winner ~= nil then
+      s.fit = s.fit + R.MAP_LOSS
+      s.human_wins = s.human_wins + 1
     end
+    local total = math.max(1, tonumber(mod.game.map_count()) or 1)
+    local sel = math.floor(s.rand() * total)
+    if sel >= total then sel = total - 1 end
+    mod.game.start_match(sel)
+    resync_ledger(s, mod.game.combat_ledger(), ai_player)
+    s.had_sword_en = nil
+    d.Bot.reset_scaffold()
+    if s.policy then d.Policy.reset(s.policy) end
     s.slice_t = s.slice_t + 1
     return
   end
-  s.ending = false
+
+  -- real kills/deaths: pure ledger deltas
+  local d_ai = (ai_player == 0) and led.deaths0 or led.deaths1
+  local d_hu = (ai_player == 0) and led.deaths1 or led.deaths0
+  if d_hu > s.d_hu then
+    local n = d_hu - s.d_hu
+    s.fit = s.fit + R.KILL * n
+    s.ai_kills = s.ai_kills + n
+  end
+  if d_ai > s.d_ai then
+    local n = d_ai - s.d_ai
+    s.fit = s.fit + R.DEATH * n
+    s.human_kills = s.human_kills + n
+  end
+  s.d_ai, s.d_hu = d_ai, d_hu
 
   d.Bot.drive(ai_player, s.policy)
 
-  if snap and snap.in_game and snap.player and snap.enemy then
-    local me, en = snap.player, snap.enemy
-    local me_dying, en_dying = is_dying(me.state_id or 0), is_dying(en.state_id or 0)
-    if en_dying and not s.was.en then s.pending[#s.pending + 1] = { who = 'en', t = s.tick } end
-    if me_dying and not s.was.me then s.pending[#s.pending + 1] = { who = 'me', t = s.tick } end
-    s.was.me, s.was.en = me_dying, en_dying
-    local en_sword = en.has_sword and true or false
-    if s.had_sword_en ~= nil and s.had_sword_en and not en_sword and
-       math.abs(en.x - me.x) < R.DISARM_RANGE then
-      s.fit = s.fit + R.DISARM
-    end
-    s.had_sword_en = en_sword
+  -- disarm shaping (sword-state edge, unrelated to the dying state machine)
+  local me, en = snap.player, snap.enemy
+  local en_sword = en.has_sword and true or false
+  if s.had_sword_en ~= nil and s.had_sword_en and not en_sword and
+     math.abs(en.x - me.x) < R.DISARM_RANGE then
+    s.fit = s.fit + R.DISARM
   end
-
-  commit_pending(s, false)
+  s.had_sword_en = en_sword
 
   s.slice_t = s.slice_t + 1
-  if s.slice_t >= slice_ticks then
-    commit_pending(s, true)
-    next_fighter(s)
-  end
+  if s.slice_t >= slice_ticks then next_fighter(s) end
 end
 
 function HT.overlay()

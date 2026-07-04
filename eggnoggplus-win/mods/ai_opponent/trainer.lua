@@ -43,12 +43,8 @@ local R = {
   SWORD_LOST = -5, SWORD_GAINED = 5,
   ROOM = 30, SCORE_WIN = 300, SCORE_LOSS = -150,
 }
--- A dying edge only counts as a kill if no map score follows within this many
--- ticks: eggnogg runs the WINNER through the dying state (you win by leaping
--- into the pit), so an immediate score means "win-fall", not a kill. Without
--- this the winner's pit-fall credits the loser +120 (it also inflated the old
--- benchmark winrates).
-local PENDING_TICKS = 120
+-- Kill/death detection uses the framework's combat ledger (native player_die
+-- detour, match-winning pit dives pre-classified) - no state-machine guessing.
 
 local st = nil  -- training session state (nil when idle)
 
@@ -125,6 +121,7 @@ local function begin_episode(s)
       pb = new_policy(s.pop.nets[oi], oi * 37 + s.pop.gen * 11 + s.ep_num)
     end
   end
+  local led = mod.game.combat_ledger()
   s.ep = {
     gp = gp,
     goal = (gp == 0) and 1 or -1,
@@ -132,35 +129,16 @@ local function begin_episode(s)
     fit = 0,
     tick = 0,
     kills_me = 0, kills_op = 0,
-    pending = {},   -- deferred kill/death edges (see PENDING_TICKS)
-    was_dying = { me = false, enemy = false },
+    -- ledger baselines (monotonic C counters; blob resets don't rewind them)
+    led_ends = led.match_ends,
+    led_me = (gp == 0) and led.deaths0 or led.deaths1,
+    led_op = (gp == 0) and led.deaths1 or led.deaths0,
     had_sword = { me = nil, enemy = nil },
     start_room = nil, prev_x = nil, prev_dist = nil,
     start_score_me = nil, start_score_enemy = nil,
   }
 end
 
--- commit deferred edges not followed by a map score (= real kills)
-local function ep_commit_pending(s, e, force)
-  local keep = {}
-  for _, ev in ipairs(e.pending) do
-    if force or (e.tick - ev.t) >= PENDING_TICKS then
-      if ev.who == 'en' then
-        e.fit = e.fit + R.KILL
-        e.kills_me = e.kills_me + 1
-        s.kills_seen = s.kills_seen + 1
-      else
-        e.fit = e.fit + R.DEATH
-        e.kills_op = e.kills_op + 1
-      end
-    else
-      keep[#keep + 1] = ev
-    end
-  end
-  e.pending = keep
-end
-
-local function is_dying(state_id) return state_id == 8 or state_id == 9 end
 
 -- One sim tick of the current episode. Returns true when the episode ended.
 local function episode_step(s)
@@ -188,22 +166,27 @@ local function episode_step(s)
 
   local ended = false
 
-  -- kills / deaths: buffer the edges; they only count as kills if no map
-  -- score follows (the winner's pit-fall also looks like dying)
-  local me_dying, en_dying = is_dying(me.state_id or 0), is_dying(en.state_id or 0)
-  if en_dying and not e.was_dying.enemy then
-    e.pending[#e.pending + 1] = { who = 'en', t = e.tick }
+  -- kills / deaths: pure ledger deltas (real deaths only, by construction)
+  local led = mod.game.combat_ledger()
+  local led_me = (gp == 0) and led.deaths0 or led.deaths1
+  local led_op = (gp == 0) and led.deaths1 or led.deaths0
+  if led_op > e.led_op then
+    local n = led_op - e.led_op
+    e.fit = e.fit + R.KILL * n
+    e.kills_me = e.kills_me + n
+    s.kills_seen = s.kills_seen + n
     if not s.goal_logged then
       s.goal_logged = true
       mod.log(string.format("trainer: first kill sample gp=%d me.x=%.0f enemy.x=%.0f leader=%d",
                             gp, me.x, en.x, ns.leader or -1))
     end
   end
-  if me_dying and not e.was_dying.me then
-    e.pending[#e.pending + 1] = { who = 'me', t = e.tick }
+  if led_me > e.led_me then
+    local n = led_me - e.led_me
+    e.fit = e.fit + R.DEATH * n
+    e.kills_op = e.kills_op + n
   end
-  e.was_dying.me, e.was_dying.enemy = me_dying, en_dying
-  ep_commit_pending(s, e, false)
+  e.led_me, e.led_op = led_me, led_op
 
   -- disarm / rearm economy (balanced against throw+pickup farming)
   local me_sword, en_sword = me.has_sword and true or false, en.has_sword and true or false
@@ -247,21 +230,21 @@ local function episode_step(s)
   -- terminal conditions: map score (real win/loss), a 2-room push, or timeout
   local score_me = (gp == 0) and (ns.score_p0 or 0) or (ns.score_p1 or 0)
   local score_en = (gp == 0) and (ns.score_p1 or 0) or (ns.score_p0 or 0)
-  local ec = snap.end_countdown or 0
-  if ec > 0 then
-    -- match over: the buffered dying edge was the winner's pit-fall, not a
-    -- kill. The next begin_episode's blob restore also clears the countdown,
-    -- so the native menu switch never fires during training.
-    e.pending = {}
+  -- match over: ledger event (winner's dive) or the end countdown as fallback.
+  -- The next begin_episode's blob restore clears the countdown, so the native
+  -- menu switch never fires during training.
+  if led.match_ends > e.led_ends then
+    local winner = (led.last_winner and led.last_winner >= 0) and led.last_winner or snap.leader_index
+    if winner == gp then e.fit = e.fit + R.SCORE_WIN else e.fit = e.fit + R.SCORE_LOSS end
+    ended = true
+  elseif (snap.end_countdown or 0) > 0 then
     if snap.leader_index == gp then e.fit = e.fit + R.SCORE_WIN
     else e.fit = e.fit + R.SCORE_LOSS end
     ended = true
   elseif e.start_score_me and score_me > e.start_score_me then
-    e.pending = {}
     e.fit = e.fit + R.SCORE_WIN
     ended = true
   elseif e.start_score_enemy and score_en > e.start_score_enemy then
-    e.pending = {}
     e.fit = e.fit + R.SCORE_LOSS
     ended = true
   end
@@ -269,7 +252,6 @@ local function episode_step(s)
   if math.abs(room_now - (e.start_room or room_now)) >= 2 then ended = true end
   if e.tick >= EPISODE_TICKS then ended = true end
   if ended then
-    ep_commit_pending(s, e, true)
     e.fit = e.fit + R.ROOM * room_prog
   end
   return ended

@@ -14,6 +14,7 @@ local Codec = mod.dofile("lib/codec.lua")
 local H = mod.dofile("lib/heuristic.lua")
 local Bot = mod.dofile("bot.lua")
 local Trainer = mod.dofile("trainer.lua")
+local HT = mod.dofile("htrainer.lua")
 
 Policy.init(NN)
 EVO.init(NN)
@@ -21,6 +22,10 @@ H.init({ NN = NN })
 Bot.init({ NN = NN, A = A, F = F, Policy = Policy, H = H })
 Trainer.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
                SIZES = { F.N_INPUTS, 32, 16, A.COUNT } })
+HT.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
+          SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, CKPT_HARD = Trainer.CKPT_KEYS.hard })
+
+local human_train = false   -- set by the TRAIN VS ME menu mode, cleared at match end
 
 local DIFF = {
   easy   = { react_delay = 10, epsilon = 0.10, key = Trainer.CKPT_KEYS.easy,   need_ready = false },
@@ -66,6 +71,7 @@ mod.game.register_menu_mode({
   label = "VS AI",
   color = { 0.70, 0.45, 1.00 },
   on_activate = function(who)
+    human_train = false
     mod.game.arm_ai_match(1 - who, false)
     return true
   end,
@@ -75,7 +81,18 @@ mod.game.register_menu_mode({
   label = "TRAIN AI",
   color = { 0.52, 0.32, 0.98 },
   on_activate = function(who)
+    human_train = false
     mod.game.arm_ai_match(1 - who, true)
+    return true
+  end,
+})
+mod.game.register_menu_mode({
+  id = "train_vs_me",
+  label = "TRAIN VS ME",
+  color = { 0.98, 0.62, 0.24 },
+  on_activate = function(who)
+    human_train = true
+    mod.game.arm_ai_match(1 - who, false)
     return true
   end,
 })
@@ -89,11 +106,19 @@ mod.on_tick(function()
       Bot.reset_scaffold()
     end
     Trainer.match_ended()
+    if human_train then
+      HT.match_ended()
+      human_train = false
+    end
     return
   end
   if not mod.ui.is_state("game") then return end
   if m.training then
     Trainer.tick()
+    return
+  end
+  if human_train then
+    HT.tick(m.ai_player)
     return
   end
   if active_player ~= m.ai_player then
@@ -120,6 +145,10 @@ mod.on_frame(function()
     Trainer.overlay()
     return
   end
+  if human_train then
+    if mod.ui.is_state("game") then HT.overlay() end
+    return
+  end
   if config.get("show_debug_overlay", false) and active_player and mod.ui.is_state("game") then
     local info = Bot.last(active_player)
     mod.ui.begin_overlay()
@@ -136,6 +165,7 @@ mod.on_unload(function()
   mod.game.input_clear(0)
   mod.game.input_clear(1)
   Trainer.shutdown()
+  HT.match_ended()
 end)
 
 mod.log("ai_opponent loaded (inputs=" .. F.N_INPUTS .. " actions=" .. A.COUNT .. ", hybrid arbiter)")

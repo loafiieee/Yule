@@ -8737,6 +8737,58 @@ static int lua_game_poll_cmds_raw(lua_State* Ls) {
     return 1;
 }
 
+/* Full tile grid of one room as a flat row-major id array (1-based:
+ * ids[row * w + col + 1], row/col 0-based). Lets bot mods build navigation
+ * maps without hundreds of per-cell room_tile() calls. */
+static int lua_game_room_tiles(lua_State* Ls) {
+    int room_index = (int)luaL_optinteger(Ls, 1, 0);
+    int room_w = 0, room_h = 0;
+    if (!game_get_room_dims(&room_w, &room_h) ||
+        !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "room tiles unavailable");
+        return 2;
+    }
+    if (room_index < 0) room_index = 0;
+    {
+        int room_x0 = room_index * room_w;
+        lua_newtable(Ls);
+        lua_push_field_int(Ls, "room", room_index);
+        lua_push_field_int(Ls, "w", room_w);
+        lua_push_field_int(Ls, "h", room_h);
+        lua_newtable(Ls);
+        for (int ty = 0; ty < room_h; ty++) {
+            for (int tx = 0; tx < room_w; tx++) {
+                int tile_id = -1;
+                int tile_ptr = p_map_tile(room_x0 + tx, ty);
+                if (tile_ptr != 0 && !IsBadReadPtr((void*)(uintptr_t)tile_ptr, 1)) {
+                    tile_id = (int)(*(uint8_t*)(uintptr_t)tile_ptr);
+                }
+                lua_pushinteger(Ls, tile_id);
+                lua_rawseti(Ls, -2, ty * room_w + tx + 1);
+            }
+        }
+        lua_setfield(Ls, -2, "ids");
+    }
+    return 1;
+}
+
+/* Engine tile-property lookup: solid flag for a tile TYPE id (props table at
+ * 0x55AB44, stride 0x2C, byte +2 == solid; same table the native collision
+ * and spawn-safety code reads). */
+#define ADDR_TILE_PROPS_TABLE 0x55AB44u
+#define TILE_PROPS_STRIDE     0x2Cu
+static int lua_game_tile_solid(lua_State* Ls) {
+    int id = (int)luaL_checkinteger(Ls, 1);
+    if (id < 0 || id > 255) { lua_pushboolean(Ls, 0); return 1; }
+    {
+        const uint8_t* props = (const uint8_t*)(uintptr_t)(ADDR_TILE_PROPS_TABLE + (uint32_t)id * TILE_PROPS_STRIDE);
+        if (IsBadReadPtr(props, 3)) { lua_pushboolean(Ls, 0); return 1; }
+        lua_pushboolean(Ls, props[2] != 0);
+    }
+    return 1;
+}
+
 static int lua_game_register_bot_provider(lua_State* Ls) {
     LoadedMod* mod = (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
     if (mod) mod->bot_provider = 1;
@@ -10193,6 +10245,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_bot_provider, 1); lua_setfield(Ls, -2, "register_bot_provider");
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
+    lua_pushcfunction(Ls, lua_game_room_tiles);                                          lua_setfield(Ls, -2, "room_tiles");
+    lua_pushcfunction(Ls, lua_game_tile_solid);                                          lua_setfield(Ls, -2, "tile_solid");
     lua_game_push_command_constants(Ls);
     lua_pushcfunction(Ls, lua_game_camera);                                              lua_setfield(Ls, -2, "camera");
     lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_solid");

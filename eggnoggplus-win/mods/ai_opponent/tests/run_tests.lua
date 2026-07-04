@@ -7,6 +7,7 @@ local files = {
   "tests/test_policy.lua",
   "tests/test_evo.lua",
   "tests/test_codec.lua",
+  "tests/test_heuristic.lua",
 }
 local failed, ran = 0, 0
 _G.check = function(cond, msg)

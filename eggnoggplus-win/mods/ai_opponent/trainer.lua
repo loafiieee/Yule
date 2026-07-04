@@ -2,18 +2,23 @@
 -- tick it fast-forwards up to train_ticks_per_frame sim ticks (set both players'
 -- inputs -> simulate_ticks(1)), scores episodes, and evolves the population.
 --
--- Fitness design notes (anti-exploit):
--- * Kill +120 vs death -60: an even fight is +30 EV, so avoiding combat loses
---   to engaging (cowardice was the dominant strategy under symmetric +/-100).
--- * Episodes CONTINUE through kills (respawns and all) and end only on a map
---   score, a 2-room push, or timeout - so post-kill play (advancing, handling
---   the respawned blocker) is actually trained.
--- * Each genome plays 2 episodes per generation, once per side; features and
---   actions are goal-mirrored, so experience transfers exactly to either side.
--- * Sword-loss (-5) and pickup (+5) cancel over throw/re-pick cycles, so
---   rearming can't be farmed; disarming the enemy up close pays +10.
--- * Per-tick deltas are clamped +-8px so respawn teleports can't be farmed
---   (or unfairly punished) through the progress/closing terms.
+-- Architecture (hybrid arbiter): the scripted heuristic drives navigation and
+-- unarmed play for BOTH fighters; the genome's NN drives only fight-context
+-- ticks. Fitness differences therefore concentrate on combat skill.
+--
+-- Curriculum: half the sparring episodes are against the pure scripted fighter,
+-- half against other genomes. Every BENCH_EVERY generations the best genome
+-- plays a benchmark series vs the scripted fighter; the kill-based winrate is
+-- the objective quality meter, and it auto-captures difficulty checkpoints:
+--   winrate >= 0.35 (once) -> ckpt easy
+--   winrate >= 0.50        -> nn_ready flag (play mode starts trusting the NN)
+--   winrate >= 0.55 (once) -> ckpt normal
+--   best-of-gen (always)   -> ckpt hard
+--
+-- Anti-exploit fitness notes: kill +120 / death -60 (even fights are +EV);
+-- episodes continue through kills and end on map score / 2-room push / timeout;
+-- sword lose/regain cancels over throw cycles; per-tick deltas clamped so
+-- respawn teleports can't be farmed.
 local Trainer = {}
 local d = nil
 
@@ -22,9 +27,10 @@ local EPISODE_TICKS = 1800
 local EPISODES_PER_GENOME = 2   -- one per side
 local SAVE_TOP_N = 8            -- resumable population seeds kept in storage
 local MUT = { elites = 4, mut_rate = 0.15, mut_scale = 0.25 }
+local BENCH_EVERY = 10
+local BENCH_EPISODES = 4
 
--- v2 keys: feature/action semantics changed (goal-mirroring), old nets are
--- incompatible garbage - never resume them.
+-- v2 keys: goal-mirrored feature/action semantics; older nets are incompatible.
 local POP_KEY = "trainer_pop2"
 local GEN_KEY = "trainer_gen2"
 Trainer.CKPT_KEYS = { easy = "ckpt2_easy", normal = "ckpt2_normal", hard = "ckpt2_hard" }
@@ -79,6 +85,8 @@ local function fresh_session()
     pair_i = 1,          -- genome under evaluation
     ep_num = 1,          -- 1..EPISODES_PER_GENOME for that genome
     ep = nil,
+    bench = nil,         -- active benchmark series
+    bench_winrate = tonumber(storage.get("bench_winrate", -1)) or -1,
     paused = false,
     best_fit = nil, mean_fit = nil,
     ticks_done = 0, kills_seen = 0,
@@ -87,25 +95,37 @@ local function fresh_session()
   }
 end
 
-local function pick_opponent(s)
-  local j = 1 + math.floor(s.rand() * #s.pop.nets)
-  if j > #s.pop.nets then j = #s.pop.nets end
-  if j == s.pair_i then j = (j % #s.pop.nets) + 1 end
-  return j
+local function new_policy(net, seed)
+  return d.Policy.new(net, { react_delay = 0, epsilon = 0.05, seed = seed })
 end
 
 local function begin_episode(s)
   if s.base_blob then mod.game.apply_full_state_blob(s.base_blob) end
   d.Bot.reset_scaffold()
-  local oi = pick_opponent(s)
-  local gp = (s.ep_num % 2 == 1) and 0 or 1   -- side the genome plays this episode
+  local gp, pa, pb
+  if s.bench then
+    gp = (s.bench.done % 2 == 0) and 0 or 1
+    pa = new_policy(s.pop.nets[1], 4242 + s.bench.done)   -- elite (copy of last gen's best)
+    pb = nil                                              -- scripted fighter
+  else
+    gp = (s.ep_num % 2 == 1) and 0 or 1
+    pa = new_policy(s.pop.nets[s.pair_i], s.pair_i * 31 + s.pop.gen * 7 + s.ep_num)
+    if s.rand() < 0.5 then
+      pb = nil                                            -- curriculum: scripted fighter
+    else
+      local oi = 1 + math.floor(s.rand() * #s.pop.nets)
+      if oi > #s.pop.nets then oi = #s.pop.nets end
+      if oi == s.pair_i then oi = (oi % #s.pop.nets) + 1 end
+      pb = new_policy(s.pop.nets[oi], oi * 37 + s.pop.gen * 11 + s.ep_num)
+    end
+  end
   s.ep = {
     gp = gp,
     goal = (gp == 0) and 1 or -1,
-    a = d.Policy.new(s.pop.nets[s.pair_i], { react_delay = 0, epsilon = 0.05, seed = s.pair_i * 31 + s.pop.gen * 7 + s.ep_num }),
-    b = d.Policy.new(s.pop.nets[oi], { react_delay = 0, epsilon = 0.05, seed = oi * 37 + s.pop.gen * 11 + s.ep_num }),
+    a = pa, b = pb,
     fit = 0,
     tick = 0,
+    kills_me = 0, kills_op = 0,
     was_dying = { me = false, enemy = false },
     had_sword = { me = nil, enemy = nil },
     start_room = nil, prev_x = nil, prev_dist = nil,
@@ -119,8 +139,7 @@ local function is_dying(state_id) return state_id == 8 or state_id == 9 end
 local function episode_step(s)
   local e = s.ep
   local gp = e.gp
-  -- genome drives player gp; sparring opponent drives the other side
-  local mask_me, ctx_me = d.Bot.decide_mask(gp, e.a)
+  local mask_me = d.Bot.decide_mask(gp, e.a)
   local mask_op = d.Bot.decide_mask(1 - gp, e.b)
   if not mask_me or not mask_op then return true end  -- lost gameplay state
   s.last_mask[gp], s.last_mask[1 - gp] = mask_me, mask_op
@@ -146,6 +165,7 @@ local function episode_step(s)
   local me_dying, en_dying = is_dying(me.state_id or 0), is_dying(en.state_id or 0)
   if en_dying and not e.was_dying.enemy then
     e.fit = e.fit + R.KILL
+    e.kills_me = e.kills_me + 1
     s.kills_seen = s.kills_seen + 1
     if not s.goal_logged then
       s.goal_logged = true
@@ -153,7 +173,10 @@ local function episode_step(s)
                             gp, me.x, en.x, ns.leader or -1))
     end
   end
-  if me_dying and not e.was_dying.me then e.fit = e.fit + R.DEATH end
+  if me_dying and not e.was_dying.me then
+    e.fit = e.fit + R.DEATH
+    e.kills_op = e.kills_op + 1
+  end
   e.was_dying.me, e.was_dying.enemy = me_dying, en_dying
 
   -- disarm / rearm economy (balanced against throw+pickup farming)
@@ -221,8 +244,6 @@ function Trainer.save_checkpoints(s)
   table.sort(order, function(x, y) return (fit[x] or 0) > (fit[y] or 0) end)
   local best = s.pop.nets[order[1]]
   d.Codec.store(storage, Trainer.CKPT_KEYS.hard, d.NN.serialize(best))
-  if s.pop.gen == 30 then d.Codec.store(storage, Trainer.CKPT_KEYS.easy, d.NN.serialize(best)) end
-  if s.pop.gen == 300 then d.Codec.store(storage, Trainer.CKPT_KEYS.normal, d.NN.serialize(best)) end
   local dump = {}
   for i = 1, math.min(SAVE_TOP_N, #order) do
     dump[i] = d.NN.serialize(s.pop.nets[order[i]])
@@ -232,8 +253,46 @@ function Trainer.save_checkpoints(s)
   storage.save()
 end
 
+-- benchmark series finished: record winrate, auto-capture checkpoints
+local function finish_benchmark(s)
+  local b = s.bench
+  local total = b.kills_me + b.kills_op
+  local wr = 0.5
+  if total > 0 then wr = b.kills_me / total end
+  s.bench_winrate = wr
+  storage.set("bench_winrate", string.format("%.3f", wr))
+  mod.log(string.format("trainer: benchmark gen %d  winrate vs scripted %.2f (%d-%d)",
+                        s.pop.gen, wr, b.kills_me, b.kills_op))
+  local elite = d.NN.serialize(s.pop.nets[1])
+  if wr >= 0.35 and storage.get("ckpt_easy_done", "0") ~= "1" then
+    d.Codec.store(storage, Trainer.CKPT_KEYS.easy, elite)
+    storage.set("ckpt_easy_done", "1")
+    mod.log("trainer: EASY checkpoint captured")
+  end
+  if wr >= 0.50 and storage.get("nn_ready", "0") ~= "1" then
+    storage.set("nn_ready", "1")
+    mod.log("trainer: NN combat brain now beats the scripted fighter - marked ready for play")
+  end
+  if wr >= 0.55 and storage.get("ckpt_normal_done", "0") ~= "1" then
+    d.Codec.store(storage, Trainer.CKPT_KEYS.normal, elite)
+    storage.set("ckpt_normal_done", "1")
+    mod.log("trainer: NORMAL checkpoint captured")
+  end
+  storage.save()
+  s.bench = nil
+end
+
 local function finish_episode(s)
-  s.fitness[s.pair_i] = (s.fitness[s.pair_i] or 0) + s.ep.fit
+  local e = s.ep
+  if s.bench then
+    s.bench.kills_me = s.bench.kills_me + e.kills_me
+    s.bench.kills_op = s.bench.kills_op + e.kills_op
+    s.bench.done = s.bench.done + 1
+    if s.bench.done >= BENCH_EPISODES then finish_benchmark(s) end
+    begin_episode(s)
+    return
+  end
+  s.fitness[s.pair_i] = (s.fitness[s.pair_i] or 0) + e.fit
   s.ep_num = s.ep_num + 1
   if s.ep_num > EPISODES_PER_GENOME then
     s.ep_num = 1
@@ -255,6 +314,9 @@ local function finish_episode(s)
     s.fitness = {}
     s.pair_i = 1
     s.ep_num = 1
+    if s.pop.gen % BENCH_EVERY == 0 then
+      s.bench = { done = 0, kills_me = 0, kills_op = 0 }
+    end
   end
   begin_episode(s)
 end
@@ -287,19 +349,29 @@ end
 function Trainer.overlay()
   if not st then return end
   mod.ui.begin_overlay()
-  mod.ui.rect(20, 20, 330, 146, { color = { 0.03, 0.04, 0.06, 0.85 } })
+  mod.ui.rect(20, 20, 344, 164, { color = { 0.03, 0.04, 0.06, 0.85 } })
   mod.ui.text_at("TRAIN AI  gen " .. tostring(st.pop.gen), 32, 34, 1.0, 1.0, 0.8, 0.6)
-  mod.ui.text_at(string.format("genome %d/%d  side %d  ep tick %d",
-                               st.pair_i, #st.pop.nets, st.ep and st.ep.gp or 0,
-                               st.ep and st.ep.tick or 0), 32, 56, 0.9, 0.9, 0.9, 0.9)
+  local what
+  if st.bench then
+    what = "BENCHMARK " .. (st.bench.done + 1) .. "/" .. BENCH_EPISODES
+  else
+    what = string.format("genome %d/%d side %d", st.pair_i, #st.pop.nets, st.ep and st.ep.gp or 0)
+  end
+  mod.ui.text_at(what .. "  ep tick " .. tostring(st.ep and st.ep.tick or 0), 32, 56, 0.9, 0.9, 0.9, 0.9)
   mod.ui.text_at(string.format("best %.1f  mean %.1f", st.best_fit or 0, st.mean_fit or 0),
                  32, 74, 0.9, 0.9, 0.9, 0.9)
+  local wrtxt = "not yet measured"
+  if st.bench_winrate and st.bench_winrate >= 0 then
+    wrtxt = string.format("%.0f%%%s", st.bench_winrate * 100,
+                          (storage.get("nn_ready", "0") == "1") and "  (NN live in play)" or "")
+  end
+  mod.ui.text_at("vs scripted: " .. wrtxt, 32, 92, 0.9, 0.6, 1.0, 0.7)
   mod.ui.text_at(string.format("sim ticks %d   kills %d", st.ticks_done, st.kills_seen),
-                 32, 92, 0.9, 0.7, 0.7, 0.7)
-  if mod.ui.button_at("train_pause", st.paused and "RESUME" or "PAUSE", 32, 112, 90, 26) then
+                 32, 110, 0.9, 0.7, 0.7, 0.7)
+  if mod.ui.button_at("train_pause", st.paused and "RESUME" or "PAUSE", 32, 128, 90, 26) then
     st.paused = not st.paused
   end
-  if mod.ui.button_at("train_save", "SAVE", 130, 112, 70, 26) then
+  if mod.ui.button_at("train_save", "SAVE", 130, 128, 70, 26) then
     if next(st.fitness) then Trainer.save_checkpoints(st) end
   end
   mod.ui.end_overlay()

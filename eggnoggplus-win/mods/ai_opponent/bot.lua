@@ -1,17 +1,93 @@
--- Game-facing bot runtime: builds the feature context from live game state and
--- drives one player via set_input. Loaded with mod.dofile("bot.lua"); deps injected.
+-- Game-facing bot runtime: builds the sensing context from live game state and
+-- drives one player. Arbiter: the scripted heuristic handles navigation, sword
+-- recovery and unarmed play; the NN policy (when provided) drives fight-context
+-- ticks only. Loaded with mod.dofile("bot.lua"); deps injected via init().
 local Bot = { _d = nil }
 
-function Bot.init(deps)  -- deps = { NN=, A=, F=, Policy= }
+function Bot.init(deps)  -- deps = { NN=, A=, F=, Policy=, H= }
   Bot._d = deps
 end
 
--- Solid-geometry probe (world pixels). Hazard ids are not queryable per-pixel in the
--- current framework API, so hazard_ahead stays 0 for v1; deaths teach hazard
--- avoidance through the trainer's fitness signal instead.
-local function solid(x, y)
+local function solid_px(x, y)
   return mod.game.is_solid(x, y) and 1 or 0
 end
+
+-- ------------------------------------------------- room tile grid (cached) ---
+
+local grid = { room = -1, ok = false }
+local solid_id = {}   -- tile id -> bool (engine props table via mod.game.tile_solid)
+
+local function tile_is_solid(id)
+  if id == nil or id < 0 then return false end
+  local v = solid_id[id]
+  if v == nil then
+    v = mod.game.tile_solid(id) and true or false
+    solid_id[id] = v
+  end
+  return v
+end
+
+local function grid_refresh(room)
+  if grid.room == room and grid.ok then return end
+  grid.room = room
+  grid.ok = false
+  local rt = mod.game.room_tiles(room)
+  if not rt or not rt.ids or rt.w < 2 or rt.h < 2 then return end
+  local c11 = mod.game.room_tile(1, 1, room)
+  local c22 = mod.game.room_tile(2, 2, room)
+  if not c11 or not c22 then return end
+  local tw = (c22.global_x or 0) - (c11.global_x or 0)
+  local th = (c22.global_y or 0) - (c11.global_y or 0)
+  if tw <= 0 or th <= 0 then return end
+  grid.w, grid.h, grid.ids = rt.w, rt.h, rt.ids
+  grid.tile_w, grid.tile_h = tw, th
+  grid.origin_x, grid.origin_y = c11.global_x, c11.global_y
+  grid.ok = true
+end
+
+-- col/row are 1-based; cells outside the room count as open (the row below the
+-- map is the death pit - the gap probe is what reports that danger)
+local function solid_cell(col, row)
+  if not grid.ok then return false end
+  if col < 1 or col > grid.w or row < 1 or row > grid.h then return false end
+  return tile_is_solid(grid.ids[(row - 1) * grid.w + col])
+end
+
+local function world_to_cell(x, y)
+  local col = math.floor((x - grid.origin_x) / grid.tile_w) + 1
+  local row = math.floor((y - grid.origin_y) / grid.tile_h) + 1
+  return col, row
+end
+
+-- nav senses for one screen direction: wall = solid at body/head height within
+-- 2 tiles ahead; gap = no ground within 4 rows below the next 2 columns
+local function nav_dir(px, py, dir)
+  if grid.ok then
+    local col, row = world_to_cell(px, py)
+    local wall = false
+    for step = 1, 2 do
+      if solid_cell(col + dir * step, row) or solid_cell(col + dir * step, row - 1) then
+        wall = true
+        break
+      end
+    end
+    local gap = true
+    for step = 1, 2 do
+      local ground = false
+      for below = 1, 4 do
+        if solid_cell(col + dir * step, row + below) then ground = true break end
+      end
+      if ground then gap = false break end
+    end
+    return { wall = wall, gap = gap }
+  end
+  -- fallback: pixel probes (no grid available)
+  local wall = solid_px(px + dir * 14, py) == 1 or solid_px(px + dir * 28, py) == 1
+  local gap = solid_px(px + dir * 16, py + 18) == 0 and solid_px(px + dir * 16, py + 34) == 0
+  return { wall = wall, gap = gap }
+end
+
+-- ----------------------------------------------------------------- context ---
 
 function Bot.build_ctx(ai_player)
   local snap = mod.game.snapshot(ai_player, false)
@@ -20,37 +96,52 @@ function Bot.build_ctx(ai_player)
   local ns = mod.game.native_state()
   local dirx = (p.facing or 1) >= 0 and 1 or -1
   local px, py = p.x, p.y
-  local g_front = solid(px + dirx * 12, py + 14)
-  local below_front = solid(px + dirx * 12, py + 30)
+  local room = p.room_index or 0
+  grid_refresh(room)
+  local nav_r = nav_dir(px, py, 1)
+  local nav_l = nav_dir(px, py, -1)
+  local nav_f = (dirx > 0) and nav_r or nav_l
   local lead = ns.leader or -1
   local leader = 0
   if lead == ai_player then leader = 1 elseif lead == (1 - ai_player) then leader = -1 end
   return {
     snap = snap,
-    my_room = p.room_index or 0,
+    my_room = room,
     enemy_room = snap.enemy.room_index or 0,
-    goal_dir = (ai_player == 0) and 1 or -1,   -- P0 pushes right (trainer logs verify this)
+    goal_dir = (ai_player == 0) and 1 or -1,   -- P0 pushes right (trainer logs verify)
     leader = leader,
+    nav = { [1] = nav_r, [-1] = nav_l },
+    -- probes feed the NN features (facing-relative, mirror-stable)
     probes = {
-      ahead_near = solid(px + dirx * 12, py),
-      ahead_far = solid(px + dirx * 28, py),
+      ahead_near = solid_px(px + dirx * 12, py),
+      ahead_far = solid_px(px + dirx * 28, py),
       hazard_ahead = 0,
-      ground_front = g_front,
-      gap_below = (g_front == 0 and below_front == 0) and 1 or 0,
-      above = solid(px, py - 16),
+      ground_front = solid_px(px + dirx * 12, py + 14),
+      gap_below = (nav_f.gap and 1 or 0),
+      above = solid_px(px, py - 16),
     },
     tick = mod.game.tick_count(),
   }
 end
 
--- stuck scaffold: if x hasn't moved >2px in 90 ticks while trying to move, force a jump
+-- ------------------------------------------------------- per-player state ---
+
 local stuck = { [0] = { x = 0, t = 0 }, [1] = { x = 0, t = 0 } }
+local heur_mem = { [0] = nil, [1] = nil }
+local last_info = { [0] = {}, [1] = {} }
 
 function Bot.reset_scaffold()
   stuck[0].x, stuck[0].t = 0, 0
   stuck[1].x, stuck[1].t = 0, 0
+  heur_mem[0], heur_mem[1] = nil, nil
+  grid.room, grid.ok = -1, false
 end
 
+function Bot.last(ai_player)
+  return last_info[ai_player] or {}
+end
+
+-- stuck scaffold: if x hasn't moved >2px in 90 ticks while trying to move, jump
 function Bot.scaffold(ai_player, ctx, mask)
   local s = stuck[ai_player]
   local x = ctx.snap.player.x
@@ -68,13 +159,24 @@ function Bot.scaffold(ai_player, ctx, mask)
 end
 
 -- Compute this tick's command mask for ai_player without applying it.
+-- policy: NN policy that drives fight-context ticks, or nil for pure heuristic.
 function Bot.decide_mask(ai_player, policy)
   local d = Bot._d
   local ctx = Bot.build_ctx(ai_player)
   if not ctx then return nil, nil end
-  local feats = d.F.extract(ctx)
-  local action = d.Policy.decide(policy, feats)
+  if not heur_mem[ai_player] then
+    heur_mem[ai_player] = d.H.new_mem(ai_player * 7919 + 5)
+  end
+  local action, mode, brain
+  if policy and d.H.is_fight(ctx) then
+    action = d.Policy.decide(policy, d.F.extract(ctx))
+    mode, brain = 'fight', 'nn'
+  else
+    action, mode = d.H.decide(ctx, heur_mem[ai_player])
+    brain = 'heur'
+  end
   local mask = Bot.scaffold(ai_player, ctx, d.A.mask(action, ctx.goal_dir))
+  last_info[ai_player] = { mode = mode, brain = brain, action = action, mask = mask }
   return mask, ctx
 end
 

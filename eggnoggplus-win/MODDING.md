@@ -710,6 +710,13 @@ end
 - Table fields: `active` (always `true`), `ai_player` (`0` or `1` — the player the bot should drive; the opposite of whoever activated the menu button), `training` (`true` for TRAIN AI mode, where the bot drives both players).
 - The flag clears automatically when the game returns to the main menu. It is never armed while an online session is active or pending.
 
+`room_tiles([room_index=0]) -> table | nil, err`
+- Returns one room's full tile grid: `{ room, w, h, ids }` where `ids` is a flat row-major array of tile type ids (`ids[row * w + col + 1]` with 0-based `row`/`col`; `-1` = unreadable cell).
+- Intended for bot/navigation mods — one call replaces hundreds of per-cell `room_tile()` calls. Combine with `room_tile(col, row, room)` (its `global_x`/`global_y`) to map cells to world pixels.
+
+`tile_solid(tile_id) -> bool`
+- Solidity of a tile TYPE id straight from the engine's tile property table (the same data native collision and spawn-safety use).
+
 `simulate_ticks([count=1 [,arg0=0]]) -> ok, ran`
 - Runs the native gameplay update loop immediately without re-entering Lua `on_tick(...)`.
 - Intended for rollback/resimulation workflows after `apply_snapshot(...)`.

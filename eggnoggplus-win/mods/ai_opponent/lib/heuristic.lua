@@ -141,6 +141,12 @@ function H.decide(ctx, mem)
       local sdir = ((sx - me.x) >= 0) and 1 or -1
       local sdx = math.abs(sx - me.x)
       if sdx < 10 then mem.mode = 'grab'; return DOWN, 'grab' end   -- crouch onto it
+      if ctx.route and ctx.route.kind == 'sword' and ctx.route.dir and ctx.route.dir ~= 0 then
+        if ctx.route.jump then
+          return hold(mem, jump_toward(ctx.route.dir, g), 10, 'get_sword')
+        end
+        return move_or_jump(ctx, mem, ctx.route.dir, g, 'get_sword')
+      end
       local nav = ctx.nav and ctx.nav[sdir]
       if (sy and sy < me.y - 24) or (nav and (nav.wall or nav.gap)) then
         return hold(mem, jump_toward(sdir, g), 8, 'get_sword')
@@ -160,6 +166,14 @@ function H.decide(ctx, mem)
     if same_room and en_alive and en.has_sword and adx < 130 then
       mem.mode = 'evade'
       return toward(-edir, g), 'evade'                               -- keep distance
+    end
+    if same_room and en_alive and (not en.has_sword) and adx < 40 and ady < 50 then
+      -- fistfight: nobody has a sword - punch them out instead of shoving
+      if mem.rand() < 0.30 then
+        return hold(mem, jump_toward(edir, g), 5, 'fists')           -- jump punch
+      end
+      mem.mode = 'fists'
+      return attack_toward(edir, g), 'fists'
     end
     -- fall through to navigation (advance while they can't punish)
   end
@@ -188,8 +202,8 @@ function H.decide(ctx, mem)
     end
   else
     dir = edir
-    -- vertical hunt: horizontally aligned but on another floor
-    if adx < 24 and ady > 40 then
+    -- vertical hunt fallback (only when no planned route exists)
+    if not (ctx.route and ctx.route.dir and ctx.route.dir ~= 0) and adx < 24 and ady > 40 then
       if (en.y or 0) < (me.y or 0) then
         return hold(mem, jump_toward(edir, g), 8, 'navigate')   -- enemy above: jump
       end
@@ -200,6 +214,18 @@ function H.decide(ctx, mem)
       elseif ctx.nav and ctx.nav[second] and ctx.nav[second].gap then
         dir = second
       end
+    end
+  end
+  -- planned route (bot-side pathfinder) drives all long-distance movement:
+  -- jumps and drops are explicit plan steps
+  if ctx.route and ctx.route.dir then
+    local rt = ctx.route
+    if rt.jump then
+      local jd = (rt.dir ~= 0) and rt.dir or dir
+      return hold(mem, jump_toward(jd, g), 10, 'navigate')
+    end
+    if rt.dir ~= 0 then
+      return move_or_jump(ctx, mem, rt.dir, g, 'navigate')
     end
   end
   local nav = ctx.nav and ctx.nav[dir]

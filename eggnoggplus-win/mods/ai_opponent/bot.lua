@@ -4,7 +4,7 @@
 -- ticks only. Loaded with mod.dofile("bot.lua"); deps injected via init().
 local Bot = { _d = nil }
 
-function Bot.init(deps)  -- deps = { NN=, A=, F=, Policy=, H= }
+function Bot.init(deps)  -- deps = { NN=, A=, F=, Policy=, H=, P= }
   Bot._d = deps
 end
 
@@ -134,13 +134,86 @@ local ENGAGE_PATIENCE, ENGAGE_FORCE = 30, 90
 local engage = { [0] = { min_dist = nil, t = 0, force = 0, progress = false },
                  [1] = { min_dist = nil, t = 0, force = 0, progress = false } }
 
+local plan = { [0] = nil, [1] = nil }   -- cached routes (pathfinder output)
+
 function Bot.reset_scaffold()
   stuck[0].x, stuck[0].t, stuck[0].hold = 0, 0, 0
   stuck[1].x, stuck[1].t, stuck[1].hold = 0, 0, 0
   heur_mem[0], heur_mem[1] = nil, nil
   engage[0] = { min_dist = nil, t = 0, force = 0, progress = false }
   engage[1] = { min_dist = nil, t = 0, force = 0, progress = false }
+  plan[0], plan[1] = nil, nil
   grid.room, grid.ok = -1, false
+end
+
+-- ------------------------------------------------------- route planning ---
+-- All long-distance movement follows an explicit path over the tile grid
+-- (lib/path.lua): jumps and drops are plan steps, not probe guesses.
+
+local function grid_obj()
+  return { w = grid.w, h = grid.h, solid = function(c, r) return solid_cell(c, r) end }
+end
+
+local function is_dying_state(sid) return sid == 8 or sid == 9 end
+
+local function plan_route(ai_player, ctx)
+  if not grid.ok then plan[ai_player] = nil; return nil end
+  local d = Bot._d
+  local me, en = ctx.snap.player, ctx.snap.enemy
+  local g = ctx.goal_dir
+  local sc, sr = world_to_cell(me.x, me.y)
+
+  -- movement intent mirrors the heuristic's macro logic
+  local kind, gc, gr
+  local en_alive = not is_dying_state(en.state_id or 0)
+  local sx, sy = ctx.snap.nearest_sword_x, ctx.snap.nearest_sword_y
+  if ctx.leader == 1 or not en_alive then
+    kind, gc, gr = 'goal', (g > 0) and grid.w or 1, sr
+  elseif (not me.has_sword) and sx and math.abs(sx - me.x) < 240 and
+         math.abs((sy or me.y) - me.y) < 90 then
+    kind = 'sword'
+    gc, gr = world_to_cell(sx, sy or me.y)
+  elseif ctx.enemy_room ~= ctx.my_room then
+    kind, gc, gr = 'enemy', (ctx.enemy_room > ctx.my_room) and grid.w or 1, sr
+  else
+    kind = 'enemy'
+    gc, gr = world_to_cell(en.x, en.y)
+  end
+
+  local p = plan[ai_player]
+  if (not p) or p.kind ~= kind or p.room ~= ctx.my_room or p.age >= 20 or
+     math.abs(p.gc - gc) > 1 or math.abs(p.gr - gr) > 1 then
+    p = { kind = kind, room = ctx.my_room, gc = gc, gr = gr, age = 0, idx = 1,
+          path = d.P.find(grid_obj(), sc, sr, gc, gr) }
+    plan[ai_player] = p
+  end
+  p.age = p.age + 1
+  if not p.path then return nil end
+
+  local wp = p.path[p.idx]
+  while wp and wp.c == sc and wp.r == sr do   -- waypoint reached
+    p.idx = p.idx + 1
+    wp = p.path[p.idx]
+  end
+  if not wp then return nil end
+  local dir = 0
+  if wp.c > sc then dir = 1 elseif wp.c < sc then dir = -1 end
+  local jump = (wp.r < sr) or (wp.kind == 'jump')
+  return { dir = dir, jump = (jump and (me.grounded and true or false)), kind = kind }
+end
+
+-- remaining waypoints in world pixels (for the path overlay)
+function Bot.route_points(ai_player)
+  local p = plan[ai_player]
+  if not p or not p.path or not grid.ok then return nil end
+  local pts = {}
+  for i = math.max(1, p.idx), #p.path do
+    local wp = p.path[i]
+    pts[#pts + 1] = { x = grid.origin_x + (wp.c - 0.5) * grid.tile_w,
+                      y = grid.origin_y + (wp.r - 0.5) * grid.tile_h }
+  end
+  if #pts == 0 then return nil end
+  return pts
 end
 
 function Bot.last(ai_player)
@@ -178,6 +251,7 @@ function Bot.decide_mask(ai_player, policy)
   local d = Bot._d
   local ctx = Bot.build_ctx(ai_player)
   if not ctx then return nil, nil end
+  ctx.route = plan_route(ai_player, ctx)
   if not heur_mem[ai_player] then
     heur_mem[ai_player] = d.H.new_mem(ai_player * 7919 + 5)
   end

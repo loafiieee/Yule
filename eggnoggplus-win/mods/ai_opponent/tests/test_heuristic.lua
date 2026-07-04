@@ -124,6 +124,25 @@ for t = 1, 40 do
 end
 check(jumped, 'blocked runner starts jumping')
 
+-- planned route: a jump step becomes a held jump in the route direction
+local mrt = H.new_mem(21)
+local ctxr = fake_ctx()
+ctxr.route = { dir = 1, jump = true, kind = 'enemy' }
+local art = H.decide(ctxr, mrt)
+local mrt_mask = A.mask(art, 1)
+check(has(mrt_mask, J) and has(mrt_mask, R), 'route jump step -> held jump toward waypoint')
+
+-- fistfight: both unarmed and close -> punches (attack), never endless shoving
+local fist_n = 0
+for i = 1, 50 do
+  local mff = H.new_mem(700 + i)
+  local aff = H.decide(fake_ctx({ player = { has_sword = false },
+                                  enemy = { x = 120, has_sword = false } }), mff)
+  local mk = A.mask(aff, 1)
+  if has(mk, AT) or has(mk, J) then fist_n = fist_n + 1 end
+end
+check(fist_n >= 45, 'unarmed pair punches it out (' .. fist_n .. '/50)')
+
 -- hold mechanics: a jump hold repeats for several ticks
 local mh = H.new_mem(7)
 local ctxh = fake_ctx({ nav = { [1] = { wall = true, gap = false }, [-1] = { wall = false, gap = false } } })

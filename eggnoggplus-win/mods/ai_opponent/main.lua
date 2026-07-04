@@ -13,6 +13,7 @@ local EVO = mod.dofile("lib/evo.lua")
 local Codec = mod.dofile("lib/codec.lua")
 local H = mod.dofile("lib/heuristic.lua")
 local RW = mod.dofile("lib/reward.lua")
+local P = mod.dofile("lib/path.lua")
 local Bot = mod.dofile("bot.lua")
 local Trainer = mod.dofile("trainer.lua")
 local HT = mod.dofile("htrainer.lua")
@@ -60,7 +61,7 @@ end
 Policy.init(NN)
 EVO.init(NN)
 H.init({ NN = NN })
-Bot.init({ NN = NN, A = A, F = F, Policy = Policy, H = H })
+Bot.init({ NN = NN, A = A, F = F, Policy = Policy, H = H, P = P })
 Trainer.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
                RW = RW, SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, pick_map = pick_map,
                curriculum_size = curriculum_size })
@@ -181,9 +182,41 @@ mod.on_tick(function()
   Bot.drive(active_player, play_policy)
 end)
 
+-- draw the routes the AI wants to take (world -> screen via the game camera)
+local function draw_paths(players)
+  local cam = mod.game.camera()
+  if not cam or not cam.w or cam.w <= 1 then return end
+  local sw, sh = mod.ui.screen_size()
+  if not sw or sw <= 0 then return end
+  local scale = math.min(sw / cam.w, sh / cam.h)
+  mod.ui.begin_overlay()
+  for _, pl in ipairs(players) do
+    local pts = Bot.route_points(pl)
+    if pts and #pts >= 1 then
+      local col = (pl == 0) and { 0.30, 1.00, 0.50, 0.85 } or { 1.00, 0.55, 0.30, 0.85 }
+      local px, py
+      for _, pt in ipairs(pts) do
+        local sx = sw * 0.5 + (pt.x - cam.x) * scale
+        local sy = sh * 0.5 + (pt.y - cam.y) * scale
+        if px then mod.ui.line(px, py, sx, sy, { line_w = 2, color = col }) end
+        px, py = sx, sy
+      end
+      if px then mod.ui.rect(px - 3, py - 3, 6, 6, { color = col }) end
+    end
+  end
+  mod.ui.end_overlay()
+end
+
 mod.on_frame(function()
   local m = mod.game.ai_match()
   if not m then return end
+  if config.get("show_paths", true) and mod.ui.is_state("game") then
+    if m.training then
+      draw_paths({ 0, 1 })
+    else
+      draw_paths({ m.ai_player })
+    end
+  end
   if m.training then
     Trainer.overlay()
     return

@@ -16,14 +16,33 @@ local Bot = mod.dofile("bot.lua")
 local Trainer = mod.dofile("trainer.lua")
 local HT = mod.dofile("htrainer.lua")
 
+-- Random map from the training pool. banned_maps (config) is a comma list of
+-- selector indices to exclude - default bans vanilla 5 (selector 4, the
+-- multi-score eggnog map, a poor fencing teacher).
+local function pick_map(rand)
+  local total = math.max(1, tonumber(mod.game.map_count()) or 1)
+  local banned = {}
+  for tok in tostring(config.get("banned_maps", "4") or ""):gmatch("[^,%s]+") do
+    local n = tonumber(tok)
+    if n then banned[n] = true end
+  end
+  for _ = 1, 24 do
+    local sel = math.floor(rand() * total)
+    if sel >= total then sel = total - 1 end
+    if not banned[sel] then return sel end
+  end
+  return 0
+end
+
 Policy.init(NN)
 EVO.init(NN)
 H.init({ NN = NN })
 Bot.init({ NN = NN, A = A, F = F, Policy = Policy, H = H })
 Trainer.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
-               SIZES = { F.N_INPUTS, 32, 16, A.COUNT } })
+               SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, pick_map = pick_map })
 HT.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
-          SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, CKPT_HARD = Trainer.CKPT_KEYS.hard })
+          SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, CKPT_HARD = Trainer.CKPT_KEYS.hard,
+          pick_map = pick_map })
 
 local human_train = false   -- set by the TRAIN VS ME menu mode, cleared at match end
 

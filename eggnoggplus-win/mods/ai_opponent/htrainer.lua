@@ -173,10 +173,7 @@ function HT.tick(ai_player)
         s.human_points = s.human_points + 1
       end
     end
-    local total = math.max(1, tonumber(mod.game.map_count()) or 1)
-    local sel = math.floor(s.rand() * total)
-    if sel >= total then sel = total - 1 end
-    mod.game.start_match(sel)
+    mod.game.start_match(d.pick_map(s.rand))
     s.led = led_view(ai_player)   -- resync across the hop
     d.Bot.reset_scaffold()
     if s.policy then d.Policy.reset(s.policy) end

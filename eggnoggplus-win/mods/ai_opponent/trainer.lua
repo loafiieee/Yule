@@ -1,296 +1,207 @@
--- Self-play neuroevolution trainer. Runs inside a TRAIN AI match: every gameplay
--- tick it fast-forwards up to train_ticks_per_frame sim ticks (set both players'
--- inputs -> simulate_ticks(1)), scores episodes, and evolves the population.
+-- Self-play trainer ("TRAIN AI"): champion-vs-challenger duels, fast-forwarded.
 --
--- Architecture (hybrid arbiter): the scripted heuristic drives navigation and
--- unarmed play for BOTH fighters; the genome's NN drives only fight-context
--- ticks. Fitness differences therefore concentrate on combat skill.
+-- Scheme ((1+1)-style evolution, per user design): keep ONE champion net. Each
+-- match, a challenger = mutated copy of the champion fights it in a FULL match
+-- (played to an actual map win, like a real game). The winner survives as the
+-- new champion and becomes the template for the next mutation. After every
+-- match the trainer hops to a random map from the training pool (banned_maps
+-- config excludes poor teachers like the eggnog points map).
 --
--- Curriculum: half the sparring episodes are against the pure scripted fighter,
--- half against other genomes. Every BENCH_EVERY generations the best genome
--- plays a benchmark series vs the scripted fighter; the kill-based winrate is
--- the objective quality meter, and it auto-captures difficulty checkpoints:
---   winrate >= 0.35 (once) -> ckpt easy
---   winrate >= 0.50        -> nn_ready flag (play mode starts trusting the NN)
---   winrate >= 0.55 (once) -> ckpt normal
---   best-of-gen (always)   -> ckpt hard
+-- Scoring per side = the four unambiguous combat-ledger events (native
+-- player_die detour; goal dives pre-classified, never deaths):
+--   kill +120   death -60   point scored +300   point conceded -100
+-- plus a stuck punishment: -8 whenever a fighter moves less than 12px over a
+-- 120-tick window (covers pits, corners, and refusing to jump).
+-- Match winner = the ledger's match-end winner; on timeout, the higher side
+-- score (ties keep the champion).
 --
--- Anti-exploit fitness notes: kill +120 / death -60 (even fights are +EV);
--- episodes continue through kills and end on map score / 2-room push / timeout;
--- sword lose/regain cancels over throw cycles; per-tick deltas clamped so
--- respawn teleports can't be farmed.
+-- Every BENCH_EVERY matches the champion plays the scripted fighter; the
+-- kill+point winrate is the quality meter and auto-captures checkpoints:
+--   >= 0.35 (once) easy | >= 0.50 nn_ready | >= 0.55 (once) normal
+-- The hard checkpoint is always the current champion.
 local Trainer = {}
 local d = nil
 
-local POP_N = 32
-local EPISODE_TICKS = 1800
-local EPISODES_PER_GENOME = 2   -- one per side
-local SAVE_TOP_N = 8            -- resumable population seeds kept in storage
-local MUT = { elites = 4, mut_rate = 0.15, mut_scale = 0.25 }
-local BENCH_EVERY = 10
-local BENCH_EPISODES = 4
+local MATCH_TIMEOUT = 7200      -- 2 minutes of game time safety cap
+local BENCH_EVERY = 20          -- duels between benchmark series
+local BENCH_MATCHES = 2
+local MUT_RATE, MUT_SCALE = 0.15, 0.20
+local HEAVY_CHANCE, HEAVY_RATE, HEAVY_SCALE = 0.10, 0.40, 0.45
+local STUCK_WINDOW, STUCK_MOVE, STUCK_PENALTY = 120, 12, -8
+local RECENT_CHAMPS = 8         -- seeds kept for TRAIN VS ME to build on
 
--- v2 keys: goal-mirrored feature/action semantics; older nets are incompatible.
-local POP_KEY = "trainer_pop2"
-local GEN_KEY = "trainer_gen2"
+local POP_KEY = "trainer_pop2"  -- shared with htrainer.lua
 Trainer.CKPT_KEYS = { easy = "ckpt2_easy", normal = "ckpt2_normal", hard = "ckpt2_hard" }
 
-local R = {
-  KILL = 120, DEATH = -60,
-  LEADER_TICK = 0.02, TIME_TICK = -0.01,
-  PROGRESS = 0.05, CLOSING = 0.02, DELTA_CLAMP = 8,
-  ROOM = 30, SCORE_WIN = 300, SCORE_LOSS = -150,
-}
--- Kill/death/score detection uses the framework's combat ledger (native
--- player_die detour; goal dives pre-classified) - no state-machine guessing.
--- No sword/disarm shaping: throws and pickups are indistinguishable from
--- disarms and only add noise.
+local R = { KILL = 120, DEATH = -60, SCORE = 300, OPP_SCORE = -100 }
 
-local st = nil  -- training session state (nil when idle)
+local st = nil
 
 function Trainer.init(deps) d = deps end
 
-local function load_seed_nets()
-  local nets = {}
+local function load_champion()
   local dump = d.Codec.load(storage, POP_KEY)
   if dump then
     for chunk in dump:gmatch("([^\n]+)") do
       local net = d.NN.deserialize(chunk)
-      if net then nets[#nets + 1] = net end
+      if net then
+        mod.log("trainer: champion resumed from storage")
+        return net
+      end
     end
   end
-  return nets
+  mod.log("trainer: fresh random champion")
+  return d.NN.new(d.SIZES, os.time() % 100000)
 end
 
 local function fresh_session()
-  local gen = tonumber(storage.get(GEN_KEY, 0)) or 0
-  local seeds = load_seed_nets()
-  local pop
-  if #seeds >= 2 then
-    local rand = d.NN.rng_new(os.time() % 100000 + 3)
-    pop = { nets = {}, gen = gen, sizes = d.SIZES }
-    for i = 1, math.min(#seeds, POP_N) do pop.nets[i] = seeds[i] end
-    while #pop.nets < POP_N do
-      local base = seeds[1 + (#pop.nets % #seeds)]
-      pop.nets[#pop.nets + 1] = d.NN.mutate(base, 0.3, 0.3, rand)
-    end
-    mod.log("trainer: resumed population from storage (gen " .. gen .. ")")
-  else
-    pop = d.EVO.new(POP_N, d.SIZES, os.time() % 100000)
-    mod.log("trainer: fresh random population")
-  end
+  local champ = load_champion()
   return {
-    pop = pop,
+    champ = champ,
+    champ_age = 0,                 -- matches survived
+    recent = { d.NN.serialize(champ) },
     rand = d.NN.rng_new(os.time() % 100000 + 17),
-    base_blob = nil,
-    fitness = {},
-    pair_i = 1,          -- genome under evaluation
-    ep_num = 1,          -- 1..EPISODES_PER_GENOME for that genome
-    ep = nil,
-    bench = nil,         -- active benchmark series
+    matches = tonumber(storage.get("duel_matches", 0)) or 0,
+    ch_wins = 0,                   -- challenger takeovers this session
+    bench = nil,
     bench_winrate = tonumber(storage.get("bench_winrate", -1)) or -1,
     paused = false,
-    best_fit = nil, mean_fit = nil,
-    ticks_done = 0, kills_seen = 0,
+    ticks_done = 0,
     last_mask = { [0] = 0, [1] = 0 },
-    goal_logged = false,
+    match = nil,
   }
 end
 
-local function new_policy(net, seed)
-  return d.Policy.new(net, { react_delay = 0, epsilon = 0.05, seed = seed })
-end
-
-local function begin_episode(s)
-  if s.base_blob then mod.game.apply_full_state_blob(s.base_blob) end
-  d.Bot.reset_scaffold()
-  local gp, pa, pb
-  if s.bench then
-    gp = (s.bench.done % 2 == 0) and 0 or 1
-    pa = new_policy(s.pop.nets[1], 4242 + s.bench.done)   -- elite (copy of last gen's best)
-    pb = nil                                              -- scripted fighter
-  else
-    gp = (s.ep_num % 2 == 1) and 0 or 1
-    pa = new_policy(s.pop.nets[s.pair_i], s.pair_i * 31 + s.pop.gen * 7 + s.ep_num)
-    if s.rand() < 0.5 then
-      pb = nil                                            -- curriculum: scripted fighter
-    else
-      local oi = 1 + math.floor(s.rand() * #s.pop.nets)
-      if oi > #s.pop.nets then oi = #s.pop.nets end
-      if oi == s.pair_i then oi = (oi % #s.pop.nets) + 1 end
-      pb = new_policy(s.pop.nets[oi], oi * 37 + s.pop.gen * 11 + s.ep_num)
-    end
-  end
-  local led = mod.game.combat_ledger()
-  s.ep = {
-    gp = gp,
-    goal = (gp == 0) and 1 or -1,
-    a = pa, b = pb,
-    fit = 0,
-    tick = 0,
-    kills_me = 0, kills_op = 0,
-    -- ledger baselines (monotonic C counters; blob resets don't rewind them)
-    led_ends = led.match_ends,
-    led_me = (gp == 0) and led.deaths0 or led.deaths1,
-    led_op = (gp == 0) and led.deaths1 or led.deaths0,
-    led_sme = (gp == 0) and led.scores0 or led.scores1,
-    led_sop = (gp == 0) and led.scores1 or led.scores0,
-    start_room = nil, prev_x = nil, prev_dist = nil,
-  }
-end
-
-
--- One sim tick of the current episode. Returns true when the episode ended.
-local function episode_step(s)
-  local e = s.ep
-  local gp = e.gp
-  local mask_me = d.Bot.decide_mask(gp, e.a)
-  local mask_op = d.Bot.decide_mask(1 - gp, e.b)
-  if not mask_me or not mask_op then return true end  -- lost gameplay state
-  s.last_mask[gp], s.last_mask[1 - gp] = mask_me, mask_op
-  mod.game.set_input(gp, mask_me, 1, true)
-  mod.game.set_input(1 - gp, mask_op, 1, true)
-  mod.game.simulate_ticks(1)
-  e.tick = e.tick + 1
-
-  local snap = mod.game.snapshot(gp, false)
-  if not snap or not snap.in_game or not snap.player or not snap.enemy then return true end
-  local me, en = snap.player, snap.enemy
-  local ns = mod.game.native_state()
-
-  if not e.start_room then
-    e.start_room = me.room_index or 0
-  end
-
-  local ended = false
-
-  -- ledger deltas: kills, deaths, and scoring dives (all pre-classified in C)
-  local led = mod.game.combat_ledger()
-  local led_me = (gp == 0) and led.deaths0 or led.deaths1
-  local led_op = (gp == 0) and led.deaths1 or led.deaths0
-  local led_sme = (gp == 0) and led.scores0 or led.scores1
-  local led_sop = (gp == 0) and led.scores1 or led.scores0
-  if led_op > e.led_op then
-    local n = led_op - e.led_op
-    e.fit = e.fit + R.KILL * n
-    e.kills_me = e.kills_me + n
-    s.kills_seen = s.kills_seen + n
-    if not s.goal_logged then
-      s.goal_logged = true
-      mod.log(string.format("trainer: first kill sample gp=%d me.x=%.0f enemy.x=%.0f leader=%d",
-                            gp, me.x, en.x, ns.leader or -1))
-    end
-  end
-  if led_me > e.led_me then
-    local n = led_me - e.led_me
-    e.fit = e.fit + R.DEATH * n
-    e.kills_op = e.kills_op + n
-  end
-  local scored = false
-  if led_sme > e.led_sme then
-    e.fit = e.fit + R.SCORE_WIN * (led_sme - e.led_sme)
-    scored = true
-  end
-  if led_sop > e.led_sop then
-    e.fit = e.fit + R.SCORE_LOSS * (led_sop - e.led_sop)
-    scored = true
-  end
-  e.led_me, e.led_op = led_me, led_op
-  e.led_sme, e.led_sop = led_sme, led_sop
-
-  -- leader time + time pressure
-  if (ns.leader or -1) == gp then e.fit = e.fit + R.LEADER_TICK end
-  e.fit = e.fit + R.TIME_TICK
-
-  -- per-tick goal progress (wrong-way running punished; respawn teleports clamped)
-  if e.prev_x then
-    local dx = (me.x - e.prev_x) * e.goal
-    if dx > R.DELTA_CLAMP then dx = R.DELTA_CLAMP elseif dx < -R.DELTA_CLAMP then dx = -R.DELTA_CLAMP end
-    e.fit = e.fit + R.PROGRESS * dx
-  end
-  e.prev_x = me.x
-
-  -- engagement: closing on the opponent in the same room
-  local room_now = me.room_index or e.start_room or 0
-  local enemy_room = en.room_index or room_now
-  if room_now == enemy_room then
-    local dist = math.abs(en.x - me.x)
-    if e.prev_dist then
-      local closing = e.prev_dist - dist
-      if closing > R.DELTA_CLAMP then closing = R.DELTA_CLAMP
-      elseif closing < -R.DELTA_CLAMP then closing = -R.DELTA_CLAMP end
-      e.fit = e.fit + R.CLOSING * closing
-    end
-    e.prev_dist = dist
-  else
-    e.prev_dist = nil
-  end
-
-  -- terminal conditions: match end, a 2-room push, or timeout. (Scoring dives
-  -- in points modes do NOT end the episode - play continues through respawns.
-  -- The final dive already paid its score event, so no extra award here unless
-  -- the match ended without one. begin_episode's blob restore clears the end
-  -- countdown, so the native menu switch never fires during training.)
-  if led.match_ends > e.led_ends then
-    if not scored then
-      local winner = (led.last_winner and led.last_winner >= 0) and led.last_winner or snap.leader_index
-      if winner == gp then e.fit = e.fit + R.SCORE_WIN else e.fit = e.fit + R.SCORE_LOSS end
-    end
-    ended = true
-  elseif (snap.end_countdown or 0) > 0 then
-    if not scored then
-      if snap.leader_index == gp then e.fit = e.fit + R.SCORE_WIN
-      else e.fit = e.fit + R.SCORE_LOSS end
-    end
-    ended = true
-  end
-  local room_prog = (room_now - (e.start_room or room_now)) * e.goal
-  if math.abs(room_now - (e.start_room or room_now)) >= 2 then ended = true end
-  if e.tick >= EPISODE_TICKS then ended = true end
-  if ended then
-    e.fit = e.fit + R.ROOM * room_prog
-  end
-  return ended
-end
-
-function Trainer.save_checkpoints(s)
-  local fit = s.fitness
-  local order = {}
-  for i = 1, #s.pop.nets do order[i] = i end
-  table.sort(order, function(x, y) return (fit[x] or 0) > (fit[y] or 0) end)
-  local best = s.pop.nets[order[1]]
-  d.Codec.store(storage, Trainer.CKPT_KEYS.hard, d.NN.serialize(best))
-  local dump = {}
-  for i = 1, math.min(SAVE_TOP_N, #order) do
-    dump[i] = d.NN.serialize(s.pop.nets[order[i]])
-  end
-  d.Codec.store(storage, POP_KEY, table.concat(dump, "\n"))
-  storage.set(GEN_KEY, tostring(s.pop.gen))
+local function save_progress(s)
+  d.Codec.store(storage, Trainer.CKPT_KEYS.hard, d.NN.serialize(s.champ))
+  d.Codec.store(storage, POP_KEY, table.concat(s.recent, "\n"))
+  storage.set("duel_matches", tostring(s.matches))
   storage.save()
 end
 
--- benchmark series finished: record winrate, auto-capture checkpoints
+local function remember_champion(s)
+  table.insert(s.recent, 1, d.NN.serialize(s.champ))
+  while #s.recent > RECENT_CHAMPS do table.remove(s.recent) end
+end
+
+local function mutate_challenger(s)
+  if s.rand() < HEAVY_CHANCE then
+    return d.NN.mutate(s.champ, HEAVY_RATE, HEAVY_SCALE, s.rand)
+  end
+  return d.NN.mutate(s.champ, MUT_RATE, MUT_SCALE, s.rand)
+end
+
+-- begin one match. kind = 'duel' (challenger vs champion) or 'bench'
+-- (champion vs the scripted fighter).
+local function begin_match(s, kind)
+  local led = mod.game.combat_ledger()
+  local m = {
+    kind = kind,
+    t = 0,
+    led = led,
+    score = { [0] = 0, [1] = 0 },
+    stuck = { [0] = { x = nil, t0 = 0 }, [1] = { x = nil, t0 = 0 } },
+    pol = {},
+  }
+  if kind == 'bench' then
+    m.side = s.bench.n % 2                       -- champion's side
+    m.pol[m.side] = d.Policy.new(s.champ, { react_delay = 0, epsilon = 0, seed = 900 + s.bench.n })
+    m.pol[1 - m.side] = nil                      -- scripted fighter
+  else
+    s.challenger = mutate_challenger(s)
+    m.side = s.matches % 2                       -- challenger's side
+    m.pol[m.side] = d.Policy.new(s.challenger, { react_delay = 0, epsilon = 0.03, seed = s.matches * 7 + 1 })
+    m.pol[1 - m.side] = d.Policy.new(s.champ, { react_delay = 0, epsilon = 0.03, seed = s.matches * 7 + 2 })
+  end
+  d.Bot.reset_scaffold()
+  s.match = m
+end
+
+-- one fast-forwarded sim tick; returns winner player index, -1 for a
+-- score-decided timeout, or nil while the match continues
+local function match_step(s)
+  local m = s.match
+  local mask0 = d.Bot.decide_mask(0, m.pol[0])
+  local mask1 = d.Bot.decide_mask(1, m.pol[1])
+  if not mask0 or not mask1 then return -1 end
+  s.last_mask[0], s.last_mask[1] = mask0, mask1
+  mod.game.set_input(0, mask0, 1, true)
+  mod.game.set_input(1, mask1, 1, true)
+  mod.game.simulate_ticks(1)
+  m.t = m.t + 1
+
+  -- ledger deltas -> per-side scores
+  local led = mod.game.combat_ledger()
+  local d0 = led.deaths0 - m.led.deaths0
+  local d1 = led.deaths1 - m.led.deaths1
+  local s0 = led.scores0 - m.led.scores0
+  local s1 = led.scores1 - m.led.scores1
+  if d0 > 0 then m.score[0] = m.score[0] + R.DEATH * d0; m.score[1] = m.score[1] + R.KILL * d0 end
+  if d1 > 0 then m.score[1] = m.score[1] + R.DEATH * d1; m.score[0] = m.score[0] + R.KILL * d1 end
+  if s0 > 0 then m.score[0] = m.score[0] + R.SCORE * s0; m.score[1] = m.score[1] + R.OPP_SCORE * s0 end
+  if s1 > 0 then m.score[1] = m.score[1] + R.SCORE * s1; m.score[0] = m.score[0] + R.OPP_SCORE * s1 end
+  local match_ended = led.match_ends > m.led.match_ends
+  local winner = led.last_winner
+  m.led = led
+
+  -- stuck punishment: barely moved over the window
+  local snap = mod.game.snapshot(0, false)
+  if snap and snap.in_game and snap.player and snap.enemy then
+    local x = { [0] = snap.player.x, [1] = snap.enemy.x }
+    for pi = 0, 1 do
+      local sk = m.stuck[pi]
+      if sk.x == nil then
+        sk.x, sk.t0 = x[pi], m.t
+      elseif m.t - sk.t0 >= STUCK_WINDOW then
+        if math.abs(x[pi] - sk.x) < STUCK_MOVE then
+          m.score[pi] = m.score[pi] + STUCK_PENALTY
+        end
+        sk.x, sk.t0 = x[pi], m.t
+      end
+    end
+    if match_ended and (winner == nil or winner < 0) then
+      winner = snap.leader_index
+    end
+  end
+
+  if match_ended then
+    if winner == nil or winner < 0 then
+      winner = (m.score[0] >= m.score[1]) and 0 or 1
+    end
+    return winner
+  end
+  if m.t >= MATCH_TIMEOUT then
+    if m.score[0] == m.score[1] then return -1 end
+    return (m.score[0] > m.score[1]) and 0 or 1
+  end
+  return nil
+end
+
+local function hop_map(s)
+  mod.game.start_match(d.pick_map(s.rand))
+end
+
 local function finish_benchmark(s)
   local b = s.bench
-  local total = b.kills_me + b.kills_op
+  local total = b.my + b.op
   local wr = 0.5
-  if total > 0 then wr = b.kills_me / total end
+  if total > 0 then wr = b.my / total end
   s.bench_winrate = wr
   storage.set("bench_winrate", string.format("%.3f", wr))
-  mod.log(string.format("trainer: benchmark gen %d  winrate vs scripted %.2f (%d-%d)",
-                        s.pop.gen, wr, b.kills_me, b.kills_op))
-  local elite = d.NN.serialize(s.pop.nets[1])
+  mod.log(string.format("trainer: benchmark after %d duels  winrate vs scripted %.2f (%d-%d)",
+                        s.matches, wr, b.my, b.op))
+  local champ = d.NN.serialize(s.champ)
   if wr >= 0.35 and storage.get("ckpt_easy_done", "0") ~= "1" then
-    d.Codec.store(storage, Trainer.CKPT_KEYS.easy, elite)
+    d.Codec.store(storage, Trainer.CKPT_KEYS.easy, champ)
     storage.set("ckpt_easy_done", "1")
     mod.log("trainer: EASY checkpoint captured")
   end
   if wr >= 0.50 and storage.get("nn_ready", "0") ~= "1" then
     storage.set("nn_ready", "1")
-    mod.log("trainer: NN combat brain now beats the scripted fighter - marked ready for play")
+    mod.log("trainer: champion beats the scripted fighter - NN marked ready for play")
   end
   if wr >= 0.55 and storage.get("ckpt_normal_done", "0") ~= "1" then
-    d.Codec.store(storage, Trainer.CKPT_KEYS.normal, elite)
+    d.Codec.store(storage, Trainer.CKPT_KEYS.normal, champ)
     storage.set("ckpt_normal_done", "1")
     mod.log("trainer: NORMAL checkpoint captured")
   end
@@ -298,64 +209,53 @@ local function finish_benchmark(s)
   s.bench = nil
 end
 
-local function finish_episode(s)
-  local e = s.ep
-  if s.bench then
-    s.bench.kills_me = s.bench.kills_me + e.kills_me
-    s.bench.kills_op = s.bench.kills_op + e.kills_op
-    s.bench.done = s.bench.done + 1
-    if s.bench.done >= BENCH_EPISODES then finish_benchmark(s) end
-    begin_episode(s)
-    return
-  end
-  s.fitness[s.pair_i] = (s.fitness[s.pair_i] or 0) + e.fit
-  s.ep_num = s.ep_num + 1
-  if s.ep_num > EPISODES_PER_GENOME then
-    s.ep_num = 1
-    s.pair_i = s.pair_i + 1
-  end
-  if s.pair_i > #s.pop.nets then
-    local best, sum = nil, 0
-    for i = 1, #s.pop.nets do
-      local f = s.fitness[i] or 0
-      if not best or f > best then best = f end
-      sum = sum + f
+local function finish_match(s, winner)
+  local m = s.match
+  if m.kind == 'bench' then
+    -- kills+points decide the benchmark: positive events for each side
+    local champ_side = m.side
+    s.bench.my = s.bench.my + math.max(0, m.score[champ_side])
+    s.bench.op = s.bench.op + math.max(0, m.score[1 - champ_side])
+    s.bench.n = s.bench.n + 1
+    if s.bench.n >= BENCH_MATCHES then finish_benchmark(s) end
+  else
+    local ch_side = m.side
+    local challenger_won = (winner == ch_side)
+    if winner == -1 then challenger_won = false end   -- ties keep the champion
+    if challenger_won then
+      s.champ = s.challenger
+      s.champ_age = 0
+      s.ch_wins = s.ch_wins + 1
+      remember_champion(s)
+    else
+      s.champ_age = s.champ_age + 1
     end
-    s.best_fit, s.mean_fit = best, sum / #s.pop.nets
-    Trainer.save_checkpoints(s)
-    mod.log(string.format("trainer: gen %d done  best %.1f  mean %.1f  kills so far %d",
-                          s.pop.gen, s.best_fit, s.mean_fit, s.kills_seen))
-    s.pop = d.EVO.next_gen(s.pop, s.fitness, MUT, s.rand)
-    storage.set(GEN_KEY, tostring(s.pop.gen))
-    s.fitness = {}
-    s.pair_i = 1
-    s.ep_num = 1
-    if s.pop.gen % BENCH_EVERY == 0 then
-      s.bench = { done = 0, kills_me = 0, kills_op = 0 }
+    s.matches = s.matches + 1
+    save_progress(s)
+    if s.matches % BENCH_EVERY == 0 then
+      s.bench = { n = 0, my = 0, op = 0 }
     end
   end
-  begin_episode(s)
+  hop_map(s)
+  begin_match(s, s.bench and 'bench' or 'duel')
 end
 
 function Trainer.tick()
   if not st then st = fresh_session() end
-  if st.paused then
+  local s = st
+  if s.paused then
     mod.game.set_input(0, 0, 1, true)
     mod.game.set_input(1, 0, 1, true)
     return
   end
-  if not st.base_blob then
-    local blob = mod.game.full_state_blob()
-    if not blob then return end
-    st.base_blob = blob
-    begin_episode(st)
-  end
+  if not s.match then begin_match(s, 'duel') end
   local budget = tonumber(config.get("train_ticks_per_frame", 120)) or 120
   if budget < 1 then budget = 1 end
   if budget > 600 then budget = 600 end
   for _ = 1, budget do
-    if episode_step(st) then finish_episode(st) end
-    st.ticks_done = st.ticks_done + 1
+    local winner = match_step(s)
+    if winner ~= nil then finish_match(s, winner) end
+    s.ticks_done = s.ticks_done + 1
   end
   -- hold the last masks through the visible native tick after on_tick returns
   mod.game.set_input(0, st.last_mask[0], 1, true)
@@ -364,39 +264,37 @@ end
 
 function Trainer.overlay()
   if not st then return end
+  local s = st
+  local m = s.match
   mod.ui.begin_overlay()
-  mod.ui.rect(20, 20, 344, 164, { color = { 0.03, 0.04, 0.06, 0.85 } })
-  mod.ui.text_at("TRAIN AI  gen " .. tostring(st.pop.gen), 32, 34, 1.0, 1.0, 0.8, 0.6)
-  local what
-  if st.bench then
-    what = "BENCHMARK " .. (st.bench.done + 1) .. "/" .. BENCH_EPISODES
-  else
-    what = string.format("genome %d/%d side %d", st.pair_i, #st.pop.nets, st.ep and st.ep.gp or 0)
-  end
-  mod.ui.text_at(what .. "  ep tick " .. tostring(st.ep and st.ep.tick or 0), 32, 56, 0.9, 0.9, 0.9, 0.9)
-  mod.ui.text_at(string.format("best %.1f  mean %.1f", st.best_fit or 0, st.mean_fit or 0),
+  mod.ui.rect(20, 20, 360, 164, { color = { 0.03, 0.04, 0.06, 0.85 } })
+  mod.ui.text_at("TRAIN AI  duel " .. tostring(s.matches), 32, 34, 1.0, 1.0, 0.8, 0.6)
+  local what = "duel"
+  if m and m.kind == 'bench' then what = "BENCHMARK " .. (s.bench and (s.bench.n + 1) or 1) .. "/" .. BENCH_MATCHES end
+  mod.ui.text_at(string.format("%s  match tick %d/%d", what, m and m.t or 0, MATCH_TIMEOUT),
+                 32, 56, 0.9, 0.9, 0.9, 0.9)
+  mod.ui.text_at(string.format("champion age %d  takeovers %d  score %d : %d",
+                               s.champ_age, s.ch_wins,
+                               m and m.score[0] or 0, m and m.score[1] or 0),
                  32, 74, 0.9, 0.9, 0.9, 0.9)
   local wrtxt = "not yet measured"
-  if st.bench_winrate and st.bench_winrate >= 0 then
-    wrtxt = string.format("%.0f%%%s", st.bench_winrate * 100,
+  if s.bench_winrate and s.bench_winrate >= 0 then
+    wrtxt = string.format("%.0f%%%s", s.bench_winrate * 100,
                           (storage.get("nn_ready", "0") == "1") and "  (NN live in play)" or "")
   end
   mod.ui.text_at("vs scripted: " .. wrtxt, 32, 92, 0.9, 0.6, 1.0, 0.7)
-  mod.ui.text_at(string.format("sim ticks %d   kills %d", st.ticks_done, st.kills_seen),
-                 32, 110, 0.9, 0.7, 0.7, 0.7)
-  if mod.ui.button_at("train_pause", st.paused and "RESUME" or "PAUSE", 32, 128, 90, 26) then
-    st.paused = not st.paused
+  mod.ui.text_at("sim ticks " .. tostring(s.ticks_done), 32, 110, 0.9, 0.7, 0.7, 0.7)
+  if mod.ui.button_at("train_pause", s.paused and "RESUME" or "PAUSE", 32, 128, 90, 26) then
+    s.paused = not s.paused
   end
   if mod.ui.button_at("train_save", "SAVE", 130, 128, 70, 26) then
-    if next(st.fitness) then Trainer.save_checkpoints(st) end
+    save_progress(s)
   end
   mod.ui.end_overlay()
 end
 
--- Called when the TRAIN match ends (back to menu): persist progress and drop the
--- session so the next TRAIN run captures a fresh base state for its map.
 function Trainer.match_ended()
-  if st and next(st.fitness) then Trainer.save_checkpoints(st) end
+  if st then save_progress(st) end
   st = nil
 end
 

@@ -9009,15 +9009,18 @@ static int lua_game_map_count(lua_State* Ls) {
 }
 
 /* combat_ledger() - monotonic counters from the native player_die detour:
- * deaths0/deaths1 (real deaths per player index; match-winning pit dives are
- * NOT counted), match_ends, last_winner (player index or -1). */
+ * deaths0/deaths1 (real deaths only), scores0/scores1 (goal dives that scored
+ * a point, incl. the match-winning one), match_ends, last_winner (player
+ * index or -1). */
 static int lua_game_combat_ledger(lua_State* Ls) {
-    uint32_t d0 = 0, d1 = 0, ends = 0;
+    uint32_t d0 = 0, d1 = 0, s0 = 0, s1 = 0, ends = 0;
     int winner = -1;
-    hooks_get_combat_ledger(&d0, &d1, &ends, &winner);
+    hooks_get_combat_ledger(&d0, &d1, &s0, &s1, &ends, &winner);
     lua_newtable(Ls);
     lua_push_field_number(Ls, "deaths0", (lua_Number)d0);
     lua_push_field_number(Ls, "deaths1", (lua_Number)d1);
+    lua_push_field_number(Ls, "scores0", (lua_Number)s0);
+    lua_push_field_number(Ls, "scores1", (lua_Number)s1);
     lua_push_field_number(Ls, "match_ends", (lua_Number)ends);
     lua_push_field_int(Ls, "last_winner", winner);
     return 1;

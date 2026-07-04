@@ -736,16 +736,20 @@ static volatile int g_ai_match_player = 1;
 static volatile int g_ai_match_training = 0;
 
 /* --- combat ledger --------------------------------------------------------
- * Authoritative kill/death counts from a detour on the engine's player_die
- * (0x422830) - the single native kill path. Winning a map ALSO routes the
- * winner through player_die (you win by leaping into the pit), so the detour
- * classifies at the source: if the call flips the end countdown on, it was
- * the match-winning dive, not a death. Counters are monotonic; Lua diffs. */
+ * Authoritative combat counts from a detour on the engine's player_die
+ * (0x422830) - the single native kill path. Goal dives ALSO route through
+ * player_die (winning a swords map, scoring a point in eggnog/points modes),
+ * so the detour classifies at the source by what the call itself changed:
+ *   score incremented        -> scoring dive (scores[] event, never a death)
+ *   end countdown flipped on -> match end (last_winner)
+ *   neither                  -> a real death
+ * Counters are monotonic; Lua consumers diff them. */
 #define ADDR_PLAYER_DIE 0x422830u
 typedef void (__cdecl *fn_player_die_t)(int);
 static Detour g_player_die_detour;
 static fn_player_die_t p_player_die_trampoline = NULL;
 static volatile uint32_t g_ledger_deaths[2] = { 0, 0 };
+static volatile uint32_t g_ledger_scores[2] = { 0, 0 };
 static volatile uint32_t g_ledger_match_ends = 0;
 static volatile int g_ledger_last_winner = -1;
 
@@ -10723,9 +10727,12 @@ void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training) 
 
 static void __cdecl hooked_player_die(int player_ptr) {
     fn_player_die_t real = p_player_die_trampoline;
+    volatile int* sc0 = (volatile int*)(uintptr_t)ADDR_SCORE_PLAYER0;
+    volatile int* sc1 = (volatile int*)(uintptr_t)ADDR_SCORE_PLAYER1;
     int idx = -1;
-    int ec_before = 0;
-    int ec_after = 0;
+    int ec_before = 0, ec_after = 0;
+    int s0_before = 0, s1_before = 0, s0_after = 0, s1_after = 0;
+    int scored = 0;
     if (p_player_slots) {
         if ((uintptr_t)player_ptr == (uintptr_t)p_player_slots[0]) idx = 0;
         else if ((uintptr_t)player_ptr == (uintptr_t)p_player_slots[1]) idx = 1;
@@ -10733,23 +10740,36 @@ static void __cdecl hooked_player_die(int player_ptr) {
     if (g_game_end_countdown && !IsBadReadPtr((const void*)g_game_end_countdown, sizeof(int))) {
         ec_before = *g_game_end_countdown;
     }
+    if (!IsBadReadPtr((const void*)sc0, sizeof(int))) s0_before = *sc0;
+    if (!IsBadReadPtr((const void*)sc1, sizeof(int))) s1_before = *sc1;
+
     if (real) real(player_ptr);
+
     if (g_game_end_countdown && !IsBadReadPtr((const void*)g_game_end_countdown, sizeof(int))) {
         ec_after = *g_game_end_countdown;
     }
+    if (!IsBadReadPtr((const void*)sc0, sizeof(int))) s0_after = *sc0;
+    if (!IsBadReadPtr((const void*)sc1, sizeof(int))) s1_after = *sc1;
+
+    if (s0_after > s0_before) { g_ledger_scores[0]++; scored = 1; }
+    if (s1_after > s1_before) { g_ledger_scores[1]++; scored = 1; }
     if (ec_before == 0 && ec_after > 0) {
-        /* this die() ended the match: the diver is the winner, not a casualty */
         g_ledger_match_ends++;
-        g_ledger_last_winner = idx;
-    } else if (idx >= 0) {
+        if (s0_after > s0_before) g_ledger_last_winner = 0;
+        else if (s1_after > s1_before) g_ledger_last_winner = 1;
+        else g_ledger_last_winner = idx;
+    } else if (!scored && idx >= 0) {
         g_ledger_deaths[idx]++;
     }
 }
 
 void hooks_get_combat_ledger(uint32_t* out_d0, uint32_t* out_d1,
+                             uint32_t* out_s0, uint32_t* out_s1,
                              uint32_t* out_match_ends, int* out_last_winner) {
     if (out_d0) *out_d0 = g_ledger_deaths[0];
     if (out_d1) *out_d1 = g_ledger_deaths[1];
+    if (out_s0) *out_s0 = g_ledger_scores[0];
+    if (out_s1) *out_s1 = g_ledger_scores[1];
     if (out_match_ends) *out_match_ends = g_ledger_match_ends;
     if (out_last_winner) *out_last_winner = g_ledger_last_winner;
 }

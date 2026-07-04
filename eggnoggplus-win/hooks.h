@@ -79,10 +79,12 @@ void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training);
 // Refused during online play. Returns 1 on success.
 int hooks_start_native_match(int selector);
 
-// Combat ledger: monotonic per-player death counts and match-end events from
-// the player_die detour (match-winning pit dives are counted as match ends
-// with the diver as winner, never as deaths).
+// Combat ledger: monotonic per-player death counts, scoring-dive counts, and
+// match-end events from the player_die detour (goal dives - map wins and
+// points-mode scores - are classified at the source and never count as
+// deaths).
 void hooks_get_combat_ledger(uint32_t* out_d0, uint32_t* out_d1,
+                             uint32_t* out_s0, uint32_t* out_s1,
                              uint32_t* out_match_ends, int* out_last_winner);
 
 // Command inspection helpers.

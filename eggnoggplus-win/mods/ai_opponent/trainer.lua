@@ -39,12 +39,12 @@ local R = {
   KILL = 120, DEATH = -60,
   LEADER_TICK = 0.02, TIME_TICK = -0.01,
   PROGRESS = 0.05, CLOSING = 0.02, DELTA_CLAMP = 8,
-  DISARM = 10, DISARM_RANGE = 48,
-  SWORD_LOST = -5, SWORD_GAINED = 5,
   ROOM = 30, SCORE_WIN = 300, SCORE_LOSS = -150,
 }
--- Kill/death detection uses the framework's combat ledger (native player_die
--- detour, match-winning pit dives pre-classified) - no state-machine guessing.
+-- Kill/death/score detection uses the framework's combat ledger (native
+-- player_die detour; goal dives pre-classified) - no state-machine guessing.
+-- No sword/disarm shaping: throws and pickups are indistinguishable from
+-- disarms and only add noise.
 
 local st = nil  -- training session state (nil when idle)
 
@@ -133,9 +133,9 @@ local function begin_episode(s)
     led_ends = led.match_ends,
     led_me = (gp == 0) and led.deaths0 or led.deaths1,
     led_op = (gp == 0) and led.deaths1 or led.deaths0,
-    had_sword = { me = nil, enemy = nil },
+    led_sme = (gp == 0) and led.scores0 or led.scores1,
+    led_sop = (gp == 0) and led.scores1 or led.scores0,
     start_room = nil, prev_x = nil, prev_dist = nil,
-    start_score_me = nil, start_score_enemy = nil,
   }
 end
 
@@ -160,16 +160,16 @@ local function episode_step(s)
 
   if not e.start_room then
     e.start_room = me.room_index or 0
-    e.start_score_me = (gp == 0) and (ns.score_p0 or 0) or (ns.score_p1 or 0)
-    e.start_score_enemy = (gp == 0) and (ns.score_p1 or 0) or (ns.score_p0 or 0)
   end
 
   local ended = false
 
-  -- kills / deaths: pure ledger deltas (real deaths only, by construction)
+  -- ledger deltas: kills, deaths, and scoring dives (all pre-classified in C)
   local led = mod.game.combat_ledger()
   local led_me = (gp == 0) and led.deaths0 or led.deaths1
   local led_op = (gp == 0) and led.deaths1 or led.deaths0
+  local led_sme = (gp == 0) and led.scores0 or led.scores1
+  local led_sop = (gp == 0) and led.scores1 or led.scores0
   if led_op > e.led_op then
     local n = led_op - e.led_op
     e.fit = e.fit + R.KILL * n
@@ -186,18 +186,17 @@ local function episode_step(s)
     e.fit = e.fit + R.DEATH * n
     e.kills_op = e.kills_op + n
   end
-  e.led_me, e.led_op = led_me, led_op
-
-  -- disarm / rearm economy (balanced against throw+pickup farming)
-  local me_sword, en_sword = me.has_sword and true or false, en.has_sword and true or false
-  if e.had_sword.me ~= nil then
-    if e.had_sword.me and not me_sword then e.fit = e.fit + R.SWORD_LOST end
-    if (not e.had_sword.me) and me_sword then e.fit = e.fit + R.SWORD_GAINED end
-    if e.had_sword.enemy and not en_sword and math.abs(en.x - me.x) < R.DISARM_RANGE then
-      e.fit = e.fit + R.DISARM
-    end
+  local scored = false
+  if led_sme > e.led_sme then
+    e.fit = e.fit + R.SCORE_WIN * (led_sme - e.led_sme)
+    scored = true
   end
-  e.had_sword.me, e.had_sword.enemy = me_sword, en_sword
+  if led_sop > e.led_sop then
+    e.fit = e.fit + R.SCORE_LOSS * (led_sop - e.led_sop)
+    scored = true
+  end
+  e.led_me, e.led_op = led_me, led_op
+  e.led_sme, e.led_sop = led_sme, led_sop
 
   -- leader time + time pressure
   if (ns.leader or -1) == gp then e.fit = e.fit + R.LEADER_TICK end
@@ -227,25 +226,22 @@ local function episode_step(s)
     e.prev_dist = nil
   end
 
-  -- terminal conditions: map score (real win/loss), a 2-room push, or timeout
-  local score_me = (gp == 0) and (ns.score_p0 or 0) or (ns.score_p1 or 0)
-  local score_en = (gp == 0) and (ns.score_p1 or 0) or (ns.score_p0 or 0)
-  -- match over: ledger event (winner's dive) or the end countdown as fallback.
-  -- The next begin_episode's blob restore clears the countdown, so the native
-  -- menu switch never fires during training.
+  -- terminal conditions: match end, a 2-room push, or timeout. (Scoring dives
+  -- in points modes do NOT end the episode - play continues through respawns.
+  -- The final dive already paid its score event, so no extra award here unless
+  -- the match ended without one. begin_episode's blob restore clears the end
+  -- countdown, so the native menu switch never fires during training.)
   if led.match_ends > e.led_ends then
-    local winner = (led.last_winner and led.last_winner >= 0) and led.last_winner or snap.leader_index
-    if winner == gp then e.fit = e.fit + R.SCORE_WIN else e.fit = e.fit + R.SCORE_LOSS end
+    if not scored then
+      local winner = (led.last_winner and led.last_winner >= 0) and led.last_winner or snap.leader_index
+      if winner == gp then e.fit = e.fit + R.SCORE_WIN else e.fit = e.fit + R.SCORE_LOSS end
+    end
     ended = true
   elseif (snap.end_countdown or 0) > 0 then
-    if snap.leader_index == gp then e.fit = e.fit + R.SCORE_WIN
-    else e.fit = e.fit + R.SCORE_LOSS end
-    ended = true
-  elseif e.start_score_me and score_me > e.start_score_me then
-    e.fit = e.fit + R.SCORE_WIN
-    ended = true
-  elseif e.start_score_enemy and score_en > e.start_score_enemy then
-    e.fit = e.fit + R.SCORE_LOSS
+    if not scored then
+      if snap.leader_index == gp then e.fit = e.fit + R.SCORE_WIN
+      else e.fit = e.fit + R.SCORE_LOSS end
+    end
     ended = true
   end
   local room_prog = (room_now - (e.start_room or room_now)) * e.goal

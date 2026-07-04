@@ -14,8 +14,16 @@ extern "C" {
 int lua_manager_framework_api(void);
 
 // True when any enabled mod has called mod.game.register_bot_provider().
-// Gates the VS AI / TRAIN modes on the main-menu mode button.
 int lua_manager_has_bot_provider(void);
+
+// Mod-registered main-menu modes (PLAY/ONLINE are framework built-ins).
+// Slots are stable; info() returns 0 for empty/inactive slots. activate()
+// runs the mode's Lua on_activate(player_index) and returns 1 when the menu
+// should proceed with the native START flow.
+int lua_manager_menu_mode_count(void);
+int lua_manager_menu_mode_info(int idx, const char** out_id, const char** out_label,
+                               float* out_r, float* out_g, float* out_b);
+int lua_manager_menu_mode_activate(int idx, int player_index);
 
 typedef struct LuaModDiagnostics {
     int trace_events;

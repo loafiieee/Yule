@@ -8858,6 +8858,140 @@ static int lua_game_register_bot_provider(lua_State* Ls) {
     return 1;
 }
 
+/* ---- mod-registered main-menu modes --------------------------------------
+ * PLAY and ONLINE are framework built-ins; everything else on the menu's
+ * mode selector comes from this registry. Slots are stable (never compacted)
+ * so the native button's label pointer stays valid; a re-register with the
+ * same id reuses its slot (hot reload). */
+#define MENU_MODE_MAX 8
+typedef struct LuaMenuMode {
+    int used;
+    int active;
+    char id[32];
+    char label[24];
+    float r, g, b;
+    int cb_ref;
+    LoadedMod* owner;
+} LuaMenuMode;
+static LuaMenuMode g_menu_modes[MENU_MODE_MAX];
+
+static void menu_modes_remove_owner(LoadedMod* mod) {
+    for (int i = 0; i < MENU_MODE_MAX; i++) {
+        LuaMenuMode* mm = &g_menu_modes[i];
+        if (mm->used && mm->owner == mod) {
+            if (L && mm->cb_ref != LUA_NOREF && mm->cb_ref != LUA_REFNIL) {
+                luaL_unref(L, LUA_REGISTRYINDEX, mm->cb_ref);
+            }
+            mm->cb_ref = LUA_NOREF;
+            mm->active = 0;
+            mm->owner = NULL;
+        }
+    }
+}
+
+int lua_manager_menu_mode_count(void) {
+    return MENU_MODE_MAX;
+}
+
+int lua_manager_menu_mode_info(int idx, const char** out_id, const char** out_label,
+                               float* out_r, float* out_g, float* out_b) {
+    if (idx < 0 || idx >= MENU_MODE_MAX) return 0;
+    {
+        LuaMenuMode* mm = &g_menu_modes[idx];
+        if (!mm->used || !mm->active) return 0;
+        if (out_id) *out_id = mm->id;
+        if (out_label) *out_label = mm->label;
+        if (out_r) *out_r = mm->r;
+        if (out_g) *out_g = mm->g;
+        if (out_b) *out_b = mm->b;
+    }
+    return 1;
+}
+
+/* Runs the mode's on_activate(player_index). Returns 1 when the callback asks
+ * the menu to proceed with the native START flow (truthy return). */
+int lua_manager_menu_mode_activate(int idx, int player_index) {
+    LuaMenuMode* mm;
+    int proceed = 0;
+    if (!L || idx < 0 || idx >= MENU_MODE_MAX) return 0;
+    mm = &g_menu_modes[idx];
+    if (!mm->used || !mm->active || mm->cb_ref == LUA_NOREF || mm->cb_ref == LUA_REFNIL) return 0;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, mm->cb_ref);
+    lua_pushinteger(L, player_index);
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        LOG_ERROR("[menu_mode:%s] on_activate error: %s", mm->id, lua_tostring(L, -1));
+        lua_pop(L, 1);
+        return 0;
+    }
+    proceed = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return proceed;
+}
+
+static int lua_game_register_menu_mode(lua_State* Ls) {
+    LoadedMod* mod = (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+    const char* id;
+    const char* label;
+    LuaMenuMode* slot = NULL;
+    luaL_checktype(Ls, 1, LUA_TTABLE);
+
+    lua_getfield(Ls, 1, "id");
+    id = lua_tostring(Ls, -1);
+    if (!id || !id[0]) { lua_pushnil(Ls); lua_pushstring(Ls, "id required"); return 2; }
+    lua_getfield(Ls, 1, "label");
+    label = lua_tostring(Ls, -1);
+    if (!label || !label[0]) { lua_pushnil(Ls); lua_pushstring(Ls, "label required"); return 2; }
+    lua_getfield(Ls, 1, "on_activate");
+    if (!lua_isfunction(Ls, -1)) { lua_pushnil(Ls); lua_pushstring(Ls, "on_activate function required"); return 2; }
+
+    for (int i = 0; i < MENU_MODE_MAX; i++) {
+        if (g_menu_modes[i].used && strncmp(g_menu_modes[i].id, id, sizeof(g_menu_modes[i].id) - 1) == 0) {
+            slot = &g_menu_modes[i];
+            break;
+        }
+    }
+    if (!slot) {
+        for (int i = 0; i < MENU_MODE_MAX; i++) {
+            if (!g_menu_modes[i].used) { slot = &g_menu_modes[i]; break; }
+        }
+    }
+    if (!slot) { lua_pushnil(Ls); lua_pushstring(Ls, "no free menu mode slots"); return 2; }
+
+    /* copy strings while their values are still on the stack */
+    memset(slot->id, 0, sizeof(slot->id));
+    strncpy(slot->id, id, sizeof(slot->id) - 1);
+    memset(slot->label, 0, sizeof(slot->label));
+    strncpy(slot->label, label, sizeof(slot->label) - 1);
+
+    if (slot->cb_ref != LUA_NOREF && slot->cb_ref != LUA_REFNIL && slot->used) {
+        luaL_unref(Ls, LUA_REGISTRYINDEX, slot->cb_ref);
+    }
+    slot->cb_ref = luaL_ref(Ls, LUA_REGISTRYINDEX);   /* pops on_activate */
+    lua_pop(Ls, 2);                                    /* label, id */
+    slot->r = 0.70f; slot->g = 0.45f; slot->b = 1.00f;   /* default accent */
+    lua_getfield(Ls, 1, "color");
+    if (lua_istable(Ls, -1)) {
+        lua_rawgeti(Ls, -1, 1); if (lua_isnumber(Ls, -1)) slot->r = (float)lua_tonumber(Ls, -1); lua_pop(Ls, 1);
+        lua_rawgeti(Ls, -1, 2); if (lua_isnumber(Ls, -1)) slot->g = (float)lua_tonumber(Ls, -1); lua_pop(Ls, 1);
+        lua_rawgeti(Ls, -1, 3); if (lua_isnumber(Ls, -1)) slot->b = (float)lua_tonumber(Ls, -1); lua_pop(Ls, 1);
+    }
+    lua_pop(Ls, 1);
+    slot->owner = mod;
+    slot->used = 1;
+    slot->active = 1;
+    LOG_INFO("[mod:%s] registered menu mode '%s' (%s)", mod ? mod->id : "?", slot->id, slot->label);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_game_arm_ai_match(lua_State* Ls) {
+    int ai_player = (int)luaL_checkinteger(Ls, 1);
+    int training = lua_toboolean(Ls, 2);
+    hooks_arm_ai_match(ai_player, training);
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
 static int lua_game_ai_match(lua_State* Ls) {
     int active = 0, ai_player = 1, training = 0;
     hooks_get_ai_match(&active, &ai_player, &training);
@@ -10306,6 +10440,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_snapshot, 1); lua_setfield(Ls, -2, "apply_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_bot_provider, 1); lua_setfield(Ls, -2, "register_bot_provider");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_menu_mode, 1);    lua_setfield(Ls, -2, "register_menu_mode");
+    lua_pushcfunction(Ls, lua_game_arm_ai_match);                                        lua_setfield(Ls, -2, "arm_ai_match");
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
     lua_pushcfunction(Ls, lua_game_room_tiles);                                          lua_setfield(Ls, -2, "room_tiles");
     lua_pushcfunction(Ls, lua_game_room_tile);                                           lua_setfield(Ls, -2, "room_tile");
@@ -12055,6 +12191,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     mod->on_layout_cap = 0;
 
     interop_remove_owner(L, mod);
+    menu_modes_remove_owner(mod);
     mod_config_clear(L, mod);
     mod_bind_clear(mod);
     mod_storage_clear(mod);

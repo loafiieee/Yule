@@ -972,16 +972,18 @@ static void stop_ggpo_net(const char* source);
 static void online_hub_open(void);
 static void online_hub_set_status(const char* msg);
 
-/* --- Main-menu mode-cycling PLAY button (PLAY / ONLINE / VS AI / TRAIN AI) --- */
+/* --- Main-menu mode-cycling PLAY button ------------------------------------
+ * Modes 0 (PLAY) and 1 (ONLINE) are framework built-ins; modes >= 2 map to
+ * the lua_manager menu-mode registry (mod.game.register_menu_mode), registry
+ * index (mode - 2). Selection persists by mode ID string in modframework.cfg. */
 enum {
     MENU_MODE_PLAY = 0,
     MENU_MODE_ONLINE = 1,
-    MENU_MODE_VSAI = 2,
-    MENU_MODE_TRAIN = 3,
-    MENU_MODE_COUNT = 4
+    MENU_MODE_CUSTOM0 = 2
 };
 static int g_menu_mode = MENU_MODE_PLAY;
 static int g_menu_mode_loaded = 0;
+static char g_menu_mode_pending_id[32] = "";   /* persisted id awaiting registration */
 static int __cdecl menu_mode_main_filter_proxy(void* btn, int event_code);
 static int __cdecl menu_mode_arrow_up_filter_proxy(void* btn, int event_code);
 static int __cdecl menu_mode_arrow_down_filter_proxy(void* btn, int event_code);
@@ -3165,6 +3167,7 @@ static const char* k_console_commands[] = {
     "binds.list", "binds.find", "binds.set", "binds.clear",
     "reload.mods", "mods.reload", "reload.assets",
     "online.hub",
+    "net.diag",
     "ggpo.net",
     "log.level", "log.tail", "input.show", "input.override", "input.clear",
     "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
@@ -3982,6 +3985,12 @@ static void console_show_help(const char* topic) {
     if (_stricmp(t, "online.hub") == 0 || _stricmp(t, "online") == 0) {
         console_push_line_rgb("online.hub: open the built-in online hub with Play, Friends, and Settings tabs.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("Play uses server login plus casual/competitive queues; Friends handles requests and challenges.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "net.diag") == 0 || _stricmp(t, "net.trouble") == 0) {
+        console_push_line_rgb("net.diag: P2P connection troubleshooter. Run it during a stuck/failing", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("connect to see candidates, packets sent/received, and a plain verdict on", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("what's blocking the link (NAT/firewall vs version mismatch, etc.).", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "reload.mods") == 0) {
@@ -5379,6 +5388,48 @@ static int parse_port_token(const char* tok, uint16_t* out_port) {
     return 1;
 }
 
+/* Build the P2P connection troubleshooter report (hub context + net-layer diag).
+ * Writes newline-separated lines into `out`; used by the net.diag console command
+ * and logged automatically when a connect attempt times out. */
+static void online_build_net_diag(char* out, size_t cap) {
+    char net[1536];
+    char lan[64];
+    int n;
+    const char* server_state =
+        g_online_server_state == ONLINE_SERVER_CONNECTED  ? "connected" :
+        g_online_server_state == ONLINE_SERVER_CONNECTING ? "connecting" : "offline";
+    if (!out || cap == 0) return;
+    lan[0] = '\0';
+    if (!(net_local_ipv4(lan, sizeof(lan)) && lan[0])) safe_copy(lan, sizeof(lan), "(unknown)");
+    net[0] = '\0';
+    ggpo_net_format_diag(net, sizeof(net));
+    n = snprintf(out, cap,
+                 "=== P2P connection troubleshooter ===\n"
+                 "server:  %s:%u (%s) slot=%d\n"
+                 "match:   active=%s id=%d\n"
+                 "your LAN ip: %s\n"
+                 "%s",
+                 g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port, server_state,
+                 g_online_server_slot,
+                 g_online_active_match.active ? "yes" : "no", g_online_active_match.match_id,
+                 lan, net);
+    if (n < 0 || (size_t)n >= cap) out[cap - 1] = '\0';
+}
+
+static void console_run_net_diag(void) {
+    char report[2048];
+    char* p;
+    online_build_net_diag(report, sizeof(report));
+    p = report;
+    while (p && *p) {
+        char* nl = strchr(p, '\n');
+        if (nl) *nl = '\0';
+        if (*p) console_push_line_rgb(p, 0.80f, 0.90f, 1.00f);
+        if (!nl) break;
+        p = nl + 1;
+    }
+}
+
 static void console_run_ggpo_net(const char* arg) {
     char arg_buf[CONSOLE_INPUT_BUF];
     char* cursor;
@@ -6297,6 +6348,8 @@ static void console_execute_input(void) {
         console_run_ggpo_selftest(arg);
     } else if (_stricmp(cmd, "ggpo.local") == 0) {
         console_run_ggpo_local(arg);
+    } else if (_stricmp(cmd, "net.diag") == 0 || _stricmp(cmd, "net.trouble") == 0) {
+        console_run_net_diag();
     } else if (_stricmp(cmd, "ggpo.net") == 0) {
         console_run_ggpo_net(arg);
     } else if (_stricmp(cmd, "log.level") == 0) {
@@ -9681,12 +9734,15 @@ static void online_draw_nametag(float cx, float cy, const char* text, int oppone
 }
 
 static void menu_mode_accent(float* r, float* g, float* b) {
-    switch (g_menu_mode) {
-        case MENU_MODE_ONLINE: *r = 0.36f; *g = 0.92f; *b = 0.82f; break;   /* hub cyan (selected-tab accent) */
-        case MENU_MODE_VSAI:   *r = 0.70f; *g = 0.45f; *b = 1.00f; break;   /* purple */
-        case MENU_MODE_TRAIN:  *r = 0.52f; *g = 0.32f; *b = 0.98f; break;   /* deeper violet */
-        default:               *r = 1.00f; *g = 0.22f; *b = 0.26f; break;   /* vibrant red */
+    if (g_menu_mode == MENU_MODE_ONLINE) {
+        *r = 0.36f; *g = 0.92f; *b = 0.82f;   /* hub cyan (selected-tab accent) */
+        return;
     }
+    if (g_menu_mode >= MENU_MODE_CUSTOM0 &&
+        lua_manager_menu_mode_info(g_menu_mode - MENU_MODE_CUSTOM0, NULL, NULL, r, g, b)) {
+        return;
+    }
+    *r = 1.00f; *g = 0.22f; *b = 0.26f;       /* PLAY: vibrant red */
 }
 
 static void btn_write_rgba(void* btn, int ofs, float r, float g, float b, float a) {
@@ -10612,6 +10668,7 @@ int hooks_get_input_override(int player_index, uint32_t* out_mask, int* out_fram
 
 void hooks_arm_ai_match(int ai_player, int training) {
     if (ggpo_net_active()) return;               /* never during online play */
+    if (g_online_pending_match.active) return;   /* nor while a match is launching */
     g_ai_match_player = ai_player & 1;
     g_ai_match_training = training ? 1 : 0;
     g_ai_match_active = 1;
@@ -11860,6 +11917,18 @@ static int online_match_state_allowed(void* state_ptr) {
  * return to the hub with an explanatory message instead of hanging forever. */
 static void online_abort_connect_timeout(void) {
     LOG_WARN("online.match: P2P did not connect within %d ticks; aborting to hub", ONLINE_CONNECT_TIMEOUT_TICKS);
+    {   /* Capture why in the log so failed connects are diagnosable after the fact. */
+        char report[2048];
+        char* p;
+        online_build_net_diag(report, sizeof(report));
+        for (p = report; p && *p; ) {
+            char* nl = strchr(p, '\n');
+            if (nl) *nl = '\0';
+            if (*p) LOG_WARN("net.diag: %s", p);
+            if (!nl) break;
+            p = nl + 1;
+        }
+    }
     if (g_online_active_match.active && !g_online_active_match.result_reported) {
         g_online_active_match.result_reported = 1;
         online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
@@ -12048,20 +12117,53 @@ static void online_match_pump_launch(void) {
     }
 }
 
-static const char* menu_mode_label(int mode) {
-    switch (mode) {
-        case MENU_MODE_ONLINE: return "ONLINE";
-        case MENU_MODE_VSAI:   return "VS AI";
-        case MENU_MODE_TRAIN:  return "TRAIN AI";
-        default:               return "PLAY";
-    }
+static int menu_mode_total(void) {
+    return 2 + lua_manager_menu_mode_count();
 }
 
 static int menu_mode_available(int mode) {
-    if (mode == MENU_MODE_VSAI || mode == MENU_MODE_TRAIN) {
-        return lua_manager_has_bot_provider();
+    if (mode == MENU_MODE_PLAY || mode == MENU_MODE_ONLINE) return 1;
+    return lua_manager_menu_mode_info(mode - MENU_MODE_CUSTOM0, NULL, NULL, NULL, NULL, NULL);
+}
+
+static const char* menu_mode_label(int mode) {
+    const char* label = NULL;
+    if (mode == MENU_MODE_ONLINE) return "ONLINE";
+    if (mode >= MENU_MODE_CUSTOM0 &&
+        lua_manager_menu_mode_info(mode - MENU_MODE_CUSTOM0, NULL, &label, NULL, NULL, NULL) &&
+        label && label[0]) {
+        return label;
     }
-    return 1;
+    return "PLAY";
+}
+
+static const char* menu_mode_id(int mode) {
+    const char* id = NULL;
+    if (mode == MENU_MODE_ONLINE) return "online";
+    if (mode >= MENU_MODE_CUSTOM0 &&
+        lua_manager_menu_mode_info(mode - MENU_MODE_CUSTOM0, &id, NULL, NULL, NULL, NULL) &&
+        id && id[0]) {
+        return id;
+    }
+    return "play";
+}
+
+/* resolve a persisted mode id to the current mode index; -1 if not (yet) present */
+static int menu_mode_index_for_id(const char* id) {
+    if (!id || !id[0]) return -1;
+    if (_stricmp(id, "play") == 0 || strcmp(id, "0") == 0) return MENU_MODE_PLAY;
+    if (_stricmp(id, "online") == 0 || strcmp(id, "1") == 0) return MENU_MODE_ONLINE;
+    /* legacy numeric ids from the enum era */
+    if (strcmp(id, "2") == 0) return menu_mode_index_for_id("vs_ai");
+    if (strcmp(id, "3") == 0) return menu_mode_index_for_id("train_ai");
+    for (int i = 0; i < lua_manager_menu_mode_count(); i++) {
+        const char* mid = NULL;
+        if (lua_manager_menu_mode_info(i, &mid, NULL, NULL, NULL, NULL) &&
+            mid && _stricmp(mid, id) == 0) {
+            return MENU_MODE_CUSTOM0 + i;
+        }
+    }
+    return -1;
 }
 
 static void menu_mode_load(void) {
@@ -12073,27 +12175,43 @@ static void menu_mode_load(void) {
     if (!f) return;
     while (fgets(line, sizeof(line), f)) {
         char* p = line;
+        char* e;
         while (*p == ' ' || *p == '\t') p++;
         if (_strnicmp(p, "main_menu_mode", 14) != 0) continue;
         p += 14;
         while (*p == ' ' || *p == '\t' || *p == '=' || *p == ':') p++;
-        g_menu_mode = atoi(p);
-        if (g_menu_mode < 0 || g_menu_mode >= MENU_MODE_COUNT) g_menu_mode = MENU_MODE_PLAY;
+        e = p + strlen(p);
+        while (e > p && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ')) e--;
+        *e = '\0';
+        snprintf(g_menu_mode_pending_id, sizeof(g_menu_mode_pending_id), "%s", p);
         break;
     }
     fclose(f);
 }
 
+/* mods may register modes after the cfg was read; retry until the id appears */
+static void menu_mode_resolve_pending(void) {
+    if (!g_menu_mode_pending_id[0]) return;
+    {
+        int idx = menu_mode_index_for_id(g_menu_mode_pending_id);
+        if (idx >= 0) {
+            g_menu_mode = idx;
+            g_menu_mode_pending_id[0] = '\0';
+        }
+    }
+}
+
 static void menu_mode_save(void) {
     char lines[64][256];
     int count = 0, replaced = 0;
+    const char* id = menu_mode_id(g_menu_mode);
     FILE* f = fopen("mods/modframework.cfg", "r");
     if (f) {
         while (count < 64 && fgets(lines[count], sizeof(lines[count]), f)) {
             char* p = lines[count];
             while (*p == ' ' || *p == '\t') p++;
             if (_strnicmp(p, "main_menu_mode", 14) == 0) {
-                snprintf(lines[count], sizeof(lines[count]), "main_menu_mode=%d\n", g_menu_mode);
+                snprintf(lines[count], sizeof(lines[count]), "main_menu_mode=%s\n", id);
                 replaced = 1;
             }
             count++;
@@ -12104,14 +12222,15 @@ static void menu_mode_save(void) {
     f = fopen("mods/modframework.cfg", "w");
     if (!f) return;
     for (int i = 0; i < count; i++) fputs(lines[i], f);
-    if (!replaced) fprintf(f, "main_menu_mode=%d\n", g_menu_mode);
+    if (!replaced) fprintf(f, "main_menu_mode=%s\n", id);
     fclose(f);
 }
 
 static void menu_mode_cycle(int dir) {
+    int total = menu_mode_total();
     int step;
-    for (step = 0; step < MENU_MODE_COUNT; step++) {
-        g_menu_mode = (g_menu_mode + dir + MENU_MODE_COUNT) % MENU_MODE_COUNT;
+    for (step = 0; step < total; step++) {
+        g_menu_mode = (g_menu_mode + dir + total) % total;
         if (menu_mode_available(g_menu_mode)) break;
     }
     menu_mode_save();
@@ -12176,9 +12295,13 @@ static int __cdecl menu_mode_main_filter_proxy(void* btn, int event_code) {
             online_hub_open();
             return 0;
         }
-        if ((g_menu_mode == MENU_MODE_VSAI || g_menu_mode == MENU_MODE_TRAIN) &&
-            !ggpo_net_active() && !g_online_pending_match.active) {
-            hooks_arm_ai_match(who ^ 1, g_menu_mode == MENU_MODE_TRAIN);
+        if (g_menu_mode >= MENU_MODE_CUSTOM0) {
+            /* registered mode: run its Lua on_activate(who); only proceed with
+             * the native START flow if the callback returns truthy */
+            if (ggpo_net_active() || g_online_pending_match.active) return 0;
+            if (!lua_manager_menu_mode_activate(g_menu_mode - MENU_MODE_CUSTOM0, who)) {
+                return 0;
+            }
         }
         /* PLAY / VS AI / TRAIN: run the original native START activation */
         if (g_main_start_orig_action) {
@@ -12202,6 +12325,7 @@ static void apply_main_menu_mode_button(void) {
     void* down_btn;
     float sx, sy, sw, sh;
     menu_mode_load();
+    menu_mode_resolve_pending();
     if (!p_button_ex) return;
     if (!menu_mode_available(g_menu_mode)) g_menu_mode = MENU_MODE_PLAY;
 

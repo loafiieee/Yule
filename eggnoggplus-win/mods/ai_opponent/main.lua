@@ -58,7 +58,27 @@ local function load_brain(diff_name)
   return nil, dd
 end
 
-mod.game.register_bot_provider()
+-- Add our modes to the main menu's mode selector. on_activate receives the
+-- index of the player who pressed the button; returning true tells the menu
+-- to proceed with the native START flow (map select -> match).
+mod.game.register_menu_mode({
+  id = "vs_ai",
+  label = "VS AI",
+  color = { 0.70, 0.45, 1.00 },
+  on_activate = function(who)
+    mod.game.arm_ai_match(1 - who, false)
+    return true
+  end,
+})
+mod.game.register_menu_mode({
+  id = "train_ai",
+  label = "TRAIN AI",
+  color = { 0.52, 0.32, 0.98 },
+  on_activate = function(who)
+    mod.game.arm_ai_match(1 - who, true)
+    return true
+  end,
+})
 
 mod.on_tick(function()
   local m = mod.game.ai_match()

@@ -702,8 +702,19 @@ end
 `native_state() -> table`
 - Returns a small table with `game_ticks`, `rng_seed`, `game_level`, `score_p0`, `score_p1`, `score_target`, and `leader` (`0`/`1` = leading player index, `-1` = none).
 
+`register_menu_mode{ id=, label=, color={r,g,b}, on_activate=fn } -> true | nil, err`
+- Adds an entry to the main menu's mode-cycling PLAY button (PLAY and ONLINE are framework built-ins; everything else comes from this registry, up to 8 entries).
+- `id`: stable string, also used to persist the selected mode across sessions.
+- `label`: the button text while your mode is selected (keep it short).
+- `color`: optional `{r,g,b}` accent for the button and selector arrows.
+- `on_activate(player_index)`: called when the button is activated with your mode selected; `player_index` is `0`/`1` for whichever player's controls pressed it. Return `true` to proceed with the native START flow (map select → match); return `false`/nothing to stay in the menu (e.g. if you opened your own screen).
+- Entries disappear from the cycle while your mod is disabled and are restored on re-enable/hot-reload (re-register in your entry file).
+
+`arm_ai_match(ai_player, training) -> true`
+- Arms the AI-match flag consumed via `ai_match()` (typically from a `register_menu_mode` `on_activate`). Ignored while an online session is active or launching.
+
 `register_bot_provider() -> true`
-- Marks the calling mod as a bot provider. While at least one enabled mod has registered, the main menu's mode-cycling PLAY button offers the **VS AI** and **TRAIN AI** modes.
+- Marks the calling mod as a bot provider (informational; menu entries are now added via `register_menu_mode` instead).
 
 `ai_match() -> nil | table`
 - Returns the AI-match flag armed by the main menu, or `nil` when no AI match is active.

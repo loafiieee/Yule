@@ -8737,12 +8737,29 @@ static int lua_game_poll_cmds_raw(lua_State* Ls) {
     return 1;
 }
 
+/* Tile pixel dimensions (engine globals read by native tile_w()/tile_h()
+ * at 0x434980/0x434990). */
+#define ADDR_TILE_W_PX 0x54A1F0u
+#define ADDR_TILE_H_PX 0x54A1F4u
+static int game_get_tile_px(int* out_w, int* out_h) {
+    const int* pw = (const int*)(uintptr_t)ADDR_TILE_W_PX;
+    const int* ph = (const int*)(uintptr_t)ADDR_TILE_H_PX;
+    int w = 0, h = 0;
+    if (ptr_readable((const void*)pw, sizeof(int))) w = *pw;
+    if (ptr_readable((const void*)ph, sizeof(int))) h = *ph;
+    if (w <= 0 || w > 512 || h <= 0 || h > 512) return 0;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return 1;
+}
+
 /* Full tile grid of one room as a flat row-major id array (1-based:
- * ids[row * w + col + 1], row/col 0-based). Lets bot mods build navigation
- * maps without hundreds of per-cell room_tile() calls. */
+ * ids[row * w + col + 1], row/col 0-based) plus pixel geometry so mods can
+ * map world coordinates to cells without per-cell calls. */
 static int lua_game_room_tiles(lua_State* Ls) {
     int room_index = (int)luaL_optinteger(Ls, 1, 0);
     int room_w = 0, room_h = 0;
+    int tile_w = 0, tile_h = 0;
     if (!game_get_room_dims(&room_w, &room_h) ||
         !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
         lua_pushnil(Ls);
@@ -8756,6 +8773,12 @@ static int lua_game_room_tiles(lua_State* Ls) {
         lua_push_field_int(Ls, "room", room_index);
         lua_push_field_int(Ls, "w", room_w);
         lua_push_field_int(Ls, "h", room_h);
+        if (game_get_tile_px(&tile_w, &tile_h)) {
+            lua_push_field_int(Ls, "tile_w", tile_w);
+            lua_push_field_int(Ls, "tile_h", tile_h);
+            lua_push_field_int(Ls, "origin_x", room_x0 * tile_w);  /* world px of cell (1,1) */
+            lua_push_field_int(Ls, "origin_y", 0);
+        }
         lua_newtable(Ls);
         for (int ty = 0; ty < room_h; ty++) {
             for (int tx = 0; tx < room_w; tx++) {
@@ -8769,6 +8792,45 @@ static int lua_game_room_tiles(lua_State* Ls) {
             }
         }
         lua_setfield(Ls, -2, "ids");
+    }
+    return 1;
+}
+
+/* room_tile(col, row [,room_index]) - documented in MODDING.md long before it
+ * existed; implemented to match: exact bytes for one room-relative cell. */
+static int lua_game_room_tile(lua_State* Ls) {
+    int col = (int)luaL_checkinteger(Ls, 1);
+    int row = (int)luaL_checkinteger(Ls, 2);
+    int room_index = (int)luaL_optinteger(Ls, 3, 0);
+    int room_w = 0, room_h = 0;
+    int tile_w = 0, tile_h = 0;
+    if (!game_get_room_dims(&room_w, &room_h) ||
+        !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    if (room_index < 0) room_index = 0;
+    if (col < 1 || col > room_w || row < 1 || row > room_h) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    {
+        int gx = room_index * room_w + (col - 1);
+        int gy = row - 1;
+        int tile_ptr = p_map_tile(gx, gy);
+        int exists = (tile_ptr != 0 && !IsBadReadPtr((void*)(uintptr_t)tile_ptr, 3));
+        lua_newtable(Ls);
+        lua_push_field_bool(Ls, "exists", exists);
+        lua_push_field_int(Ls, "id", exists ? (int)((uint8_t*)(uintptr_t)tile_ptr)[0] : -1);
+        lua_push_field_int(Ls, "frame", exists ? (int)((uint8_t*)(uintptr_t)tile_ptr)[1] : 0);
+        lua_push_field_int(Ls, "arg", exists ? (int)((uint8_t*)(uintptr_t)tile_ptr)[2] : 0);
+        lua_push_field_int(Ls, "room_index", room_index);
+        if (game_get_tile_px(&tile_w, &tile_h)) {
+            lua_push_field_int(Ls, "x", (col - 1) * tile_w);
+            lua_push_field_int(Ls, "y", (row - 1) * tile_h);
+            lua_push_field_int(Ls, "global_x", gx * tile_w);
+            lua_push_field_int(Ls, "global_y", gy * tile_h);
+        }
     }
     return 1;
 }
@@ -10246,6 +10308,7 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_bot_provider, 1); lua_setfield(Ls, -2, "register_bot_provider");
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
     lua_pushcfunction(Ls, lua_game_room_tiles);                                          lua_setfield(Ls, -2, "room_tiles");
+    lua_pushcfunction(Ls, lua_game_room_tile);                                           lua_setfield(Ls, -2, "room_tile");
     lua_pushcfunction(Ls, lua_game_tile_solid);                                          lua_setfield(Ls, -2, "tile_solid");
     lua_game_push_command_constants(Ls);
     lua_pushcfunction(Ls, lua_game_camera);                                              lua_setfield(Ls, -2, "camera");

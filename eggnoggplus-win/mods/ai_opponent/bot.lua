@@ -32,16 +32,11 @@ local function grid_refresh(room)
   grid.room = room
   grid.ok = false
   local rt = mod.game.room_tiles(room)
-  if not rt or not rt.ids or rt.w < 2 or rt.h < 2 then return end
-  local c11 = mod.game.room_tile(1, 1, room)
-  local c22 = mod.game.room_tile(2, 2, room)
-  if not c11 or not c22 then return end
-  local tw = (c22.global_x or 0) - (c11.global_x or 0)
-  local th = (c22.global_y or 0) - (c11.global_y or 0)
-  if tw <= 0 or th <= 0 then return end
+  if not rt or not rt.ids or not rt.w or rt.w < 2 or not rt.h or rt.h < 2 then return end
+  if not rt.tile_w or rt.tile_w <= 0 or not rt.tile_h or rt.tile_h <= 0 then return end
   grid.w, grid.h, grid.ids = rt.w, rt.h, rt.ids
-  grid.tile_w, grid.tile_h = tw, th
-  grid.origin_x, grid.origin_y = c11.global_x, c11.global_y
+  grid.tile_w, grid.tile_h = rt.tile_w, rt.tile_h
+  grid.origin_x, grid.origin_y = rt.origin_x or 0, rt.origin_y or 0
   grid.ok = true
 end
 

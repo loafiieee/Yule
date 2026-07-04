@@ -12,6 +12,7 @@ local Policy = mod.dofile("lib/policy.lua")
 local EVO = mod.dofile("lib/evo.lua")
 local Codec = mod.dofile("lib/codec.lua")
 local H = mod.dofile("lib/heuristic.lua")
+local RW = mod.dofile("lib/reward.lua")
 local Bot = mod.dofile("bot.lua")
 local Trainer = mod.dofile("trainer.lua")
 local HT = mod.dofile("htrainer.lua")
@@ -39,9 +40,9 @@ EVO.init(NN)
 H.init({ NN = NN })
 Bot.init({ NN = NN, A = A, F = F, Policy = Policy, H = H })
 Trainer.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
-               SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, pick_map = pick_map })
+               RW = RW, SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, pick_map = pick_map })
 HT.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
-          SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, CKPT_HARD = Trainer.CKPT_KEYS.hard,
+          RW = RW, SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, CKPT_HARD = Trainer.CKPT_KEYS.hard,
           pick_map = pick_map })
 
 local human_train = false   -- set by the TRAIN VS ME menu mode, cleared at match end

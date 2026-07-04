@@ -123,6 +123,7 @@ function HT.tick(ai_player)
                             { react_delay = 0, epsilon = 0.03, seed = s.pop.gen * 31 + s.i })
     s.slice_t = 0
     s.fit = 0
+    s.pot = nil
     d.Bot.reset_scaffold()
   end
 
@@ -148,12 +149,14 @@ function HT.tick(ai_player)
   end
 
   -- real kills / deaths
+  local ai_died = led.d_ai > s.led.d_ai
+  local ai_dove = led.s_ai > s.led.s_ai
   if led.d_hu > s.led.d_hu then
     local n = led.d_hu - s.led.d_hu
     s.fit = s.fit + R.KILL * n
     s.ai_kills = s.ai_kills + n
   end
-  if led.d_ai > s.led.d_ai then
+  if ai_died then
     local n = led.d_ai - s.led.d_ai
     s.fit = s.fit + R.DEATH * n
     s.human_kills = s.human_kills + n
@@ -175,6 +178,7 @@ function HT.tick(ai_player)
     end
     mod.game.start_match(d.pick_map(s.rand))
     s.led = led_view(ai_player)   -- resync across the hop
+    s.pot = nil
     d.Bot.reset_scaffold()
     if s.policy then d.Policy.reset(s.policy) end
     s.slice_t = s.slice_t + 1
@@ -182,6 +186,20 @@ function HT.tick(ai_player)
   end
 
   s.led = led
+
+  -- potential shaping: reward per-tick progress toward winning (camping = 0)
+  local lead = snap.leader_index
+  local obs = { x = snap.player.x, goal = (ai_player == 0) and 1 or -1,
+                has_sword = snap.player.has_sword and true or false,
+                enemy_has_sword = snap.enemy.has_sword and true or false,
+                is_leader = (lead == ai_player),
+                dist = math.abs(snap.enemy.x - snap.player.x) }
+  if ai_died or ai_dove then
+    s.pot = nil                    -- respawn/dive teleport: rebaseline
+  else
+    s.fit = s.fit + d.RW.delta(s.pot, obs)
+    s.pot = obs
+  end
 
   d.Bot.drive(ai_player, s.policy)
 
@@ -197,7 +215,7 @@ function HT.overlay()
   mod.ui.begin_overlay()
   mod.ui.rect(20, 20, 344, 110, { color = { 0.03, 0.04, 0.06, 0.80 } })
   mod.ui.text_at("TRAIN VS ME  human-gen " .. tostring(s.pop.gen), 32, 34, 1.0, 1.0, 0.75, 0.45)
-  mod.ui.text_at(string.format("fighter %d/%d  next in %ds  this one: %+d",
+  mod.ui.text_at(string.format("fighter %d/%d  next in %ds  this one: %+.0f",
                                s.i, #s.pop.nets, secs_left, s.fit), 32, 56, 0.9, 0.9, 0.9, 0.9)
   mod.ui.text_at(string.format("kills YOU %d : %d AI   points YOU %d : %d AI",
                                s.human_kills, s.ai_kills, s.human_points, s.ai_points),

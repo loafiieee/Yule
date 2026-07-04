@@ -10,10 +10,15 @@
 -- Scoring per side = the four unambiguous combat-ledger events (native
 -- player_die detour; goal dives pre-classified, never deaths):
 --   kill +120   death -60   point scored +300   point conceded -100
--- plus a stuck punishment: -8 whenever a fighter moves less than 12px over a
--- 120-tick window (covers pits, corners, and refusing to jump).
--- Match winner = the ledger's match-end winner; on timeout, the higher side
--- score (ties keep the champion).
+-- PLUS continuous potential-based shaping (lib/reward.lua): fighters are
+-- rewarded every tick for progress toward winning - territory gained, swords
+-- held, leads taken, closing on the enemy when a kill is needed. Camping
+-- earns exactly zero while anything that progresses pulls ahead, so selection
+-- always has a gradient (the fix for corner-camping lineages). The bot-side
+-- engagement scaffold additionally hands control to the scripted fighter
+-- whenever the NN refuses to fight, so standoffs cannot stall a match.
+-- Matches end ONLY when a player actually wins the map; a 10-minute failsafe
+-- logs a warning and decides on score (it should never fire).
 --
 -- Every BENCH_EVERY matches the champion plays the scripted fighter; the
 -- kill+point winrate is the quality meter and auto-captures checkpoints:
@@ -22,12 +27,11 @@
 local Trainer = {}
 local d = nil
 
-local MATCH_TIMEOUT = 7200      -- 2 minutes of game time safety cap
+local FAILSAFE_TICKS = 36000    -- 10 minutes of game time; should never fire
 local BENCH_EVERY = 20          -- duels between benchmark series
 local BENCH_MATCHES = 2
 local MUT_RATE, MUT_SCALE = 0.15, 0.20
 local HEAVY_CHANCE, HEAVY_RATE, HEAVY_SCALE = 0.10, 0.40, 0.45
-local STUCK_WINDOW, STUCK_MOVE, STUCK_PENALTY = 120, 12, -8
 local RECENT_CHAMPS = 8         -- seeds kept for TRAIN VS ME to build on
 
 local POP_KEY = "trainer_pop2"  -- shared with htrainer.lua
@@ -100,7 +104,7 @@ local function begin_match(s, kind)
     t = 0,
     led = led,
     score = { [0] = 0, [1] = 0 },
-    stuck = { [0] = { x = nil, t0 = 0 }, [1] = { x = nil, t0 = 0 } },
+    pot = { [0] = nil, [1] = nil },   -- shaping baselines (nil = rebaseline)
     pol = {},
   }
   if kind == 'bench' then
@@ -144,23 +148,33 @@ local function match_step(s)
   local winner = led.last_winner
   m.led = led
 
-  -- stuck punishment: barely moved over the window
+  -- potential-based shaping: reward per-tick progress toward winning
   local snap = mod.game.snapshot(0, false)
   if snap and snap.in_game and snap.player and snap.enemy then
-    local x = { [0] = snap.player.x, [1] = snap.enemy.x }
+    local lead = snap.leader_index
+    local dist = math.abs(snap.enemy.x - snap.player.x)
+    local obs = {
+      [0] = { x = snap.player.x, goal = 1,
+              has_sword = snap.player.has_sword and true or false,
+              enemy_has_sword = snap.enemy.has_sword and true or false,
+              is_leader = (lead == 0), dist = dist },
+      [1] = { x = snap.enemy.x, goal = -1,
+              has_sword = snap.enemy.has_sword and true or false,
+              enemy_has_sword = snap.player.has_sword and true or false,
+              is_leader = (lead == 1), dist = dist },
+    }
+    local died = { [0] = d0 > 0, [1] = d1 > 0 }
+    local dove = { [0] = s0 > 0, [1] = s1 > 0 }
     for pi = 0, 1 do
-      local sk = m.stuck[pi]
-      if sk.x == nil then
-        sk.x, sk.t0 = x[pi], m.t
-      elseif m.t - sk.t0 >= STUCK_WINDOW then
-        if math.abs(x[pi] - sk.x) < STUCK_MOVE then
-          m.score[pi] = m.score[pi] + STUCK_PENALTY
-        end
-        sk.x, sk.t0 = x[pi], m.t
+      if died[pi] or dove[pi] then
+        m.pot[pi] = nil            -- respawn teleport: rebaseline, no shaped reward
+      else
+        m.score[pi] = m.score[pi] + d.RW.delta(m.pot[pi], obs[pi])
+        m.pot[pi] = obs[pi]
       end
     end
     if match_ended and (winner == nil or winner < 0) then
-      winner = snap.leader_index
+      winner = lead
     end
   end
 
@@ -170,7 +184,10 @@ local function match_step(s)
     end
     return winner
   end
-  if m.t >= MATCH_TIMEOUT then
+  -- matches end only when someone actually wins; the failsafe should never
+  -- fire now that the engagement scaffold makes standoffs impossible
+  if m.t >= FAILSAFE_TICKS then
+    mod.log("trainer: WARNING - duel hit the 10-minute failsafe, deciding on score")
     if m.score[0] == m.score[1] then return -1 end
     return (m.score[0] > m.score[1]) and 0 or 1
   end
@@ -271,9 +288,9 @@ function Trainer.overlay()
   mod.ui.text_at("TRAIN AI  duel " .. tostring(s.matches), 32, 34, 1.0, 1.0, 0.8, 0.6)
   local what = "duel"
   if m and m.kind == 'bench' then what = "BENCHMARK " .. (s.bench and (s.bench.n + 1) or 1) .. "/" .. BENCH_MATCHES end
-  mod.ui.text_at(string.format("%s  match tick %d/%d", what, m and m.t or 0, MATCH_TIMEOUT),
+  mod.ui.text_at(string.format("%s  match tick %d", what, m and m.t or 0),
                  32, 56, 0.9, 0.9, 0.9, 0.9)
-  mod.ui.text_at(string.format("champion age %d  takeovers %d  score %d : %d",
+  mod.ui.text_at(string.format("champion age %d  takeovers %d  score %.0f : %.0f",
                                s.champ_age, s.ch_wins,
                                m and m.score[0] or 0, m and m.score[1] or 0),
                  32, 74, 0.9, 0.9, 0.9, 0.9)

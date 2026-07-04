@@ -124,11 +124,19 @@ end
 local stuck = { [0] = { x = 0, t = 0 }, [1] = { x = 0, t = 0 } }
 local heur_mem = { [0] = nil, [1] = nil }
 local last_info = { [0] = {}, [1] = {} }
+-- engagement scaffold state: the NN decides HOW to fight, never WHETHER.
+-- If it makes no fight progress (no closing, no attacks) for ENGAGE_PATIENCE
+-- ticks, the scripted fighter takes the stick for ENGAGE_FORCE ticks.
+local ENGAGE_PATIENCE, ENGAGE_FORCE = 90, 60
+local engage = { [0] = { dist_ref = nil, t = 0, force = 0 },
+                 [1] = { dist_ref = nil, t = 0, force = 0 } }
 
 function Bot.reset_scaffold()
   stuck[0].x, stuck[0].t = 0, 0
   stuck[1].x, stuck[1].t = 0, 0
   heur_mem[0], heur_mem[1] = nil, nil
+  engage[0] = { dist_ref = nil, t = 0, force = 0 }
+  engage[1] = { dist_ref = nil, t = 0, force = 0 }
   grid.room, grid.ok = -1, false
 end
 
@@ -164,9 +172,33 @@ function Bot.decide_mask(ai_player, policy)
   end
   local action, mode, brain
   if policy and d.H.is_fight(ctx) then
-    action = d.Policy.decide(policy, d.F.extract(ctx))
-    mode, brain = 'fight', 'nn'
+    local eng = engage[ai_player]
+    local dist = math.abs(ctx.snap.enemy.x - ctx.snap.player.x)
+    if eng.force > 0 then
+      -- engagement scaffold: scripted fighter has the stick until the standoff
+      -- is broken (the NN forfeited its turn by refusing to fight)
+      eng.force = eng.force - 1
+      action, mode = d.H.decide(ctx, heur_mem[ai_player])
+      brain = 'heur-forced'
+    else
+      action = d.Policy.decide(policy, d.F.extract(ctx))
+      mode, brain = 'fight', 'nn'
+      -- fight-progress watchdog: closing in or swinging counts as fighting
+      if eng.dist_ref == nil or dist < eng.dist_ref - 2 then
+        eng.dist_ref, eng.t = dist, 0
+      elseif action >= 7 and action <= 9 then   -- attack family
+        eng.t = 0
+      else
+        eng.t = eng.t + 1
+        if eng.t >= ENGAGE_PATIENCE then
+          eng.t, eng.dist_ref = 0, nil
+          eng.force = ENGAGE_FORCE
+        end
+      end
+    end
   else
+    engage[ai_player].dist_ref = nil
+    engage[ai_player].t = 0
     action, mode = d.H.decide(ctx, heur_mem[ai_player])
     brain = 'heur'
   end

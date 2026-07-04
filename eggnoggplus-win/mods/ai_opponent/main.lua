@@ -17,22 +17,44 @@ local Bot = mod.dofile("bot.lua")
 local Trainer = mod.dofile("trainer.lua")
 local HT = mod.dofile("htrainer.lua")
 
--- Random map from the training pool. banned_maps (config) is a comma list of
--- selector indices to exclude - default bans vanilla 5 (selector 4, the
--- multi-score eggnog map, a poor fencing teacher).
-local function pick_map(rand)
+-- Training map pool. banned_maps (config) is a comma list of selector indices
+-- to exclude - default bans vanilla 5 (selector 4, the multi-score eggnog
+-- map, a poor fencing teacher).
+--
+-- Map curriculum (config `curriculum`, default on): training starts on ONE
+-- map until the champion is proficient there (benchmark winrate vs the
+-- scripted fighter >= 55%), then the next allowed map unlocks, and so on.
+-- The unlocked count persists as storage key "map_stage".
+local function allowed_maps()
   local total = math.max(1, tonumber(mod.game.map_count()) or 1)
   local banned = {}
   for tok in tostring(config.get("banned_maps", "4") or ""):gmatch("[^,%s]+") do
     local n = tonumber(tok)
     if n then banned[n] = true end
   end
-  for _ = 1, 24 do
-    local sel = math.floor(rand() * total)
-    if sel >= total then sel = total - 1 end
-    if not banned[sel] then return sel end
+  local list = {}
+  for sel = 0, total - 1 do
+    if not banned[sel] then list[#list + 1] = sel end
   end
-  return 0
+  if #list == 0 then list[1] = 0 end
+  return list
+end
+
+local function pick_map(rand)
+  local list = allowed_maps()
+  local n = #list
+  if config.get("curriculum", true) then
+    local stage = tonumber(storage.get("map_stage", 1)) or 1
+    if stage < 1 then stage = 1 end
+    if stage < n then n = stage end
+  end
+  local i = 1 + math.floor(rand() * n)
+  if i > n then i = n end
+  return list[i]
+end
+
+local function curriculum_size()
+  return #allowed_maps()
 end
 
 Policy.init(NN)
@@ -40,7 +62,8 @@ EVO.init(NN)
 H.init({ NN = NN })
 Bot.init({ NN = NN, A = A, F = F, Policy = Policy, H = H })
 Trainer.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
-               RW = RW, SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, pick_map = pick_map })
+               RW = RW, SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, pick_map = pick_map,
+               curriculum_size = curriculum_size })
 HT.init({ NN = NN, A = A, F = F, Policy = Policy, EVO = EVO, Codec = Codec, Bot = Bot, H = H,
           RW = RW, SIZES = { F.N_INPUTS, 32, 16, A.COUNT }, CKPT_HARD = Trainer.CKPT_KEYS.hard,
           pick_map = pick_map })

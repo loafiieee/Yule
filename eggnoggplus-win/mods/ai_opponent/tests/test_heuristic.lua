@@ -87,6 +87,27 @@ for i = 1, 100 do
 end
 check(evade_n >= 55, 'evades when enemy swings (' .. evade_n .. '/100)')
 
+-- non-leader with the enemy BEHIND still hunts (eggnogg blocks non-leaders at
+-- the room edge; running for the goal just parks you on an invisible wall)
+local mnl = H.new_mem(11)
+local anl = H.decide(fake_ctx({ enemy = { x = -100 } }), mnl)
+check(has(A.mask(anl, 1), L), 'non-leader hunts the enemy behind him')
+
+-- vertical hunt: horizontally aligned, enemy on a floor above -> jump
+local mvh = H.new_mem(12)
+local avh = H.decide(fake_ctx({ enemy = { x = 108, y = -30 } }), mvh)
+check(has(A.mask(avh, 1), J), 'vertical hunt jumps toward enemy above')
+
+-- blocked-jump reflex: pressing toward a distant enemy while x never moves ->
+-- commits to a held jump within a few dozen ticks
+local mbj = H.new_mem(13)
+local jumped = false
+for t = 1, 40 do
+  local abj = H.decide(fake_ctx(), mbj)   -- identical ctx: x frozen
+  if has(A.mask(abj, 1), J) then jumped = true end
+end
+check(jumped, 'blocked runner starts jumping')
+
 -- hold mechanics: a jump hold repeats for several ticks
 local mh = H.new_mem(7)
 local ctxh = fake_ctx({ nav = { [1] = { wall = true, gap = false }, [-1] = { wall = false, gap = false } } })

@@ -17,7 +17,8 @@ H.ENGAGE_Y = 60
 function H.init(deps) H._NN = deps.NN end
 
 function H.new_mem(seed)
-  return { rand = H._NN.rng_new(seed or 1), hold = nil, hold_t = 0, mode = 'idle' }
+  return { rand = H._NN.rng_new(seed or 1), hold = nil, hold_t = 0, mode = 'idle',
+           blocked_x = nil, blocked_t = 0 }
 end
 
 local function is_dying(p) local s = p.state_id or 0; return s == 8 or s == 9 end
@@ -56,6 +57,24 @@ local function hold(mem, action, ticks, mode)
   mem.hold_t = ticks
   mem.mode = mode
   return action, mode
+end
+
+-- lateral movement with a blocked-jump reflex: if we keep pressing a direction
+-- and x doesn't move for 12 ticks (probes can miss steps/ledges), commit to a
+-- real held jump instead of grinding against the geometry
+local function move_or_jump(ctx, mem, dir, g, mode_name)
+  local x = ctx.snap.player.x
+  if mem.blocked_x ~= nil and math.abs(x - mem.blocked_x) < 0.75 then
+    mem.blocked_t = mem.blocked_t + 1
+  else
+    mem.blocked_x, mem.blocked_t = x, 0
+  end
+  if mem.blocked_t >= 12 and ctx.snap.player.grounded then
+    mem.blocked_t = 0
+    return hold(mem, jump_toward(dir, g), 10, mode_name)
+  end
+  mem.mode = mode_name
+  return toward(dir, g), mode_name
 end
 
 -- scripted fight micro (also the NN's sparring baseline and fallback)
@@ -128,8 +147,7 @@ function H.decide(ctx, mem)
       if (sy and sy < me.y - 24) or (nav and (nav.wall or nav.gap)) then
         return hold(mem, jump_toward(sdir, g), 8, 'get_sword')
       end
-      mem.mode = 'get_sword'
-      return toward(sdir, g), 'get_sword'
+      return move_or_jump(ctx, mem, sdir, g, 'get_sword')
     end
     if same_room and en_alive and en.has_sword and adx < 70 and ady < 50 then
       local r = mem.rand()
@@ -156,20 +174,33 @@ function H.decide(ctx, mem)
   end
 
   -- ------------------------------------------------------------ navigate ---
-  -- advance toward the goal when it's my run (leader / enemy dead / enemy
-  -- already behind me); otherwise chase the enemy down
+  -- With the lead (or a dead enemy) advance toward the goal. WITHOUT it,
+  -- always hunt the enemy: eggnogg blocks the non-leader at the room edge,
+  -- so "running to your goal" just parks you on an invisible wall.
   local dir
-  if ctx.leader == 1 or not en_alive or (dx * g) < 0 then
+  if ctx.leader == 1 or not en_alive then
     dir = g
   else
     dir = edir
+    -- vertical hunt: horizontally aligned but on another floor
+    if adx < 24 and ady > 40 then
+      if (en.y or 0) < (me.y or 0) then
+        return hold(mem, jump_toward(edir, g), 8, 'navigate')   -- enemy above: jump
+      end
+      -- enemy below: head for a drop (prefer goal-side gap; mirror-safe)
+      local first, second = g, -g
+      if ctx.nav and ctx.nav[first] and ctx.nav[first].gap then
+        dir = first
+      elseif ctx.nav and ctx.nav[second] and ctx.nav[second].gap then
+        dir = second
+      end
+    end
   end
   local nav = ctx.nav and ctx.nav[dir]
   if nav and (nav.wall or nav.gap) then
     return hold(mem, jump_toward(dir, g), 8, 'navigate')
   end
-  mem.mode = 'navigate'
-  return toward(dir, g), 'navigate'
+  return move_or_jump(ctx, mem, dir, g, 'navigate')
 end
 
 return H

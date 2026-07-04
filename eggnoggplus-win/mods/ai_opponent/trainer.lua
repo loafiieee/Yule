@@ -222,6 +222,14 @@ local function finish_benchmark(s)
     storage.set("ckpt_normal_done", "1")
     mod.log("trainer: NORMAL checkpoint captured")
   end
+  -- map curriculum: proficient on the current pool -> unlock the next map
+  if wr >= 0.55 and config.get("curriculum", true) and d.curriculum_size then
+    local stage = tonumber(storage.get("map_stage", 1)) or 1
+    if stage < d.curriculum_size() then
+      storage.set("map_stage", tostring(stage + 1))
+      mod.log("trainer: map curriculum advanced - " .. (stage + 1) .. " map(s) unlocked")
+    end
+  end
   storage.save()
   s.bench = nil
 end

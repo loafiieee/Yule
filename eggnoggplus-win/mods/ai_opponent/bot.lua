@@ -54,31 +54,34 @@ local function world_to_cell(x, y)
   return col, row
 end
 
--- nav senses for one screen direction: wall = solid at body/head height within
--- 2 tiles ahead; gap = no ground within 4 rows below the next 2 columns
+-- nav senses for one screen direction: wall = solid ahead at any body height;
+-- gap = no ground below the next columns. Pixel probes at multiple heights are
+-- ALWAYS merged in (the grid geometry derivation can be wrong on some maps,
+-- and missing a wall means never jumping it).
 local function nav_dir(px, py, dir)
+  local wall = solid_px(px + dir * 14, py - 6) == 1 or
+               solid_px(px + dir * 14, py + 8) == 1 or
+               solid_px(px + dir * 28, py) == 1
+  local gap = solid_px(px + dir * 16, py + 18) == 0 and
+              solid_px(px + dir * 16, py + 34) == 0
   if grid.ok then
     local col, row = world_to_cell(px, py)
-    local wall = false
     for step = 1, 2 do
       if solid_cell(col + dir * step, row) or solid_cell(col + dir * step, row - 1) then
         wall = true
         break
       end
     end
-    local gap = true
+    local ggap = true
     for step = 1, 2 do
       local ground = false
       for below = 1, 4 do
         if solid_cell(col + dir * step, row + below) then ground = true break end
       end
-      if ground then gap = false break end
+      if ground then ggap = false break end
     end
-    return { wall = wall, gap = gap }
+    gap = gap or ggap
   end
-  -- fallback: pixel probes (no grid available)
-  local wall = solid_px(px + dir * 14, py) == 1 or solid_px(px + dir * 28, py) == 1
-  local gap = solid_px(px + dir * 16, py + 18) == 0 and solid_px(px + dir * 16, py + 34) == 0
   return { wall = wall, gap = gap }
 end
 
@@ -121,22 +124,22 @@ end
 
 -- ------------------------------------------------------- per-player state ---
 
-local stuck = { [0] = { x = 0, t = 0 }, [1] = { x = 0, t = 0 } }
+local stuck = { [0] = { x = 0, t = 0, hold = 0 }, [1] = { x = 0, t = 0, hold = 0 } }
 local heur_mem = { [0] = nil, [1] = nil }
 local last_info = { [0] = {}, [1] = {} }
 -- engagement scaffold state: the NN decides HOW to fight, never WHETHER.
 -- If it makes no fight progress (no closing, no attacks) for ENGAGE_PATIENCE
 -- ticks, the scripted fighter takes the stick for ENGAGE_FORCE ticks.
 local ENGAGE_PATIENCE, ENGAGE_FORCE = 90, 60
-local engage = { [0] = { dist_ref = nil, t = 0, force = 0 },
-                 [1] = { dist_ref = nil, t = 0, force = 0 } }
+local engage = { [0] = { min_dist = nil, t = 0, force = 0, progress = false },
+                 [1] = { min_dist = nil, t = 0, force = 0, progress = false } }
 
 function Bot.reset_scaffold()
-  stuck[0].x, stuck[0].t = 0, 0
-  stuck[1].x, stuck[1].t = 0, 0
+  stuck[0].x, stuck[0].t, stuck[0].hold = 0, 0, 0
+  stuck[1].x, stuck[1].t, stuck[1].hold = 0, 0, 0
   heur_mem[0], heur_mem[1] = nil, nil
-  engage[0] = { dist_ref = nil, t = 0, force = 0 }
-  engage[1] = { dist_ref = nil, t = 0, force = 0 }
+  engage[0] = { min_dist = nil, t = 0, force = 0, progress = false }
+  engage[1] = { min_dist = nil, t = 0, force = 0, progress = false }
   grid.room, grid.ok = -1, false
 end
 
@@ -144,9 +147,16 @@ function Bot.last(ai_player)
   return last_info[ai_player] or {}
 end
 
--- stuck scaffold: if x hasn't moved >2px in 90 ticks while trying to move, jump
+-- stuck scaffold (last line of defense): if x hasn't moved >2px in 60 ticks
+-- while trying to move, HOLD jump for 10 ticks (a single-tick tap is a useless
+-- micro-hop that never clears anything)
 function Bot.scaffold(ai_player, ctx, mask)
   local s = stuck[ai_player]
+  if s.hold > 0 then
+    s.hold = s.hold - 1
+    if mask % 2 == 0 then mask = mask + 1 end   -- OR in JUMP
+    return mask
+  end
   local x = ctx.snap.player.x
   local moving = (mask % 16) >= 4   -- LEFT (0x08) or RIGHT (0x04) bit set
   if moving and math.abs(x - s.x) < 2 then
@@ -154,9 +164,10 @@ function Bot.scaffold(ai_player, ctx, mask)
   else
     s.x, s.t = x, 0
   end
-  if s.t > 90 then
+  if s.t > 60 then
     s.t = 0
-    if mask % 2 == 0 then mask = mask + 1 end   -- OR in JUMP if not set
+    s.hold = 10
+    if mask % 2 == 0 then mask = mask + 1 end
   end
   return mask
 end
@@ -183,22 +194,29 @@ function Bot.decide_mask(ai_player, policy)
     else
       action = d.Policy.decide(policy, d.F.extract(ctx))
       mode, brain = 'fight', 'nn'
-      -- fight-progress watchdog: closing in or swinging counts as fighting
-      if eng.dist_ref == nil or dist < eng.dist_ref - 2 then
-        eng.dist_ref, eng.t = dist, 0
-      elseif action >= 7 and action <= 9 then   -- attack family
-        eng.t = 0
-      else
-        eng.t = eng.t + 1
-        if eng.t >= ENGAGE_PATIENCE then
-          eng.t, eng.dist_ref = 0, nil
+      -- fight-progress watchdog: only NEW record approaches or actual
+      -- in-range attacks count as fighting - dancing in and out of an old
+      -- distance earns nothing (min_dist persists across windows)
+      eng.t = eng.t + 1
+      if eng.min_dist == nil or dist < eng.min_dist - 8 then
+        eng.min_dist = dist
+        eng.progress = true
+      end
+      if action >= 7 and action <= 9 and dist < 56 then   -- attack family, in range
+        eng.progress = true
+      end
+      if eng.t >= ENGAGE_PATIENCE then
+        if not eng.progress then
           eng.force = ENGAGE_FORCE
         end
+        eng.t = 0
+        eng.progress = false
       end
     end
   else
-    engage[ai_player].dist_ref = nil
+    engage[ai_player].min_dist = nil
     engage[ai_player].t = 0
+    engage[ai_player].progress = false
     action, mode = d.H.decide(ctx, heur_mem[ai_player])
     brain = 'heur'
   end

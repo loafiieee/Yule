@@ -17,6 +17,9 @@ int custom_maps_build_manifest_json(char* out, size_t out_sz);
    local map selector. Returns 1 on success. */
 int custom_maps_selector_for_key(const char* key, int* out_selector);
 
+/* Total number of valid map selector values (vanilla + registered custom). */
+int custom_maps_total_selectors(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -64,8 +64,7 @@ local function fresh_session()
     was = { me = false, en = false },
     had_sword_en = nil,
     pending = {},                    -- deferred kill/death edges
-    base_blob = nil,                 -- match state to reset to after map wins
-    score_me = nil, score_en = nil,
+    ending = false,                  -- native end countdown in progress
     ai_kills = 0, human_kills = 0,   -- session scoreboard (real kills only)
     ai_wins = 0, human_wins = 0,     -- map wins
     gens_done = 0,
@@ -123,37 +122,12 @@ local function commit_pending(s, force)
   s.pending = keep
 end
 
--- a map was scored: the buffered dying edge was the winner's pit-fall, not a
--- kill; award win/loss and restart the round in place so training continues
-local function map_scored(s, ai_won)
-  s.pending = {}
-  if ai_won then
-    s.fit = s.fit + R.MAP_WIN
-    s.ai_wins = s.ai_wins + 1
-  else
-    s.fit = s.fit + R.MAP_LOSS
-    s.human_wins = s.human_wins + 1
-  end
-  if s.base_blob then
-    mod.game.apply_full_state_blob(s.base_blob)
-  end
-  s.was = { me = false, en = false }
-  s.had_sword_en = nil
-  s.score_me, s.score_en = nil, nil   -- re-baseline after the reset
-  d.Bot.reset_scaffold()
-  if s.policy then d.Policy.reset(s.policy) end
-end
-
 function HT.tick(ai_player)
   if not st then st = fresh_session() end
   local s = st
   local slice_ticks = tonumber(config.get("human_slice_ticks", 1200)) or 1200
   if slice_ticks < 300 then slice_ticks = 300 end
   s.tick = s.tick + 1
-
-  if not s.base_blob then
-    s.base_blob = mod.game.full_state_blob()
-  end
 
   if not s.policy then
     s.policy = d.Policy.new(s.pop.nets[s.i],
@@ -166,25 +140,45 @@ function HT.tick(ai_player)
     d.Bot.reset_scaffold()
   end
 
-  d.Bot.drive(ai_player, s.policy)
+  local snap = mod.game.snapshot(ai_player, false)
+  if not (snap and snap.in_game and snap.player and snap.enemy) then return end
 
-  -- map score first: a score converts buffered dying edges into a win-fall
-  local ns = mod.game.native_state()
-  local score_me = (ai_player == 0) and (ns.score_p0 or 0) or (ns.score_p1 or 0)
-  local score_en = (ai_player == 0) and (ns.score_p1 or 0) or (ns.score_p0 or 0)
-  if s.score_me == nil then
-    s.score_me, s.score_en = score_me, score_en
-  elseif score_me > s.score_me then
-    map_scored(s, true)
-    s.slice_t = s.slice_t + 1
-    return
-  elseif score_en > s.score_en then
-    map_scored(s, false)
+  -- Match over? (the winner's pit-fall starts the native end countdown; the
+  -- buffered dying edge belongs to the WIN, not a kill.) Award win/loss, let
+  -- the fanfare play, then hop to a random map before the menu switch fires -
+  -- same trick the online flow uses to chain matches.
+  local ec = snap.end_countdown or 0
+  if ec > 0 then
+    if not s.ending then
+      s.ending = true
+      s.pending = {}
+      local winner = snap.leader_index
+      if winner == ai_player then
+        s.fit = s.fit + R.MAP_WIN
+        s.ai_wins = s.ai_wins + 1
+      elseif winner ~= nil then
+        s.fit = s.fit + R.MAP_LOSS
+        s.human_wins = s.human_wins + 1
+      end
+    end
+    if ec <= 20 then
+      local total = math.max(1, tonumber(mod.game.map_count()) or 1)
+      local sel = math.floor(s.rand() * total)
+      if sel >= total then sel = total - 1 end
+      mod.game.start_match(sel)
+      s.ending = false
+      s.was = { me = false, en = false }
+      s.had_sword_en = nil
+      d.Bot.reset_scaffold()
+      if s.policy then d.Policy.reset(s.policy) end
+    end
     s.slice_t = s.slice_t + 1
     return
   end
+  s.ending = false
 
-  local snap = mod.game.snapshot(ai_player, false)
+  d.Bot.drive(ai_player, s.policy)
+
   if snap and snap.in_game and snap.player and snap.enemy then
     local me, en = snap.player, snap.enemy
     local me_dying, en_dying = is_dying(me.state_id or 0), is_dying(en.state_id or 0)

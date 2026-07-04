@@ -6979,6 +6979,26 @@ static void online_launch_pending_match_to_game(void) {
     }
 }
 
+/* Start (or restart) a native local match, optionally on a specific map
+ * selector - the same recipe the online flow uses to launch matches
+ * (selector -> game_reset -> switch to GAME). Exposed to Lua as
+ * mod.game.start_match for bot/trainer mods that chain matches. */
+int hooks_start_native_match(int selector) {
+    if (ggpo_net_active()) return 0;              /* never yank an online match */
+    if (g_online_pending_match.active) return 0;
+    online_clear_waterfall_audio_state("mod match start");
+    if (selector >= 0 && g_hook_map_selector) {
+        *g_hook_map_selector = selector;
+    }
+    if (p_game_reset) {
+        p_game_reset();
+    }
+    if (p_state_switch) {
+        p_state_switch((void*)(uintptr_t)ADDR_GAME_STATE);
+    }
+    return 1;
+}
+
 static void online_server_begin_pending_match(const char* line) {
     char text[128];
     char queue[32];

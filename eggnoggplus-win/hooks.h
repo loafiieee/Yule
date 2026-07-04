@@ -75,6 +75,10 @@ void hooks_arm_ai_match(int ai_player, int training);
 void hooks_clear_ai_match(void);
 void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training);
 
+// Start/restart a native local match (selector -1 keeps the current map).
+// Refused during online play. Returns 1 on success.
+int hooks_start_native_match(int selector);
+
 // Command inspection helpers.
 uint32_t hooks_peek_player_cmds_raw(int player_index, int mode);
 uint32_t hooks_peek_player_cmds_effective(int player_index, int mode);

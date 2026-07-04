@@ -2114,6 +2114,10 @@ int custom_maps_build_manifest_json(char* out, size_t out_sz) {
     return (int)pos;
 }
 
+int custom_maps_total_selectors(void) {
+    return VANILLA_MAP_COUNT + g_custom_registry.count;
+}
+
 int custom_maps_selector_for_key(const char* key, int* out_selector) {
     const char* p;
     char norm_key[160];

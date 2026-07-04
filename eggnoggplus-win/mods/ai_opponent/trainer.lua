@@ -247,8 +247,17 @@ local function episode_step(s)
   -- terminal conditions: map score (real win/loss), a 2-room push, or timeout
   local score_me = (gp == 0) and (ns.score_p0 or 0) or (ns.score_p1 or 0)
   local score_en = (gp == 0) and (ns.score_p1 or 0) or (ns.score_p0 or 0)
-  if e.start_score_me and score_me > e.start_score_me then
-    e.pending = {}   -- buffered dying edge was the win-fall, not a kill
+  local ec = snap.end_countdown or 0
+  if ec > 0 then
+    -- match over: the buffered dying edge was the winner's pit-fall, not a
+    -- kill. The next begin_episode's blob restore also clears the countdown,
+    -- so the native menu switch never fires during training.
+    e.pending = {}
+    if snap.leader_index == gp then e.fit = e.fit + R.SCORE_WIN
+    else e.fit = e.fit + R.SCORE_LOSS end
+    ended = true
+  elseif e.start_score_me and score_me > e.start_score_me then
+    e.pending = {}
     e.fit = e.fit + R.SCORE_WIN
     ended = true
   elseif e.start_score_enemy and score_en > e.start_score_enemy then

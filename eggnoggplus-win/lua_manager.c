@@ -18,6 +18,7 @@
 #include "hooks.h"
 #include "font_ext.h"
 #include "texture_ext.h"
+#include "custom_maps.h"
 #include "ggpo_net.h"
 
 static lua_State *L = NULL;
@@ -8992,6 +8993,21 @@ static int lua_game_arm_ai_match(lua_State* Ls) {
     return 1;
 }
 
+/* start_match([selector]) - start/restart a native local match, optionally on
+ * a specific map selector (see map_count). Refused during online play. */
+static int lua_game_start_match(lua_State* Ls) {
+    int selector = (int)luaL_optinteger(Ls, 1, -1);
+    int total = custom_maps_total_selectors();
+    if (selector >= total) selector = total > 0 ? (selector % total) : -1;
+    lua_pushboolean(Ls, hooks_start_native_match(selector));
+    return 1;
+}
+
+static int lua_game_map_count(lua_State* Ls) {
+    lua_pushinteger(Ls, custom_maps_total_selectors());
+    return 1;
+}
+
 static int lua_game_ai_match(lua_State* Ls) {
     int active = 0, ai_player = 1, training = 0;
     hooks_get_ai_match(&active, &ai_player, &training);
@@ -10443,6 +10459,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_menu_mode, 1);    lua_setfield(Ls, -2, "register_menu_mode");
     lua_pushcfunction(Ls, lua_game_arm_ai_match);                                        lua_setfield(Ls, -2, "arm_ai_match");
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
+    lua_pushcfunction(Ls, lua_game_start_match);                                         lua_setfield(Ls, -2, "start_match");
+    lua_pushcfunction(Ls, lua_game_map_count);                                           lua_setfield(Ls, -2, "map_count");
     lua_pushcfunction(Ls, lua_game_room_tiles);                                          lua_setfield(Ls, -2, "room_tiles");
     lua_pushcfunction(Ls, lua_game_room_tile);                                           lua_setfield(Ls, -2, "room_tile");
     lua_pushcfunction(Ls, lua_game_tile_solid);                                          lua_setfield(Ls, -2, "tile_solid");

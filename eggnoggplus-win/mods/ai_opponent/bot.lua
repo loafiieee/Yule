@@ -130,7 +130,7 @@ local last_info = { [0] = {}, [1] = {} }
 -- engagement scaffold state: the NN decides HOW to fight, never WHETHER.
 -- If it makes no fight progress (no closing, no attacks) for ENGAGE_PATIENCE
 -- ticks, the scripted fighter takes the stick for ENGAGE_FORCE ticks.
-local ENGAGE_PATIENCE, ENGAGE_FORCE = 90, 60
+local ENGAGE_PATIENCE, ENGAGE_FORCE = 30, 90
 local engage = { [0] = { min_dist = nil, t = 0, force = 0, progress = false },
                  [1] = { min_dist = nil, t = 0, force = 0, progress = false } }
 

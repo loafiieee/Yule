@@ -37,19 +37,16 @@ end
 
 -- Fight context: same room, close, both alive, and I'm armed. One source of
 -- truth for "should the combat brain (NN or scripted) be driving".
--- Exception: when I'm the leader and the enemy is BEHIND my run, keep running
--- unless they're right on top of me - turning around throws away the lead.
+-- THE LEADER NEVER FIGHTS: with the go, reaching the goal is worth more than
+-- any exchange - run mode handles blockers with pass-through moves instead.
 function H.is_fight(ctx)
   local s = ctx.snap
+  if ctx.leader == 1 then return false end
   if not s.player.has_sword then return false end
   if is_dying(s.player) or is_dying(s.enemy) then return false end
   if ctx.my_room ~= ctx.enemy_room then return false end
-  local dx = s.enemy.x - s.player.x
-  local adx = math.abs(dx)
-  if adx >= H.ENGAGE_X or math.abs(s.enemy.y - s.player.y) >= H.ENGAGE_Y then return false end
-  local g = (ctx.goal_dir or 1) >= 0 and 1 or -1
-  if ctx.leader == 1 and (dx * g) < 0 and adx > 40 then return false end
-  return true
+  return math.abs(s.enemy.x - s.player.x) < H.ENGAGE_X and
+         math.abs(s.enemy.y - s.player.y) < H.ENGAGE_Y
 end
 
 local function hold(mem, action, ticks, mode)
@@ -94,24 +91,25 @@ local function fight(ctx, mem)
   end
 
   if adx > 46 then
-    -- approach; jump-approach sometimes when they poke at range
-    if attacking(en) and adx < 84 and r < 0.35 then
+    -- approach; jump-approach occasionally when they poke at range
+    if attacking(en) and adx < 84 and r < 0.25 then
       return hold(mem, jump_toward(edir, g), 6, 'fight')
     end
     return toward(edir, g), 'fight'
   elseif adx >= 16 then
+    -- KILL INTENT: mostly swing; evasion is the seasoning, not the meal
     if attacking(en) then
-      if r < 0.45 then return hold(mem, jump_toward(edir, g), 6, 'fight') end  -- vault over
-      if r < 0.70 then return DOWN, 'fight' end                                 -- duck under
-      return attack_toward(edir, g), 'fight'                                    -- trade
+      if r < 0.25 then return hold(mem, jump_toward(edir, g), 6, 'fight') end  -- vault over
+      if r < 0.45 then return DOWN, 'fight' end                                 -- duck under
+      return attack_toward(edir, g), 'fight'                                    -- trade (55%)
     end
-    if r < 0.18 then return UP, 'fight' end      -- stance mixups
-    if r < 0.36 then return DOWN, 'fight' end
-    return attack_toward(edir, g), 'fight'
+    if r < 0.10 then return UP, 'fight' end      -- light stance mixups
+    if r < 0.20 then return DOWN, 'fight' end
+    return attack_toward(edir, g), 'fight'       -- attack (80%)
   else
-    -- point blank: cross-up, swing, or step out
-    if r < 0.30 then return hold(mem, jump_toward(edir, g), 6, 'fight') end
-    if r < 0.60 then return attack_toward(edir, g), 'fight' end
+    -- point blank: mostly swing, sometimes step out, rare cross-up
+    if r < 0.15 then return hold(mem, jump_toward(edir, g), 6, 'fight') end
+    if r < 0.70 then return attack_toward(edir, g), 'fight' end
     return toward(-edir, g), 'fight'
   end
 end
@@ -174,12 +172,20 @@ function H.decide(ctx, mem)
   end
 
   -- ------------------------------------------------------------ navigate ---
-  -- With the lead (or a dead enemy) advance toward the goal. WITHOUT it,
-  -- always hunt the enemy: eggnogg blocks the non-leader at the room edge,
-  -- so "running to your goal" just parks you on an invisible wall.
+  -- With the lead (or a dead enemy) advance toward the goal ABOVE ALL ELSE.
+  -- WITHOUT it, always hunt the enemy: eggnogg blocks the non-leader at the
+  -- room edge, so "running to your goal" just parks you on an invisible wall.
   local dir
   if ctx.leader == 1 or not en_alive then
     dir = g
+    -- blocker in my lane: swing through or vault over, but never stop running
+    if en_alive and same_room and (dx * g) > 0 and adx < 60 and ady < 50 then
+      if me.has_sword and mem.rand() < 0.55 then
+        mem.mode = 'run'
+        return attack_toward(edir, g), 'run'     -- cut through them
+      end
+      return hold(mem, jump_toward(g, g), 8, 'run')  -- vault past
+    end
   else
     dir = edir
     -- vertical hunt: horizontally aligned but on another floor

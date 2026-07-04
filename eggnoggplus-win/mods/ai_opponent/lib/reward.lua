@@ -20,10 +20,12 @@ local RW = {}
 
 RW.W = {
   X = 0.05,
+  X_LEAD = 0.10,     -- EXTRA territory rate while leading: with the go,
+                     -- advancing is worth 3x - the goal above all else
   SWORD = 15,
   DISARM = 10,
   LEAD = 25,
-  HUNT = 0.03,
+  HUNT = 0.05,       -- without the go, closing on the enemy IS the job
   HUNT_RANGE = 200,
   DELTA_CLAMP = 8,   -- per-tick clamp: teleports/respawns can't spike rewards
 }
@@ -35,7 +37,7 @@ function RW.potential(o)
   if o.has_sword then p = p + W.SWORD end
   if not o.enemy_has_sword then p = p + W.DISARM end
   if o.is_leader then
-    p = p + W.LEAD
+    p = p + W.LEAD + W.X_LEAD * (o.x * o.goal)
   else
     local dist = o.dist or W.HUNT_RANGE
     if dist > W.HUNT_RANGE then dist = W.HUNT_RANGE end

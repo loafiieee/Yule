@@ -68,24 +68,40 @@ local a5b, mode5b = H.decide(ctx5, m5b)
 check(mode5b == 'get_sword', 'unarmed seeks sword (' .. tostring(mode5b) .. ')')
 check(has(A.mask(a5b, 1), L), 'moves left toward the sword')
 
--- fight: in range vs idle enemy -> mostly attacks
+-- fight: in range vs idle enemy -> attacks decisively (kill intent)
 local atk_n, act_n = 0, 100
 for i = 1, act_n do
   local mm = H.new_mem(100 + i)
   local ai = H.decide(fake_ctx({ enemy = { x = 130 } }), mm)   -- adx 30
   if has(A.mask(ai, 1), AT) then atk_n = atk_n + 1 end
 end
-check(atk_n >= 45, 'attacks often in range (' .. atk_n .. '/100)')
+check(atk_n >= 70, 'attacks decisively in range (' .. atk_n .. '/100)')
 
--- fight: enemy attacking in range -> evades (jump/duck) more than half the time
-local evade_n = 0
+-- fight: enemy attacking in range -> always reacts (trade, vault, or duck)
+local react_n, evade_n = 0, 0
 for i = 1, 100 do
   local mm = H.new_mem(300 + i)
   local ai = H.decide(fake_ctx({ enemy = { x = 130, cmd_bits = 2 } }), mm)
   local mk = A.mask(ai, 1)
+  if has(mk, J) or has(mk, D) or has(mk, AT) then react_n = react_n + 1 end
   if has(mk, J) or has(mk, D) then evade_n = evade_n + 1 end
 end
-check(evade_n >= 55, 'evades when enemy swings (' .. evade_n .. '/100)')
+check(react_n >= 95, 'always reacts to a swing (' .. react_n .. '/100)')
+check(evade_n >= 25, 'still mixes in evasion (' .. evade_n .. '/100)')
+
+-- THE LEADER NEVER FIGHTS: with the go, is_fight is false even at sword range
+check(not H.is_fight(fake_ctx({ enemy = { x = 130 }, leader = 1 })), 'leader never in fight context')
+
+-- leader with a blocker in the lane: keeps moving through (attack or vault),
+-- never turns around
+local run_ok = 0
+for i = 1, 50 do
+  local mm = H.new_mem(500 + i)
+  local ar = H.decide(fake_ctx({ enemy = { x = 140 }, leader = 1 }), mm)
+  local mk = A.mask(ar, 1)
+  if (has(mk, AT) or has(mk, J)) and not has(mk, L) then run_ok = run_ok + 1 end
+end
+check(run_ok >= 45, 'leader powers through blockers (' .. run_ok .. '/50)')
 
 -- non-leader with the enemy BEHIND still hunts (eggnogg blocks non-leaders at
 -- the room edge; running for the goal just parks you on an invisible wall)

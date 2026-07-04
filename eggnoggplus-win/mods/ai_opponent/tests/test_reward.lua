@@ -37,6 +37,10 @@ check(RW.delta(o({ dist = 120 }), o({ dist = 180 })) < 0, "fleeing punished when
 check(RW.delta(o({ is_leader = true, dist = 180 }), o({ is_leader = true, dist = 120 })) == 0,
       "leader ignores distance")
 
+-- GO above all else: the same advance is worth 3x while leading
+local lead_fwd = RW.delta(o({ is_leader = true }), o({ is_leader = true, x = 120 }))
+check(lead_fwd > fwd * 2.5, "leader advance worth ~3x (" .. lead_fwd .. " vs " .. fwd .. ")")
+
 -- teleport clamp
 local spike = RW.delta(o(), o({ x = 5000 }))
 check(spike <= RW.W.DELTA_CLAMP + 1e-9, "teleport clamped (" .. spike .. ")")

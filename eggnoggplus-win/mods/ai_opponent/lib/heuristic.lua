@@ -51,8 +51,20 @@ function H.is_fight(ctx)
   if not s.player.has_sword then return false end
   if is_dying(s.player) or is_dying(s.enemy) then return false end
   if ctx.my_room ~= ctx.enemy_room then return false end
-  return math.abs(s.enemy.x - s.player.x) < H.ENGAGE_X and
-         math.abs(s.enemy.y - s.player.y) < H.ENGAGE_Y
+  local dx = s.enemy.x - s.player.x
+  local adx = math.abs(dx)
+  if adx >= H.ENGAGE_X or math.abs(s.enemy.y - s.player.y) >= H.ENGAGE_Y then
+    return false
+  end
+  -- terrain gate: a wall/step between us and an out-of-reach enemy is a
+  -- NAVIGATION problem (route over it), not a fight - fight mode has no
+  -- terrain moves and would swing at the geometry forever
+  if adx > 40 then
+    local edir = (dx >= 0) and 1 or -1
+    local nav = ctx.nav and ctx.nav[edir]
+    if nav and nav.wall then return false end
+  end
+  return true
 end
 
 -- JUMP is edge-triggered: holding the button is NOT pressing it. After any
@@ -109,6 +121,11 @@ local function fight(ctx, mem)
   end
 
   if adx > 46 then
+    -- geometry in the way? jump it, don't grind into it
+    local nav = ctx.nav and ctx.nav[edir]
+    if nav and nav.wall then
+      return hold(mem, jump_toward(edir, g), 12, 'fight')
+    end
     -- approach; jump-approach occasionally when they poke at range
     if attacking(en) and adx < 84 and r < 0.25 then
       return hold(mem, jump_toward(edir, g), 6, 'fight')
@@ -225,9 +242,10 @@ function H.decide(ctx, mem)
   local dir
   if running then
     dir = g
-    -- blocker in my lane: SLIDE through their hitbox (crouch-slide passes
-    -- clean through), swing through, or vault - but never stop running
-    if en_alive and same_room and (dx * g) > 0 and adx < 60 and ady < 50 then
+    -- blocker in my lane (SAME floor - an elevated enemy is a terrain
+    -- problem for the route, not a body to swing at): SLIDE through their
+    -- hitbox, swing through, or vault - but never stop running
+    if en_alive and same_room and (dx * g) > 0 and adx < 60 and ady < 16 then
       -- slide through, kill them, or jump over - roughly even odds
       local r = mem.rand()
       if r < 0.35 then

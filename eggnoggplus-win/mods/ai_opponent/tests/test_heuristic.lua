@@ -93,6 +93,24 @@ check(evade_n >= 25, 'still mixes in evasion (' .. evade_n .. '/100)')
 -- THE LEADER NEVER FIGHTS: with the go, is_fight is false even at sword range
 check(not H.is_fight(fake_ctx({ enemy = { x = 130 }, leader = 1 })), 'leader never in fight context')
 
+-- terrain gate: a wall between us and an out-of-reach enemy is a navigation
+-- problem, not a fight (fight mode would swing at the step forever)
+local ctx_step = fake_ctx({ enemy = { x = 180 },
+                            nav = { [1] = { wall = true, gap = false },
+                                    [-1] = { wall = false, gap = false } } })
+check(not H.is_fight(ctx_step), 'wall toward out-of-reach enemy -> not a fight')
+local ctx_close = fake_ctx({ enemy = { x = 135 },
+                             nav = { [1] = { wall = true, gap = false },
+                                     [-1] = { wall = false, gap = false } } })
+check(H.is_fight(ctx_close), 'wall but enemy within sword reach -> still a fight')
+
+-- leader with an ELEVATED enemy ahead: terrain problem, keeps moving, no
+-- swinging at the step
+local mel = H.new_mem(51)
+local ael = H.decide(fake_ctx({ enemy = { x = 140, y = 30 }, leader = 1 }), mel)
+local mel_mask = A.mask(ael, 1)
+check(not has(mel_mask, AT), 'leader does not swing at an elevated blocker')
+
 -- leader with a blocker in the lane: keeps moving through (attack or vault),
 -- never turns around
 local run_ok = 0

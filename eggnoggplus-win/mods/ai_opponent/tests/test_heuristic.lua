@@ -171,6 +171,18 @@ for i = 1, 50 do
 end
 check(fist_n >= 45, 'unarmed pair punches it out (' .. fist_n .. '/50)')
 
+-- jump release gap: after a jump hold ends, the button comes UP for a few
+-- ticks before the next jump (holding jump is not pressing jump)
+local mjc = H.new_mem(41)
+local ctxw = fake_ctx({ nav = { [1] = { wall = true, gap = false },
+                                [-1] = { wall = false, gap = false } } })
+local saw_gap = false
+for t = 1, 20 do
+  local a = H.decide(ctxw, mjc)
+  if t > 8 and t <= 13 and not has(A.mask(a, 1), J) then saw_gap = true end
+end
+check(saw_gap, 'release gap between consecutive jump holds')
+
 -- hold mechanics: a jump hold repeats for several ticks
 local mh = H.new_mem(7)
 local ctxh = fake_ctx({ nav = { [1] = { wall = true, gap = false }, [-1] = { wall = false, gap = false } } })

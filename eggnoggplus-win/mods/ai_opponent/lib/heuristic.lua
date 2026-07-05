@@ -55,7 +55,19 @@ function H.is_fight(ctx)
          math.abs(s.enemy.y - s.player.y) < H.ENGAGE_Y
 end
 
+-- JUMP is edge-triggered: holding the button is NOT pressing it. After any
+-- jump-bearing hold ends, a short release gap must pass before the next one,
+-- or the second jump simply never happens (the walk-into-the-step bug).
+local JUMP_DEGRADE = {
+  [JUMP] = IDLE, [JUMP_BACK] = BACK, [JUMP_FWD] = FWD,
+  [DOWN_JUMP] = DOWN, [SLIDE_FWD] = FWD, [SLIDE_BACK] = BACK,
+}
+
 local function hold(mem, action, ticks, mode)
+  if JUMP_DEGRADE[action] and (mem.jump_cool or 0) > 0 then
+    mem.mode = mode
+    return JUMP_DEGRADE[action], mode   -- release gap: keep moving, no jump yet
+  end
   mem.hold = action
   mem.hold_t = ticks
   mem.mode = mode
@@ -124,9 +136,15 @@ function H.decide(ctx, mem)
   -- multi-tick action holds (jump arcs need sustained input)
   if mem.hold and mem.hold_t > 0 then
     mem.hold_t = mem.hold_t - 1
-    if mem.hold_t <= 0 then local a = mem.hold; mem.hold = nil; return a, mem.mode end
+    if mem.hold_t <= 0 then
+      local a = mem.hold
+      mem.hold = nil
+      if JUMP_DEGRADE[a] then mem.jump_cool = 5 end   -- force a release gap
+      return a, mem.mode
+    end
     return mem.hold, mem.mode
   end
+  if (mem.jump_cool or 0) > 0 then mem.jump_cool = mem.jump_cool - 1 end
 
   local s = ctx.snap
   local me, en = s.player, s.enemy
@@ -146,7 +164,13 @@ function H.decide(ctx, mem)
     if sx and math.abs(sx - me.x) < 240 and math.abs((sy or me.y) - me.y) < 90 then
       local sdir = ((sx - me.x) >= 0) and 1 or -1
       local sdx = math.abs(sx - me.x)
-      if sdx < 14 then mem.mode = 'grab'; return DOWN_JUMP, 'grab' end   -- crouch (down+jump) picks it up
+      if sdx < 14 then
+        -- crouch (down+jump) picks it up; pulse the press so the edge repeats
+        mem.grab_t = (mem.grab_t or 0) + 1
+        mem.mode = 'grab'
+        if (mem.grab_t % 10) < 5 then return DOWN_JUMP, 'grab' end
+        return DOWN, 'grab'
+      end
       if ctx.route and ctx.route.kind == 'sword' and ctx.route.dir and ctx.route.dir ~= 0 then
         if ctx.route.jump then
           return hold(mem, jump_toward(ctx.route.dir, g), 14, 'get_sword')

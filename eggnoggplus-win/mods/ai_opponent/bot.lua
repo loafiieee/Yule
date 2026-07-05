@@ -27,6 +27,9 @@ local function tile_is_solid(id)
   return v
 end
 
+local HAZARD_IDS = { [5] = true }          -- spikes: landing there kills
+local POOL_IDS = { [9] = true, [10] = true } -- eggnog goal pools: touching wins
+
 local function grid_refresh(room)
   if grid.room == room and grid.ok then return end
   grid.room = room
@@ -37,7 +40,24 @@ local function grid_refresh(room)
   grid.w, grid.h, grid.ids = rt.w, rt.h, rt.ids
   grid.tile_w, grid.tile_h = rt.tile_w, rt.tile_h
   grid.origin_x, grid.origin_y = rt.origin_x or 0, rt.origin_y or 0
+  -- goal pools in this room (either pool wins - race targets)
+  grid.pools = {}
+  for r = 1, grid.h do
+    for c = 1, grid.w do
+      local id = grid.ids[(r - 1) * grid.w + c]
+      if id and POOL_IDS[id] then
+        grid.pools[#grid.pools + 1] = { c = c, r = r }
+      end
+    end
+  end
   grid.ok = true
+end
+
+local function hazard_cell(c, r)
+  if not grid.ok then return false end
+  if c < 1 or c > grid.w or r < 1 or r > grid.h then return false end
+  local id = grid.ids[(r - 1) * grid.w + c]
+  return (id and HAZARD_IDS[id]) and true or false
 end
 
 -- col/row are 1-based; cells outside the room count as open (the row below the
@@ -52,6 +72,18 @@ local function world_to_cell(x, y)
   local col = math.floor((x - grid.origin_x) / grid.tile_w) + 1
   local row = math.floor((y - grid.origin_y) / grid.tile_h) + 1
   return col, row
+end
+
+-- nearest goal pool cell in the current room, or nil
+local function nearest_pool(px, py)
+  if not grid.ok or not grid.pools or #grid.pools == 0 then return nil end
+  local sc, sr = world_to_cell(px, py)
+  local best, best_d
+  for _, pool in ipairs(grid.pools) do
+    local dd = math.abs(pool.c - sc) + math.abs(pool.r - sr)
+    if not best or dd < best_d then best, best_d = pool, dd end
+  end
+  return best
 end
 
 -- nav senses for one screen direction: wall = solid ahead at any body height;
@@ -90,9 +122,17 @@ end
 local goal_st = { [0] = nil, [1] = nil }   -- sticky nearest-end goal (hysteresis)
 
 -- The eggnog goal pools sit at BOTH map ends and either wins (engine win
--- check has no side filter): the right run target is the NEAREST end.
--- 40px hysteresis around the map center stops mid-map goal dithering.
-local function nearest_goal_dir(ai_player, px)
+-- check has no side filter): the right run target is the NEAREST end - or
+-- the pool itself when it's in the current room. 40px hysteresis around the
+-- map center stops mid-map goal dithering.
+local function nearest_goal_dir(ai_player, px, py)
+  local pool = nearest_pool(px, py)
+  if pool and grid.ok then
+    local poolx = grid.origin_x + (pool.c - 0.5) * grid.tile_w
+    local gd = (poolx >= px) and 1 or -1
+    goal_st[ai_player] = gd
+    return gd
+  end
   local gd = goal_st[ai_player]
   local map = mod.game.map_size()
   if map and map.w and map.w > 1 then
@@ -126,7 +166,7 @@ function Bot.build_ctx(ai_player)
     snap = snap,
     my_room = room,
     enemy_room = snap.enemy.room_index or 0,
-    goal_dir = nearest_goal_dir(ai_player, px),
+    goal_dir = nearest_goal_dir(ai_player, px, py),
     leader = leader,
     nav = { [1] = nav_r, [-1] = nav_l },
     -- probes feed the NN features (facing-relative, mirror-stable)
@@ -177,42 +217,43 @@ end
 -- (lib/path.lua): jumps and drops are plan steps, not probe guesses.
 
 local function grid_obj()
-  return { w = grid.w, h = grid.h, solid = function(c, r) return solid_cell(c, r) end }
+  return { w = grid.w, h = grid.h,
+           solid = function(c, r) return solid_cell(c, r) end,
+           hazard = hazard_cell }
 end
 
 local function is_dying_state(sid) return sid == 8 or sid == 9 end
 
--- Fight or run? With the go, a dead enemy, or an OPEN LANE (enemy behind my
--- run) the answer is run - engaging throws away position. But a non-leader's
--- run can be blocked by the game (screen/room rules): if the run stalls for
--- 1.5s, turn back into a hunter for 4s and earn the lane with a kill.
+-- Fight or run? RUN only when it can actually win: with the go (the leader
+-- advances the active room), with a dead enemy, or when a goal pool is IN
+-- THIS ROOM (either pool wins - dive for it). A non-leader cannot advance
+-- the room, so "open lane" running just parks on an invisible wall - without
+-- the go and without a reachable pool, the only path to the goal is a kill:
+-- HUNT. Stalled runs also fall back to hunting.
 local function decide_intent(ai_player, ctx)
   local st = intent_st[ai_player]
   local me, en = ctx.snap.player, ctx.snap.enemy
   local g = ctx.goal_dir
   local en_alive = not is_dying_state(en.state_id or 0)
-  if ctx.leader == 1 or not en_alive then
+  local pool = nearest_pool(me.x, me.y)
+  if not (ctx.leader == 1 or not en_alive or pool) then
     st.run_x, st.stall, st.hunt_until = nil, 0, 0
-    return 'run'
+    return 'hunt'
   end
   if st.hunt_until > 0 then
     st.hunt_until = st.hunt_until - 1
     return 'hunt'
   end
-  local open_lane = ((en.x - me.x) * g) < 0
-  if not open_lane then
-    st.run_x, st.stall = nil, 0
-    return 'hunt'
-  end
+  -- run, but watch for stalls (blocked step, screen edge...)
   if st.run_x == nil then
     st.run_x, st.stall = me.x, 0
-  elseif ((me.x - st.run_x) * g) > 2 then
+  elseif math.abs(me.x - st.run_x) > 2 then
     st.run_x, st.stall = me.x, 0
   else
     st.stall = st.stall + 1
     if st.stall >= 90 then
       st.run_x, st.stall = nil, 0
-      st.hunt_until = 240
+      st.hunt_until = 180
       return 'hunt'
     end
   end
@@ -230,7 +271,13 @@ local function plan_route(ai_player, ctx)
   local kind, gc, gr
   local sx, sy = ctx.snap.nearest_sword_x, ctx.snap.nearest_sword_y
   if ctx.intent == 'run' then
-    kind, gc, gr = 'goal', (g > 0) and grid.w or 1, sr
+    kind = 'goal'
+    local pool = nearest_pool(me.x, me.y)
+    if pool then
+      gc, gr = pool.c, pool.r      -- dive target: the pool itself
+    else
+      gc, gr = (g > 0) and grid.w or 1, sr
+    end
   elseif (not me.has_sword) and sx and math.abs(sx - me.x) < 240 and
          math.abs((sy or me.y) - me.y) < 90 then
     kind = 'sword'

@@ -27,8 +27,8 @@ local function tile_is_solid(id)
   return v
 end
 
-local HAZARD_IDS = { [5] = true, [6] = true } -- spikes kill on landing; mines (id 6) detonate on contact
-local MINE_ID = 6
+local LETHAL_IDS = { [5] = true }            -- spikes: instant death on contact/landing
+local MINE_ID = 6                            -- mines: SAFE to step on; ~1s fuse then a blast
 local POOL_IDS = { [9] = true, [10] = true } -- eggnog goal pools: touching wins
 
 local function grid_refresh(room)
@@ -54,11 +54,20 @@ local function grid_refresh(room)
   grid.ok = true
 end
 
-local function hazard_cell(c, r)
+-- spikes etc: landing/standing there kills instantly, so never a graph node
+local function lethal_cell(c, r)
   if not grid.ok then return false end
   if c < 1 or c > grid.w or r < 1 or r > grid.h then return false end
   local id = grid.ids[(r - 1) * grid.w + c]
-  return (id and HAZARD_IDS[id]) and true or false
+  return (id and LETHAL_IDS[id]) and true or false
+end
+
+-- mines: safe to step on (a fuse starts, ~1s, then it blows). Passable but
+-- costly - cross quickly, don't linger, prefer to jump over when cheap.
+local function mine_cell(c, r)
+  if not grid.ok then return false end
+  if c < 1 or c > grid.w or r < 1 or r > grid.h then return false end
+  return grid.ids[(r - 1) * grid.w + c] == MINE_ID
 end
 
 -- col/row are 1-based; cells outside the room count as open (the row below the
@@ -82,8 +91,10 @@ local function hazard_ahead_of(px, py, dir)
   if not grid.ok then return 0 end
   local col, row = world_to_cell(px, py)
   for step = 1, 2 do
-    if hazard_cell(col + dir * step, row) or hazard_cell(col + dir * step, row + 1) then
-      return 1
+    local c = col + dir * step
+    if lethal_cell(c, row) or lethal_cell(c, row + 1)
+       or mine_cell(c, row) or mine_cell(c, row + 1) then
+      return 1   -- caution: spikes are lethal, mines are a timed risk
     end
   end
   return 0
@@ -91,7 +102,7 @@ end
 
 -- a mine (id 6) in our OWN cell or directly under our feet means we have
 -- triggered it (contact detonates), so bail immediately. Horizontally adjacent
--- mines are left to the pathfinder (it routes over them via hazard_cell), so
+-- mines are left to the pathfinder (crossable but penalized), so
 -- this reflex never fights the planned jump-over.
 local function mine_alert(px, py)
   if not grid.ok then return false end
@@ -243,7 +254,8 @@ end
 local function grid_obj()
   return { w = grid.w, h = grid.h,
            solid = function(c, r) return solid_cell(c, r) end,
-           hazard = hazard_cell }
+           hazard = lethal_cell,     -- excluded from the graph (instant death)
+           softhazard = mine_cell }  -- passable but penalized (timed detonation)
 end
 
 local function is_dying_state(sid) return sid == 8 or sid == 9 end

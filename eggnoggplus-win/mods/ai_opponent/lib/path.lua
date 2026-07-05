@@ -1,17 +1,20 @@
 -- Grid pathfinding for a jumping fencer. Pure: operates on a grid object
--- { w, h, solid = fn(col,row)->bool [, hazard = fn(col,row)->bool] } with
+-- { w, h, solid = fn(col,row)->bool [, hazard = fn, softhazard = fn] } with
 -- 1-based cells; out-of-range cells count as open (room edges connect rooms;
 -- below the map is the pit).
 --
--- Nodes are STANDABLE cells (open, supported, and NOT hazardous - landing on
--- spikes kills you, so spike cells are simply not part of the graph).
+-- Nodes are STANDABLE cells (open, supported, and NOT a LETHAL hazard - landing
+-- on spikes kills you, so spike cells are simply not part of the graph).
+-- A SOFT hazard (a mine: safe to step on, then a ~1s fuse) IS standable, but
+-- landing on/over one carries a cost penalty so the route jumps over or goes
+-- around when that is cheap, and only crosses a mine when it must.
 -- Weighted edges (bucketed Dijkstra, so the route prefers safe easy paths and
 -- takes risky/awkward moves only when they genuinely win):
 --   walk  (cost 1) : adjacent standable cell, same row
 --   jump  (cost 3) : up 1..MAX_JUMP_UP rows or across a 1..MAX_GAP gap
 --   drop  (cost 2) : walk off an edge, land on the first standable cell below
 --   climb (cost 6) : wall-jump chain up a wall face to its ledge
--- plus +4 on any move that lands NEXT TO a hazard (danger margin).
+-- plus +4 landing NEXT TO a lethal hazard, +5 landing on/over a mine.
 local P = {}
 
 P.MAX_JUMP_UP = 2   -- rows a real jump reliably gains
@@ -19,7 +22,7 @@ P.MAX_DROP = 8
 P.MAX_GAP = 3       -- columns a running jump clears
 P.MAX_CLIMB = 6     -- rows a wall-jump chain can gain (up to 3 timed jumps)
 
-P.COST = { walk = 1, jump = 3, drop = 2, climb = 6, danger = 4 }
+P.COST = { walk = 1, jump = 3, drop = 2, climb = 6, danger = 4, mine = 5 }
 
 local function open(g, c, r)
   if c < 1 or c > g.w or r < 1 or r > g.h then return true end
@@ -170,6 +173,11 @@ function P.find(g, sc, sr, gc, gr)
             local k = key(nb.c, nb.r)
             local step = P.COST[nb.kind] or 1
             if near_hazard(g, nb.c, nb.r) then step = step + P.COST.danger end
+            -- landing on a mine (or its support cell) is safe but starts a
+            -- fuse: penalize so jumping over / going around wins when cheap
+            if g.softhazard and (g.softhazard(nb.c, nb.r) or g.softhazard(nb.c, nb.r + 1)) then
+              step = step + P.COST.mine
+            end
             local nd = cur_cost + step
             if dist[k] == nil or nd < dist[k] then
               dist[k] = nd

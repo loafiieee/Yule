@@ -178,16 +178,18 @@ function H.decide(ctx, mem)
     mem.mode = mem.seq_mode or mem.mode
     return a, mem.mode
   end
-  -- GET OFF THE MINE: standing on one means we have triggered it, so hop clear
-  -- of the blast immediately (a mine blast is small; any horizontal hop to open
-  -- ground escapes it). Highest-priority reflex except a committed jump arc.
+  -- DON'T LINGER ON A MINE: stepping on one is safe but starts a ~1s fuse, so
+  -- get off it fast. Hop toward our goal (that also keeps making progress and
+  -- clears a mine we are crossing); fall back to the other clear side if the
+  -- goal side is blocked. Highest-priority reflex except a committed jump arc.
   if not (mem.hold and mem.hold_t > 0) and ctx.mine and ctx.mine.near
      and ctx.snap.player.grounded and not is_dying(ctx.snap.player) then
     local g = (ctx.goal_dir or 1) >= 0 and 1 or -1
-    local navL, navR = ctx.nav and ctx.nav[-1], ctx.nav and ctx.nav[1]
-    local away = -1
-    if navR and not navR.wall and not navR.gap then away = 1
-    elseif navL and not navL.wall and not navL.gap then away = -1 end
+    local navF, navB = ctx.nav and ctx.nav[g], ctx.nav and ctx.nav[-g]
+    local away = g
+    if navF and (navF.wall or navF.gap) and navB and not navB.wall and not navB.gap then
+      away = -g
+    end
     return hold(mem, jump_toward(away, g), 8, 'mine!')
   end
   -- multi-tick action holds (jump arcs need sustained input)

@@ -114,8 +114,8 @@ check(p7 and p7[#p7].c == 5 and p7[#p7].r == 1, "climb tops out on the ledge")
 local sc, sr = P.snap(flat, 3, 1)
 check(sc == 3 and sr == 2, "snap falls to the floor")
 
--- hazards (spikes id 5 / mines id 6): never stood on, jumped over instead
-local function GH(rows, hazrows)
+-- hazards: 'x' = lethal (spikes, never a node) / 'o' = soft (mine: passable)
+local function GH(rows, hazrows, softrows)
   local h, w = #rows, #rows[1]
   return {
     w = w, h = h,
@@ -124,15 +124,18 @@ local function GH(rows, hazrows)
       return rows[r]:sub(c, c) == '#'
     end,
     hazard = function(c, r)
-      if c < 1 or c > w or r < 1 or r > h then return false end
+      if not hazrows or c < 1 or c > w or r < 1 or r > h then return false end
       return hazrows[r]:sub(c, c) == 'x'
+    end,
+    softhazard = function(c, r)
+      if not softrows or c < 1 or c > w or r < 1 or r > h then return false end
+      return softrows[r]:sub(c, c) == 'o'
     end,
   }
 end
 
--- a mine embedded in the floor mid-corridor: the cell above it is unstandable,
--- so the route jumps over rather than walking onto it
-local minec = GH({
+-- spikes (lethal): the cell above is never a node, so the route jumps the gap
+local spikec = GH({
   "........",
   "........",
   "########",
@@ -141,11 +144,23 @@ local minec = GH({
   "........",
   "...xx...",
 })
-check(not P.standable(minec, 4, 2), "cell above a mine is not standable")
-check(not P.standable(minec, 5, 2), "cell above a mine is not standable (2)")
+check(not P.standable(spikec, 4, 2), "cell above spikes is not standable")
+local ps = P.find(spikec, 1, 2, 8, 2)
+local spike_jump = false
+for _, wp in ipairs(ps or {}) do if wp.kind == 'jump' then spike_jump = true end end
+check(spike_jump, "route jumps over lethal spikes")
+
+-- mines (timed): SAFE to step on briefly, so passable - the cell above a mine
+-- IS standable and a route may cross it (at extra cost), not forced to jump
+local minec = GH({
+  "........",
+  "........",
+  "########",
+}, nil, {
+  "........",
+  "........",
+  "...oo...",
+})
+check(P.standable(minec, 4, 2), "can stand above a mine (safe to step on, timed)")
 local pm = P.find(minec, 1, 2, 8, 2)
-check(pm ~= nil, "mine corridor path found")
-local mine_jump = false
-for _, wp in ipairs(pm or {}) do if wp.kind == 'jump' then mine_jump = true end end
-check(mine_jump, "route jumps over the mine")
-check(pm and pm[#pm].c == 8, "route still reaches the far side of the mine")
+check(pm ~= nil and pm[#pm].c == 8, "route crosses the mine to the far side")

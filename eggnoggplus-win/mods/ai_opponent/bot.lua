@@ -27,7 +27,8 @@ local function tile_is_solid(id)
   return v
 end
 
-local HAZARD_IDS = { [5] = true }          -- spikes: landing there kills
+local HAZARD_IDS = { [5] = true, [6] = true } -- spikes kill on landing; mines (id 6) detonate on contact
+local MINE_ID = 6
 local POOL_IDS = { [9] = true, [10] = true } -- eggnog goal pools: touching wins
 
 local function grid_refresh(room)
@@ -72,6 +73,36 @@ local function world_to_cell(x, y)
   local col = math.floor((x - grid.origin_x) / grid.tile_w) + 1
   local row = math.floor((y - grid.origin_y) / grid.tile_h) + 1
   return col, row
+end
+
+-- lethal tile (spike/mine) in the next cell or two ahead at foot level? feeds
+-- the NN's hazard_ahead probe (which was hardcoded 0 until now) and warns the
+-- scripted layer off walking into it.
+local function hazard_ahead_of(px, py, dir)
+  if not grid.ok then return 0 end
+  local col, row = world_to_cell(px, py)
+  for step = 1, 2 do
+    if hazard_cell(col + dir * step, row) or hazard_cell(col + dir * step, row + 1) then
+      return 1
+    end
+  end
+  return 0
+end
+
+-- a mine (id 6) in our OWN cell or directly under our feet means we have
+-- triggered it (contact detonates), so bail immediately. Horizontally adjacent
+-- mines are left to the pathfinder (it routes over them via hazard_cell), so
+-- this reflex never fights the planned jump-over.
+local function mine_alert(px, py)
+  if not grid.ok then return false end
+  local col, row = world_to_cell(px, py)
+  for dr = 0, 1 do
+    local r = row + dr
+    if r >= 1 and r <= grid.h and grid.ids[(r - 1) * grid.w + col] == MINE_ID then
+      return true
+    end
+  end
+  return false
 end
 
 -- nearest goal pool cell in the current room, or nil
@@ -162,11 +193,12 @@ function Bot.build_ctx(ai_player)
     goal_dir = goal_dir_of(ai_player),
     leader = leader,
     nav = { [1] = nav_r, [-1] = nav_l },
+    mine = { near = mine_alert(px, py) },   -- standing-on-a-mine bail reflex
     -- probes feed the NN features (facing-relative, mirror-stable)
     probes = {
       ahead_near = solid_px(px + dirx * 12, py),
       ahead_far = solid_px(px + dirx * 28, py),
-      hazard_ahead = 0,
+      hazard_ahead = hazard_ahead_of(px, py, dirx),
       ground_front = solid_px(px + dirx * 12, py + 14),
       gap_below = (nav_f.gap and 1 or 0),
       above = solid_px(px, py - 16),
@@ -227,6 +259,15 @@ local function decide_intent(ai_player, ctx)
   local me, en = ctx.snap.player, ctx.snap.enemy
   local en_alive = not is_dying_state(en.state_id or 0)
   local pool = goal_pool(ai_player, me.x, me.y)
+  -- WARP: the enemy has the go and has advanced into a room we cannot follow
+  -- into (only the leader crosses room edges). Chasing them only shrinks the
+  -- catch-up gap and delays the respawn - pure chasing never works. Run our
+  -- OWN goal instead to WIDEN the gap and trigger the teleport that snaps us
+  -- back beside (often in front of) the leader. (Loser respawns AT leader.x.)
+  if ctx.leader == -1 and en_alive and ctx.enemy_room ~= ctx.my_room then
+    st.run_x, st.stall, st.hunt_until = nil, 0, 0
+    return 'warp'
+  end
   if not (ctx.leader == 1 or not en_alive or pool) then
     st.run_x, st.stall, st.hunt_until = nil, 0, 0
     return 'hunt'
@@ -261,13 +302,13 @@ local function plan_route(ai_player, ctx)
   -- movement intent mirrors the heuristic's macro logic
   local kind, gc, gr
   local sx, sy = ctx.snap.nearest_sword_x, ctx.snap.nearest_sword_y
-  if ctx.intent == 'run' then
+  if ctx.intent == 'run' or ctx.intent == 'warp' then
     kind = 'goal'
     local pool = goal_pool(ai_player, me.x, me.y)
     if pool then
       gc, gr = pool.c, pool.r      -- dive target: our pool itself
     else
-      gc, gr = (g > 0) and grid.w or 1, sr
+      gc, gr = (g > 0) and grid.w or 1, sr   -- otherwise our goal-side edge
     end
   elseif (not me.has_sword) and sx and math.abs(sx - me.x) < 240 and
          math.abs((sy or me.y) - me.y) < 90 then

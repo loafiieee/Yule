@@ -48,7 +48,7 @@ end
 function H.is_fight(ctx)
   local s = ctx.snap
   if ctx.leader == 1 then return false end
-  if ctx.intent == 'run' then return false end
+  if ctx.intent == 'run' or ctx.intent == 'warp' then return false end
   if not s.player.has_sword then return false end
   if is_dying(s.player) or is_dying(s.enemy) then return false end
   if ctx.my_room ~= ctx.enemy_room then return false end
@@ -87,6 +87,17 @@ local function hold(mem, action, ticks, mode)
   return action, mode
 end
 
+-- Throwing the sword is a PHASED input: a direction (or jump) pressed first,
+-- then ATTACK a tick later WITH the direction still held (overlap). Pressing
+-- attack alone just swings. We queue the exact frames: [dir], [dir+attack]x2.
+-- Costs us our sword, so callers use it sparingly as a ranged poke/finisher.
+local function throw_seq(mem, dir, g, mode)
+  mem.seq = { attack_toward(dir, g), attack_toward(dir, g) }  -- frames 2..3
+  mem.seq_mode = mode
+  mem.mode = mode
+  return toward(dir, g), mode                                 -- frame 1: direction only
+end
+
 -- lateral movement with a blocked-jump reflex: if we keep pressing a direction
 -- and x doesn't move for 12 ticks (probes can miss steps/ledges), commit to a
 -- real held jump instead of grinding against the geometry
@@ -112,6 +123,7 @@ local function fight(ctx, mem)
   local g = ctx.goal_dir
   local dx = en.x - me.x
   local adx = math.abs(dx)
+  local ady = math.abs((en.y or 0) - (me.y or 0))
   local edir = (dx >= 0) and 1 or -1
   local r = mem.rand()
 
@@ -127,8 +139,17 @@ local function fight(ctx, mem)
     if nav and nav.wall then
       return hold(mem, jump_toward(edir, g), 12, 'fight')
     end
+    -- THROW: a ranged poke when they are out of stab reach but roughly level.
+    -- It disarms us, so only sometimes - it is a commitment, not a jab.
+    if me.has_sword and adx < 118 and ady < 34 and r < 0.18 then
+      return throw_seq(mem, edir, g, 'throw')
+    end
+    -- slide in to close the gap and blow through a poke (sliding is safe)
+    if r < 0.30 then
+      return hold(mem, slide_toward(edir, g), 12, 'fight')
+    end
     -- approach; jump-approach occasionally when they poke at range
-    if attacking(en) and adx < 84 and r < 0.25 then
+    if attacking(en) and adx < 84 and r < 0.45 then
       return hold(mem, jump_toward(edir, g), 6, 'fight')
     end
     return toward(edir, g), 'fight'
@@ -151,6 +172,24 @@ local function fight(ctx, mem)
 end
 
 function H.decide(ctx, mem)
+  -- queued input sequence (e.g. a throw: direction then direction+attack)
+  if mem.seq and #mem.seq > 0 then
+    local a = table.remove(mem.seq, 1)
+    mem.mode = mem.seq_mode or mem.mode
+    return a, mem.mode
+  end
+  -- GET OFF THE MINE: standing on one means we have triggered it, so hop clear
+  -- of the blast immediately (a mine blast is small; any horizontal hop to open
+  -- ground escapes it). Highest-priority reflex except a committed jump arc.
+  if not (mem.hold and mem.hold_t > 0) and ctx.mine and ctx.mine.near
+     and ctx.snap.player.grounded and not is_dying(ctx.snap.player) then
+    local g = (ctx.goal_dir or 1) >= 0 and 1 or -1
+    local navL, navR = ctx.nav and ctx.nav[-1], ctx.nav and ctx.nav[1]
+    local away = -1
+    if navR and not navR.wall and not navR.gap then away = 1
+    elseif navL and not navL.wall and not navL.gap then away = -1 end
+    return hold(mem, jump_toward(away, g), 8, 'mine!')
+  end
   -- multi-tick action holds (jump arcs need sustained input)
   if mem.hold and mem.hold_t > 0 then
     mem.hold_t = mem.hold_t - 1
@@ -179,15 +218,25 @@ function H.decide(ctx, mem)
   -- ------------------------------------------------------------- unarmed ---
   if not me.has_sword then
     local sx, sy = s.nearest_sword_x, s.nearest_sword_y
-    if sx and math.abs(sx - me.x) < 240 and math.abs((sy or me.y) - me.y) < 90 then
+    -- Being armed dominates almost everything, so go for a loose sword whenever
+    -- one is sensed and not absurdly far. You grab a sword by CROUCHING on it
+    -- OR SLIDING onto it - the slide is more forgiving (it covers the last
+    -- stretch and passes through the enemy), so prefer it once we are close.
+    if sx and math.abs(sx - me.x) < 360 and math.abs((sy or me.y) - me.y) < 120 then
       local sdir = ((sx - me.x) >= 0) and 1 or -1
       local sdx = math.abs(sx - me.x)
-      if sdx < 14 then
-        -- crouch (down+jump) picks it up; pulse the press so the edge repeats
+      local level = math.abs((sy or me.y) - me.y) < 26
+      if sdx < 12 and level then
+        -- right on it: crouch (down+jump) grabs; pulse so the edge repeats
         mem.grab_t = (mem.grab_t or 0) + 1
         mem.mode = 'grab'
-        if (mem.grab_t % 10) < 5 then return DOWN_JUMP, 'grab' end
+        if (mem.grab_t % 8) < 4 then return DOWN_JUMP, 'grab' end
         return DOWN, 'grab'
+      end
+      mem.grab_t = 0
+      if sdx < 64 and level and me.grounded then
+        -- close and level: slide onto it (also grabs, and blows past a guard)
+        return hold(mem, slide_toward(sdir, g), 12, 'get_sword')
       end
       if ctx.route and ctx.route.kind == 'sword' and ctx.route.dir and ctx.route.dir ~= 0 then
         if ctx.route.jump then
@@ -239,7 +288,7 @@ function H.decide(ctx, mem)
   -- RUNNING (the go, an open lane, or a dead enemy): the goal ABOVE ALL ELSE.
   -- Otherwise hunt the enemy down. (ctx.intent is decided by the bot, with a
   -- stall fallback so a blocked run turns back into a hunt.)
-  local running = ctx.leader == 1 or ctx.intent == 'run' or not en_alive
+  local running = ctx.leader == 1 or ctx.intent == 'run' or ctx.intent == 'warp' or not en_alive
   local dir
   if running then
     dir = g
@@ -278,16 +327,21 @@ function H.decide(ctx, mem)
   if ctx.route and ctx.route.dir then
     local rt = ctx.route
     if rt.climb and rt.dir ~= 0 then
-      -- wall-jump chain: hold INTO the wall, TIMED jump presses (holding jump
-      -- doesn't re-trigger; alternate press/release ~7 ticks each)
-      mem.climb_t = (mem.climb_t or 0) + 1
+      -- wall-jump chain for HEIGHT: hold INTO the wall, and press JUMP only on
+      -- actual wall contact while not already rising - that is the instant a
+      -- wall-jump gains height. A blind press cadence wastes presses mid-air
+      -- and tops out low; contact-timing gets the full chain. Jump is
+      -- edge-triggered, so a short release gap must pass between presses.
       mem.mode = 'climb'
-      if (mem.climb_t % 14) < 7 then
+      if (mem.climb_cool or 0) > 0 then mem.climb_cool = mem.climb_cool - 1 end
+      local wall_contact = (rt.dir > 0 and me.wall_right) or (rt.dir < 0 and me.wall_left)
+      if wall_contact and (me.vy or 0) > -1.0 and (mem.climb_cool or 0) == 0 then
+        mem.climb_cool = 4                       -- re-arm the jump edge
         return jump_toward(rt.dir, g), 'climb'
       end
-      return toward(rt.dir, g), 'climb'
+      return toward(rt.dir, g), 'climb'          -- keep pressing into the wall
     end
-    mem.climb_t = 0
+    mem.climb_t, mem.climb_cool = 0, 0
     if rt.jump then
       local jd = (rt.dir ~= 0) and rt.dir or dir
       return hold(mem, jump_toward(jd, g), 14, 'navigate')

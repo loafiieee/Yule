@@ -113,3 +113,39 @@ check(p7 and p7[#p7].c == 5 and p7[#p7].r == 1, "climb tops out on the ledge")
 -- snap: airborne start snaps to the landing cell below
 local sc, sr = P.snap(flat, 3, 1)
 check(sc == 3 and sr == 2, "snap falls to the floor")
+
+-- hazards (spikes id 5 / mines id 6): never stood on, jumped over instead
+local function GH(rows, hazrows)
+  local h, w = #rows, #rows[1]
+  return {
+    w = w, h = h,
+    solid = function(c, r)
+      if c < 1 or c > w or r < 1 or r > h then return false end
+      return rows[r]:sub(c, c) == '#'
+    end,
+    hazard = function(c, r)
+      if c < 1 or c > w or r < 1 or r > h then return false end
+      return hazrows[r]:sub(c, c) == 'x'
+    end,
+  }
+end
+
+-- a mine embedded in the floor mid-corridor: the cell above it is unstandable,
+-- so the route jumps over rather than walking onto it
+local minec = GH({
+  "........",
+  "........",
+  "########",
+}, {
+  "........",
+  "........",
+  "...xx...",
+})
+check(not P.standable(minec, 4, 2), "cell above a mine is not standable")
+check(not P.standable(minec, 5, 2), "cell above a mine is not standable (2)")
+local pm = P.find(minec, 1, 2, 8, 2)
+check(pm ~= nil, "mine corridor path found")
+local mine_jump = false
+for _, wp in ipairs(pm or {}) do if wp.kind == 'jump' then mine_jump = true end end
+check(mine_jump, "route jumps over the mine")
+check(pm and pm[#pm].c == 8, "route still reaches the far side of the mine")

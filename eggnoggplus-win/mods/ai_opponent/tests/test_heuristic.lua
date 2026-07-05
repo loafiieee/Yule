@@ -208,6 +208,67 @@ local ah1 = H.decide(ctxh, mh)
 local ah2 = H.decide(fake_ctx(), mh)   -- different ctx, but hold should persist
 check(ah1 == ah2, 'hold repeats action across ticks')
 
+-- THROW: at medium range some fighters throw the sword. A throw is PHASED -
+-- a direction pressed first, then ATTACK a tick later with the direction still
+-- held (overlap). Pressing attack alone is a swing, not a throw.
+local throw_seen, throw_seed = false, nil
+for i = 1, 300 do
+  local mmt = H.new_mem(1300 + i)
+  local _, modet = H.decide(fake_ctx({ enemy = { x = 190 } }), mmt)   -- adx 90, level, armed
+  if modet == 'throw' then throw_seen = true; throw_seed = 1300 + i; break end
+end
+check(throw_seen, 'throws the sword at medium range sometimes')
+local mmt = H.new_mem(throw_seed)
+local ctxt = fake_ctx({ enemy = { x = 190 } })
+local tf1 = A.mask(H.decide(ctxt, mmt), 1)
+check(has(tf1, R) and not has(tf1, AT), 'throw frame 1: direction only, no attack yet')
+local tf2 = A.mask(H.decide(ctxt, mmt), 1)
+local tf3 = A.mask(H.decide(ctxt, mmt), 1)
+check((has(tf2, AT) and has(tf2, R)) or (has(tf3, AT) and has(tf3, R)),
+      'throw follows with attack overlapping the direction')
+
+-- SLIDE pickup: unarmed with a close, level loose sword -> slide onto it
+-- (down+jump+direction); sliding also grabs and is more forgiving than crouching
+local msl = H.new_mem(61)
+local ctxsl = fake_ctx({ player = { has_sword = false }, enemy = { x = 400 } })
+ctxsl.snap.nearest_sword_x, ctxsl.snap.nearest_sword_y = 145, 50   -- sdx 45, level, to the right
+local asl, modesl = H.decide(ctxsl, msl)
+local msl_mask = A.mask(asl, 1)
+check(modesl == 'get_sword', 'slides for a close sword (mode)')
+check(has(msl_mask, D) and has(msl_mask, J) and has(msl_mask, R),
+      'slide toward the sword = down+jump+direction')
+
+-- MINE reflex: standing on a mine -> hop clear of the blast toward open ground
+local mmn = H.new_mem(71)
+local ctxmn = fake_ctx({ nav = { [1] = { wall = true, gap = false },     -- right blocked
+                                 [-1] = { wall = false, gap = false } } })
+ctxmn.mine = { near = true }
+local amn, modemn = H.decide(ctxmn, mmn)
+local mmn_mask = A.mask(amn, 1)
+check(modemn == 'mine!', 'standing on a mine triggers the flee reflex')
+check(has(mmn_mask, J) and has(mmn_mask, L), 'mine flee hops toward the open (left) side')
+
+-- WARP (hopelessly behind the leader): never a fight - run our own goal instead
+local ctxwarp = fake_ctx({ enemy = { x = 130 } })
+ctxwarp.intent = 'warp'
+check(not H.is_fight(ctxwarp), 'warp intent suppresses fight context')
+
+-- WALL-JUMP timing: on a climb route, JUMP fires only on wall contact while not
+-- rising (that is the height-gaining instant); otherwise press into the wall
+local mwj = H.new_mem(81)
+local ctxwj = fake_ctx({ player = { wall_right = true, vy = 0 } })
+ctxwj.route = { dir = 1, climb = true, kind = 'goal' }
+check(has(A.mask(H.decide(ctxwj, mwj), 1), J), 'walljump: contact + not rising -> jump')
+local mwj2 = H.new_mem(82)
+local ctxwj2 = fake_ctx({ player = { wall_right = false, vy = 0 } })
+ctxwj2.route = { dir = 1, climb = true, kind = 'goal' }
+local awj2 = A.mask(H.decide(ctxwj2, mwj2), 1)
+check(not has(awj2, J) and has(awj2, R), 'walljump: no contact -> press into wall, no wasted jump')
+local mwj3 = H.new_mem(83)
+local ctxwj3 = fake_ctx({ player = { wall_right = true, vy = -4 } })   -- -y is up: rising
+ctxwj3.route = { dir = 1, climb = true, kind = 'goal' }
+check(not has(A.mask(H.decide(ctxwj3, mwj3), 1), J), 'walljump: still rising -> wait, no wasted press')
+
 -- MIRROR test: fully mirrored world (goal -1) with same rng seed produces the
 -- mirrored command mask every tick
 local function mirror_ctx(c)

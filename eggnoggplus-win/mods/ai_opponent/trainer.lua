@@ -99,12 +99,10 @@ end
 -- (champion vs the scripted fighter).
 local function begin_match(s, kind)
   local led = mod.game.combat_ledger()
-  local map = mod.game.map_size()
   local m = {
     kind = kind,
     t = 0,
     led = led,
-    mapw = map and map.w or nil,
     score = { [0] = 0, [1] = 0 },
     pot = { [0] = nil, [1] = nil },   -- shaping baselines (nil = rebaseline)
     pol = {},
@@ -170,13 +168,13 @@ local function match_step(s)
   m.led = led
 
   -- potential-based shaping: reward per-tick progress toward winning.
-  -- Goals point at the NEAREST map end (either eggnog pool wins).
+  -- Goal sides are engine-fixed per player index (player_new writes ±1 to
+  -- player+0x9C: P0 pushes RIGHT, P1 pushes LEFT, all match). Rewarding
+  -- "nearest end" here used to TEACH defenders to sprint at the enemy's goal.
   do
     local lead = snap.leader_index
     local dist = math.abs(snap.enemy.x - snap.player.x)
-    local mid = (m.mapw and m.mapw > 1) and (m.mapw * 0.5) or nil
-    local function goal_of(x, pi)
-      if mid then return (x < mid) and -1 or 1 end
+    local function goal_of(_, pi)
       return (pi == 0) and 1 or -1
     end
     local obs = {

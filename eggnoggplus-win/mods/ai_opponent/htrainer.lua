@@ -184,15 +184,10 @@ function HT.tick(ai_player)
   s.led = led
 
   -- potential shaping: reward per-tick progress toward winning (camping = 0).
-  -- Goal = the NEAREST map end (either eggnog pool wins).
+  -- Goal side is engine-fixed per player index (player+0x9C from player_new:
+  -- P0 pushes RIGHT, P1 pushes LEFT) - never positional.
   local lead = snap.leader_index
-  local map = mod.game.map_size()
-  local goal
-  if map and map.w and map.w > 1 then
-    goal = (snap.player.x < map.w * 0.5) and -1 or 1
-  else
-    goal = (ai_player == 0) and 1 or -1
-  end
+  local goal = (ai_player == 0) and 1 or -1
   local obs = { x = snap.player.x, goal = goal,
                 has_sword = snap.player.has_sword and true or false,
                 enemy_has_sword = snap.enemy.has_sword and true or false,

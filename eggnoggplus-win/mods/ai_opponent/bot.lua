@@ -40,7 +40,7 @@ local function grid_refresh(room)
   grid.w, grid.h, grid.ids = rt.w, rt.h, rt.ids
   grid.tile_w, grid.tile_h = rt.tile_w, rt.tile_h
   grid.origin_x, grid.origin_y = rt.origin_x or 0, rt.origin_y or 0
-  -- goal pools in this room (either pool wins - race targets)
+  -- goal pools in this room (dive target only when on OUR side - see goal_pool)
   grid.pools = {}
   for r = 1, grid.h do
     for c = 1, grid.w do
@@ -119,32 +119,25 @@ end
 
 -- ----------------------------------------------------------------- context ---
 
-local goal_st = { [0] = nil, [1] = nil }   -- sticky nearest-end goal (hysteresis)
+-- Goal sides are FIXED by the engine, not positional: player_new writes
+-- (index & 1) * -2 + 1 to player+0x9C, so P0 always pushes RIGHT and P1
+-- always pushes LEFT, for the whole match. Room transitions enforce it
+-- (only the _leader may cross a room edge, and only in their 0x9C
+-- direction - anyone else gets their position reverted). Running toward
+-- the OTHER end is never progress; the old nearest-end heuristic made
+-- defenders sprint at the enemy's goal.
+local function goal_dir_of(ai_player)
+  return (ai_player == 0) and 1 or -1
+end
 
--- The eggnog goal pools sit at BOTH map ends and either wins (engine win
--- check has no side filter): the right run target is the NEAREST end - or
--- the pool itself when it's in the current room. 40px hysteresis around the
--- map center stops mid-map goal dithering.
-local function nearest_goal_dir(ai_player, px, py)
+-- nearest pool that actually lies in OUR goal direction (a pool at the
+-- enemy's end is their target, not ours - never dive for it)
+local function goal_pool(ai_player, px, py)
   local pool = nearest_pool(px, py)
-  if pool and grid.ok then
-    local poolx = grid.origin_x + (pool.c - 0.5) * grid.tile_w
-    local gd = (poolx >= px) and 1 or -1
-    goal_st[ai_player] = gd
-    return gd
-  end
-  local gd = goal_st[ai_player]
-  local map = mod.game.map_size()
-  if map and map.w and map.w > 1 then
-    local mid = map.w * 0.5
-    if gd == nil or (gd < 0 and px > mid + 40) or (gd > 0 and px < mid - 40) then
-      gd = (px < mid) and -1 or 1
-    end
-  else
-    gd = gd or ((ai_player == 0) and 1 or -1)
-  end
-  goal_st[ai_player] = gd
-  return gd
+  if not (pool and grid.ok) then return nil end
+  local poolx = grid.origin_x + (pool.c - 0.5) * grid.tile_w
+  if (poolx - px) * goal_dir_of(ai_player) < 0 then return nil end
+  return pool
 end
 
 function Bot.build_ctx(ai_player)
@@ -166,7 +159,7 @@ function Bot.build_ctx(ai_player)
     snap = snap,
     my_room = room,
     enemy_room = snap.enemy.room_index or 0,
-    goal_dir = nearest_goal_dir(ai_player, px, py),
+    goal_dir = goal_dir_of(ai_player),
     leader = leader,
     nav = { [1] = nav_r, [-1] = nav_l },
     -- probes feed the NN features (facing-relative, mirror-stable)
@@ -208,7 +201,6 @@ function Bot.reset_scaffold()
   intent_st[0] = { run_x = nil, stall = 0, hunt_until = 0 }
   intent_st[1] = { run_x = nil, stall = 0, hunt_until = 0 }
   plan[0], plan[1] = nil, nil
-  goal_st[0], goal_st[1] = nil, nil
   grid.room, grid.ok = -1, false
 end
 
@@ -225,17 +217,16 @@ end
 local function is_dying_state(sid) return sid == 8 or sid == 9 end
 
 -- Fight or run? RUN only when it can actually win: with the go (the leader
--- advances the active room), with a dead enemy, or when a goal pool is IN
--- THIS ROOM (either pool wins - dive for it). A non-leader cannot advance
--- the room, so "open lane" running just parks on an invisible wall - without
--- the go and without a reachable pool, the only path to the goal is a kill:
--- HUNT. Stalled runs also fall back to hunting.
+-- advances the active room), with a dead enemy, or when OUR goal pool is in
+-- this room (dive for it - even as non-leader, touching our own nog wins).
+-- A non-leader cannot advance the room, so without those the only path to
+-- the goal is a kill: HUNT and hold ground - every screen the enemy takes
+-- is ours to defend. Stalled runs also fall back to hunting.
 local function decide_intent(ai_player, ctx)
   local st = intent_st[ai_player]
   local me, en = ctx.snap.player, ctx.snap.enemy
-  local g = ctx.goal_dir
   local en_alive = not is_dying_state(en.state_id or 0)
-  local pool = nearest_pool(me.x, me.y)
+  local pool = goal_pool(ai_player, me.x, me.y)
   if not (ctx.leader == 1 or not en_alive or pool) then
     st.run_x, st.stall, st.hunt_until = nil, 0, 0
     return 'hunt'
@@ -272,9 +263,9 @@ local function plan_route(ai_player, ctx)
   local sx, sy = ctx.snap.nearest_sword_x, ctx.snap.nearest_sword_y
   if ctx.intent == 'run' then
     kind = 'goal'
-    local pool = nearest_pool(me.x, me.y)
+    local pool = goal_pool(ai_player, me.x, me.y)
     if pool then
-      gc, gr = pool.c, pool.r      -- dive target: the pool itself
+      gc, gr = pool.c, pool.r      -- dive target: our pool itself
     else
       gc, gr = (g > 0) and grid.w or 1, sr
     end

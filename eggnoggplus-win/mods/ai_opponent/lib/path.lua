@@ -16,6 +16,8 @@ P.MAX_JUMP_UP = 2   -- rows a real jump reliably gains (planning 3 made fighters
                     -- attempt jumps the physics can't complete)
 P.MAX_DROP = 8
 P.MAX_GAP = 2
+P.MAX_CLIMB = 6     -- rows a wall-jump chain can gain (up to 3 timed jumps
+                    -- holding into the wall)
 
 local function open(g, c, r)
   if c < 1 or c > g.w or r < 1 or r > g.h then return true end
@@ -89,6 +91,23 @@ local function neighbors(g, c, r, out)
           break
         end
         if not open(g, c + dc, r + dr) then break end
+      end
+    end
+  end
+  -- wall climb (wall-jump chain: hold into an adjacent solid wall, timed jump
+  -- presses gain height; top out on the wall's ledge)
+  for _, s in ipairs({ -1, 1 }) do
+    if not open(g, c + s, r) then                -- wall face beside us
+      local wall_ok = true
+      for dr = 1, P.MAX_CLIMB do
+        if not open(g, c, r - dr) then break end -- need clear air in our column
+        if open(g, c + s, r - dr) then
+          -- the wall ends here: its top surface is (c+s, r-dr) if standable
+          if wall_ok and P.standable(g, c + s, r - dr) and dr > P.MAX_JUMP_UP then
+            n = n + 1; out[n] = { c = c + s, r = r - dr, kind = 'climb' }
+          end
+          break
+        end
       end
     end
   end

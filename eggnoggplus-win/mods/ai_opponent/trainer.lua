@@ -99,10 +99,12 @@ end
 -- (champion vs the scripted fighter).
 local function begin_match(s, kind)
   local led = mod.game.combat_ledger()
+  local map = mod.game.map_size()
   local m = {
     kind = kind,
     t = 0,
     led = led,
+    mapw = map and map.w or nil,
     score = { [0] = 0, [1] = 0 },
     pot = { [0] = nil, [1] = nil },   -- shaping baselines (nil = rebaseline)
     pol = {},
@@ -134,8 +136,29 @@ local function match_step(s)
   mod.game.simulate_ticks(1)
   m.t = m.t + 1
 
-  -- ledger deltas -> per-side scores
   local led = mod.game.combat_ledger()
+  local snap = mod.game.snapshot(0, false)
+  if not (snap and snap.in_game and snap.player and snap.enemy) then return -1 end
+
+  -- MATCH END FIRST: the winning dive briefly registers as a death (the
+  -- engine sets scores/countdown outside player_die), so on the end tick all
+  -- ledger deltas are dive artifacts and must be skipped, not scored
+  local ledger_end = led.match_ends > m.led.match_ends
+  if ledger_end or (snap.end_countdown or 0) > 0 then
+    local winner
+    if ledger_end and led.last_winner and led.last_winner >= 0 then
+      winner = led.last_winner
+    else
+      winner = snap.leader_index
+    end
+    m.led = led
+    if winner == nil or winner < 0 then
+      winner = (m.score[0] >= m.score[1]) and 0 or 1
+    end
+    return winner
+  end
+
+  -- ledger deltas -> per-side scores
   local d0 = led.deaths0 - m.led.deaths0
   local d1 = led.deaths1 - m.led.deaths1
   local s0 = led.scores0 - m.led.scores0
@@ -144,21 +167,24 @@ local function match_step(s)
   if d1 > 0 then m.score[1] = m.score[1] + R.DEATH * d1; m.score[0] = m.score[0] + R.KILL * d1 end
   if s0 > 0 then m.score[0] = m.score[0] + R.SCORE * s0; m.score[1] = m.score[1] + R.OPP_SCORE * s0 end
   if s1 > 0 then m.score[1] = m.score[1] + R.SCORE * s1; m.score[0] = m.score[0] + R.OPP_SCORE * s1 end
-  local match_ended = led.match_ends > m.led.match_ends
-  local winner = led.last_winner
   m.led = led
 
-  -- potential-based shaping: reward per-tick progress toward winning
-  local snap = mod.game.snapshot(0, false)
-  if snap and snap.in_game and snap.player and snap.enemy then
+  -- potential-based shaping: reward per-tick progress toward winning.
+  -- Goals point at the NEAREST map end (either eggnog pool wins).
+  do
     local lead = snap.leader_index
     local dist = math.abs(snap.enemy.x - snap.player.x)
+    local mid = (m.mapw and m.mapw > 1) and (m.mapw * 0.5) or nil
+    local function goal_of(x, pi)
+      if mid then return (x < mid) and -1 or 1 end
+      return (pi == 0) and 1 or -1
+    end
     local obs = {
-      [0] = { x = snap.player.x, goal = 1,
+      [0] = { x = snap.player.x, goal = goal_of(snap.player.x, 0),
               has_sword = snap.player.has_sword and true or false,
               enemy_has_sword = snap.enemy.has_sword and true or false,
               is_leader = (lead == 0), dist = dist },
-      [1] = { x = snap.enemy.x, goal = -1,
+      [1] = { x = snap.enemy.x, goal = goal_of(snap.enemy.x, 1),
               has_sword = snap.enemy.has_sword and true or false,
               enemy_has_sword = snap.player.has_sword and true or false,
               is_leader = (lead == 1), dist = dist },
@@ -166,23 +192,13 @@ local function match_step(s)
     local died = { [0] = d0 > 0, [1] = d1 > 0 }
     local dove = { [0] = s0 > 0, [1] = s1 > 0 }
     for pi = 0, 1 do
-      if died[pi] or dove[pi] then
-        m.pot[pi] = nil            -- respawn teleport: rebaseline, no shaped reward
+      if died[pi] or dove[pi] or (m.pot[pi] and m.pot[pi].goal ~= obs[pi].goal) then
+        m.pot[pi] = nil   -- teleport or goal flip: rebaseline, no shaped reward
       else
         m.score[pi] = m.score[pi] + d.RW.delta(m.pot[pi], obs[pi])
         m.pot[pi] = obs[pi]
       end
     end
-    if match_ended and (winner == nil or winner < 0) then
-      winner = lead
-    end
-  end
-
-  if match_ended then
-    if winner == nil or winner < 0 then
-      winner = (m.score[0] >= m.score[1]) and 0 or 1
-    end
-    return winner
   end
   -- matches end only when someone actually wins; the failsafe should never
   -- fire now that the engagement scaffold makes standoffs impossible

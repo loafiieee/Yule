@@ -132,25 +132,44 @@ function HT.tick(ai_player)
   local led = led_view(ai_player)
   if not s.led then s.led = led end
 
-  local awarded_score = false
+  -- MATCH END FIRST: on the end tick all ledger deltas are dive artifacts
+  -- (the winning dive briefly registers as a death because the engine sets
+  -- scores/countdown outside player_die) - award the map result, hop to a
+  -- random map immediately, and skip everything else this tick
+  if led.ends > s.led.ends or (snap.end_countdown or 0) > 0 then
+    local winner = (led.ends > s.led.ends and led.winner and led.winner >= 0)
+                   and led.winner or snap.leader_index
+    if winner == ai_player then
+      s.fit = s.fit + R.SCORE
+      s.ai_points = s.ai_points + 1
+    elseif winner ~= nil then
+      s.fit = s.fit + R.OPP_SCORE
+      s.human_points = s.human_points + 1
+    end
+    mod.game.start_match(d.pick_map(s.rand))
+    s.led = led_view(ai_player)   -- resync across the hop (drops dive deltas)
+    s.pot = nil
+    d.Bot.reset_scaffold()
+    if s.policy then d.Policy.reset(s.policy) end
+    s.slice_t = s.slice_t + 1
+    return
+  end
 
-  -- scoring dives (points modes AND the match-winning dive)
-  if led.s_ai > s.led.s_ai then
+  -- scoring dives (points modes: score and respawn, match continues)
+  local ai_dove = led.s_ai > s.led.s_ai
+  if ai_dove then
     local n = led.s_ai - s.led.s_ai
     s.fit = s.fit + R.SCORE * n
     s.ai_points = s.ai_points + n
-    awarded_score = true
   end
   if led.s_hu > s.led.s_hu then
     local n = led.s_hu - s.led.s_hu
     s.fit = s.fit + R.OPP_SCORE * n
     s.human_points = s.human_points + n
-    awarded_score = true
   end
 
   -- real kills / deaths
   local ai_died = led.d_ai > s.led.d_ai
-  local ai_dove = led.s_ai > s.led.s_ai
   if led.d_hu > s.led.d_hu then
     local n = led.d_hu - s.led.d_hu
     s.fit = s.fit + R.KILL * n
@@ -162,40 +181,25 @@ function HT.tick(ai_player)
     s.human_kills = s.human_kills + n
   end
 
-  -- match over? hop to a random map immediately. (If the final dive already
-  -- paid a score event this tick, don't award again.)
-  if led.ends > s.led.ends or (snap.end_countdown or 0) > 0 then
-    if not awarded_score then
-      local winner = (led.ends > s.led.ends and led.winner and led.winner >= 0)
-                     and led.winner or snap.leader_index
-      if winner == ai_player then
-        s.fit = s.fit + R.SCORE
-        s.ai_points = s.ai_points + 1
-      elseif winner ~= nil then
-        s.fit = s.fit + R.OPP_SCORE
-        s.human_points = s.human_points + 1
-      end
-    end
-    mod.game.start_match(d.pick_map(s.rand))
-    s.led = led_view(ai_player)   -- resync across the hop
-    s.pot = nil
-    d.Bot.reset_scaffold()
-    if s.policy then d.Policy.reset(s.policy) end
-    s.slice_t = s.slice_t + 1
-    return
-  end
-
   s.led = led
 
-  -- potential shaping: reward per-tick progress toward winning (camping = 0)
+  -- potential shaping: reward per-tick progress toward winning (camping = 0).
+  -- Goal = the NEAREST map end (either eggnog pool wins).
   local lead = snap.leader_index
-  local obs = { x = snap.player.x, goal = (ai_player == 0) and 1 or -1,
+  local map = mod.game.map_size()
+  local goal
+  if map and map.w and map.w > 1 then
+    goal = (snap.player.x < map.w * 0.5) and -1 or 1
+  else
+    goal = (ai_player == 0) and 1 or -1
+  end
+  local obs = { x = snap.player.x, goal = goal,
                 has_sword = snap.player.has_sword and true or false,
                 enemy_has_sword = snap.enemy.has_sword and true or false,
                 is_leader = (lead == ai_player),
                 dist = math.abs(snap.enemy.x - snap.player.x) }
-  if ai_died or ai_dove then
-    s.pot = nil                    -- respawn/dive teleport: rebaseline
+  if ai_died or ai_dove or (s.pot and s.pot.goal ~= goal) then
+    s.pot = nil                    -- teleport or goal flip: rebaseline
   else
     s.fit = s.fit + d.RW.delta(s.pot, obs)
     s.pot = obs

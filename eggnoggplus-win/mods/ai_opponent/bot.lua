@@ -87,6 +87,26 @@ end
 
 -- ----------------------------------------------------------------- context ---
 
+local goal_st = { [0] = nil, [1] = nil }   -- sticky nearest-end goal (hysteresis)
+
+-- The eggnog goal pools sit at BOTH map ends and either wins (engine win
+-- check has no side filter): the right run target is the NEAREST end.
+-- 40px hysteresis around the map center stops mid-map goal dithering.
+local function nearest_goal_dir(ai_player, px)
+  local gd = goal_st[ai_player]
+  local map = mod.game.map_size()
+  if map and map.w and map.w > 1 then
+    local mid = map.w * 0.5
+    if gd == nil or (gd < 0 and px > mid + 40) or (gd > 0 and px < mid - 40) then
+      gd = (px < mid) and -1 or 1
+    end
+  else
+    gd = gd or ((ai_player == 0) and 1 or -1)
+  end
+  goal_st[ai_player] = gd
+  return gd
+end
+
 function Bot.build_ctx(ai_player)
   local snap = mod.game.snapshot(ai_player, false)
   if not snap or not snap.in_game or not snap.player or not snap.enemy then return nil end
@@ -106,7 +126,7 @@ function Bot.build_ctx(ai_player)
     snap = snap,
     my_room = room,
     enemy_room = snap.enemy.room_index or 0,
-    goal_dir = (ai_player == 0) and 1 or -1,   -- P0 pushes right (trainer logs verify)
+    goal_dir = nearest_goal_dir(ai_player, px),
     leader = leader,
     nav = { [1] = nav_r, [-1] = nav_l },
     -- probes feed the NN features (facing-relative, mirror-stable)
@@ -148,6 +168,7 @@ function Bot.reset_scaffold()
   intent_st[0] = { run_x = nil, stall = 0, hunt_until = 0 }
   intent_st[1] = { run_x = nil, stall = 0, hunt_until = 0 }
   plan[0], plan[1] = nil, nil
+  goal_st[0], goal_st[1] = nil, nil
   grid.room, grid.ok = -1, false
 end
 
@@ -231,16 +252,28 @@ local function plan_route(ai_player, ctx)
   p.age = p.age + 1
   if not p.path then return nil end
 
+  -- advance waypoints we've reached OR OVERSHOT (a jump can land past a
+  -- waypoint; steering back to it caused the 1-tile-step oscillation)
+  local function md(c, r, wp) return math.abs(c - wp.c) + math.abs(r - wp.r) end
   local wp = p.path[p.idx]
-  while wp and wp.c == sc and wp.r == sr do   -- waypoint reached
-    p.idx = p.idx + 1
+  while wp do
+    if wp.c == sc and wp.r == sr then
+      p.idx = p.idx + 1
+    elseif p.path[p.idx + 1] and md(sc, sr, p.path[p.idx + 1]) < md(sc, sr, wp) then
+      p.idx = p.idx + 1
+    else
+      break
+    end
     wp = p.path[p.idx]
   end
   if not wp then return nil end
   local dir = 0
   if wp.c > sc then dir = 1 elseif wp.c < sc then dir = -1 end
   local jump = (wp.r < sr) or (wp.kind == 'jump')
-  return { dir = dir, jump = (jump and (me.grounded and true or false)), kind = kind }
+  return { dir = dir,
+           jump = (jump and (me.grounded and true or false)),
+           climb = (wp.kind == 'climb'),
+           kind = kind }
 end
 
 -- remaining waypoints in world pixels (for the path overlay)

@@ -19,7 +19,7 @@ function H.init(deps) H._NN = deps.NN end
 
 function H.new_mem(seed)
   return { rand = H._NN.rng_new(seed or 1), hold = nil, hold_t = 0, mode = 'idle',
-           blocked_x = nil, blocked_t = 0 }
+           blocked_x = nil, blocked_t = 0, climb_t = 0 }
 end
 
 local function is_dying(p) local s = p.state_id or 0; return s == 8 or s == 9 end
@@ -204,10 +204,11 @@ function H.decide(ctx, mem)
     -- blocker in my lane: SLIDE through their hitbox (crouch-slide passes
     -- clean through), swing through, or vault - but never stop running
     if en_alive and same_room and (dx * g) > 0 and adx < 60 and ady < 50 then
+      -- slide through, kill them, or jump over - roughly even odds
       local r = mem.rand()
-      if r < 0.55 then
+      if r < 0.35 then
         return hold(mem, slide_toward(g, g), 12, 'run')      -- slide through
-      elseif me.has_sword and r < 0.80 then
+      elseif me.has_sword and r < 0.70 then
         mem.mode = 'run'
         return attack_toward(edir, g), 'run'                 -- cut through
       end
@@ -230,9 +231,20 @@ function H.decide(ctx, mem)
     end
   end
   -- planned route (bot-side pathfinder) drives all long-distance movement:
-  -- jumps and drops are explicit plan steps
+  -- jumps, drops, and wall climbs are explicit plan steps
   if ctx.route and ctx.route.dir then
     local rt = ctx.route
+    if rt.climb and rt.dir ~= 0 then
+      -- wall-jump chain: hold INTO the wall, TIMED jump presses (holding jump
+      -- doesn't re-trigger; alternate press/release ~7 ticks each)
+      mem.climb_t = (mem.climb_t or 0) + 1
+      mem.mode = 'climb'
+      if (mem.climb_t % 14) < 7 then
+        return jump_toward(rt.dir, g), 'climb'
+      end
+      return toward(rt.dir, g), 'climb'
+    end
+    mem.climb_t = 0
     if rt.jump then
       local jd = (rt.dir ~= 0) and rt.dir or dir
       return hold(mem, jump_toward(jd, g), 14, 'navigate')
@@ -241,6 +253,7 @@ function H.decide(ctx, mem)
       return move_or_jump(ctx, mem, rt.dir, g, 'navigate')
     end
   end
+  mem.climb_t = 0
   local nav = ctx.nav and ctx.nav[dir]
   if nav and (nav.wall or nav.gap) then
     return hold(mem, jump_toward(dir, g), 8, 'navigate')

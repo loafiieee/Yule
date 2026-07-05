@@ -9008,6 +9008,23 @@ static int lua_game_map_count(lua_State* Ls) {
     return 1;
 }
 
+/* map_size() -> { w, h } in world pixels for the CURRENT map (native
+ * map_pixels_w/h at 0x434960/0x434970). The eggnog goal pools sit at both
+ * ends of the map; bots use this to run for the NEAREST end. */
+typedef int (__cdecl *fn_int_void_t2)(void);
+static int lua_game_map_size(lua_State* Ls) {
+    fn_int_void_t2 pw = (fn_int_void_t2)(uintptr_t)0x434960u;
+    fn_int_void_t2 ph = (fn_int_void_t2)(uintptr_t)0x434970u;
+    if (IsBadCodePtr((FARPROC)(void*)pw) || IsBadCodePtr((FARPROC)(void*)ph)) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    lua_newtable(Ls);
+    lua_push_field_int(Ls, "w", pw());
+    lua_push_field_int(Ls, "h", ph());
+    return 1;
+}
+
 /* combat_ledger() - monotonic counters from the native player_die detour:
  * deaths0/deaths1 (real deaths only), scores0/scores1 (goal dives that scored
  * a point, incl. the match-winning one), match_ends, last_winner (player
@@ -10479,6 +10496,7 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
     lua_pushcfunction(Ls, lua_game_start_match);                                         lua_setfield(Ls, -2, "start_match");
     lua_pushcfunction(Ls, lua_game_map_count);                                           lua_setfield(Ls, -2, "map_count");
+    lua_pushcfunction(Ls, lua_game_map_size);                                            lua_setfield(Ls, -2, "map_size");
     lua_pushcfunction(Ls, lua_game_combat_ledger);                                       lua_setfield(Ls, -2, "combat_ledger");
     lua_pushcfunction(Ls, lua_game_room_tiles);                                          lua_setfield(Ls, -2, "room_tiles");
     lua_pushcfunction(Ls, lua_game_room_tile);                                           lua_setfield(Ls, -2, "room_tile");

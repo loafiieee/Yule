@@ -95,6 +95,21 @@ local p6 = P.find(walled, 1, 2, 8, 2)
 check(p6 ~= nil, "best-effort path exists")
 check(p6 and p6[#p6].c <= 4, "best-effort stops before the wall (c=" .. tostring(p6 and p6[#p6].c) .. ")")
 
+-- tall wall (3 rows: beyond a plain jump) topped by a ledge -> wall-jump climb
+local wallg = G({
+  "........",
+  "....#...",
+  "....#...",
+  "....#...",
+  "########",
+})
+local p7 = P.find(wallg, 4, 4, 5, 1)
+check(p7 ~= nil, "climb path found")
+local has_climb = false
+for _, wp in ipairs(p7 or {}) do if wp.kind == 'climb' then has_climb = true end end
+check(has_climb, "path climbs the wall (wall-jump chain)")
+check(p7 and p7[#p7].c == 5 and p7[#p7].r == 1, "climb tops out on the ledge")
+
 -- snap: airborne start snaps to the landing cell below
 local sc, sr = P.snap(flat, 3, 1)
 check(sc == 3 and sr == 2, "snap falls to the floor")

@@ -776,8 +776,8 @@ end
   - `tick`, `enemy_x`, `enemy_y`, `nearest_sword_x`, `nearest_sword_y`
 
 Command bit constants are available on `mod.game`:
-- `CMD_JUMP = 0x01`
-- `CMD_ATTACK = 0x02`
+- `CMD_ATTACK = 0x01`
+- `CMD_JUMP = 0x02`
 - `CMD_RIGHT = 0x04`
 - `CMD_LEFT = 0x08`
 - `CMD_UP = 0x10`

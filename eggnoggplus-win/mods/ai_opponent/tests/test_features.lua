@@ -6,7 +6,7 @@ local function fake_ctx()
       player = { x=100, y=50, vx=1, vy=0, facing=1, has_sword=true, grounded=true,
                  wall_left=false, wall_right=true, state_id=0, cmd_bits=0 },
       enemy  = { x=180, y=50, vx=-1, vy=0, facing=-1, has_sword=true, grounded=true,
-                 wall_left=false, wall_right=false, state_id=0, cmd_bits=2 },
+                 wall_left=false, wall_right=false, state_id=0, cmd_bits=1 },
       nearest_sword_x = 140, nearest_sword_y = 50,
     },
     my_room = 2, enemy_room = 2, goal_dir = 1, leader = -1,

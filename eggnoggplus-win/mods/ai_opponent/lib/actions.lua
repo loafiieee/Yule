@@ -1,9 +1,10 @@
 -- Discrete action set -> native command bitmasks, canonicalized to the goal
 -- direction: "forward" always means "toward my goal end of the map", so one
 -- policy plays either side. A.mask(i, goal_dir) resolves fwd/back to RIGHT/LEFT.
--- JUMP 0x01, ATTACK 0x02, RIGHT 0x04, LEFT 0x08, UP 0x10, DOWN 0x20.
+-- ATTACK 0x01, JUMP 0x02 (decompile-verified: bit 0x02 arms the jump buffer),
+-- RIGHT 0x04, LEFT 0x08, UP 0x10, DOWN 0x20.
 local A = {}
-local J, AT, R, L, U, D = 0x01, 0x02, 0x04, 0x08, 0x10, 0x20
+local J, AT, R, L, U, D = 0x02, 0x01, 0x04, 0x08, 0x10, 0x20
 -- fwd/back are resolved per goal_dir at mask time
 A.LIST = {
   { name = "idle",         base = 0,      fwd = false, back = false },

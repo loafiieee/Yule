@@ -346,10 +346,13 @@ end
 -- micro-hop that never clears anything)
 function Bot.scaffold(ai_player, ctx, mask)
   local s = stuck[ai_player]
+  local function or_jump(m)   -- JUMP is bit 0x02
+    if math.floor(m / 2) % 2 == 0 then return m + 2 end
+    return m
+  end
   if s.hold > 0 then
     s.hold = s.hold - 1
-    if mask % 2 == 0 then mask = mask + 1 end   -- OR in JUMP
-    return mask
+    return or_jump(mask)
   end
   local x = ctx.snap.player.x
   local moving = (mask % 16) >= 4   -- LEFT (0x08) or RIGHT (0x04) bit set
@@ -361,7 +364,7 @@ function Bot.scaffold(ai_player, ctx, mask)
   if s.t > 60 then
     s.t = 0
     s.hold = 10
-    if mask % 2 == 0 then mask = mask + 1 end
+    mask = or_jump(mask)
   end
   return mask
 end

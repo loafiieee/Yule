@@ -23,7 +23,8 @@ function H.new_mem(seed)
 end
 
 local function is_dying(p) local s = p.state_id or 0; return s == 8 or s == 9 end
-local function attacking(p) return (((p.cmd_bits or 0) % 4) >= 2) end
+-- ATTACK is bit 0x01 (decompile-verified; 0x02 is JUMP)
+local function attacking(p) return (((p.cmd_bits or 0) % 2) == 1) end
 
 -- translate a SCREEN direction (+1 = +x) into our goal-relative actions
 local function toward(dir, g)

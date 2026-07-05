@@ -8162,8 +8162,12 @@ static int lua_ui_button_activate_ptr(lua_State* Ls) {
 // Gameplay API
 // =============================
 
-#define GAME_CMD_JUMP   0x01u
-#define GAME_CMD_ATTACK 0x02u
+/* Verified against the engine's input consumer (rising edge of 0x02 arms the
+ * jump buffer at player+0xA0, consumed by try_jump; 0x01 arms the attack
+ * buffer at +0xA1). These were SWAPPED for a long time - every scripted jump
+ * was a swing and vice versa. */
+#define GAME_CMD_JUMP   0x02u
+#define GAME_CMD_ATTACK 0x01u
 #define GAME_CMD_RIGHT  0x04u
 #define GAME_CMD_LEFT   0x08u
 #define GAME_CMD_UP     0x10u

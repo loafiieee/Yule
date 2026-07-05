@@ -1,5 +1,5 @@
 local A = dofile("lib/actions.lua")
-local J, AT, R, L, U, D = 0x01, 0x02, 0x04, 0x08, 0x10, 0x20
+local J, AT, R, L, U, D = 0x02, 0x01, 0x04, 0x08, 0x10, 0x20
 
 check(A.COUNT == 14, "14 actions")
 check(A.mask(1) == 0, "idle mask 0")

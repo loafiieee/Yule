@@ -3,7 +3,7 @@ local A = dofile("lib/actions.lua")
 local H = dofile("lib/heuristic.lua")
 H.init({ NN = NN })
 
-local R, L, J, AT, D = 0x04, 0x08, 0x01, 0x02, 0x20
+local R, L, J, AT, D = 0x04, 0x08, 0x02, 0x01, 0x20
 local U = 0x10
 local function has(m, bit) return (math.floor(m / bit) % 2) == 1 end
 
@@ -82,7 +82,7 @@ check(atk_n >= 70, 'attacks decisively in range (' .. atk_n .. '/100)')
 local react_n, evade_n = 0, 0
 for i = 1, 100 do
   local mm = H.new_mem(300 + i)
-  local ai = H.decide(fake_ctx({ enemy = { x = 130, cmd_bits = 2 } }), mm)
+  local ai = H.decide(fake_ctx({ enemy = { x = 130, cmd_bits = 1 } }), mm)
   local mk = A.mask(ai, 1)
   if has(mk, J) or has(mk, D) or has(mk, AT) then react_n = react_n + 1 end
   if has(mk, J) or has(mk, D) then evade_n = evade_n + 1 end
@@ -239,7 +239,7 @@ local function mirror_mask(mask)
 end
 local scenarios = {
   fake_ctx({ enemy = { x = 130 } }),
-  fake_ctx({ enemy = { x = 130, cmd_bits = 2 } }),
+  fake_ctx({ enemy = { x = 130, cmd_bits = 1 } }),
   fake_ctx({ player = { has_sword = false }, enemy = { x = 150 } }),
   fake_ctx({ leader = 1, enemy = { x = 20 } }),
   fake_ctx({ nav = { [1] = { wall = true, gap = false }, [-1] = { wall = false, gap = false } } }),

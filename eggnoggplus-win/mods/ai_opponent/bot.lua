@@ -31,6 +31,17 @@ local LETHAL_IDS = { [5] = true }            -- spikes: instant death on contact
 local MINE_ID = 6                            -- mines: SAFE to step on; ~1s fuse then a blast
 local POOL_IDS = { [9] = true, [10] = true } -- eggnog goal pools: touching wins
 
+-- Mine fuse tracking (position-based, no engine timer needed): the moment a
+-- player's cell becomes a mine cell we mark that mine LIVE and count ticks. It
+-- is safe until FUSE_TICKS, then a blast for BLAST_TICKS within BLAST_R cells.
+-- This is what makes the AI fuse-aware: cross/step freely, but be gone from the
+-- blast before it goes off - and use it as a trap (bait the enemy across it).
+local FUSE_TICKS  = 55    -- ~1s fuse (user's estimate; tune here if needed)
+local BLAST_TICKS = 12    -- lethal blast lingers a moment after detonation
+local BLAST_R     = 1     -- blast reaches ~1 cell around the mine
+local armed = {}          -- "room:c:r" -> { t=arm_tick, by=player_idx, room, c, r }
+local g_now = 0           -- latest game tick (updated each build_ctx)
+
 local function grid_refresh(room)
   if grid.room == room and grid.ok then return end
   grid.room = room
@@ -100,11 +111,9 @@ local function hazard_ahead_of(px, py, dir)
   return 0
 end
 
--- a mine (id 6) in our OWN cell or directly under our feet means we have
--- triggered it (contact detonates), so bail immediately. Horizontally adjacent
--- mines are left to the pathfinder (crossable but penalized), so
--- this reflex never fights the planned jump-over.
-local function mine_alert(px, py)
+-- a mine (id 6) in our OWN cell or directly under our feet: we are on it. That
+-- arms it (a fuse starts), so bail before it blows.
+local function on_mine(px, py)
   if not grid.ok then return false end
   local col, row = world_to_cell(px, py)
   for dr = 0, 1 do
@@ -114,6 +123,50 @@ local function mine_alert(px, py)
     end
   end
   return false
+end
+
+-- a player standing on a mine cell arms it: record the LIVE mine (once) with
+-- the tick and who armed it, so we know when it will blow and can bait with it.
+local function arm_mines_at(room, px, py, by)
+  if not grid.ok then return end
+  local col, row = world_to_cell(px, py)
+  for dr = 0, 1 do
+    local r = row + dr
+    if r >= 1 and r <= grid.h and grid.ids[(r - 1) * grid.w + col] == MINE_ID then
+      local k = room .. ":" .. col .. ":" .. r
+      if not armed[k] then armed[k] = { t = g_now, by = by, room = room, c = col, r = r } end
+    end
+  end
+end
+
+local function prune_armed()
+  for k, m in pairs(armed) do
+    if g_now - m.t > FUSE_TICKS + BLAST_TICKS then armed[k] = nil end
+  end
+end
+
+-- nearest LIVE armed mine whose blast still threatens cell (c,r) in this room,
+-- within `reach` cells; returns the mine record or nil
+local function armed_threat(room, c, r, reach)
+  local best, bestd
+  for _, m in pairs(armed) do
+    if m.room == room then
+      local age = g_now - m.t
+      if age >= 0 and age <= FUSE_TICKS + BLAST_TICKS then
+        local d = math.abs(m.c - c) + math.abs(m.r - r)
+        if d <= (reach or (BLAST_R + 2)) and (not best or d < bestd) then
+          best, bestd = m, d
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- for the pathfinder: is cell (c,r) inside a live armed mine's blast right now?
+local function armed_blast_cell(c, r)
+  if not grid.ok then return false end
+  return armed_threat(grid.room, c, r, BLAST_R) ~= nil
 end
 
 -- nearest goal pool cell in the current room, or nil
@@ -185,18 +238,34 @@ end
 function Bot.build_ctx(ai_player)
   local snap = mod.game.snapshot(ai_player, false)
   if not snap or not snap.in_game or not snap.player or not snap.enemy then return nil end
-  local p = snap.player
+  local p, en = snap.player, snap.enemy
   local ns = mod.game.native_state()
   local dirx = (p.facing or 1) >= 0 and 1 or -1
   local px, py = p.x, p.y
   local room = p.room_index or 0
   grid_refresh(room)
+  -- fuse bookkeeping: advance the clock, arm any mine a player is standing on,
+  -- forget mines that have already blown
+  g_now = mod.game.tick_count() or (g_now + 1)
+  arm_mines_at(room, px, py, ai_player)
+  if (en.room_index or room) == room then arm_mines_at(room, en.x, en.y, 1 - ai_player) end
+  prune_armed()
   local nav_r = nav_dir(px, py, 1)
   local nav_l = nav_dir(px, py, -1)
   local nav_f = (dirx > 0) and nav_r or nav_l
   local lead = ns.leader or -1
   local leader = 0
   if lead == ai_player then leader = 1 elseif lead == (1 - ai_player) then leader = -1 end
+  -- fuse-aware mine picture for the heuristic
+  local avoid_dir, threat_by = 0, nil
+  if grid.ok then
+    local mcol, mrow = world_to_cell(px, py)
+    local threat = armed_threat(room, mcol, mrow, BLAST_R + 3)
+    if threat then
+      threat_by = threat.by
+      if threat.c > mcol then avoid_dir = 1 elseif threat.c < mcol then avoid_dir = -1 end
+    end
+  end
   return {
     snap = snap,
     my_room = room,
@@ -204,7 +273,10 @@ function Bot.build_ctx(ai_player)
     goal_dir = goal_dir_of(ai_player),
     leader = leader,
     nav = { [1] = nav_r, [-1] = nav_l },
-    mine = { near = mine_alert(px, py) },   -- standing-on-a-mine bail reflex
+    -- mine picture: on = standing on one (arm+bail); avoid_dir = screen dir of a
+    -- LIVE armed blast to stay out of; by_me = we armed it (bait opportunity)
+    mine = { on = on_mine(px, py), avoid_dir = avoid_dir,
+             by_me = (threat_by == ai_player) },
     -- probes feed the NN features (facing-relative, mirror-stable)
     probes = {
       ahead_near = solid_px(px + dirx * 12, py),
@@ -244,6 +316,7 @@ function Bot.reset_scaffold()
   intent_st[0] = { run_x = nil, stall = 0, hunt_until = 0 }
   intent_st[1] = { run_x = nil, stall = 0, hunt_until = 0 }
   plan[0], plan[1] = nil, nil
+  armed = {}                       -- forget live mines from the previous match
   grid.room, grid.ok = -1, false
 end
 
@@ -254,8 +327,10 @@ end
 local function grid_obj()
   return { w = grid.w, h = grid.h,
            solid = function(c, r) return solid_cell(c, r) end,
-           hazard = lethal_cell,     -- excluded from the graph (instant death)
-           softhazard = mine_cell }  -- passable but penalized (timed detonation)
+           -- spikes AND live armed-mine blast cells are no-go (routes around);
+           -- an idle mine is merely a penalized crossing.
+           hazard = function(c, r) return lethal_cell(c, r) or armed_blast_cell(c, r) end,
+           softhazard = function(c, r) return mine_cell(c, r) and not armed_blast_cell(c, r) end }
 end
 
 local function is_dying_state(sid) return sid == 8 or sid == 9 end

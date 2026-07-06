@@ -242,11 +242,62 @@ check(has(msl_mask, D) and has(msl_mask, J) and has(msl_mask, R),
 local mmn = H.new_mem(71)
 local ctxmn = fake_ctx({ nav = { [1] = { wall = true, gap = false },     -- right blocked
                                  [-1] = { wall = false, gap = false } } })
-ctxmn.mine = { near = true }
+ctxmn.mine = { on = true, avoid_dir = 0 }
 local amn, modemn = H.decide(ctxmn, mmn)
 local mmn_mask = A.mask(amn, 1)
 check(modemn == 'mine!', 'standing on a mine triggers the flee reflex')
 check(has(mmn_mask, J) and has(mmn_mask, L), 'mine flee hops toward the open (left) side')
+
+-- FUSE-AWARE BAIT: a live armed mine between us and the enemy -> don't charge
+-- into the blast; hold our ground so the enemy crosses it
+local mba = H.new_mem(91)
+local ctxba = fake_ctx({ enemy = { x = 300 } })   -- enemy far to the right
+ctxba.mine = { on = false, avoid_dir = 1 }        -- live mine to our right (enemy side)
+local held = 0
+for i = 1, 40 do
+  local mb = H.new_mem(910 + i)
+  local ab = H.decide(ctxba, mb)
+  local mk = A.mask(ab, 1)
+  if not has(mk, R) then held = held + 1 end       -- did NOT advance into the mine
+end
+check(held >= 36, 'holds/does not charge across a live mine toward the enemy (' .. held .. '/40)')
+
+-- but a mine on the OPPOSITE side of the enemy must not freeze the hunt
+local mba2 = H.new_mem(92)
+local ctxba2 = fake_ctx({ enemy = { x = 300 } })   -- enemy right
+ctxba2.mine = { on = false, avoid_dir = -1 }       -- mine to our LEFT, away from enemy
+local adv = 0
+for i = 1, 20 do
+  local mb2 = H.new_mem(920 + i)
+  if has(A.mask(H.decide(ctxba2, mb2), 1), R) then adv = adv + 1 end
+end
+check(adv >= 15, 'a mine away from the enemy does not stop the hunt (' .. adv .. '/20)')
+
+-- PRESS UNARMED ENEMY: armed vs an unarmed foe in range -> close and stab,
+-- never throw our sword away
+local mpu = H.new_mem(93)
+local apu, modepu = H.decide(fake_ctx({ enemy = { x = 130, has_sword = false } }), mpu)
+check(modepu == 'press', 'presses an unarmed enemy')
+check(has(A.mask(apu, 1), AT) or has(A.mask(apu, 1), R), 'press = advance or stab, not throw')
+local threw = false
+for i = 1, 100 do
+  local mp = H.new_mem(930 + i)
+  local _, md = H.decide(fake_ctx({ enemy = { x = 190, has_sword = false } }), mp)  -- medium range
+  if md == 'throw' then threw = true end
+end
+check(not threw, 'never throws the sword at an unarmed enemy')
+
+-- LEDGE-SAFE: at point blank with a pit behind, never step back off it
+local ledge_back = 0
+for i = 1, 80 do
+  local ml = H.new_mem(940 + i)
+  local ctxl = fake_ctx({ enemy = { x = 108 },   -- point blank (adx 8)
+                          nav = { [1] = { wall = false, gap = false },
+                                  [-1] = { wall = false, gap = true } } })  -- pit behind (left)
+  local mk = A.mask(H.decide(ctxl, ml), 1)
+  if has(mk, L) and not has(mk, J) then ledge_back = ledge_back + 1 end   -- grounded step into pit
+end
+check(ledge_back == 0, 'never steps back off a ledge at point blank (' .. ledge_back .. ')')
 
 -- WARP (hopelessly behind the leader): never a fight - run our own goal instead
 local ctxwarp = fake_ctx({ enemy = { x = 130 } })

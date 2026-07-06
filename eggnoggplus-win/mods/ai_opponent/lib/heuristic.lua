@@ -116,6 +116,12 @@ local function move_or_jump(ctx, mem, dir, g, mode_name)
   return toward(dir, g), mode_name
 end
 
+-- is stepping one screen direction safe (no pit to fall in, no wall to grind)?
+local function safe_side(ctx, dir)
+  local nav = ctx.nav and ctx.nav[dir]
+  return not (nav and (nav.gap or nav.wall))
+end
+
 -- scripted fight micro (also the NN's sparring baseline and fallback)
 local function fight(ctx, mem)
   local s = ctx.snap
@@ -131,6 +137,13 @@ local function fight(ctx, mem)
   if not en.grounded and adx < 64 then
     if r < 0.5 then return UP, 'fight' end
     return attack_toward(edir, g), 'fight'
+  end
+
+  -- PRESS AN UNARMED ENEMY: they can't hurt us and might recover a sword, so
+  -- close relentlessly and stab - and never THROW ours away against them.
+  if me.has_sword and not en.has_sword then
+    if adx > 22 then return toward(edir, g), 'press' end
+    return attack_toward(edir, g), 'press'
   end
 
   if adx > 46 then
@@ -167,7 +180,9 @@ local function fight(ctx, mem)
     -- point blank: mostly swing, sometimes step out, rare cross-up
     if r < 0.15 then return hold(mem, jump_toward(edir, g), 6, 'fight') end
     if r < 0.70 then return attack_toward(edir, g), 'fight' end
-    return toward(-edir, g), 'fight'
+    -- step out only if there's ground behind us; never back off a ledge
+    if safe_side(ctx, -edir) then return toward(-edir, g), 'fight' end
+    return attack_toward(edir, g), 'fight'
   end
 end
 
@@ -182,7 +197,7 @@ function H.decide(ctx, mem)
   -- get off it fast. Hop toward our goal (that also keeps making progress and
   -- clears a mine we are crossing); fall back to the other clear side if the
   -- goal side is blocked. Highest-priority reflex except a committed jump arc.
-  if not (mem.hold and mem.hold_t > 0) and ctx.mine and ctx.mine.near
+  if not (mem.hold and mem.hold_t > 0) and ctx.mine and ctx.mine.on
      and ctx.snap.player.grounded and not is_dying(ctx.snap.player) then
     local g = (ctx.goal_dir or 1) >= 0 and 1 or -1
     local navF, navB = ctx.nav and ctx.nav[g], ctx.nav and ctx.nav[-g]
@@ -216,6 +231,24 @@ function H.decide(ctx, mem)
   local edir = (dx >= 0) and 1 or -1
   local same_room = ctx.my_room == ctx.enemy_room
   local en_alive = not is_dying(en)
+
+  -- LIVE MINE IN THE WAY: a mine is counting down toward the direction we would
+  -- naturally push (the enemy when hunting, our goal when running). Don't walk
+  -- into the blast. If the enemy is on the mine's far side, HOLD our ground and
+  -- let them cross it - that is the trap. It disarms after ~1s and normal play
+  -- resumes. (Route planning already steers around it; this covers the direct
+  -- fight/hunt pull and works whether or not we set the fuse.)
+  if ctx.mine and ctx.mine.avoid_dir ~= 0 and me.grounded and not ctx.mine.on then
+    local mdir = ctx.mine.avoid_dir
+    local run = ctx.leader == 1 or ctx.intent == 'run' or ctx.intent == 'warp' or not en_alive
+    local pull = run and g or edir
+    if pull == mdir then
+      if safe_side(ctx, -mdir) and mem.rand() < 0.5 then
+        return toward(-mdir, g), 'mine-bait'   -- ease back to keep clear
+      end
+      return IDLE, 'mine-bait'                  -- hold; make them come to it
+    end
+  end
 
   -- ------------------------------------------------------------- unarmed ---
   if not me.has_sword then

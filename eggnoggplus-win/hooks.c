@@ -595,6 +595,10 @@ static fn_set_fullscreen_t           p_main_set_fullscreen = (fn_set_fullscreen_
 static fn_set_window_t               p_main_set_window = (fn_set_window_t)(uintptr_t)ADDR_MAIN_SET_WINDOW;
 static fn_is_fullscreen_t            p_main_is_fullscreen = (fn_is_fullscreen_t)(uintptr_t)ADDR_MAIN_IS_FULLSCREEN;
 extern void* g_proxy_sdl_window;
+extern void* p_SDL_SetWindowBordered;
+extern void* p_SDL_SetWindowSize;
+extern void* p_SDL_SetWindowPosition;
+extern void* p_SDL_GetDisplayBounds;
 static fn_void_void_t                p_mapgen_init = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_INIT;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
@@ -12616,6 +12620,31 @@ static void hooks_apply_window_launch_args(void) {
         if (p_main_set_fullscreen && p_main_is_fullscreen && p_main_is_fullscreen()) {
             p_main_set_fullscreen(0);
             LOG_INFO("launch: -windowed applied");
+        }
+    } else if (hooks_cmdline_has_flag("-borderless") || hooks_cmdline_has_flag("--borderless")) {
+        /* Borderless fullscreen: stay in windowed mode, strip the border, size to
+         * the desktop. The game's own SIZE_CHANGED handling re-reads the drawable
+         * size, so the GL viewport/letterbox stays correct without the native
+         * exclusive-fullscreen path. -fullscreen wins if both are passed. */
+        typedef struct { int x, y, w, h; } SdlRect;
+        typedef void (__cdecl *fn_set_bordered_t)(void*, int);
+        typedef void (__cdecl *fn_set_size_t)(void*, int, int);
+        typedef void (__cdecl *fn_set_pos_t)(void*, int, int);
+        typedef int  (__cdecl *fn_get_bounds_t)(int, SdlRect*);
+        SdlRect bounds = {0, 0, 0, 0};
+        if (p_main_set_fullscreen && p_main_is_fullscreen && p_main_is_fullscreen()) {
+            p_main_set_fullscreen(0);
+        }
+        if (p_SDL_GetDisplayBounds && p_SDL_SetWindowBordered && p_SDL_SetWindowSize &&
+            p_SDL_SetWindowPosition &&
+            ((fn_get_bounds_t)p_SDL_GetDisplayBounds)(0, &bounds) == 0 &&
+            bounds.w > 0 && bounds.h > 0) {
+            ((fn_set_bordered_t)p_SDL_SetWindowBordered)(g_proxy_sdl_window, 0);
+            ((fn_set_size_t)p_SDL_SetWindowSize)(g_proxy_sdl_window, bounds.w, bounds.h);
+            ((fn_set_pos_t)p_SDL_SetWindowPosition)(g_proxy_sdl_window, bounds.x, bounds.y);
+            LOG_INFO("launch: -borderless applied %dx%d at %d,%d", bounds.w, bounds.h, bounds.x, bounds.y);
+        } else {
+            LOG_WARN("launch: -borderless unavailable (SDL window fns/bounds missing)");
         }
     }
 }

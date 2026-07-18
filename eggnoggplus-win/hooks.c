@@ -52,6 +52,9 @@
 #ifndef SDLK_F2
 #define SDLK_F2 1073741883
 #endif
+#ifndef SDLK_F1
+#define SDLK_F1 1073741882
+#endif
 #ifndef SDLK_F3
 #define SDLK_F3 1073741884
 #endif
@@ -73,6 +76,9 @@
 #ifndef SDLK_F10
 #define SDLK_F10 1073741891
 #endif
+#ifndef SDLK_F11
+#define SDLK_F11 1073741892
+#endif
 
 #include "hooks.h"
 #include "ggpo_ext.h"
@@ -83,8 +89,15 @@
 #include "font_ext.h"
 #include "texture_ext.h"
 #include "custom_maps.h"
+#include "content_bridge.h"
+#include "content_tiles.h"
 #include "log.h"
 #include "net_ext.h"
+#include "update_ext.h"
+#include "credential_ext.h"
+#include "online_control.h"
+#include "window_policy.h"
+#include "cursor_ext.h"
 
 extern char* SDL_GetClipboardText(void);
 extern int SDL_SetClipboardText(const char* text);
@@ -109,8 +122,10 @@ extern void SDL_free(void* mem);
 #define ADDR_MAIN_CURSOR_DATA        0x549140u
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_SPRITE_BATCH_PLOT        0x405890u
+#define ADDR_SPRITE_GET               0x405D20u
 #define ADDR_SPRITE_BATCH_DRAW        0x405A90u
 #define ADDR_ATLAS_UPLOAD             0x401480u
+#define ADDR_MISC_ID                  0x547B7Cu
 #define ADDR_MENU_BUTTON_LINK         0x433950u
 #define ADDR_BUTTON_GET              0x415D00u
 #define ADDR_BUTTON_COUNT            0x416890u
@@ -123,6 +138,8 @@ extern void SDL_free(void* mem);
 #define ADDR_TURTLE_SET_ANGLE         0x409000u
 #define ADDR_TURTLE_SET_POS_UNSCALED  0x409040u
 #define ADDR_TURTLE_SET_SCALE         0x409080u
+#define ADDR_TURTLE_SET_SCALEX        0x4090A0u
+#define ADDR_TURTLE_SET_SCALEY        0x4090B0u
 #define ADDR_TURTLE_SET_RGB           0x4091E0u
 #define ADDR_TURTLE_SET_RGBA          0x4090C0u
 #define ADDR_TURTLE_RESET             0x4092D0u
@@ -152,7 +169,13 @@ extern void SDL_free(void* mem);
 #define ADDR_MAIN_SET_FULLSCREEN      0x430AA0u
 #define ADDR_MAIN_SET_WINDOW          0x4309E0u
 #define ADDR_MAIN_IS_FULLSCREEN       0x430AE0u
+#define ADDR_MAIN_SAVED_WINDOW_H      0x448360u
+#define ADDR_MAIN_SAVED_WINDOW_W      0x448364u
+#define ADDR_WRAPPER_DESKTOP_H         0x4EDB70u
+#define ADDR_WRAPPER_DESKTOP_W         0x4EDB74u
 #define ADDR_MAPGEN_INIT              0x437D30u
+#define ADDR_MAPGEN_BUILD_MAP         0x437DB0u
+#define ADDR_TILE_ACTION_EX           0x440250u
 #define ADDR_HIGH_WATER_ACTION        0x43C730u
 #define ADDR_GAME_WATER_HI_COLOUR     0x420100u
 #define ADDR_GAME_WATER_COLOUR        0x4201D0u
@@ -182,6 +205,10 @@ extern void SDL_free(void* mem);
 #define ADDR_SCORE_PLAYER0            0x55A314u
 #define ADDR_SCORE_PLAYER1            0x55A318u
 #define ADDR_GAME_TICKS               0x547BA0u
+#define ADDR_TILEMAP_DATA_PTR         0x54A1E4u
+#define ADDR_TILEMAP_W                0x54A1E8u
+#define ADDR_TILEMAP_H                0x54A1ECu
+#define ADDR_TURTLE_STATE             0x4480C0u
 #define ADDR_NATIVE_SYNTH_ENABLED     0x54C0CAu
 #define ADDR_AUDIO_STREAM_INITED      0x54C0C8u   /* DAT_0054c0c8: >0 once mad_init_audio_stream ran */
 #define ADDR_SOUND_SETTING            0x55A170u   /* DAT_0055a170: saved "sound on" setting (0=off) */
@@ -272,19 +299,30 @@ extern void SDL_free(void* mem);
 #define ONLINE_HUB_MAX_FRIENDS    32
 #define ONLINE_HUB_MAX_INBOX      32
 #define ONLINE_HUB_TEXT_MAX      128
+#define ONLINE_HUB_CAPTURE_MAX   512
 #define ONLINE_HUB_STATUS_MAX    256
 #define ONLINE_HUB_CFG_PATH      "mods\\online_hub.cfg"
 #define ONLINE_DEFAULT_SERVER_HOST "eggnogg.loafiieee.com"
 #define ONLINE_DEFAULT_SERVER_PORT 47778
 #define ONLINE_ABANDON_GRACE_TICKS 90
 #define ONLINE_MATCH_COUNTDOWN_FRAMES 150
-/* If the P2P session never connects within this many ticks (~12s @60Hz) - e.g.
- * hostile NAT that direct hole-punch can't beat - abort back to the hub with a
- * message instead of hanging. Generous enough not to cut off a legit slow connect
- * + initial state transfer over a real internet link. */
-#define ONLINE_CONNECT_TIMEOUT_TICKS 720
+/* Hole punching depends on the NAT mapping chosen for a UDP socket. Retrying with
+ * a fresh socket (and therefore a fresh mapping) gives ordinary NATs more chances
+ * to line up without changing any post-connect rollback behavior. Wall-clock
+ * deadlines keep duplicate UI/update pumps from shortening an attempt. */
+#define ONLINE_CONNECT_ATTEMPT_MS       8000u
+#define ONLINE_CONNECT_START_FAILURE_MS  250u
+#define ONLINE_CONNECT_MAX_ATTEMPTS        3
+#define ONLINE_PREMATCH_SETUP_TIMEOUT_MS 45000u
+#define ONLINE_SERVER_CONNECT_TIMEOUT_MS 10000u
+#define ONLINE_SERVER_AUTH_TIMEOUT_MS    10000u
+#define ONLINE_SERVER_LINE_CAP            8192u
+#define ONLINE_MAP_MANIFEST_MAX_BYTES    (96u * 1024u)
+#define ONLINE_CONTROL_PROTOCOL_VERSION      2
+#define ONLINE_MATCH_PROTOCOL_VERSION        2
 #define ONLINE_RESULT_TOAST_FRAMES 420
 #define ONLINE_CHALLENGE_TOAST_FADE_FRAMES 30
+#define UPDATE_TOAST_VISIBLE_MS 12000u
 
 typedef struct GameState {
     void (__cdecl *enter)(void);
@@ -310,10 +348,13 @@ typedef enum RowKind {
     ROW_BACK,
     ROW_INFO,
     ROW_FW_TOGGLE,   // framework-level toggle (cfg_index = FW_SETTING_*)
+    ROW_FW_ACTION,   // framework-level action (cfg_index = FW_ACTION_*)
 } RowKind;
 
 // Framework-level settings shown at the top of the mods menu (cfg_index of a ROW_FW_TOGGLE row).
 #define FW_SETTING_LOG_CONSOLE 0
+#define FW_SETTING_AUTO_UPDATE 1
+#define FW_ACTION_UPDATE       0
 
 typedef enum CaptureKind {
     CAPTURE_NONE = 0,
@@ -381,6 +422,7 @@ typedef enum OnlineHubSetting {
     ONLINE_SETTING_NONE = 0,
     ONLINE_SETTING_USERNAME,
     ONLINE_SETTING_PASSWORD,
+    ONLINE_SETTING_REMEMBER_ME,
     ONLINE_SETTING_SERVER_HOST,
     ONLINE_SETTING_SERVER_PORT,
     ONLINE_SETTING_PEER_HOST,
@@ -458,7 +500,8 @@ typedef struct OnlineChallengeToast {
 
 typedef struct OnlineHubConfig {
     char username[48];
-    char password[96];
+    char password[257];
+    int remember_me;
     char server_host[ONLINE_HUB_TEXT_MAX];
     uint16_t server_port;
     char peer_host[ONLINE_HUB_TEXT_MAX];
@@ -522,6 +565,7 @@ typedef void  (__cdecl *fn_main_cursors_reset_t)(float, float);
 typedef void  (__cdecl *fn_main_cursor_spin_t)(int);
 typedef void  (__cdecl *fn_main_sprite_batches_draw_t)(void);
 typedef void  (__cdecl *fn_sprite_batch_plot_t)(int sprite, int flip, int layer);
+typedef void* (__cdecl *fn_sprite_get_t)(uint32_t sprite_id);
 typedef void  (__cdecl *fn_sprite_batch_draw_t)(int atlas);
 typedef int   (__cdecl *fn_atlas_upload_t)(int atlas, int arg2, int format);
 typedef void* (__cdecl *fn_menu_button_link_t)(float, float, const char*, void*);
@@ -536,6 +580,7 @@ typedef void  (__cdecl *fn_turtle_trans_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_angle_t)(double);
 typedef void  (__cdecl *fn_turtle_set_pos_unscaled_t)(double, double);
 typedef void  (__cdecl *fn_turtle_set_scale_t)(double, double);
+typedef void  (__cdecl *fn_turtle_set_scalar_t)(double);
 typedef void  (__cdecl *fn_turtle_set_rgb_t)(float, float, float);
 typedef void  (__cdecl *fn_turtle_set_rgba_t)(float, float, float, float);
 typedef void  (__cdecl *fn_turtle_reset_t)(void);
@@ -568,6 +613,8 @@ static fn_main_cursors_reset_t       p_main_cursors_reset = (fn_main_cursors_res
 static fn_main_cursor_spin_t        p_main_cursor_spin = (fn_main_cursor_spin_t)(uintptr_t)ADDR_MAIN_CURSOR_SPIN;
 static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw = (fn_main_sprite_batches_draw_t)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW;
 static fn_sprite_batch_plot_t        p_sprite_batch_plot = (fn_sprite_batch_plot_t)(uintptr_t)ADDR_SPRITE_BATCH_PLOT;
+static fn_sprite_get_t               p_sprite_get = (fn_sprite_get_t)(uintptr_t)ADDR_SPRITE_GET;
+static volatile int*                 p_misc_id = (volatile int*)(uintptr_t)ADDR_MISC_ID;
 static fn_atlas_upload_t             p_atlas_upload = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
 static fn_menu_button_link_t         p_menu_button_link = (fn_menu_button_link_t)(uintptr_t)ADDR_MENU_BUTTON_LINK;
 static fn_button_ex_t                p_button_ex = (fn_button_ex_t)(uintptr_t)ADDR_BUTTON_EX;
@@ -581,6 +628,8 @@ static fn_turtle_trans_t             p_turtle_trans = (fn_turtle_trans_t)(uintpt
 static fn_turtle_set_angle_t         p_turtle_set_angle = (fn_turtle_set_angle_t)(uintptr_t)ADDR_TURTLE_SET_ANGLE;
 static fn_turtle_set_pos_unscaled_t  p_turtle_set_pos_unscaled = (fn_turtle_set_pos_unscaled_t)(uintptr_t)ADDR_TURTLE_SET_POS_UNSCALED;
 static fn_turtle_set_scale_t         p_turtle_set_scale = (fn_turtle_set_scale_t)(uintptr_t)ADDR_TURTLE_SET_SCALE;
+static fn_turtle_set_scalar_t        p_turtle_set_scalex = (fn_turtle_set_scalar_t)(uintptr_t)ADDR_TURTLE_SET_SCALEX;
+static fn_turtle_set_scalar_t        p_turtle_set_scaley = (fn_turtle_set_scalar_t)(uintptr_t)ADDR_TURTLE_SET_SCALEY;
 static fn_turtle_set_rgb_t           p_turtle_set_rgb = (fn_turtle_set_rgb_t)(uintptr_t)ADDR_TURTLE_SET_RGB;
 static fn_turtle_set_rgba_t          p_turtle_set_rgba = (fn_turtle_set_rgba_t)(uintptr_t)ADDR_TURTLE_SET_RGBA;
 static fn_turtle_reset_t             p_turtle_reset = (fn_turtle_reset_t)(uintptr_t)ADDR_TURTLE_RESET;
@@ -594,15 +643,27 @@ typedef int  (__cdecl *fn_is_fullscreen_t)(void);
 static fn_set_fullscreen_t           p_main_set_fullscreen = (fn_set_fullscreen_t)(uintptr_t)ADDR_MAIN_SET_FULLSCREEN;
 static fn_set_window_t               p_main_set_window = (fn_set_window_t)(uintptr_t)ADDR_MAIN_SET_WINDOW;
 static fn_is_fullscreen_t            p_main_is_fullscreen = (fn_is_fullscreen_t)(uintptr_t)ADDR_MAIN_IS_FULLSCREEN;
+static volatile int*                 p_main_saved_window_h = (volatile int*)(uintptr_t)ADDR_MAIN_SAVED_WINDOW_H;
+static volatile int*                 p_main_saved_window_w = (volatile int*)(uintptr_t)ADDR_MAIN_SAVED_WINDOW_W;
+static volatile int*                 p_wrapper_desktop_h = (volatile int*)(uintptr_t)ADDR_WRAPPER_DESKTOP_H;
+static volatile int*                 p_wrapper_desktop_w = (volatile int*)(uintptr_t)ADDR_WRAPPER_DESKTOP_W;
 extern void* g_proxy_sdl_window;
-extern void* p_SDL_SetWindowBordered;
-extern void* p_SDL_SetWindowSize;
-extern void* p_SDL_SetWindowPosition;
+extern void* p_SDL_GetWindowSize;
+extern void* p_SDL_GL_GetDrawableSize;
+extern void* p_SDL_GetWindowDisplayIndex;
 extern void* p_SDL_GetDisplayBounds;
+extern void* p_SDL_GetWindowFlags;
+extern void* p_SDL_GetError;
+extern void* p_SDL_SetWindowFullscreen;
+extern volatile LONG g_proxy_sdl_display_override;
 static fn_void_void_t                p_mapgen_init = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_INIT;
+static fn_void_void_t                p_mapgen_build_map = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_BUILD_MAP;
+static fn_tile_action_t              p_tile_action_ex = (fn_tile_action_t)(uintptr_t)ADDR_TILE_ACTION_EX;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
 static fn_void_void_t                p_mapgen_init_trampoline = NULL;
+static fn_void_void_t                p_mapgen_build_map_trampoline = NULL;
+static fn_tile_action_t              p_tile_action_ex_trampoline = NULL;
 static fn_state_switch_t             p_state_switch_trampoline = NULL;
 static fn_main_update_with_buttons_t p_main_update_with_buttons_trampoline = NULL;
 static fn_game_update_t              p_game_update_trampoline = NULL;
@@ -625,6 +686,9 @@ static uintptr_t*                    p_player_slots = (uintptr_t*)(uintptr_t)ADD
 static volatile int* g_layer = (volatile int*)(uintptr_t)ADDR_LAYER;
 static volatile uint32_t* g_mad_ticks = (volatile uint32_t*)(uintptr_t)ADDR_MAD_TICKS;
 static volatile uint32_t* g_game_ticks = (volatile uint32_t*)(uintptr_t)ADDR_GAME_TICKS;
+static volatile uintptr_t* g_tilemap_data_ptr = (volatile uintptr_t*)(uintptr_t)ADDR_TILEMAP_DATA_PTR;
+static volatile int* g_tilemap_width = (volatile int*)(uintptr_t)ADDR_TILEMAP_W;
+static volatile int* g_tilemap_height = (volatile int*)(uintptr_t)ADDR_TILEMAP_H;
 static volatile int* g_debug = (volatile int*)(uintptr_t)ADDR_DEBUG;
 static volatile int* g_debug_slowmo = (volatile int*)(uintptr_t)ADDR_DEBUG_SLOWMO;
 static volatile int* g_game_started = (volatile int*)(uintptr_t)ADDR_GAME_STARTED;
@@ -668,6 +732,8 @@ static Detour g_game_update_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
+static Detour g_mapgen_build_map_detour;
+static Detour g_tile_action_ex_detour;
 static Detour g_high_water_action_detour;
 static Detour g_atlas_upload_detour;
 static Detour g_game_player_colour_index_detour;
@@ -687,6 +753,7 @@ static void*  g_hooks_onein_trampoline = NULL;
 static Detour g_respawn_warble_detour;
 static Detour g_synth_effect_whistling_detour;
 static Detour g_sound_sword_ching_detour;
+static volatile LONG g_content_bridge_enabled = 0;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -723,6 +790,52 @@ static GLuint g_console_bg_tex = 0;
 static int g_console_bg_w = 0;
 static int g_console_bg_h = 0;
 static int g_console_bg_ready = 0;
+
+/* The updater starts here, on the render thread with a live application and
+ * GL context.  It must never be booted from DllMain's loader lock. */
+static volatile LONG g_update_runtime_booted = 0;
+static uint32_t g_update_toast_started_ms = 0;
+static int g_update_toast_status = -1;
+
+typedef enum WindowLaunchMode {
+    WINDOW_LAUNCH_DEFAULT = 0,
+    WINDOW_LAUNCH_WINDOWED,
+    WINDOW_LAUNCH_FULLSCREEN,
+    WINDOW_LAUNCH_BORDERLESS,
+} WindowLaunchMode;
+
+typedef enum WindowKeyAction {
+    WINDOW_KEY_ACTION_NONE = 0,
+    WINDOW_KEY_ACTION_CYCLE_SIZE,
+    WINDOW_KEY_ACTION_TOGGLE_FULLSCREEN,
+} WindowKeyAction;
+
+typedef struct WindowRuntimeState {
+    volatile LONG busy;
+    int command_line_parsed;
+    WindowLaunchMode launch_mode;
+    int launch_done;
+    int launch_attempts;
+    DWORD first_window_ms;
+    DWORD next_launch_attempt_ms;
+    DWORD suppress_resize_until_ms;
+    DWORD resize_due_ms;
+    unsigned int pending_key_actions;
+    int pending_key_action_count;
+    int pending_resize;
+    int pending_maximize;
+    int pending_w;
+    int pending_h;
+    int geometry_dirty;
+    int last_window_w;
+    int last_window_h;
+    int last_drawable_w;
+    int last_drawable_h;
+    int last_display_index;
+    unsigned int last_window_flags;
+} WindowRuntimeState;
+
+static WindowRuntimeState g_window_runtime;
 
 // Tick-synchronous input scheduling (applied for an entire gameplay update).
 static volatile uint32_t g_tick_input_mask[2] = { 0, 0 };
@@ -957,7 +1070,6 @@ static void __cdecl online_result_enter(void);
 static void __cdecl online_result_update(void);
 static void __cdecl online_result_render(void);
 static void __cdecl online_result_leave(void);
-static void online_result_render_overlay(const OnlineLayout* L);
 static void __cdecl custom_state_enter(void);
 static void __cdecl custom_state_update(void);
 static void __cdecl custom_state_render(void);
@@ -1019,8 +1131,17 @@ static int online_advance_net_gameplay_tick(int arg0);
 static int online_state_is_ingame_menu(void* st);
 static void online_server_update(void);
 static void online_server_disconnect(const char* reason);
+static void online_handle_server_match_disconnect(const char* reason);
+static void online_cancel_match_from_console(void);
 static void online_match_pump_launch(void);
 static void online_match_poll_completion(void);
+static void online_abort_connect_timeout(void);
+static void online_abort_prematch_setup(const char* reason);
+static void online_connect_start_attempt(int first);
+static void online_connect_retry_tick(void);
+static void online_viewport_poll(const char* tag, int force);
+static void online_viewport_end(void);
+static const char* state_name_from_ptr(void* st);
 static void console_draw_background(float w, float h);
 
 static GameState g_mods_state = {
@@ -1066,10 +1187,10 @@ typedef enum OnlineServerState {
 
 typedef struct OnlinePendingMatch {
     int active;
-    int launch_stage;
-    int launch_delay_frames;
     int launch_countdown_frames;
-    int p2p_started;
+    int prematch_prepared;
+    int prematch_released;
+    DWORD setup_started_ms;
     int match_id;
     int role;
     int selector;
@@ -1082,10 +1203,32 @@ typedef struct OnlinePendingMatch {
     char p2p_role[12];
     char peer_host[ONLINE_HUB_TEXT_MAX];
     char p2p_token[96];
+    char p2p_auth_token[GGPO_NET_MATCH_TOKEN_HEX_BYTES + 1];
     char opponent[48];
     char map_key[128];
     char map_label[128];
 } OnlinePendingMatch;
+
+typedef struct OnlineConnectRetry {
+    int attempts;              /* attempts started (1-based while connecting) */
+    DWORD attempt_started_ms;
+    int connected_once;        /* log/status latch for the current fresh socket */
+    int established;           /* set only once synchronized gameplay begins */
+    int match_id;
+    char p2p_role[12];
+    int local_port;            /* configured port for attempt 1; retries bind 0 */
+    char peer_host[ONLINE_HUB_TEXT_MAX];
+    int peer_port;
+    char public_host[ONLINE_HUB_TEXT_MAX];
+    int public_port;
+    char lan_host[ONLINE_HUB_TEXT_MAX];
+    int lan_port;
+    char p2p_token[96];
+    char p2p_auth_token[GGPO_NET_MATCH_TOKEN_HEX_BYTES + 1];
+    int probe_cooldown;
+    int probe_logged;
+    int probe_warned;
+} OnlineConnectRetry;
 
 typedef struct OnlineActiveMatch {
     int active;
@@ -1095,10 +1238,6 @@ typedef struct OnlineActiveMatch {
     int queue_mode;
     int result_reported;
     int invalid_state_ticks;
-    int connect_wait_ticks;
-    int p2p_probe_cooldown;
-    int p2p_probe_logged;
-    int p2p_probe_warned;
     OnlineMatchResult result;
     char opponent[48];
     char map_label[128];
@@ -1107,6 +1246,7 @@ typedef struct OnlineActiveMatch {
 
 typedef struct OnlineResultScreen {
     int active;
+    int match_id;
     int selected;
     int reported;
     int server_confirmed;
@@ -1122,6 +1262,25 @@ typedef struct OnlineResultScreen {
     char map_label[128];
     char status[ONLINE_HUB_STATUS_MAX];
 } OnlineResultScreen;
+
+typedef struct OnlineViewportSnapshot {
+    int valid;
+    int window_w;
+    int window_h;
+    int drawable_w;
+    int drawable_h;
+    int viewport[4];
+    int scissor[4];
+    int scissor_enabled;
+    int fullscreen;
+    void* state_ptr;
+    float mad_w;
+    float mad_h;
+    float game_w;
+    float game_h;
+    float camera_x;
+    float camera_y;
+} OnlineViewportSnapshot;
 
 static OnlineHubConfig g_online_cfg;
 static OnlineFriend g_online_friends[ONLINE_HUB_MAX_FRIENDS];
@@ -1139,17 +1298,21 @@ static int g_online_row_count = 0;
 static int g_online_selected_row = -1;
 static int g_online_scroll_row = 0;
 static char g_online_status[ONLINE_HUB_STATUS_MAX];
-/* Set when a match is aborted because P2P never connected; the hub-enter handler
- * shows the "couldn't connect" message (which it would otherwise clear). */
+/* Deferred hub status after a terminal connect path (1 opponent timeout,
+ * 2 matchmaking disconnect, 3 explicit cancellation, 4 setup/sync failure). */
 static int g_online_pending_connect_fail_status = 0;
 static int g_online_capture_active = 0;
 static OnlineHubCaptureKind g_online_capture_kind = ONLINE_CAPTURE_NONE;
 static int g_online_capture_target = 0;
-static char g_online_capture_buf[ONLINE_HUB_TEXT_MAX];
+static char g_online_capture_buf[ONLINE_HUB_CAPTURE_MAX];
+static int g_online_password_from_credential = 0;
 static OnlineServerState g_online_server_state = ONLINE_SERVER_DISCONNECTED;
 static int g_online_server_slot = -1;
 static int g_online_authed = 0;
 static int g_online_register_after_connect = 0;
+static int g_online_auth_pending = 0;
+static int g_online_server_info_pending = 0;
+static DWORD g_online_server_deadline_ms = 0;
 static char g_online_recv_buf[65536];
 static size_t g_online_recv_len = 0;
 static int g_online_queue_mode = 0; /* 0 none, 1 casual, 2 competitive */
@@ -1166,8 +1329,12 @@ static int g_online_open_pending = 0;
 static void* g_online_pending_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
 static OnlinePendingMatch g_online_pending_match;
 static OnlineActiveMatch g_online_active_match;
+static OnlineConnectRetry g_online_connect;
 static OnlineResultScreen g_online_result;
 static OnlineChallengeToast g_online_challenge_toast;
+static int g_online_result_toast_rendered_this_swap = 0;
+static int g_online_challenge_toast_rendered_this_swap = 0;
+static OnlineViewportSnapshot g_online_viewport;
 static volatile int* g_hook_map_selector = (volatile int*)(uintptr_t)ADDR_MAP_SELECTOR;
 static volatile uintptr_t* g_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_LEADER;
 static volatile uintptr_t* g_game_loser = (volatile uintptr_t*)(uintptr_t)ADDR_LOSER;
@@ -1182,6 +1349,129 @@ static volatile int* g_game_round_end_any = (volatile int*)(uintptr_t)ADDR_ROUND
 static volatile int* g_game_score_target = (volatile int*)(uintptr_t)ADDR_SCORE_TARGET;
 static volatile int* g_game_score_player0 = (volatile int*)(uintptr_t)ADDR_SCORE_PLAYER0;
 static volatile int* g_game_score_player1 = (volatile int*)(uintptr_t)ADDR_SCORE_PLAYER1;
+
+static void online_clear_password_memory(void) {
+    credential_ext_secure_zero(g_online_cfg.password, sizeof(g_online_cfg.password));
+    g_online_password_from_credential = 0;
+}
+
+static void online_clear_capture_state(void) {
+    credential_ext_secure_zero(g_online_capture_buf, sizeof(g_online_capture_buf));
+    g_online_capture_active = 0;
+    g_online_capture_kind = ONLINE_CAPTURE_NONE;
+    g_online_capture_target = 0;
+}
+
+static void online_p2p_auth_tokens_clear(void) {
+    SecureZeroMemory(g_online_pending_match.p2p_auth_token,
+                     sizeof(g_online_pending_match.p2p_auth_token));
+    SecureZeroMemory(g_online_connect.p2p_auth_token,
+                     sizeof(g_online_connect.p2p_auth_token));
+    ggpo_net_clear_match_token();
+}
+
+static void online_pending_match_reset(void) {
+    SecureZeroMemory(g_online_pending_match.p2p_auth_token,
+                     sizeof(g_online_pending_match.p2p_auth_token));
+    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+}
+
+static void online_connect_reset(void) {
+    online_viewport_end();
+    online_p2p_auth_tokens_clear();
+    memset(&g_online_connect, 0, sizeof(g_online_connect));
+}
+
+static int online_viewport_geometry_equal(const OnlineViewportSnapshot* a,
+                                          const OnlineViewportSnapshot* b) {
+    if (!a || !b || !a->valid || !b->valid) return 0;
+    return a->window_w == b->window_w &&
+           a->window_h == b->window_h &&
+           a->drawable_w == b->drawable_w &&
+           a->drawable_h == b->drawable_h &&
+           a->viewport[0] == b->viewport[0] &&
+           a->viewport[1] == b->viewport[1] &&
+           a->viewport[2] == b->viewport[2] &&
+           a->viewport[3] == b->viewport[3] &&
+           a->scissor[0] == b->scissor[0] &&
+           a->scissor[1] == b->scissor[1] &&
+           a->scissor[2] == b->scissor[2] &&
+           a->scissor[3] == b->scissor[3] &&
+           a->scissor_enabled == b->scissor_enabled &&
+           a->fullscreen == b->fullscreen &&
+           a->state_ptr == b->state_ptr &&
+           a->mad_w == b->mad_w &&
+           a->mad_h == b->mad_h &&
+           a->game_w == b->game_w &&
+           a->game_h == b->game_h;
+}
+
+static void online_viewport_poll(const char* tag, int force) {
+    typedef void (__cdecl *fn_get_size_t)(void*, int*, int*);
+    OnlineViewportSnapshot now;
+    memset(&now, 0, sizeof(now));
+    now.valid = 1;
+    now.window_w = -1;
+    now.window_h = -1;
+    now.drawable_w = -1;
+    now.drawable_h = -1;
+    if (g_proxy_sdl_window && p_SDL_GetWindowSize) {
+        ((fn_get_size_t)p_SDL_GetWindowSize)(g_proxy_sdl_window, &now.window_w, &now.window_h);
+    }
+    if (g_proxy_sdl_window && p_SDL_GL_GetDrawableSize) {
+        ((fn_get_size_t)p_SDL_GL_GetDrawableSize)(g_proxy_sdl_window,
+                                                  &now.drawable_w,
+                                                  &now.drawable_h);
+    }
+    glGetIntegerv(GL_VIEWPORT, now.viewport);
+    glGetIntegerv(GL_SCISSOR_BOX, now.scissor);
+    now.scissor_enabled = glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE ? 1 : 0;
+    now.fullscreen = (p_main_is_fullscreen && p_main_is_fullscreen()) ? 1 : 0;
+    now.state_ptr = p_state_current ? p_state_current() : NULL;
+    now.mad_w = p_mad_w ? p_mad_w() : -1.0f;
+    now.mad_h = p_mad_h ? p_mad_h() : -1.0f;
+    now.game_w = g_game_w_native ? *g_game_w_native : -1.0f;
+    now.game_h = g_game_h_native ? *g_game_h_native : -1.0f;
+    now.camera_x = g_camera_x ? *g_camera_x : 0.0f;
+    now.camera_y = g_camera_y ? *g_camera_y : 0.0f;
+
+    if (!force && online_viewport_geometry_equal(&g_online_viewport, &now)) return;
+    LOG_INFO("online.viewport[%s]: window=%dx%d drawable=%dx%d viewport=%d,%d %dx%d scissor=%s:%d,%d %dx%d mad=%.0fx%.0f game=%.1fx%.1f camera=%.2f,%.2f fullscreen=%d state=%s match=%d lp=%d frame=%u/%u",
+             tag ? tag : (g_online_viewport.valid ? "changed" : "match-start"),
+             now.window_w,
+             now.window_h,
+             now.drawable_w,
+             now.drawable_h,
+             now.viewport[0],
+             now.viewport[1],
+             now.viewport[2],
+             now.viewport[3],
+             now.scissor_enabled ? "on" : "off",
+             now.scissor[0],
+             now.scissor[1],
+             now.scissor[2],
+             now.scissor[3],
+             now.mad_w,
+             now.mad_h,
+             now.game_w,
+             now.game_h,
+             now.camera_x,
+             now.camera_y,
+             now.fullscreen,
+             state_name_from_ptr(now.state_ptr),
+             g_online_active_match.active ? g_online_active_match.match_id
+                                          : g_online_pending_match.match_id,
+             ggpo_net_local_player(),
+             (unsigned int)ggpo_net_frame_count(),
+             (unsigned int)ggpo_net_remote_frame_count());
+    g_online_viewport = now;
+}
+
+static void online_viewport_end(void) {
+    if (!g_online_viewport.valid) return;
+    online_viewport_poll("match-end", 1);
+    memset(&g_online_viewport, 0, sizeof(g_online_viewport));
+}
 
 static int clampi(int v, int lo, int hi) {
     if (v < lo) return lo;
@@ -1700,6 +1990,32 @@ static void safe_copy(char* dst, size_t dst_sz, const char* src) {
     if (!src) src = "";
     strncpy(dst, src, dst_sz - 1);
     dst[dst_sz - 1] = '\0';
+}
+
+static void safe_copy_ellipsized(char* dst, size_t dst_sz,
+                                 const char* src, size_t max_chars) {
+    size_t len;
+    size_t keep;
+    if (!dst || dst_sz == 0) return;
+    if (!src) src = "";
+    if (max_chars >= dst_sz) max_chars = dst_sz - 1;
+    len = strlen(src);
+    if (len <= max_chars) {
+        if (dst != src) safe_copy(dst, dst_sz, src);
+        return;
+    }
+    if (max_chars < 4) {
+        keep = max_chars;
+        if (dst != src) memmove(dst, src, keep);
+        dst[keep] = '\0';
+        return;
+    }
+    keep = max_chars - 3;
+    if (dst != src) memmove(dst, src, keep);
+    dst[keep] = '.';
+    dst[keep + 1] = '.';
+    dst[keep + 2] = '.';
+    dst[keep + 3] = '\0';
 }
 
 static void format_bytes_compact(unsigned int bytes, char* out, size_t out_sz) {
@@ -2797,12 +3113,45 @@ static int console_apply_config_value(int idx, int cfg_idx, const char* value) {
 
 static void rebuild_rows(void) {
     RowKey keep = selected_key();
+    UpdateStatus update_status;
+    const char* update_line;
+    const char* latest_version;
+    char update_line_display[64];
+    char latest_display[40];
+    char update_action[192];
     rows_clear();
 
     // Framework settings (apply to the mod framework itself, not a specific mod).
     rows_add(ROW_INFO, 0, -1, -1, "Framework", "");
+    rows_add(ROW_INFO, 0, -1, -1, "  Framework version", FRAMEWORK_VERSION);
     rows_add(ROW_FW_TOGGLE, 1, -1, FW_SETTING_LOG_CONSOLE,
              "  Show log console", log_console_visible() ? "ON" : "OFF");
+    rows_add(ROW_FW_TOGGLE, 1, -1, FW_SETTING_AUTO_UPDATE,
+             "  Automatic updates", update_ext_auto() ? "ON" : "OFF");
+
+    update_status = update_ext_status();
+    update_line = update_ext_status_line();
+    latest_version = update_ext_latest_version();
+    if (!update_line || !update_line[0]) {
+        update_line = (update_status == UPDATE_IDLE) ? "not checked yet" : "working...";
+    }
+    safe_copy_ellipsized(update_line_display, sizeof(update_line_display), update_line, 42);
+    safe_copy_ellipsized(latest_display, sizeof(latest_display), latest_version, 28);
+    rows_add(ROW_INFO, 0, -1, -1, "  Update status", update_line_display);
+    if (update_status == UPDATE_AVAILABLE) {
+        snprintf(update_action, sizeof(update_action), "Install %s",
+                 latest_display[0] ? latest_display : "update");
+        rows_add(ROW_FW_ACTION, 1, -1, FW_ACTION_UPDATE,
+                 "  Install update", update_action);
+    } else if (update_status == UPDATE_IDLE || update_status == UPDATE_UP_TO_DATE ||
+               update_status == UPDATE_ERROR) {
+        rows_add(ROW_FW_ACTION, 1, -1, FW_ACTION_UPDATE,
+                 (update_status == UPDATE_ERROR) ? "  Retry update check" : "  Check for updates",
+                 "[Check]");
+    } else if (update_status == UPDATE_RESTART_PENDING) {
+        rows_add(ROW_INFO, 0, -1, -1,
+                 "  Restart required", "Exit and relaunch the game");
+    }
     rows_add(ROW_DIVIDER, 0, -1, -1, "", "");
 
     int mod_count = lua_manager_get_mod_count();
@@ -2816,14 +3165,12 @@ static void rebuild_rows(void) {
         char header_right[64];
         char desc_line[192];
         char warn[192];
-        char runtime_line[192];
-        char perf_line[192];
-        char mem_buf[32];
         const char* name = lua_manager_get_mod_name(mi);
         const char* id = lua_manager_get_mod_id(mi);
         const char* author = lua_manager_get_mod_author(mi);
         const char* desc = lua_manager_get_mod_description(mi);
         int enabled = lua_manager_get_mod_enabled(mi);
+        int suspended = lua_manager_get_mod_suspended(mi);
         int error_count = lua_manager_get_mod_error_count(mi);
         int dep_count = lua_manager_get_mod_dependency_count(mi);
         int conflict_count = lua_manager_get_mod_conflict_count(mi);
@@ -2858,7 +3205,9 @@ static void rebuild_rows(void) {
         }
 
         header_right[0] = '\0';
-        if (error_count > 0) {
+        if (suspended) {
+            snprintf(header_right, sizeof(header_right), "SUSPENDED (ONLINE)");
+        } else if (error_count > 0) {
             snprintf(header_right, sizeof(header_right), "errors=%d", error_count);
         } else if (missing_required > 0 || active_conflicts > 0) {
             snprintf(header_right, sizeof(header_right), "issues");
@@ -2873,7 +3222,16 @@ static void rebuild_rows(void) {
 
         if (!collapsed) {
             rows_add(ROW_INFO, 0, mi, -1, "Options", "");
-            rows_add(ROW_MOD_TOGGLE, 1, mi, -1, "  Enabled", enabled ? "ON" : "OFF");
+            rows_add(ROW_MOD_TOGGLE, suspended ? 0 : 1, mi, -1, "  Enabled",
+                     suspended ? "SUSPENDED" : (enabled ? "ON" : "OFF"));
+
+            if (suspended) {
+                snprintf(warn, sizeof(warn), "  Online safety: %s",
+                         lua_manager_get_mod_suspend_reason(mi)[0]
+                             ? lua_manager_get_mod_suspend_reason(mi)
+                             : "gameplay-affecting mod");
+                rows_add(ROW_INFO, 0, mi, -1, warn, "");
+            }
 
             if (error_count > 0 || missing_required > 0 || active_conflicts > 0) {
                 snprintf(warn, sizeof(warn), "  Status: %d errors, %d missing required, %d active conflicts",
@@ -2901,7 +3259,7 @@ static void rebuild_rows(void) {
                         case LUA_CFG_OPTIONS: snprintf(value, sizeof(value), "< %s >", raw_value); break;
                         default: safe_copy(value, sizeof(value), raw_value); break;
                     }
-                    rows_add(ROW_CONFIG, 1, mi, ci, label, value);
+                    rows_add(ROW_CONFIG, suspended ? 0 : 1, mi, ci, label, value);
                 }
             }
 
@@ -2918,7 +3276,7 @@ static void rebuild_rows(void) {
                     if (lua_manager_mod_bind_has_conflict(mi, bi) && strlen(value) + 11 < sizeof(value)) {
                         strcat(value, " [conflict]");
                     }
-                    rows_add(ROW_BIND, 1, mi, bi, label, value);
+                    rows_add(ROW_BIND, suspended ? 0 : 1, mi, bi, label, value);
                 }
             }
         }
@@ -2990,9 +3348,11 @@ static void apply_adjustment_on_selected(int delta) {
     if (row->kind == ROW_MOD_HEADER) {
         mods_toggle_collapsed(row->mod_index);
     } else if (row->kind == ROW_MOD_TOGGLE) {
+        if (lua_manager_get_mod_suspended(row->mod_index)) return;
         int enabled = lua_manager_get_mod_enabled(row->mod_index);
         lua_manager_set_mod_enabled(row->mod_index, delta > 0 ? 1 : (delta < 0 ? 0 : !enabled));
     } else if (row->kind == ROW_CONFIG) {
+        if (lua_manager_get_mod_suspended(row->mod_index)) return;
         int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
         if (type == LUA_CFG_BOOL) {
             lua_manager_config_toggle_bool(row->mod_index, row->cfg_index);
@@ -3006,6 +3366,8 @@ static void apply_adjustment_on_selected(int delta) {
     } else if (row->kind == ROW_FW_TOGGLE) {
         if (row->cfg_index == FW_SETTING_LOG_CONSOLE) {
             log_set_console_visible(delta > 0 ? 1 : (delta < 0 ? 0 : !log_console_visible()));
+        } else if (row->cfg_index == FW_SETTING_AUTO_UPDATE) {
+            update_ext_set_auto(delta > 0 ? 1 : (delta < 0 ? 0 : !update_ext_auto()));
         }
     }
 
@@ -3025,10 +3387,13 @@ static void activate_selected(void) {
     if (row->kind == ROW_MOD_HEADER) {
         mods_toggle_collapsed(row->mod_index);
     } else if (row->kind == ROW_MOD_TOGGLE) {
+        if (lua_manager_get_mod_suspended(row->mod_index)) return;
         lua_manager_set_mod_enabled(row->mod_index, lua_manager_get_mod_enabled(row->mod_index) ? 0 : 1);
     } else if (row->kind == ROW_BIND) {
+        if (lua_manager_get_mod_suspended(row->mod_index)) return;
         begin_bind_capture(row->mod_index, row->cfg_index);
     } else if (row->kind == ROW_CONFIG) {
+        if (lua_manager_get_mod_suspended(row->mod_index)) return;
         int type = lua_manager_get_mod_config_type(row->mod_index, row->cfg_index);
         if (type == LUA_CFG_BOOL) {
             lua_manager_config_toggle_bool(row->mod_index, row->cfg_index);
@@ -3046,6 +3411,16 @@ static void activate_selected(void) {
     } else if (row->kind == ROW_FW_TOGGLE) {
         if (row->cfg_index == FW_SETTING_LOG_CONSOLE) {
             log_set_console_visible(!log_console_visible());
+        } else if (row->cfg_index == FW_SETTING_AUTO_UPDATE) {
+            update_ext_set_auto(!update_ext_auto());
+        }
+    } else if (row->kind == ROW_FW_ACTION && row->cfg_index == FW_ACTION_UPDATE) {
+        UpdateStatus status = update_ext_status();
+        if (status == UPDATE_AVAILABLE) {
+            update_ext_begin_apply();
+        } else if (status == UPDATE_IDLE || status == UPDATE_UP_TO_DATE ||
+                   status == UPDATE_ERROR) {
+            update_ext_begin_check();
         }
     }
 
@@ -3991,6 +4366,8 @@ static void console_show_help(const char* topic) {
         return;
     }
     if (_stricmp(t, "ggpo.net") == 0) {
+        console_push_line_rgb("ggpo.net key: arm a one-shot shared v16 key from the clipboard, then clear the clipboard.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net key clear: discard an armed one-shot key.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net host [port]: host a UDP rollback input session as player 0.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net join <host> [port] [local_port]: join as player 1.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net delay [frames]: show or set local input delay (0..8).", 0.72f, 0.90f, 1.00f);
@@ -4001,7 +4378,7 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("ggpo.net correction [on|off]: recover desyncs with host-authoritative state.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net sim [loss_pct] [min_delay] [max_delay]: simulate outgoing UDP loss/jitter.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net sim off: clear simulated network loss and delay.", 0.72f, 0.90f, 1.00f);
-        console_push_line_rgb("F6 hosts on 47777. F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("After arming a key, F6 hosts on 47777 and F7 joins 127.0.0.1:47777.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "online.hub") == 0 || _stricmp(t, "online") == 0) {
@@ -5470,8 +5847,71 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
     if (_stricmp(action, "off") == 0 || _stricmp(action, "stop") == 0 || _stricmp(action, "disable") == 0) {
-        stop_ggpo_net("console");
+        online_cancel_match_from_console();
         console_close();
+        return;
+    }
+    if (_stricmp(action, "key") == 0 || _stricmp(action, "auth") == 0) {
+        char* option = console_parse_token(&cursor);
+        char* clipboard;
+        char* token_begin;
+        char* token_end;
+        size_t clipboard_len;
+        size_t token_len;
+        char err[256];
+        int armed;
+        if (option && option[0]) {
+            if (_stricmp(option, "clear") == 0 || _stricmp(option, "off") == 0) {
+                ggpo_net_clear_match_token();
+                console_push_line_rgb("ggpo.net: one-shot match key cleared", 0.64f, 0.92f, 0.66f);
+                return;
+            }
+            console_push_line_rgb("Usage: copy one 64-hex shared key, then run ggpo.net key", 0.98f, 0.76f, 0.40f);
+            return;
+        }
+        clipboard = SDL_GetClipboardText();
+        if (!clipboard) {
+            console_push_line_rgb("ggpo.net: clipboard is unavailable", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        clipboard_len = strlen(clipboard);
+        token_begin = clipboard;
+        while (*token_begin == ' ' || *token_begin == '\t' ||
+               *token_begin == '\r' || *token_begin == '\n') {
+            token_begin++;
+        }
+        token_end = clipboard + clipboard_len;
+        while (token_end > token_begin &&
+               (token_end[-1] == ' ' || token_end[-1] == '\t' ||
+                token_end[-1] == '\r' || token_end[-1] == '\n')) {
+            token_end--;
+        }
+        token_len = (size_t)(token_end - token_begin);
+        memmove(clipboard, token_begin, token_len);
+        clipboard[token_len] = '\0';
+
+        /* Do not arm a reusable network secret unless the OS clipboard was
+         * successfully cleared. The command/history never contains the key. */
+        if (SDL_SetClipboardText("") != 0) {
+            credential_ext_secure_zero(clipboard, clipboard_len + 1u);
+            SDL_free(clipboard);
+            ggpo_net_clear_match_token();
+            console_push_line_rgb("ggpo.net: could not clear the clipboard; key was not armed", 0.98f, 0.45f, 0.45f);
+            return;
+        }
+        err[0] = '\0';
+        armed = ggpo_net_set_match_token(clipboard, err, sizeof(err));
+        credential_ext_secure_zero(clipboard, clipboard_len + 1u);
+        SDL_free(clipboard);
+        if (!armed) {
+            console_push_line_rgb(err[0] ? err : "ggpo.net: clipboard key must be exactly 64 hexadecimal characters",
+                                  0.98f, 0.45f, 0.45f);
+            credential_ext_secure_zero(err, sizeof(err));
+            return;
+        }
+        credential_ext_secure_zero(err, sizeof(err));
+        console_push_line_rgb("ggpo.net: one-shot v16 match key armed; start host/join next",
+                              0.64f, 0.92f, 0.66f);
         return;
     }
     if (_stricmp(action, "delay") == 0 || _stricmp(action, "input_delay") == 0) {
@@ -5810,7 +6250,7 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
 
-    console_push_line_rgb("Usage: ggpo.net <host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.98f, 0.76f, 0.40f);
+    console_push_line_rgb("Usage: ggpo.net <key|host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.98f, 0.76f, 0.40f);
 }
 
 static void console_run_ggpo_selftest(const char* arg) {
@@ -5888,7 +6328,11 @@ static void console_handle_time_scale(const char* arg) {
             return;
         }
 
-        lua_manager_set_time_scale((float)value);
+        if (!lua_manager_set_time_scale((float)value)) {
+            console_push_line_rgb("time.scale is locked to 1.0 during online rollback.",
+                                  0.98f, 0.76f, 0.40f);
+            return;
+        }
         snprintf(out, sizeof(out), "time.scale set to %.6g",
                  (double)lua_manager_get_time_scale());
         console_push_line_rgb(out, 0.64f, 0.92f, 0.66f);
@@ -6447,6 +6891,7 @@ static void online_hub_defaults(void) {
     memset(&g_online_cfg, 0, sizeof(g_online_cfg));
     g_online_cfg.username[0] = '\0';
     g_online_cfg.password[0] = '\0';
+    g_online_cfg.remember_me = 0;
     safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
     g_online_cfg.server_port = ONLINE_DEFAULT_SERVER_PORT;
     safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
@@ -6489,6 +6934,7 @@ static uint16_t online_u16_or_default(long value, uint16_t fallback) {
 
 static void online_hub_clamp_config(void) {
     g_online_cfg.server_port = online_u16_or_default(g_online_cfg.server_port, ONLINE_DEFAULT_SERVER_PORT);
+    if (g_online_cfg.server_port == 0) g_online_cfg.server_port = ONLINE_DEFAULT_SERVER_PORT;
     g_online_cfg.peer_port = online_u16_or_default(g_online_cfg.peer_port, GGPO_NET_DEFAULT_PORT);
     g_online_cfg.input_delay = clampi(g_online_cfg.input_delay, 0, GGPO_NET_MAX_INPUT_DELAY);
     g_online_cfg.max_frame_advantage = clampi(g_online_cfg.max_frame_advantage, 0, GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT);
@@ -6500,8 +6946,127 @@ static void online_hub_clamp_config(void) {
     g_online_cfg.sim_min_delay = 0;
     g_online_cfg.sim_max_delay = 0;
     g_online_cfg.challenge_notifications = g_online_cfg.challenge_notifications ? 1 : 0;
+    g_online_cfg.remember_me = g_online_cfg.remember_me ? 1 : 0;
     if (!g_online_cfg.server_host[0]) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
     if (!g_online_cfg.peer_host[0]) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
+}
+
+static int online_credential_identity_ready(const char* server,
+                                            uint16_t port,
+                                            const char* username) {
+    return server && server[0] && port != 0 && username && username[0];
+}
+
+static CredentialExtResult online_delete_remembered_password(const char* server,
+                                                              uint16_t port,
+                                                              const char* username) {
+    char error[256];
+    CredentialExtResult result;
+    if (!online_credential_identity_ready(server, port, username)) {
+        return CREDENTIAL_EXT_INVALID_ARGUMENT;
+    }
+    error[0] = '\0';
+    result = credential_ext_delete_password(server,
+                                            (unsigned int)port,
+                                            username,
+                                            error,
+                                            sizeof(error));
+    if (result != CREDENTIAL_EXT_OK && result != CREDENTIAL_EXT_NOT_FOUND) {
+        LOG_WARN("online.credentials: delete failed server=%s:%u user=%s result=%s (%s)",
+                 server,
+                 (unsigned int)port,
+                 username,
+                 credential_ext_result_name(result),
+                 error[0] ? error : "unknown error");
+    }
+    return result;
+}
+
+static CredentialExtResult online_load_remembered_password(int announce) {
+    char error[256];
+    size_t password_len = 0;
+    CredentialExtResult result;
+    CredentialExtResult delete_result = CREDENTIAL_EXT_NOT_FOUND;
+    int invalid_saved_record = 0;
+
+    online_clear_password_memory();
+    if (!g_online_cfg.remember_me ||
+        !online_credential_identity_ready(g_online_cfg.server_host,
+                                          g_online_cfg.server_port,
+                                          g_online_cfg.username)) {
+        return CREDENTIAL_EXT_NOT_FOUND;
+    }
+
+    error[0] = '\0';
+    result = credential_ext_read_password(g_online_cfg.server_host,
+                                          (unsigned int)g_online_cfg.server_port,
+                                          g_online_cfg.username,
+                                          g_online_cfg.password,
+                                          sizeof(g_online_cfg.password),
+                                          &password_len,
+                                          error,
+                                          sizeof(error));
+    if (result == CREDENTIAL_EXT_OK && password_len > 0) {
+        g_online_password_from_credential = 1;
+        LOG_INFO("online.credentials: loaded remembered login server=%s:%u user=%s",
+                 g_online_cfg.server_host,
+                 (unsigned int)g_online_cfg.server_port,
+                 g_online_cfg.username);
+        if (announce) {
+            online_hub_set_status("Remember me enabled.");
+        }
+        return result;
+    }
+
+    if (result == CREDENTIAL_EXT_OK) {
+        result = CREDENTIAL_EXT_MALFORMED_CREDENTIAL;
+        safe_copy(error, sizeof(error), "saved password was empty");
+    }
+    if (result == CREDENTIAL_EXT_MALFORMED_CREDENTIAL ||
+        result == CREDENTIAL_EXT_BUFFER_TOO_SMALL) {
+        invalid_saved_record = 1;
+        delete_result = online_delete_remembered_password(g_online_cfg.server_host,
+                                                           g_online_cfg.server_port,
+                                                           g_online_cfg.username);
+    }
+    online_clear_password_memory();
+    if (result != CREDENTIAL_EXT_NOT_FOUND) {
+        LOG_WARN("online.credentials: read failed server=%s:%u user=%s result=%s (%s)",
+                 g_online_cfg.server_host,
+                 (unsigned int)g_online_cfg.server_port,
+                 g_online_cfg.username,
+                 credential_ext_result_name(result),
+                 error[0] ? error : "unknown error");
+        if (announce && invalid_saved_record &&
+            delete_result != CREDENTIAL_EXT_OK &&
+            delete_result != CREDENTIAL_EXT_NOT_FOUND) {
+            online_hub_set_status("Remembered login could not be reset; enter your password manually.");
+        } else if (announce && invalid_saved_record) {
+            online_hub_set_status("Remembered login is unavailable; enter your password manually.");
+        } else if (announce) {
+            online_hub_set_status("Remembered login is unavailable; enter your password manually.");
+        }
+    } else if (announce) {
+        online_hub_set_status("Remember me enabled.");
+    }
+    return result;
+}
+
+static CredentialExtResult online_store_remembered_password(char* error,
+                                                             size_t error_cap) {
+    if (error && error_cap > 0) error[0] = '\0';
+    if (!g_online_cfg.remember_me || !g_online_cfg.password[0] ||
+        !online_credential_identity_ready(g_online_cfg.server_host,
+                                          g_online_cfg.server_port,
+                                          g_online_cfg.username)) {
+        return CREDENTIAL_EXT_INVALID_ARGUMENT;
+    }
+    return credential_ext_write_password(g_online_cfg.server_host,
+                                         (unsigned int)g_online_cfg.server_port,
+                                         g_online_cfg.username,
+                                         g_online_cfg.password,
+                                         error,
+                                         error_cap);
 }
 
 static void online_hub_add_friend(const char* name, const char* host, uint16_t port, int blocked) {
@@ -6601,6 +7166,7 @@ static void online_hub_load(void) {
         value = trim_ws(value);
 
         if (_stricmp(key, "username") == 0) safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), value);
+        else if (_stricmp(key, "remember_me") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.remember_me = (int)parsed;
         else if (_stricmp(key, "server_host") == 0) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), value);
         else if (_stricmp(key, "server_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.server_port = (uint16_t)parsed;
         else if (_stricmp(key, "peer_host") == 0) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), value);
@@ -6638,6 +7204,9 @@ static void online_hub_load(void) {
     fclose(f);
     online_hub_clamp_config();
     online_hub_apply_net_settings();
+    if (g_online_cfg.remember_me) {
+        (void)online_load_remembered_password(0);
+    }
 }
 
 static void online_hub_save(void) {
@@ -6649,8 +7218,9 @@ static void online_hub_save(void) {
         online_hub_set_status("Could not save online settings.");
         return;
     }
-    fprintf(f, "# Eggnogg+ built-in online hub config v1\n");
+    fprintf(f, "# Eggnogg+ built-in online hub config v2\n");
     fprintf(f, "username=%s\n", g_online_cfg.username);
+    fprintf(f, "remember_me=%d\n", g_online_cfg.remember_me ? 1 : 0);
     fprintf(f, "server_host=%s\n", g_online_cfg.server_host);
     fprintf(f, "server_port=%u\n", (unsigned int)g_online_cfg.server_port);
     fprintf(f, "local_port=%u\n", (unsigned int)g_online_cfg.local_port);
@@ -6702,55 +7272,37 @@ static void online_json_escape(char* out, size_t out_sz, const char* s) {
     out[pos] = '\0';
 }
 
-static const char* online_json_find_key(const char* json, const char* key) {
-    char needle[96];
-    const char* p;
-    if (!json || !key || !key[0]) return NULL;
-    snprintf(needle, sizeof(needle), "\"%s\"", key);
-    p = strstr(json, needle);
-    if (!p) return NULL;
-    p += strlen(needle);
-    while (*p && isspace((unsigned char)*p)) p++;
-    if (*p != ':') return NULL;
-    p++;
-    while (*p && isspace((unsigned char)*p)) p++;
-    return p;
-}
-
 static int online_json_get_string(const char* json, const char* key, char* out, size_t out_sz) {
-    const char* p = online_json_find_key(json, key);
-    size_t pos = 0;
-    if (!out || out_sz == 0) return 0;
-    out[0] = '\0';
-    if (!p || *p != '"') return 0;
-    p++;
-    while (*p && *p != '"' && pos + 1 < out_sz) {
-        if (*p == '\\' && p[1]) {
-            p++;
-            switch (*p) {
-                case 'n': out[pos++] = '\n'; break;
-                case 'r': out[pos++] = '\r'; break;
-                case 't': out[pos++] = '\t'; break;
-                default: out[pos++] = *p; break;
-            }
-            p++;
-        } else {
-            out[pos++] = *p++;
-        }
-    }
-    out[pos] = '\0';
-    return 1;
+    return online_control_json_get_string(json, key, out, out_sz) ==
+           ONLINE_CONTROL_JSON_OK;
 }
 
 static int online_json_get_int(const char* json, const char* key, int* out) {
-    const char* p = online_json_find_key(json, key);
-    char* end = NULL;
-    long value;
-    if (!p) return 0;
-    value = strtol(p, &end, 10);
-    if (end == p) return 0;
-    if (out) *out = (int)value;
-    return 1;
+    return online_control_json_get_int(json, key, out) == ONLINE_CONTROL_JSON_OK;
+}
+
+static int online_server_protocol_compatible(const char* json) {
+    int control_protocol = 0;
+    int match_protocol = 0;
+    int p2p_protocol = 0;
+    int packet_auth = 0;
+    return online_json_get_int(json, "control_protocol", &control_protocol) &&
+           online_json_get_int(json, "match_protocol", &match_protocol) &&
+           online_json_get_int(json, "p2p_protocol", &p2p_protocol) &&
+           online_json_get_int(json, "cap_p2p_auth", &packet_auth) &&
+           control_protocol == ONLINE_CONTROL_PROTOCOL_VERSION &&
+           match_protocol == ONLINE_MATCH_PROTOCOL_VERSION &&
+           p2p_protocol == (int)GGPO_NET_PROTOCOL_VERSION &&
+           packet_auth == 1;
+}
+
+static int online_match_protocol_compatible(const char* json) {
+    int match_protocol = 0;
+    int p2p_protocol = 0;
+    return online_json_get_int(json, "match_protocol", &match_protocol) &&
+           online_json_get_int(json, "p2p_protocol", &p2p_protocol) &&
+           match_protocol == ONLINE_MATCH_PROTOCOL_VERSION &&
+           p2p_protocol == (int)GGPO_NET_PROTOCOL_VERSION;
 }
 
 static int online_server_send_raw(const char* line) {
@@ -6766,64 +7318,165 @@ static int online_server_send_raw(const char* line) {
     return sent == len;
 }
 
-static void online_server_send_map_manifest(void) {
-    static char maps_json[49152];
-    static char line[53248];
+static int online_server_send_map_manifest(void) {
+    char* maps_json = NULL;
+    char* line = NULL;
     char lan_host[64];
     char lan_json[96];
     int needed;
-    needed = custom_maps_build_manifest_json(maps_json, sizeof(maps_json));
-    if (needed >= (int)sizeof(maps_json)) {
-        online_hub_set_status("Map manifest too large; only part was sent.");
+    int built;
+    int formatted;
+    int sent = 0;
+    size_t line_cap;
+
+    /* Count first, then allocate exactly. A truncated JSON prefix must never be
+     * put on the control stream: net_send accepts a logical message atomically,
+     * and this cap leaves ample space in its 128 KiB copied output queue. */
+    needed = custom_maps_build_manifest_json(NULL, 0);
+    if (needed < 0 || (size_t)needed > ONLINE_MAP_MANIFEST_MAX_BYTES) {
+        LOG_ERROR("online.maps: manifest size %d exceeds the %lu-byte control limit",
+                  needed,
+                  (unsigned long)ONLINE_MAP_MANIFEST_MAX_BYTES);
+        online_hub_set_status("Installed map list is too large for online play.");
+        return 0;
     }
+    maps_json = (char*)malloc((size_t)needed + 1u);
+    line_cap = (size_t)needed + 512u;
+    line = (char*)malloc(line_cap);
+    if (!maps_json || !line) {
+        LOG_ERROR("online.maps: could not allocate complete manifest message (%d bytes)", needed);
+        online_hub_set_status("Could not prepare the installed map list.");
+        goto done;
+    }
+    built = custom_maps_build_manifest_json(maps_json, (size_t)needed + 1u);
+    if (built != needed) {
+        LOG_WARN("online.maps: registry changed while building manifest (%d -> %d bytes)",
+                 needed,
+                 built);
+        online_hub_set_status("Installed maps changed; reconnect to try again.");
+        goto done;
+    }
+
     lan_host[0] = '\0';
     lan_json[0] = '\0';
     if (net_local_ipv4(lan_host, sizeof(lan_host)) && lan_host[0]) {
         online_json_escape(lan_json, sizeof(lan_json), lan_host);
     }
-    snprintf(line, sizeof(line), "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
-             (unsigned int)g_online_cfg.local_port,
-             lan_json,
-             maps_json);
-    online_server_send_raw(line);
+    formatted = snprintf(line,
+                         line_cap,
+                         "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
+                         (unsigned int)g_online_cfg.local_port,
+                         lan_json,
+                         maps_json);
+    if (formatted < 0 || (size_t)formatted >= line_cap) {
+        LOG_ERROR("online.maps: complete manifest envelope exceeded its checked allocation");
+        online_hub_set_status("Could not prepare the installed map list.");
+        goto done;
+    }
+    sent = online_server_send_raw(line);
+    if (!sent) {
+        LOG_WARN("online.maps: complete manifest message was not accepted by the control queue");
+        online_hub_set_status("Could not send the installed map list.");
+    }
+
+done:
+    free(line);
+    free(maps_json);
+    return sent;
 }
 
 static void online_server_send_auth(int register_account) {
-    char user[128];
-    char pass[192];
-    char line[512];
+    char user[320];
+    char pass[1537];
+    char line[2048];
+    int sent;
     online_json_escape(user, sizeof(user), g_online_cfg.username);
     online_json_escape(pass, sizeof(pass), g_online_cfg.password);
     snprintf(line, sizeof(line), "{\"type\":\"%s\",\"username\":\"%s\",\"password\":\"%s\"}\n",
              register_account ? "register" : "login", user, pass);
-    online_server_send_raw(line);
+    sent = online_server_send_raw(line);
+    credential_ext_secure_zero(pass, sizeof(pass));
+    credential_ext_secure_zero(line, sizeof(line));
+    credential_ext_secure_zero(user, sizeof(user));
+    if (!sent) {
+        LOG_WARN("online.credentials: authentication request could not be sent");
+        if (g_online_server_state != ONLINE_SERVER_DISCONNECTED) {
+            online_server_disconnect("Authentication request could not be sent.");
+        }
+    }
 }
 
 static void online_server_disconnect(const char* reason) {
+    int match_interrupted = g_online_pending_match.active ||
+                            (g_online_active_match.active && !g_online_active_match.result_reported);
+    int discard_auth_secret = g_online_auth_pending ||
+                              g_online_server_state == ONLINE_SERVER_CONNECTING;
     if (g_online_server_slot >= 0) net_close(g_online_server_slot);
     g_online_server_slot = -1;
     g_online_server_state = ONLINE_SERVER_DISCONNECTED;
     g_online_authed = 0;
+    g_online_auth_pending = 0;
+    g_online_server_info_pending = 0;
+    g_online_server_deadline_ms = 0;
     g_online_recv_len = 0;
     g_online_queue_mode = 0;
+    if (discard_auth_secret || !is_online_hub_state_active()) {
+        online_clear_password_memory();
+    }
+    if (match_interrupted) {
+        online_handle_server_match_disconnect(reason);
+        return;
+    }
     if (reason && reason[0]) online_hub_set_status(reason);
 }
 
 static void online_server_connect(int register_account) {
     online_hub_save();
     online_server_disconnect(NULL);
+    if (!register_account && !g_online_cfg.password[0] && g_online_cfg.remember_me) {
+        (void)online_load_remembered_password(0);
+    }
     if (!g_online_cfg.username[0] || !g_online_cfg.password[0]) {
         online_hub_set_status("Enter username and password on Play.");
         return;
     }
+    g_online_register_after_connect = register_account ? 1 : 0;
+    g_online_auth_pending = 1;
     g_online_server_slot = net_connect(g_online_cfg.server_host, g_online_cfg.server_port);
     if (g_online_server_slot < 0) {
-        online_hub_set_status("Could not start server connection.");
+        online_server_disconnect("Could not start server connection.");
         return;
     }
-    g_online_register_after_connect = register_account ? 1 : 0;
     g_online_server_state = ONLINE_SERVER_CONNECTING;
+    g_online_server_deadline_ms = (DWORD)online_control_deadline_after(
+        (uint32_t)GetTickCount(), ONLINE_SERVER_CONNECT_TIMEOUT_MS);
     online_hub_set_status("Connecting to online server...");
+}
+
+/* A remembered login is the only path allowed to authenticate without an
+ * explicit LOG IN activation. Keep the source flag in the predicate so a
+ * manually typed password can never be submitted merely by opening the hub. */
+static int online_remembered_login_in_progress(void) {
+    return !g_online_authed &&
+           g_online_auth_pending &&
+           !g_online_register_after_connect &&
+           g_online_password_from_credential;
+}
+
+static int online_try_remembered_login(void) {
+    CredentialExtResult result;
+    if (g_online_authed || g_online_auth_pending ||
+        g_online_server_state != ONLINE_SERVER_DISCONNECTED ||
+        !g_online_cfg.remember_me || !g_online_cfg.username[0]) {
+        return 0;
+    }
+    if (!g_online_cfg.password[0]) {
+        result = online_load_remembered_password(0);
+        if (result != CREDENTIAL_EXT_OK) return 0;
+    }
+    if (!g_online_password_from_credential || !g_online_cfg.password[0]) return 0;
+    online_server_connect(0);
+    return online_remembered_login_in_progress();
 }
 
 static void online_server_send_queue(const char* queue) {
@@ -6871,11 +7524,16 @@ static void online_server_send_challenge_action(const char* type, int id, const 
 static void online_server_send_match_end(OnlineMatchResult result) {
     char line[192];
     const char* text = "draw";
+    int match_id = g_online_active_match.match_id;
     if (result == ONLINE_MATCH_RESULT_WIN) text = "win";
     else if (result == ONLINE_MATCH_RESULT_LOSS) text = "loss";
+    if (match_id <= 0 && g_online_pending_match.active) {
+        match_id = g_online_pending_match.match_id;
+    }
+    if (match_id <= 0) return;
     if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
     snprintf(line, sizeof(line), "{\"type\":\"match_end\",\"match_id\":%d,\"result\":\"%s\"}\n",
-             g_online_active_match.match_id,
+             match_id,
              text);
     online_server_send_raw(line);
 }
@@ -6883,6 +7541,7 @@ static void online_server_send_match_end(OnlineMatchResult result) {
 static void online_result_prepare(OnlineMatchResult result, const char* status) {
     memset(&g_online_result, 0, sizeof(g_online_result));
     g_online_result.active = 1;
+    g_online_result.match_id = g_online_active_match.match_id;
     g_online_result.selected = 0;
     g_online_result.result = result;
     g_online_result.toast_age = 0;
@@ -6900,8 +7559,13 @@ static void online_result_prepare(OnlineMatchResult result, const char* status) 
 
 static void online_open_result_screen(void) {
     g_online_queue_mode = 0;
-    g_online_capture_active = 0;
+    online_clear_capture_state();
     g_online_context_active = 0;
+    lua_manager_online_suspend_end();
+    if (p_state_switch && !is_online_result_state_active()) {
+        (void)console_capture_background_now();
+        p_state_switch((void*)&g_online_result_state);
+    }
 }
 
 static void online_active_match_begin_from_pending(void) {
@@ -6915,10 +7579,16 @@ static void online_active_match_begin_from_pending(void) {
     }
     g_online_active_match.competitive = g_online_pending_match.competitive;
     g_online_active_match.queue_mode = g_online_pending_match.queue_mode;
-    g_online_active_match.p2p_probe_cooldown = 0;
     safe_copy(g_online_active_match.p2p_token, sizeof(g_online_active_match.p2p_token), g_online_pending_match.p2p_token);
     safe_copy(g_online_active_match.opponent, sizeof(g_online_active_match.opponent), g_online_pending_match.opponent);
     safe_copy(g_online_active_match.map_label, sizeof(g_online_active_match.map_label), g_online_pending_match.map_label);
+    g_online_connect.connected_once = 1;
+    g_online_connect.established = 1;
+    /* No retry can occur after synchronized gameplay begins. Retain the
+     * in-session derived keys inside ggpo_net, but erase both owner text copies
+     * and any unused pending start key now. */
+    online_p2p_auth_tokens_clear();
+    online_viewport_poll("match-start", 1);
 }
 
 static void online_finish_active_match(OnlineMatchResult result, const char* status, int send_report) {
@@ -6929,14 +7599,108 @@ static void online_finish_active_match(OnlineMatchResult result, const char* sta
         online_server_send_match_end(result);
     }
     if (ggpo_net_active()) stop_ggpo_net("online match complete");
-    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+    online_connect_reset();
+    online_pending_match_reset();
     online_result_prepare(result, status);
     online_open_result_screen();
 }
 
 static void online_clear_match_state(void) {
-    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+    online_pending_match_reset();
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+    online_connect_reset();
+    lua_manager_online_suspend_end();
+}
+
+/* A fresh retry socket is useful only while the matchmaking connection can
+ * publish its new endpoint. If that control connection disappears, terminate
+ * the server-managed match instead of spending the remaining attempts on
+ * unreachable ephemeral ports. */
+static void online_handle_server_match_disconnect(const char* reason) {
+    const char* status = (reason && reason[0])
+        ? reason
+        : "Online server disconnected; match ended.";
+    int show_result = g_online_active_match.active && g_online_connect.established;
+
+    LOG_WARN("online.match: matchmaking connection lost during match id=%d established=%d (%s)",
+             g_online_active_match.active ? g_online_active_match.match_id
+                                          : g_online_pending_match.match_id,
+             g_online_connect.established,
+             status);
+
+    if (show_result) {
+        g_online_active_match.result = ONLINE_MATCH_RESULT_LOSS;
+        g_online_active_match.result_reported = 1;
+        if (ggpo_net_active()) stop_ggpo_net("online server disconnected");
+        online_result_prepare(ONLINE_MATCH_RESULT_LOSS, status);
+        online_open_result_screen();
+        online_pending_match_reset();
+        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+        online_connect_reset();
+    } else {
+        if (ggpo_net_active()) stop_ggpo_net("online server disconnected before P2P connect");
+        online_clear_match_state();
+        g_online_pending_connect_fail_status = 2;
+    }
+    online_hub_open();
+}
+
+/* `ggpo.net off` is an explicit cancellation, not a failed attempt. Resolve the
+ * server match and clear retry state so the next frame cannot resurrect P2P. */
+static void online_cancel_match_from_console(void) {
+    if (g_online_active_match.active) {
+        g_online_active_match.result = ONLINE_MATCH_RESULT_LOSS;
+        if (!g_online_active_match.result_reported) {
+            g_online_active_match.result_reported = 1;
+            online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+        }
+        if (ggpo_net_active()) stop_ggpo_net("console cancelled online match");
+        online_result_prepare(ONLINE_MATCH_RESULT_LOSS, "P2P stopped; reported loss.");
+        online_open_result_screen();
+        online_pending_match_reset();
+        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+        online_connect_reset();
+        online_hub_open();
+        return;
+    }
+    if (g_online_pending_match.active) {
+        online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+        if (ggpo_net_active()) stop_ggpo_net("console cancelled pending online match");
+        online_clear_match_state();
+        g_online_pending_connect_fail_status = 3;
+        online_hub_open();
+        return;
+    }
+    online_connect_reset();
+    stop_ggpo_net("console");
+}
+
+static int online_current_match_id(void) {
+    if (g_online_pending_match.active && g_online_pending_match.match_id > 0) {
+        return g_online_pending_match.match_id;
+    }
+    if (g_online_active_match.active && g_online_active_match.match_id > 0) {
+        return g_online_active_match.match_id;
+    }
+    if (g_online_result.active && g_online_result.match_id > 0) {
+        return g_online_result.match_id;
+    }
+    return 0;
+}
+
+static int online_server_message_matches_current_match(const char* line, const char* type) {
+    int message_match_id = 0;
+    int current_match_id = online_current_match_id();
+    if (!online_json_get_int(line, "match_id", &message_match_id) ||
+        message_match_id <= 0 || current_match_id <= 0 ||
+        message_match_id != current_match_id) {
+        LOG_WARN("online.server: ignored stale %s match=%d current=%d",
+                 type ? type : "match message",
+                 message_match_id,
+                 current_match_id);
+        return 0;
+    }
+    return 1;
 }
 
 static OnlineMatchResult online_match_result_from_text(const char* text) {
@@ -6978,8 +7742,13 @@ static void online_ensure_native_game_started(void) {
     }
 }
 
-static void online_launch_pending_match_to_game(void) {
-    if (!g_online_pending_match.active) return;
+/* Build the complete deterministic frame-0 state while the match-found card is
+ * still on screen. The P2P host snapshots this state when the prematch hold is
+ * released; neither peer has to expose a frozen GAME frame while connecting or
+ * transferring it. */
+static int online_prepare_pending_match_state(void) {
+    if (!g_online_pending_match.active) return 0;
+    if (g_online_pending_match.prematch_prepared) return 1;
     online_clear_waterfall_audio_state("match launch");
     if (g_hook_map_selector) {
         *g_hook_map_selector = g_online_pending_match.selector;
@@ -6990,15 +7759,25 @@ static void online_launch_pending_match_to_game(void) {
         if (g_native_mrand_seed) *g_native_mrand_seed = g_online_pending_match.seed;
     }
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
-    if (p_game_reset) {
-        p_game_reset();
+    if (!p_game_reset) {
+        LOG_ERROR("online.prematch: game_reset is unavailable");
+        return 0;
     }
-    g_online_pending_match.launch_stage = 4;
-    g_online_pending_match.launch_delay_frames = 2;
-    g_online_pending_match.p2p_started = 0;
-    if (p_state_switch) {
-        p_state_switch((void*)(uintptr_t)ADDR_GAME_STATE);
+    p_game_reset();
+    /* Run the native room/start-countdown initialization before the host's
+     * authoritative capture. GAME enter will then only resume/layout the exact
+     * synchronized state after the hub-to-game switch. */
+    {
+        int old_synth_enabled = hooks_set_native_synth_enabled(0);
+        online_ensure_native_game_started();
+        hooks_set_native_synth_enabled(old_synth_enabled);
     }
+    g_online_pending_match.prematch_prepared = 1;
+    LOG_INFO("online.prematch: deterministic match state prepared in countdown match=%d map=%d seed=%u",
+             g_online_pending_match.match_id,
+             g_online_pending_match.selector,
+             g_online_pending_match.seed);
+    return 1;
 }
 
 /* Start (or restart) a native local match, optionally on a specific map
@@ -7025,12 +7804,21 @@ static void online_server_begin_pending_match(const char* line) {
     char text[128];
     char queue[32];
     int value = 0;
-    memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+    OnlineControlJsonResult map_key_result;
+    OnlineControlJsonResult auth_token_result;
+    online_pending_match_reset();
+    online_connect_reset();
     g_online_pending_match.active = 1;
-    g_online_pending_match.launch_stage = 1;
+    g_online_pending_match.setup_started_ms = GetTickCount();
+    (void)lua_manager_online_suspend_begin();
     g_online_pending_match.selector = 0;
     g_online_pending_match.input_delay = g_online_cfg.input_delay;
     g_online_pending_match.local_port = g_online_cfg.local_port;
+
+    if (!online_match_protocol_compatible(line)) {
+        online_abort_prematch_setup("server sent an incompatible match protocol");
+        return;
+    }
 
     if (online_json_get_int(line, "match_id", &value)) g_online_pending_match.match_id = value;
     if (online_json_get_int(line, "role", &value)) g_online_pending_match.role = value;
@@ -7042,8 +7830,16 @@ static void online_server_begin_pending_match(const char* line) {
     online_json_get_string(line, "p2p_role", g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role));
     online_json_get_string(line, "peer_host", g_online_pending_match.peer_host, sizeof(g_online_pending_match.peer_host));
     online_json_get_string(line, "p2p_token", g_online_pending_match.p2p_token, sizeof(g_online_pending_match.p2p_token));
+    auth_token_result = online_control_json_get_string(
+        line,
+        "p2p_auth_token",
+        g_online_pending_match.p2p_auth_token,
+        sizeof(g_online_pending_match.p2p_auth_token));
     online_json_get_string(line, "opponent", g_online_pending_match.opponent, sizeof(g_online_pending_match.opponent));
-    online_json_get_string(line, "map_key", g_online_pending_match.map_key, sizeof(g_online_pending_match.map_key));
+    map_key_result = online_control_json_get_string(line,
+                                                     "map_key",
+                                                     g_online_pending_match.map_key,
+                                                     sizeof(g_online_pending_match.map_key));
     online_json_get_string(line, "map_label", g_online_pending_match.map_label, sizeof(g_online_pending_match.map_label));
     queue[0] = '\0';
     online_json_get_string(line, "queue", queue, sizeof(queue));
@@ -7054,13 +7850,44 @@ static void online_server_begin_pending_match(const char* line) {
         g_online_pending_match.queue_mode = 1;
     }
 
-    if (g_online_pending_match.map_key[0]) {
+    if (g_online_pending_match.match_id <= 0) {
+        online_abort_prematch_setup("server sent an invalid match id");
+        return;
+    }
+    if (auth_token_result != ONLINE_CONTROL_JSON_OK) {
+        online_abort_prematch_setup("server sent missing or invalid match authentication data");
+        return;
+    }
+
+    if (map_key_result < ONLINE_CONTROL_JSON_NOT_FOUND) {
+        online_abort_prematch_setup("server sent an invalid map key");
+        return;
+    }
+    if (map_key_result == ONLINE_CONTROL_JSON_OK &&
+        g_online_pending_match.map_key[0]) {
         int selector = 0;
-        if (custom_maps_selector_for_key(g_online_pending_match.map_key, &selector)) {
-            g_online_pending_match.selector = selector;
+        if (!custom_maps_selector_for_key(g_online_pending_match.map_key, &selector)) {
+            online_abort_prematch_setup("selected map is not installed or changed since matchmaking");
+            return;
         }
+        g_online_pending_match.selector = selector;
     }
     online_normalize_pending_match_ports();
+    g_online_connect.match_id = g_online_pending_match.match_id;
+    g_online_connect.local_port = g_online_pending_match.local_port;
+    g_online_connect.peer_port = g_online_pending_match.peer_port;
+    safe_copy(g_online_connect.p2p_role,
+              sizeof(g_online_connect.p2p_role),
+              g_online_pending_match.p2p_role);
+    safe_copy(g_online_connect.peer_host,
+              sizeof(g_online_connect.peer_host),
+              g_online_pending_match.peer_host);
+    safe_copy(g_online_connect.p2p_token,
+              sizeof(g_online_connect.p2p_token),
+              g_online_pending_match.p2p_token);
+    safe_copy(g_online_connect.p2p_auth_token,
+              sizeof(g_online_connect.p2p_auth_token),
+              g_online_pending_match.p2p_auth_token);
     online_hub_apply_net_settings();
     (void)ggpo_net_set_input_delay((uint32_t)clampi(g_online_pending_match.input_delay, 0, GGPO_NET_MAX_INPUT_DELAY));
     snprintf(text, sizeof(text), "Match found: %s on %s",
@@ -7068,7 +7895,9 @@ static void online_server_begin_pending_match(const char* line) {
              g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
     online_hub_set_status(text);
     g_online_pending_match.launch_countdown_frames = ONLINE_MATCH_COUNTDOWN_FRAMES;
-    g_online_pending_match.launch_stage = 0;
+    /* Open the held UDP session now, not after switching to GAME. Connection,
+     * retries, RTT sampling and final state sync all run behind the countdown. */
+    online_connect_start_attempt(1);
     if (!is_online_hub_state_active()) {
         online_hub_open();
     }
@@ -7076,14 +7905,24 @@ static void online_server_begin_pending_match(const char* line) {
 
 static void online_apply_p2p_peer(const char* line) {
     char host[ONLINE_HUB_TEXT_MAX];
+    char public_host[ONLINE_HUB_TEXT_MAX];
+    char lan_host[ONLINE_HUB_TEXT_MAX];
     char err[256];
     int match_id = 0;
     int port = 0;
+    int public_port = 0;
+    int lan_port = 0;
     int applies = 0;
     if (!online_json_get_int(line, "match_id", &match_id)) return;
     if (!online_json_get_int(line, "peer_port", &port)) return;
     host[0] = '\0';
+    public_host[0] = '\0';
+    lan_host[0] = '\0';
     online_json_get_string(line, "peer_host", host, sizeof(host));
+    online_json_get_string(line, "peer_public_host", public_host, sizeof(public_host));
+    online_json_get_int(line, "peer_public_port", &public_port);
+    online_json_get_string(line, "peer_lan_host", lan_host, sizeof(lan_host));
+    online_json_get_int(line, "peer_lan_port", &lan_port);
     if (match_id <= 0 || port <= 0 || port > 65535 || !host[0]) return;
 
     if (g_online_pending_match.active && g_online_pending_match.match_id == match_id) {
@@ -7094,13 +7933,22 @@ static void online_apply_p2p_peer(const char* line) {
     if (g_online_active_match.active && g_online_active_match.match_id == match_id) {
         applies = 1;
     }
+    if (g_online_connect.match_id == match_id) {
+        safe_copy(g_online_connect.peer_host, sizeof(g_online_connect.peer_host), host);
+        g_online_connect.peer_port = port;
+        if (public_host[0] && public_port > 0 && public_port <= 65535) {
+            safe_copy(g_online_connect.public_host, sizeof(g_online_connect.public_host), public_host);
+            g_online_connect.public_port = public_port;
+        }
+        if (lan_host[0] && lan_port > 0 && lan_port <= 65535) {
+            safe_copy(g_online_connect.lan_host, sizeof(g_online_connect.lan_host), lan_host);
+            g_online_connect.lan_port = lan_port;
+        }
+        applies = 1;
+    }
     if (!applies) return;
 
     if (ggpo_net_active()) {
-        char public_host[ONLINE_HUB_TEXT_MAX];
-        char lan_host[ONLINE_HUB_TEXT_MAX];
-        int public_port = 0;
-        int lan_port = 0;
         err[0] = '\0';
         if (ggpo_net_set_peer(host, (uint16_t)port, err, sizeof(err))) {
             online_hub_set_status("");
@@ -7119,12 +7967,6 @@ static void online_apply_p2p_peer(const char* line) {
          * single guess, but for cross-network play the reachable one is the public
          * endpoint; probing all of them and adopting whichever replies is what
          * makes hotspot/VPN/different-network connections work. */
-        public_host[0] = '\0';
-        lan_host[0] = '\0';
-        online_json_get_string(line, "peer_public_host", public_host, sizeof(public_host));
-        online_json_get_int(line, "peer_public_port", &public_port);
-        online_json_get_string(line, "peer_lan_host", lan_host, sizeof(lan_host));
-        online_json_get_int(line, "peer_lan_port", &lan_port);
         if (public_host[0] && public_port > 0 && public_port <= 65535) {
             (void)ggpo_net_add_peer_candidate(public_host, (uint16_t)public_port, err, sizeof(err));
         }
@@ -7136,63 +7978,306 @@ static void online_apply_p2p_peer(const char* line) {
 
 static void online_pump_p2p_probe(void) {
     char err[256];
-    if (!g_online_active_match.active) return;
     /* Keep probing until the session connects. This keeps NAT mappings warm and
      * lets the server resend a changed observed endpoint during hole punching. */
+    if (g_online_connect.attempts <= 0 || g_online_connect.established) return;
     if (!ggpo_net_active() || ggpo_net_connected()) return;
-    if (!g_online_active_match.p2p_token[0] || !g_online_cfg.username[0]) return;
+    if (g_online_connect.match_id <= 0 || !g_online_connect.p2p_token[0] || !g_online_cfg.username[0]) return;
     if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0) return;
-    if (g_online_active_match.p2p_probe_cooldown > 0) {
-        g_online_active_match.p2p_probe_cooldown--;
+    if (g_online_connect.probe_cooldown > 0) {
+        g_online_connect.probe_cooldown--;
         return;
     }
-    g_online_active_match.p2p_probe_cooldown = 12;
+    g_online_connect.probe_cooldown = 12;
     err[0] = '\0';
     if (ggpo_net_send_server_probe(g_online_cfg.server_host,
                                    g_online_cfg.server_port,
-                                   g_online_active_match.match_id,
+                                   g_online_connect.match_id,
                                    g_online_cfg.username,
-                                   g_online_active_match.p2p_token,
+                                   g_online_connect.p2p_token,
                                    err,
                                    sizeof(err))) {
-        if (!g_online_active_match.p2p_probe_logged) {
-            g_online_active_match.p2p_probe_logged = 1;
+        if (!g_online_connect.probe_logged) {
+            g_online_connect.probe_logged = 1;
             LOG_INFO("online.p2p: sent UDP discovery probe match=%d server=%s:%u local_udp=%u",
-                     g_online_active_match.match_id,
+                     g_online_connect.match_id,
                      g_online_cfg.server_host,
                      (unsigned int)g_online_cfg.server_port,
                      (unsigned int)ggpo_net_local_port());
         }
     } else {
-        if (!g_online_active_match.p2p_probe_warned) {
-            g_online_active_match.p2p_probe_warned = 1;
+        if (!g_online_connect.probe_warned) {
+            g_online_connect.probe_warned = 1;
             LOG_WARN("online.p2p: server UDP probe failed match=%d (%s)",
-                     g_online_active_match.match_id,
+                     g_online_connect.match_id,
                      err[0] ? err : "unknown error");
         }
     }
 }
 
+static void online_connect_start_attempt(int first) {
+    char err[256];
+    int port;
+
+    if (g_online_connect.established || g_online_connect.match_id <= 0) return;
+
+    /* Attempt rollover is not a terminal disconnect. In particular, do not send
+     * BYE: the other side may have received our last HELLO just before this side's
+     * timeout and would otherwise poison an otherwise viable retry. */
+    if (ggpo_net_active()) {
+        LOG_INFO("online.p2p: closing attempt %d without BYE for fresh socket",
+                 g_online_connect.attempts);
+        ggpo_net_stop_for_retry();
+    }
+
+    port = first ? g_online_connect.local_port : 0;
+    g_online_connect.attempts++;
+    g_online_connect.attempt_started_ms = GetTickCount();
+    g_online_connect.connected_once = 0;
+    g_online_connect.probe_cooldown = 0;
+    g_online_connect.probe_logged = 0;
+    g_online_connect.probe_warned = 0;
+
+    /* The packet-auth key is consumed by each successful socket start. Arm it
+     * again immediately before every first/retry start, and fail the match
+     * closed instead of silently opening a legacy unauthenticated session. */
+    err[0] = '\0';
+    if (!g_online_connect.p2p_auth_token[0] ||
+        !ggpo_net_set_match_token(g_online_connect.p2p_auth_token,
+                                  err,
+                                  sizeof(err))) {
+        LOG_ERROR("online.p2p: attempt %d rejected match authentication data (%s)",
+                  g_online_connect.attempts,
+                  err[0] ? err : "missing authentication data");
+        online_abort_prematch_setup("missing or invalid P2P match authentication data");
+        return;
+    }
+
+    if (_stricmp(g_online_connect.p2p_role, "host") == 0) {
+        start_ggpo_net_host((uint16_t)port, "online server match");
+    } else {
+        start_ggpo_net_join_deferred((uint16_t)port, "online server match");
+    }
+
+    if (ggpo_net_active()) {
+        err[0] = '\0';
+        if (!ggpo_net_set_prematch_hold(1, err, sizeof(err))) {
+            LOG_ERROR("online.p2p: attempt %d could not engage prematch hold (%s)",
+                      g_online_connect.attempts,
+                      err[0] ? err : "unknown error");
+            ggpo_net_stop_for_retry();
+        }
+    }
+
+    if (ggpo_net_active()) {
+        /* A fresh socket invalidates any state prepared for the previous
+         * attempt. Rebuild and republish it only after this attempt connects. */
+        g_online_pending_match.prematch_prepared = 0;
+        g_online_pending_match.prematch_released = 0;
+        err[0] = '\0';
+        if (g_online_connect.peer_host[0] && g_online_connect.peer_port > 0 &&
+            !ggpo_net_set_peer(g_online_connect.peer_host,
+                               (uint16_t)g_online_connect.peer_port,
+                               err,
+                               sizeof(err))) {
+            LOG_WARN("online.p2p: attempt %d could not apply peer %s:%d (%s)",
+                     g_online_connect.attempts,
+                     g_online_connect.peer_host,
+                     g_online_connect.peer_port,
+                     err[0] ? err : "unknown error");
+        }
+        if (g_online_connect.public_host[0] && g_online_connect.public_port > 0) {
+            err[0] = '\0';
+            if (!ggpo_net_add_peer_candidate(g_online_connect.public_host,
+                                             (uint16_t)g_online_connect.public_port,
+                                             err,
+                                             sizeof(err))) {
+                LOG_WARN("online.p2p: attempt %d could not apply public candidate %s:%d (%s)",
+                         g_online_connect.attempts,
+                         g_online_connect.public_host,
+                         g_online_connect.public_port,
+                         err[0] ? err : "unknown error");
+            }
+        }
+        if (g_online_connect.lan_host[0] && g_online_connect.lan_port > 0) {
+            err[0] = '\0';
+            if (!ggpo_net_add_peer_candidate(g_online_connect.lan_host,
+                                             (uint16_t)g_online_connect.lan_port,
+                                             err,
+                                             sizeof(err))) {
+                LOG_WARN("online.p2p: attempt %d could not apply LAN candidate %s:%d (%s)",
+                         g_online_connect.attempts,
+                         g_online_connect.lan_host,
+                         g_online_connect.lan_port,
+                         err[0] ? err : "unknown error");
+            }
+        }
+        LOG_INFO("online.p2p: connect attempt %d/%d local_udp=%u%s",
+                 g_online_connect.attempts,
+                 ONLINE_CONNECT_MAX_ATTEMPTS,
+                 (unsigned int)ggpo_net_local_port(),
+                 first ? " configured socket" : " fresh socket");
+    } else {
+        LOG_WARN("online.p2p: connect attempt %d/%d could not start; retrying with a fresh socket",
+                 g_online_connect.attempts,
+                 ONLINE_CONNECT_MAX_ATTEMPTS);
+    }
+
+    if (g_online_connect.attempts > 1) {
+        char status[96];
+        snprintf(status,
+                 sizeof(status),
+                 "Connecting... (attempt %d/%d)",
+                 g_online_connect.attempts,
+                 ONLINE_CONNECT_MAX_ATTEMPTS);
+        online_hub_set_status(status);
+    }
+}
+
+static void online_connect_retry_tick(void) {
+    DWORD now;
+    DWORD deadline;
+
+    if (g_online_connect.established || g_online_connect.attempts <= 0) return;
+    if (!g_online_pending_match.active && !g_online_active_match.active) return;
+
+    if (ggpo_net_active() && ggpo_net_connected()) {
+        if (!g_online_connect.connected_once) {
+            g_online_connect.connected_once = 1;
+            LOG_INFO("online.p2p: connected during countdown on attempt %d/%d local_udp=%u",
+                     g_online_connect.attempts,
+                     ONLINE_CONNECT_MAX_ATTEMPTS,
+                     (unsigned int)ggpo_net_local_port());
+        }
+        return;
+    }
+
+    now = GetTickCount();
+    deadline = ggpo_net_active() ? ONLINE_CONNECT_ATTEMPT_MS
+                                 : ONLINE_CONNECT_START_FAILURE_MS;
+    if ((DWORD)(now - g_online_connect.attempt_started_ms) < deadline) return;
+
+    if (g_online_connect.attempts >= ONLINE_CONNECT_MAX_ATTEMPTS) {
+        online_abort_connect_timeout();
+        return;
+    }
+
+    LOG_WARN("online.p2p: attempt %d/%d did not connect after %lu ms; retrying",
+             g_online_connect.attempts,
+             ONLINE_CONNECT_MAX_ATTEMPTS,
+             (unsigned long)deadline);
+    online_connect_start_attempt(0);
+}
+
 static void online_server_handle_line(const char* line) {
     char type[64];
     char text[256];
+    char json_error[192];
+    OnlineControlJsonResult type_result;
     int value = 0;
-    if (!online_json_get_string(line, "type", type, sizeof(type))) return;
+    json_error[0] = '\0';
+    if (!online_control_json_validate(line, json_error, sizeof(json_error))) {
+        LOG_WARN("online.server: rejected invalid control message (%s)",
+                 json_error[0] ? json_error : "invalid JSON");
+        online_server_disconnect("Server sent an invalid message.");
+        return;
+    }
+    type_result = online_control_json_get_string(line, "type", type, sizeof(type));
+    if (type_result != ONLINE_CONTROL_JSON_OK) {
+        LOG_WARN("online.server: rejected control message with missing, invalid, or oversized type");
+        online_server_disconnect("Server sent an invalid message type.");
+        return;
+    }
 
     if (_stricmp(type, "auth_ok") == 0) {
-        g_online_authed = 1;
-        if (online_json_get_string(line, "username", text, sizeof(text))) {
-            safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), text);
+        char submitted_username[sizeof(g_online_cfg.username)];
+        char credential_error[256];
+        CredentialExtResult credential_result = CREDENTIAL_EXT_OK;
+        OnlineControlJsonResult username_result;
+        if (!online_server_protocol_compatible(line)) {
+            LOG_WARN("online.server: rejected incompatible auth protocol advertisement");
+            online_server_disconnect("Online server update required; matchmaking protocol is incompatible.");
+            return;
         }
+        safe_copy(submitted_username, sizeof(submitted_username), g_online_cfg.username);
+        username_result = online_control_json_get_string(line,
+                                                          "username",
+                                                          text,
+                                                          sizeof(text));
+        if (username_result != ONLINE_CONTROL_JSON_OK ||
+            !online_control_username_is_canonical(text)) {
+            LOG_WARN("online.server: rejected auth_ok with a non-canonical account name");
+            online_server_disconnect("Server returned an invalid account name.");
+            return;
+        }
+        g_online_auth_pending = 0;
+        g_online_server_deadline_ms = 0;
+        g_online_authed = 1;
+        safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), text);
         if (online_json_get_int(line, "elo", &value)) g_online_public_elo = value;
-        online_server_send_map_manifest();
-        online_hub_set_status("Logged in.");
+        if (!online_server_send_map_manifest()) {
+            online_clear_password_memory();
+            online_server_disconnect("Could not publish the installed map list.");
+            return;
+        }
+        if (g_online_cfg.remember_me) {
+            credential_error[0] = '\0';
+            credential_result = online_store_remembered_password(credential_error,
+                                                                 sizeof(credential_error));
+            if (credential_result == CREDENTIAL_EXT_OK) {
+                LOG_INFO("online.credentials: updated remembered login server=%s:%u user=%s",
+                         g_online_cfg.server_host,
+                         (unsigned int)g_online_cfg.server_port,
+                         g_online_cfg.username);
+                if (strcmp(submitted_username, g_online_cfg.username) != 0) {
+                    (void)online_delete_remembered_password(g_online_cfg.server_host,
+                                                            g_online_cfg.server_port,
+                                                            submitted_username);
+                }
+                online_hub_set_status("Logged in.");
+            } else {
+                LOG_WARN("online.credentials: save failed server=%s:%u user=%s result=%s (%s)",
+                         g_online_cfg.server_host,
+                         (unsigned int)g_online_cfg.server_port,
+                         g_online_cfg.username,
+                         credential_ext_result_name(credential_result),
+                         credential_error[0] ? credential_error : "unknown error");
+                online_hub_set_status("Logged in. Remember me could not be updated.");
+            }
+        } else {
+            online_hub_set_status("Logged in.");
+        }
+        online_clear_password_memory();
         online_hub_save();
+    } else if (_stricmp(type, "server_info") == 0) {
+        if (!g_online_server_info_pending || !g_online_auth_pending) return;
+        if (!online_server_protocol_compatible(line)) {
+            LOG_WARN("online.server: server_info is missing required control/match/P2P capabilities");
+            online_server_disconnect("Online server update required; matchmaking protocol is incompatible.");
+            return;
+        }
+        g_online_server_info_pending = 0;
+        online_hub_set_status("Signing in...");
+        online_server_send_auth(g_online_register_after_connect);
     } else if (_stricmp(type, "auth_fail") == 0) {
+        g_online_auth_pending = 0;
+        g_online_server_deadline_ms = 0;
         online_json_get_string(line, "reason", text, sizeof(text));
         snprintf(g_online_status, sizeof(g_online_status), "Login failed: %s", text[0] ? text : "?");
         g_online_authed = 0;
+        if (!g_online_register_after_connect && g_online_password_from_credential) {
+            (void)online_delete_remembered_password(g_online_cfg.server_host,
+                                                    g_online_cfg.server_port,
+                                                    g_online_cfg.username);
+            online_clear_password_memory();
+            LOG_WARN("online.credentials: discarded a remembered login rejected by the server");
+        }
     } else if (_stricmp(type, "error") == 0) {
+        if (g_online_server_info_pending && g_online_auth_pending) {
+            LOG_WARN("online.server: server rejected the required capability handshake");
+            online_server_disconnect("Online server update required; matchmaking protocol is incompatible.");
+            return;
+        }
         online_json_get_string(line, "message", text, sizeof(text));
         online_hub_set_status(text[0] ? text : "Server error.");
     } else if (_stricmp(type, "queue_update") == 0) {
@@ -7289,6 +8374,7 @@ static void online_server_handle_line(const char* line) {
         online_sent_challenge_remove(g_online_pending_match.opponent, 0);
         online_challenge_toast_clear(0, g_online_pending_match.opponent);
     } else if (_stricmp(type, "match_report_ack") == 0) {
+        if (!online_server_message_matches_current_match(line, type)) return;
         if (g_online_result.active) {
             safe_copy(g_online_result.status, sizeof(g_online_result.status), "Result reported; waiting for opponent.");
         } else {
@@ -7300,6 +8386,7 @@ static void online_server_handle_line(const char* line) {
         int elo_value = 0;
         int got_elo_before = 0;
         int elo_before_value = 0;
+        if (!online_server_message_matches_current_match(line, type)) return;
         if (ggpo_net_active()) stop_ggpo_net("online server result");
         text[0] = '\0';
         online_json_get_string(line, "result", text, sizeof(text));
@@ -7339,9 +8426,11 @@ static void online_server_handle_line(const char* line) {
             g_online_result.elo_delta_valid = 1;
         }
         safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match complete.");
-        memset(&g_online_pending_match, 0, sizeof(g_online_pending_match));
+        online_pending_match_reset();
         memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+        online_connect_reset();
     } else if (_stricmp(type, "match_end") == 0) {
+        if (!online_server_message_matches_current_match(line, type)) return;
         if (ggpo_net_active()) stop_ggpo_net("online server");
         online_clear_match_state();
         online_hub_set_status("Online match ended.");
@@ -7352,19 +8441,61 @@ static void online_server_handle_line(const char* line) {
 }
 
 static void online_server_update(void) {
+    char prematch_err[256];
+    uint32_t now;
     online_pump_p2p_probe();
+    /* Pending matches are transport-only. Poll the held/released socket here so
+     * hole punching, RTT/cosmetics and authoritative state sync happen while the
+     * match-found countdown is visible, never on the first GAME frame. */
+    if (g_online_pending_match.active) {
+        if (ggpo_net_active()) {
+            prematch_err[0] = '\0';
+            if (!ggpo_net_service(prematch_err, sizeof(prematch_err))) {
+                LOG_WARN("online.prematch: transport attempt %d failed before gameplay (%s)",
+                         g_online_connect.attempts,
+                         prematch_err[0] ? prematch_err : "unknown error");
+                ggpo_net_stop_for_retry();
+                g_online_connect.connected_once = 0;
+                g_online_pending_match.prematch_prepared = 0;
+                g_online_pending_match.prematch_released = 0;
+                /* The failed transport has already been serviced; let the
+                 * bounded retry machine open its next fresh socket now. */
+                g_online_connect.attempt_started_ms =
+                    GetTickCount() - ONLINE_CONNECT_START_FAILURE_MS;
+            }
+        }
+        online_connect_retry_tick();
+    }
+    now = (uint32_t)GetTickCount();
     if (g_online_server_state == ONLINE_SERVER_CONNECTING) {
         int r = net_check_connect(g_online_server_slot);
         if (r == 1) {
             g_online_server_state = ONLINE_SERVER_CONNECTED;
-            online_hub_set_status("Connected. Authenticating...");
-            online_server_send_auth(g_online_register_after_connect);
+            g_online_server_info_pending = 1;
+            g_online_server_deadline_ms = (DWORD)online_control_deadline_after(
+                now, ONLINE_SERVER_AUTH_TIMEOUT_MS);
+            online_hub_set_status("Checking online server...");
+            if (!online_server_send_raw("{\"type\":\"server_info\"}\n")) {
+                if (g_online_server_state != ONLINE_SERVER_DISCONNECTED) {
+                    online_server_disconnect("Could not start the server handshake.");
+                }
+            }
         } else if (r < 0) {
             online_server_disconnect("Server connection failed.");
+        } else if (online_control_deadline_reached(
+                       now, (uint32_t)g_online_server_deadline_ms)) {
+            online_server_disconnect("Server connection timed out.");
         }
         return;
     }
     if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0) return;
+    if (g_online_auth_pending &&
+        online_control_deadline_reached(now, (uint32_t)g_online_server_deadline_ms)) {
+        online_server_disconnect(g_online_server_info_pending
+                                     ? "Online server update required; capability handshake timed out."
+                                     : "Authentication timed out.");
+        return;
+    }
 
     while (1) {
         char chunk[4096];
@@ -7374,10 +8505,16 @@ static void online_server_update(void) {
             return;
         }
         if (got == 0) break;
+        if (memchr(chunk, '\0', (size_t)got) != NULL) {
+            LOG_WARN("online.server: rejected NUL-containing control stream");
+            online_server_disconnect("Server sent an invalid message.");
+            return;
+        }
         if (g_online_recv_len + (size_t)got >= sizeof(g_online_recv_buf)) {
-            g_online_recv_len = 0;
-            online_hub_set_status("Server message too large; dropped buffer.");
-            continue;
+            LOG_WARN("online.server: control receive buffer exceeded %lu bytes",
+                     (unsigned long)(sizeof(g_online_recv_buf) - 1u));
+            online_server_disconnect("Server message too large; disconnected.");
+            return;
         }
         memcpy(g_online_recv_buf + g_online_recv_len, chunk, (size_t)got);
         g_online_recv_len += (size_t)got;
@@ -7387,18 +8524,35 @@ static void online_server_update(void) {
             char* nl = memchr(g_online_recv_buf, '\n', g_online_recv_len);
             size_t line_len;
             size_t consumed;
-            char line[8192];
+            char line[ONLINE_SERVER_LINE_CAP];
             if (!nl) break;
             line_len = (size_t)(nl - g_online_recv_buf);
             consumed = line_len + 1;
-            if (line_len >= sizeof(line)) line_len = sizeof(line) - 1;
+            if (line_len >= sizeof(line) ||
+                memchr(g_online_recv_buf, '\0', line_len) != NULL) {
+                LOG_WARN("online.server: rejected oversized or NUL-containing control line");
+                online_server_disconnect("Server sent an invalid or oversized message.");
+                return;
+            }
             memcpy(line, g_online_recv_buf, line_len);
             line[line_len] = '\0';
             console_strip_crlf(line);
             memmove(g_online_recv_buf, g_online_recv_buf + consumed, g_online_recv_len - consumed);
             g_online_recv_len -= consumed;
             g_online_recv_buf[g_online_recv_len] = '\0';
-            if (line[0]) online_server_handle_line(line);
+            if (line[0]) {
+                online_server_handle_line(line);
+                if (g_online_server_state != ONLINE_SERVER_CONNECTED ||
+                    g_online_server_slot < 0) {
+                    return;
+                }
+            }
+        }
+        if (g_online_recv_len >= ONLINE_SERVER_LINE_CAP) {
+            LOG_WARN("online.server: unterminated control line exceeded %u bytes",
+                     (unsigned int)(ONLINE_SERVER_LINE_CAP - 1u));
+            online_server_disconnect("Server message too large; disconnected.");
+            return;
         }
     }
 }
@@ -7488,6 +8642,7 @@ static void online_format_setting_value(OnlineHubSetting setting, char* out, siz
     switch (setting) {
         case ONLINE_SETTING_USERNAME: snprintf(out, out_sz, "%s", g_online_cfg.username); break;
         case ONLINE_SETTING_PASSWORD: snprintf(out, out_sz, "%s", g_online_cfg.password[0] ? "********" : ""); break;
+        case ONLINE_SETTING_REMEMBER_ME: online_format_bool(out, out_sz, g_online_cfg.remember_me); break;
         case ONLINE_SETTING_SERVER_HOST: snprintf(out, out_sz, "%s:%u", g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port); break;
         case ONLINE_SETTING_SERVER_PORT: snprintf(out, out_sz, "%u", (unsigned int)g_online_cfg.server_port); break;
         case ONLINE_SETTING_PEER_HOST: snprintf(out, out_sz, "%s", g_online_cfg.peer_host); break;
@@ -7539,7 +8694,9 @@ static float online_hub_ui_scale(void) {
     float sx = w / BASE_UI_W;
     float sy = h / BASE_UI_H;
     float s = (sx < sy) ? sx : sy;
-    return clampf(s, 1.08f, 1.55f);
+    /* Keep the hub inside genuinely small F1 windows. A fixed >1.0 minimum made
+     * rows and dialogs extend past the viewport at 960x540 and below. */
+    return clampf(s, 0.72f, 1.55f);
 }
 
 static void online_calc_layout(OnlineLayout* L) {
@@ -7620,13 +8777,20 @@ static void online_hub_rebuild_rows(void) {
                  g_online_public_elo);
         online_rows_add(ONLINE_ROW_INFO, 0, 0, 0, "Account", line);
         if (!g_online_authed) {
-            char value[192];
-            online_format_setting_value(ONLINE_SETTING_USERNAME, value, sizeof(value));
-            online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_USERNAME, 0, "USERNAME", value);
-            online_format_setting_value(ONLINE_SETTING_PASSWORD, value, sizeof(value));
-            online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_PASSWORD, 0, "PASSWORD", value);
-            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_LOGIN, 0, "LOG IN", "");
-            online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_REGISTER, 0, "REGISTER", "");
+            if (online_remembered_login_in_progress()) {
+                online_rows_add(ONLINE_ROW_INFO, 0, 0, 0,
+                                "Opening online hub", "signing in...");
+            } else {
+                char value[192];
+                online_format_setting_value(ONLINE_SETTING_USERNAME, value, sizeof(value));
+                online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_USERNAME, 0, "USERNAME", value);
+                online_format_setting_value(ONLINE_SETTING_PASSWORD, value, sizeof(value));
+                online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_PASSWORD, 0, "PASSWORD", value);
+                online_format_setting_value(ONLINE_SETTING_REMEMBER_ME, value, sizeof(value));
+                online_rows_add(ONLINE_ROW_SETTING, 1, ONLINE_SETTING_REMEMBER_ME, 0, "REMEMBER ME", value);
+                online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_LOGIN, 0, "LOG IN", "");
+                online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_REGISTER, 0, "REGISTER", "");
+            }
         } else {
             snprintf(line, sizeof(line), "%d waiting", g_online_queue_casual_count);
             online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_QUEUE_CASUAL, 0, "CASUAL QUEUE", line);
@@ -7774,7 +8938,7 @@ static void online_switch_tab(int delta) {
     g_online_tab = (OnlineHubTab)tab;
     g_online_selected_row = -1;
     g_online_scroll_row = 0;
-    g_online_capture_active = 0;
+    online_clear_capture_state();
     g_online_context_active = 0;
     online_hub_rebuild_rows();
 }
@@ -7789,6 +8953,7 @@ static int online_setting_is_text(OnlineHubSetting setting) {
 
 static void online_begin_setting_capture(OnlineHubSetting setting) {
     if (!online_setting_is_text(setting)) return;
+    online_clear_capture_state();
     g_online_capture_active = 1;
     g_online_capture_kind = ONLINE_CAPTURE_SETTING;
     g_online_capture_target = setting;
@@ -7803,19 +8968,38 @@ static void online_begin_setting_capture(OnlineHubSetting setting) {
 }
 
 static void online_begin_friend_capture(void) {
+    online_clear_capture_state();
     g_online_capture_active = 1;
     g_online_capture_kind = ONLINE_CAPTURE_ADD_FRIEND;
     g_online_capture_target = 0;
-    g_online_capture_buf[0] = '\0';
     online_hub_set_status("Type a username, then Enter.");
 }
 
 static void online_commit_capture(void) {
+    OnlineHubSetting setting;
+    char old_server[ONLINE_HUB_TEXT_MAX];
+    char old_username[sizeof(g_online_cfg.username)];
+    uint16_t old_server_port;
+    int identity_changed = 0;
     if (!g_online_capture_active) return;
+    setting = (g_online_capture_kind == ONLINE_CAPTURE_SETTING)
+        ? (OnlineHubSetting)g_online_capture_target
+        : ONLINE_SETTING_NONE;
+    safe_copy(old_server, sizeof(old_server), g_online_cfg.server_host);
+    safe_copy(old_username, sizeof(old_username), g_online_cfg.username);
+    old_server_port = g_online_cfg.server_port;
     if (g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
-        switch ((OnlineHubSetting)g_online_capture_target) {
+        switch (setting) {
             case ONLINE_SETTING_USERNAME: safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), trim_ws(g_online_capture_buf)); break;
-            case ONLINE_SETTING_PASSWORD: safe_copy(g_online_cfg.password, sizeof(g_online_cfg.password), trim_ws(g_online_capture_buf)); break;
+            case ONLINE_SETTING_PASSWORD: {
+                const char* password = g_online_capture_buf;
+                if (strlen(password) >= sizeof(g_online_cfg.password)) {
+                    online_hub_set_status("Password is too long (256 bytes maximum).");
+                    return;
+                }
+                online_clear_password_memory();
+                safe_copy(g_online_cfg.password, sizeof(g_online_cfg.password), password);
+            } break;
             case ONLINE_SETTING_SERVER_HOST: {
                 char host[ONLINE_HUB_TEXT_MAX];
                 uint16_t port = g_online_cfg.server_port ? g_online_cfg.server_port : ONLINE_DEFAULT_SERVER_PORT;
@@ -7842,6 +9026,21 @@ static void online_commit_capture(void) {
             default: break;
         }
         online_hub_clamp_config();
+        identity_changed = (strcmp(old_server, g_online_cfg.server_host) != 0 ||
+                            old_server_port != g_online_cfg.server_port ||
+                            strcmp(old_username, g_online_cfg.username) != 0);
+        if (identity_changed &&
+            (setting == ONLINE_SETTING_USERNAME || setting == ONLINE_SETTING_SERVER_HOST)) {
+            if (g_online_cfg.remember_me) {
+                (void)online_delete_remembered_password(old_server,
+                                                        old_server_port,
+                                                        old_username);
+            }
+            online_clear_password_memory();
+            if (g_online_cfg.remember_me) {
+                (void)online_load_remembered_password(0);
+            }
+        }
         online_hub_save();
         online_hub_set_status("Settings saved.");
     } else if (g_online_capture_kind == ONLINE_CAPTURE_ADD_FRIEND) {
@@ -7849,24 +9048,44 @@ static void online_commit_capture(void) {
         if (name && name[0]) online_server_send_username_action("friend_request", name);
         else online_hub_set_status("Enter a username.");
     }
-    g_online_capture_active = 0;
-    g_online_capture_kind = ONLINE_CAPTURE_NONE;
-    g_online_capture_target = 0;
-    g_online_capture_buf[0] = '\0';
+    online_clear_capture_state();
     online_hub_rebuild_rows();
 }
 
 static void online_cancel_capture(void) {
-    g_online_capture_active = 0;
-    g_online_capture_kind = ONLINE_CAPTURE_NONE;
-    g_online_capture_target = 0;
-    g_online_capture_buf[0] = '\0';
+    online_clear_capture_state();
     online_hub_rebuild_rows();
 }
 
 static void online_adjust_setting(OnlineHubSetting setting, int delta) {
     if (delta == 0) delta = 1;
     switch (setting) {
+        case ONLINE_SETTING_REMEMBER_ME: {
+            if (g_online_cfg.remember_me) {
+                CredentialExtResult delete_result =
+                    online_delete_remembered_password(g_online_cfg.server_host,
+                                                       g_online_cfg.server_port,
+                                                       g_online_cfg.username);
+                g_online_cfg.remember_me = 0;
+                if (g_online_password_from_credential) {
+                    online_clear_password_memory();
+                }
+                if (delete_result != CREDENTIAL_EXT_OK &&
+                    delete_result != CREDENTIAL_EXT_NOT_FOUND) {
+                    online_hub_set_status("Remember me disabled; stored login cleanup failed.");
+                } else {
+                    online_hub_set_status("Remember me disabled.");
+                }
+            } else {
+                g_online_cfg.remember_me = 1;
+                if (!g_online_cfg.password[0]) {
+                    (void)online_load_remembered_password(1);
+                } else {
+                    online_hub_set_status("Remember me enabled.");
+                }
+            }
+            break;
+        }
         case ONLINE_SETTING_SERVER_PORT:
             g_online_cfg.server_port = (uint16_t)clampi((int)g_online_cfg.server_port + delta, 0, 65535);
             break;
@@ -8425,24 +9644,55 @@ static void online_hub_draw_tabs(const OnlineLayout* L) {
 }
 
 static int online_login_gateway_active(void) {
-    return !g_online_authed && g_online_tab == ONLINE_TAB_PLAY;
+    return !g_online_authed &&
+           !online_remembered_login_in_progress() &&
+           g_online_tab == ONLINE_TAB_PLAY;
+}
+
+static float online_login_checkbox_height(const OnlineLayout* L) {
+    float s = L ? L->ui : online_hub_ui_scale();
+    return clampf(30.0f * s, 22.0f, 38.0f);
 }
 
 static void online_login_gateway_metrics(const OnlineLayout* L,
                                          float* out_x,
                                          float* out_y,
                                          float* out_w,
-                                         float* out_row_h,
-                                         float* out_gap) {
+    float* out_row_h,
+    float* out_gap) {
     float s = L ? L->ui : online_hub_ui_scale();
-    float form_w = L ? clampf(500.0f * s, 420.0f, L->panel_w - 96.0f * s) : 540.0f;
+    float form_w = 540.0f;
     float row_h = 52.0f * s;
     float gap = 12.0f * s;
+    float checkbox_h = online_login_checkbox_height(L);
+    float form_y = 0.0f;
+    if (L) {
+        float max_w = L->panel_w - clampf(96.0f * s, 30.0f, 96.0f);
+        float min_w;
+        float bottom_limit;
+        float reserve;
+        if (max_w < 240.0f) max_w = L->panel_w - 20.0f;
+        min_w = max_w < 420.0f ? max_w : 420.0f;
+        form_w = clampf(500.0f * s, min_w, max_w);
+        form_y = L->content_y + 78.0f * s;
+
+        /* Two fields, a compact checkbox, buttons, and server/status copy must remain above the footer.
+         * Compact and lift the form only when the current window needs it. */
+        bottom_limit = L->panel_y + L->panel_h - L->footer_h - 4.0f * s;
+        reserve = 70.0f * s;
+        if (form_y + row_h * 3.0f + checkbox_h + gap * 3.0f + reserve > bottom_limit) {
+            float available;
+            gap = clampf(7.0f * s, 5.0f, 12.0f * s);
+            form_y = L->content_y + 8.0f * s;
+            available = bottom_limit - reserve - form_y - checkbox_h - gap * 3.0f;
+            row_h = clampf(available / 3.0f, 28.0f, row_h);
+        }
+    }
     if (out_w) *out_w = form_w;
     if (out_row_h) *out_row_h = row_h;
     if (out_gap) *out_gap = gap;
     if (out_x) *out_x = L ? (L->center_x - form_w * 0.5f) : 0.0f;
-    if (out_y) *out_y = L ? (L->content_y + 78.0f * s) : 0.0f;
+    if (out_y) *out_y = form_y;
 }
 
 static int online_find_row_by_kind_id(OnlineHubRowKind kind, int id) {
@@ -8459,10 +9709,12 @@ static int online_login_row_at_point(float x, float y) {
     float form_w;
     float row_h;
     float gap;
+    float checkbox_h;
     float button_w;
     online_hub_rebuild_rows();
     online_calc_layout(&L);
     online_login_gateway_metrics(&L, &form_x, &form_y, &form_w, &row_h, &gap);
+    checkbox_h = online_login_checkbox_height(&L);
     if (x >= form_x && x <= form_x + form_w && y >= form_y && y <= form_y + row_h) {
         return online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_USERNAME);
     }
@@ -8470,8 +9722,13 @@ static int online_login_row_at_point(float x, float y) {
         y >= form_y + row_h + gap && y <= form_y + row_h * 2.0f + gap) {
         return online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_PASSWORD);
     }
+    if (x >= form_x && x <= form_x + form_w &&
+        y >= form_y + row_h * 2.0f + gap * 2.0f &&
+        y <= form_y + row_h * 2.0f + gap * 2.0f + checkbox_h) {
+        return online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_REMEMBER_ME);
+    }
     button_w = (form_w - gap) * 0.5f;
-    y = y - (form_y + row_h * 2.0f + gap * 2.0f);
+    y = y - (form_y + row_h * 2.0f + checkbox_h + gap * 3.0f);
     if (y >= 0.0f && y <= row_h) {
         if (x >= form_x && x <= form_x + button_w) {
             return online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_LOGIN);
@@ -8537,45 +9794,9 @@ static int online_row_at_point(float x, float y) {
 }
 
 static void online_hub_draw_cursor(void) {
-    static const char* const cursor[] = {
-        "YYY.........",
-        "OYYY........",
-        "OOYYY.......",
-        ".OOYYY......",
-        "..OOYYY.....",
-        "...OOYYY....",
-        "....OOY.OOO.",
-        ".....O.OYY..",
-        "......OYY...",
-        "......OO.O..",
-        "......O...YO",
-        "..........OO",
-    };
-    float s = online_hub_ui_scale();
-    float px = clampf(2.0f * s, 2.0f, 4.0f);
-    float ox = g_online_mouse_x + 8.0f * s;
-    float oy = g_online_mouse_y + 4.0f * s;
-    for (int pass = 0; pass < 2; pass++) {
-        float dx = pass == 0 ? px * 0.8f : 0.0f;
-        float dy = pass == 0 ? px * 0.8f : 0.0f;
-        for (int row = 0; row < 12; row++) {
-            const char* line = cursor[row];
-            for (int col = 0; line[col]; col++) {
-                char c = line[col];
-                if (c == '.') continue;
-                if (pass == 0) {
-                    online_hub_draw_rect(ox + dx + (float)col * px, oy + dy + (float)row * px, px, px,
-                                         0.0f, 0.0f, 0.0f, 0.35f);
-                } else if (c == 'Y') {
-                    online_hub_draw_rect(ox + (float)col * px, oy + (float)row * px, px, px,
-                                         1.0f, 231.0f / 255.0f, 4.0f / 255.0f, 1.0f);
-                } else {
-                    online_hub_draw_rect(ox + (float)col * px, oy + (float)row * px, px, px,
-                                         154.0f / 255.0f, 119.0f / 255.0f, 0.0f, 1.0f);
-                }
-            }
-        }
-    }
+    /* Use cursor_draw itself, not just its misc[7] artwork. The native helper
+     * supplies global scaling, hotspot, shadow, animated color, and timeout. */
+    (void)cursor_ext_draw_vanilla_mouse(g_online_mouse_x, g_online_mouse_y);
 }
 
 static void online_hub_draw_context_menu(void) {
@@ -8769,7 +9990,7 @@ static void online_hub_render_matchmaking_panel(const OnlineLayout* L, int match
     float rail_h;
     if (!L) return;
     if (match_found) {
-        if (!g_online_pending_match.active || g_online_pending_match.launch_countdown_frames <= 0) return;
+        if (!g_online_pending_match.active) return;
     } else {
         if (!g_online_queue_mode || g_online_pending_match.active) return;
     }
@@ -8791,7 +10012,15 @@ static void online_hub_render_matchmaking_panel(const OnlineLayout* L, int match
                  g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
         online_hub_text(card_x + 26.0f * s, card_y + 106.0f * s,
                         0.88f * s, 0.74f, 0.82f, 0.94f, line);
-        snprintf(line, sizeof(line), "Starting in %d", seconds);
+        if (g_online_pending_match.launch_countdown_frames > 0) {
+            snprintf(line, sizeof(line), "Starting in %d", seconds);
+        } else if (!ggpo_net_active() || !ggpo_net_connected()) {
+            snprintf(line, sizeof(line), "Connecting to opponent...");
+        } else if (!g_online_pending_match.prematch_prepared) {
+            snprintf(line, sizeof(line), "Preparing match...");
+        } else {
+            snprintf(line, sizeof(line), "Synchronizing players...");
+        }
         online_hub_text(card_x + 26.0f * s, card_y + 144.0f * s,
                         1.00f * s, 1.00f, 0.86f, 0.44f, line);
     } else {
@@ -8846,17 +10075,32 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     float form_w;
     float row_h;
     float gap;
+    float checkbox_h;
+    float checkbox_y;
+    float checkbox_size;
+    float checkbox_x;
+    float checkbox_box_y;
+    float button_y;
+    float stack_end;
     float button_w;
     char username[ONLINE_HUB_TEXT_MAX];
     char password[ONLINE_HUB_TEXT_MAX];
     char server[192];
     int user_selected;
     int pass_selected;
+    int remember_selected;
     int login_selected;
     int register_selected;
     if (!L) return;
     s = L->ui;
     online_login_gateway_metrics(L, &form_x, &form_y, &form_w, &row_h, &gap);
+    checkbox_h = online_login_checkbox_height(L);
+    checkbox_y = form_y + row_h * 2.0f + gap * 2.0f;
+    checkbox_size = clampf(22.0f * s, 18.0f, checkbox_h - 2.0f);
+    checkbox_x = form_x + 12.0f * s;
+    checkbox_box_y = checkbox_y + (checkbox_h - checkbox_size) * 0.5f;
+    button_y = form_y + row_h * 2.0f + checkbox_h + gap * 3.0f;
+    stack_end = button_y + row_h;
     button_w = (form_w - gap) * 0.5f;
 
     online_format_setting_value(ONLINE_SETTING_USERNAME, username, sizeof(username));
@@ -8875,6 +10119,7 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     snprintf(server, sizeof(server), "%s:%u", g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port);
     user_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_USERNAME));
     pass_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_PASSWORD));
+    remember_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_REMEMBER_ME));
     login_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_LOGIN));
     register_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_REGISTER));
 
@@ -8886,10 +10131,10 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
                            g_online_server_state == ONLINE_SERVER_CONNECTED ? "Connected. Sign in to continue." : "Sign in to play online.");
 
     online_hub_draw_rect(form_x - 30.0f * s, form_y - 42.0f * s,
-                         form_w + 60.0f * s, row_h * 3.0f + gap * 2.0f + 106.0f * s,
+                         form_w + 60.0f * s, stack_end - form_y + 106.0f * s,
                          0.030f, 0.038f, 0.050f, 0.90f);
     online_hub_draw_border(form_x - 30.0f * s, form_y - 42.0f * s,
-                           form_w + 60.0f * s, row_h * 3.0f + gap * 2.0f + 106.0f * s,
+                           form_w + 60.0f * s, stack_end - form_y + 106.0f * s,
                            1.0f, 0.22f, 0.70f, 0.66f, 0.72f);
 
     online_hub_draw_rect(form_x, form_y, form_w, row_h,
@@ -8924,23 +10169,57 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     online_hub_text_right(form_x + form_w - 18.0f * s, form_y + row_h + gap + 14.0f * s,
                           1.04f * s, 0.94f, 0.98f, 1.00f, password[0] ? password : " ");
 
-    online_hub_draw_button_box(form_x, form_y + row_h * 2.0f + gap * 2.0f,
+    /* Compact, conventional checkbox: the whole label line is clickable, but
+     * only the square communicates the boolean state. */
+    online_hub_draw_rect(checkbox_x, checkbox_box_y, checkbox_size, checkbox_size,
+                         g_online_cfg.remember_me ? 0.055f : 0.030f,
+                         g_online_cfg.remember_me ? 0.180f : 0.050f,
+                         g_online_cfg.remember_me ? 0.145f : 0.070f,
+                         0.98f);
+    online_hub_draw_border(checkbox_x, checkbox_box_y, checkbox_size, checkbox_size,
+                           remember_selected ? 2.0f : 1.0f,
+                           remember_selected ? 0.42f : 0.28f,
+                           remember_selected ? 0.92f : 0.52f,
+                           remember_selected ? 0.82f : 0.62f,
+                           0.92f);
+    if (g_online_cfg.remember_me) {
+        hooks_ui_draw_line(checkbox_x + checkbox_size * 0.20f,
+                           checkbox_box_y + checkbox_size * 0.53f,
+                           checkbox_x + checkbox_size * 0.43f,
+                           checkbox_box_y + checkbox_size * 0.76f,
+                           clampf(2.8f * s, 2.0f, 4.0f),
+                           0.62f, 1.0f, 0.78f, 1.0f);
+        hooks_ui_draw_line(checkbox_x + checkbox_size * 0.43f,
+                           checkbox_box_y + checkbox_size * 0.76f,
+                           checkbox_x + checkbox_size * 0.83f,
+                           checkbox_box_y + checkbox_size * 0.25f,
+                           clampf(2.8f * s, 2.0f, 4.0f),
+                           0.62f, 1.0f, 0.78f, 1.0f);
+    }
+    mods_restore_render_state();
+    online_hub_text(checkbox_x + checkbox_size + 10.0f * s,
+                    checkbox_y + (checkbox_h - 12.0f * s) * 0.5f,
+                    0.92f * s,
+                    remember_selected ? 0.88f : 0.70f,
+                    remember_selected ? 0.98f : 0.82f,
+                    remember_selected ? 0.94f : 0.90f,
+                    "Remember me");
+    online_hub_draw_button_box(form_x, button_y,
                                button_w, row_h, "LOG IN", "",
                                login_selected, 1, s);
-    online_hub_draw_button_box(form_x + button_w + gap, form_y + row_h * 2.0f + gap * 2.0f,
+    online_hub_draw_button_box(form_x + button_w + gap, button_y,
                                button_w, row_h, "REGISTER", "",
                                register_selected, 0, s);
 
     mods_restore_render_state();
-    online_hub_text_center(L->center_x, form_y + row_h * 3.0f + gap * 2.0f + 28.0f * s,
+    online_hub_text_center(L->center_x, stack_end + 28.0f * s,
                            0.92f * s, 0.66f, 0.76f, 0.86f, server);
     if (g_online_status[0]) {
-        online_hub_text_center(L->center_x, form_y + row_h * 3.0f + gap * 2.0f + 58.0f * s,
+        online_hub_text_center(L->center_x, stack_end + 58.0f * s,
                                0.98f * s, 0.84f, 0.94f, 1.00f, g_online_status);
     }
     online_hub_text(L->panel_x + 18.0f * s, L->panel_y + L->panel_h - L->footer_h + 12.0f * s,
                     0.92f * s, 0.54f, 0.66f, 0.74f, "ESC");
-    online_hub_draw_cursor();
 }
 
 static void online_hub_render_ui(void) {
@@ -8981,9 +10260,8 @@ static void online_hub_render_ui(void) {
         rows_top += 32.0f * s;
     }
 
-    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) {
+    if (g_online_pending_match.active) {
         online_hub_render_match_countdown(&L);
-        online_hub_draw_cursor();
         return;
     }
 
@@ -8991,7 +10269,6 @@ static void online_hub_render_ui(void) {
         online_hub_render_queue_overlay(&L);
         online_hub_text(L.panel_x + 18.0f * s, L.panel_y + L.panel_h - L.footer_h + 12.0f * s,
                         0.88f * s, 0.40f, 0.48f, 0.58f, "ESC");
-        online_hub_draw_cursor();
         return;
     }
 
@@ -9146,7 +10423,6 @@ static void online_hub_render_ui(void) {
     online_hub_text(L.panel_x + 18.0f * s, L.panel_y + L.panel_h - L.footer_h + 12.0f * s,
                     0.88f * s, 0.40f, 0.48f, 0.58f, "ESC");
     online_hub_draw_context_menu();
-    online_hub_draw_cursor();
 }
 
 static void online_hub_open(void) {
@@ -9192,17 +10468,27 @@ static void __cdecl online_hub_enter(void) {
         last = (void*)(uintptr_t)ADDR_MAIN_STATE;
     }
     g_online_return_state = last;
-    g_online_capture_active = 0;
+    online_clear_capture_state();
     online_hub_apply_net_settings();
-    online_hub_rebuild_rows();
     if (g_online_pending_connect_fail_status) {
+        int failure = g_online_pending_connect_fail_status;
         g_online_pending_connect_fail_status = 0;
-        online_hub_set_status("Couldn't connect to opponent.");
+        if (failure == 2) {
+            online_hub_set_status("Online server disconnected; match ended.");
+        } else if (failure == 3) {
+            online_hub_set_status("P2P stopped; match cancelled.");
+        } else if (failure == 4) {
+            online_hub_set_status("Online match setup failed; see the framework log.");
+        } else {
+            online_hub_set_status("Couldn't connect to opponent.");
+        }
     } else if (abandoned) {
         online_hub_set_status("Left the match - counted as a loss.");
     } else if (!g_online_pending_match.active && !g_online_result.active) {
         online_hub_set_status("");
     }
+    (void)online_try_remembered_login();
+    online_hub_rebuild_rows();
     LOG_INFO("ONLINE HUB: enter%s", abandoned ? " (abandoned live match; P2P closed)" : "");
 }
 
@@ -9224,8 +10510,7 @@ static void online_hub_render_background(void) {
         online_hub_draw_rect(0.0f, 0.0f, w, h, 0.006f, 0.010f, 0.014f, 0.14f);
         return;
     }
-    if (p_main_draw) {
-        p_main_draw();
+    if (p_main_draw && cursor_ext_call_with_vanilla_mouse_hidden(p_main_draw)) {
         mods_restore_render_state();
         if (p_menu_common_render) {
             p_menu_common_render();
@@ -9252,7 +10537,10 @@ static void __cdecl online_hub_render(void) {
 }
 
 static void __cdecl online_hub_leave(void) {
-    g_online_capture_active = 0;
+    online_clear_capture_state();
+    if (!g_online_authed && !g_online_auth_pending) {
+        online_clear_password_memory();
+    }
     online_hub_save();
     mods_restore_render_state();
     LOG_INFO("ONLINE HUB: leave");
@@ -9267,6 +10555,50 @@ static const char* online_result_title(OnlineMatchResult result) {
 
 static const char* online_result_button_label(int index) {
     return index == 0 ? "REQUEUE" : "ONLINE HUB";
+}
+
+static void online_result_button_metrics(const OnlineLayout* L,
+                                         int index,
+                                         float* out_x,
+                                         float* out_y,
+                                         float* out_w,
+                                         float* out_h) {
+    float s;
+    float side;
+    float gap;
+    float button_w;
+    float button_h;
+    float group_w;
+    float x;
+    float y;
+    if (!L) return;
+    s = L->ui;
+    side = clampf(26.0f * s, 12.0f, 36.0f);
+    gap = clampf(18.0f * s, 8.0f, 22.0f);
+    button_w = (L->panel_w - side * 2.0f - gap) * 0.5f;
+    button_w = clampf(button_w, 126.0f, 220.0f * s);
+    button_h = clampf(48.0f * s, 34.0f, 52.0f);
+    group_w = button_w * 2.0f + gap;
+    x = L->center_x - group_w * 0.5f + (float)clampi(index, 0, 1) * (button_w + gap);
+    y = L->panel_y + L->panel_h - button_h - clampf(24.0f * s, 14.0f, 30.0f);
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    if (out_w) *out_w = button_w;
+    if (out_h) *out_h = button_h;
+}
+
+static int online_result_button_at(float x, float y) {
+    OnlineLayout L;
+    online_calc_layout(&L);
+    for (int i = 0; i < 2; i++) {
+        float bx;
+        float by;
+        float bw;
+        float bh;
+        online_result_button_metrics(&L, i, &bx, &by, &bw, &bh);
+        if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) return i;
+    }
+    return -1;
 }
 
 static void online_result_toast_metrics(float* out_x,
@@ -9380,7 +10712,7 @@ static int online_result_close_at(float x, float y) {
     float close_x;
     float close_y;
     float close_size;
-    if (!g_online_result.active) return 0;
+    if (!g_online_result.active || is_online_result_state_active()) return 0;
     online_result_toast_metrics(NULL, NULL, NULL, NULL, &close_x, &close_y, &close_size);
     return online_ui_close_hit(x, y, close_x, close_y, close_size);
 }
@@ -9616,7 +10948,7 @@ static void online_challenge_toast_tick(void) {
 }
 
 static void __cdecl online_result_enter(void) {
-    g_online_capture_active = 0;
+    online_clear_capture_state();
     if (!g_online_result.active) {
         memset(&g_online_result, 0, sizeof(g_online_result));
         g_online_result.active = 1;
@@ -9635,35 +10967,40 @@ static void __cdecl online_result_update(void) {
     hooks_finish_game_tick();
 }
 
-static void online_result_render_overlay(const OnlineLayout* L) {
-    (void)L;
-    online_result_render_toast();
-}
-
 static void __cdecl online_result_render(void) {
     OnlineLayout L;
     float s;
+    float first_button_x;
+    float button_y;
+    float button_w;
+    float button_h;
+    float text_top;
+    float text_bottom;
+    float text_span;
     char line[256];
     mods_restore_render_state();
     online_hub_render_background();
     mods_restore_render_state();
     online_calc_layout(&L);
     s = L.ui;
-    (void)s;
-    (void)line;
-    online_result_render_overlay(&L);
-    online_hub_draw_cursor();
-    mods_restore_render_state();
-    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
-    mods_restore_render_state();
-    return;
+    online_result_button_metrics(&L,
+                                 0,
+                                 &first_button_x,
+                                 &button_y,
+                                 &button_w,
+                                 &button_h);
+    text_top = L.panel_y + clampf(38.0f * s, 26.0f, 58.0f);
+    text_bottom = button_y - clampf(22.0f * s, 14.0f, 30.0f);
+    text_span = text_bottom - text_top;
+    if (text_span < 120.0f) text_span = 120.0f;
+
     online_hub_draw_rect(L.panel_x, L.panel_y, L.panel_w, L.panel_h, 0.02f, 0.025f, 0.035f, 0.94f);
     online_hub_draw_border(L.panel_x, L.panel_y, L.panel_w, L.panel_h, 2.0f,
                            g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.54f : 0.72f,
                            g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.86f : 0.50f,
                            g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.42f : 0.36f,
                            1.0f);
-    online_hub_text_center(L.center_x, L.panel_y + 58.0f * s, 1.75f * s,
+    online_hub_text_center(L.center_x, text_top, 1.75f * s,
                            g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.72f : 0.98f,
                            g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.95f : 0.66f,
                            g_online_result.result == ONLINE_MATCH_RESULT_WIN ? 0.52f : 0.48f,
@@ -9671,10 +11008,12 @@ static void __cdecl online_result_render(void) {
 
     snprintf(line, sizeof(line), "Opponent: %s",
              g_online_result.opponent[0] ? g_online_result.opponent : "opponent");
-    online_hub_text_center(L.center_x, L.panel_y + 126.0f * s, 0.96f * s, 0.82f, 0.88f, 0.98f, line);
+    online_hub_text_center(L.center_x, text_top + text_span * 0.29f,
+                           0.96f * s, 0.82f, 0.88f, 0.98f, line);
     snprintf(line, sizeof(line), "Map: %s",
              g_online_result.map_label[0] ? g_online_result.map_label : "selected map");
-    online_hub_text_center(L.center_x, L.panel_y + 166.0f * s, 0.86f * s, 0.66f, 0.72f, 0.82f, line);
+    online_hub_text_center(L.center_x, text_top + text_span * 0.45f,
+                           0.86f * s, 0.66f, 0.72f, 0.82f, line);
 
     if (g_online_result.competitive) {
         if (g_online_result.elo_delta_valid) {
@@ -9686,27 +11025,35 @@ static void __cdecl online_result_render(void) {
     } else {
         snprintf(line, sizeof(line), "Casual match");
     }
-    online_hub_text_center(L.center_x, L.panel_y + 218.0f * s, 0.92f * s, 0.96f, 0.88f, 0.42f, line);
+    online_hub_text_center(L.center_x, text_top + text_span * 0.62f,
+                           0.92f * s, 0.96f, 0.88f, 0.42f, line);
 
-    online_hub_text_center(L.center_x, L.panel_y + 262.0f * s, 0.80f * s, 0.48f, 0.58f, 0.70f,
+    online_hub_text_center(L.center_x, text_top + text_span * 0.79f,
+                           0.80f * s,
+                           g_online_result.server_confirmed ? 0.48f : 0.72f,
+                           g_online_result.server_confirmed ? 0.58f : 0.68f,
+                           g_online_result.server_confirmed ? 0.70f : 0.40f,
                            g_online_result.status[0] ? g_online_result.status : "Result reported.");
 
-    {
-        float bw = 220.0f * s;
-        float bh = 52.0f * s;
-        float gap = 20.0f * s;
-        float by = L.panel_y + L.panel_h - L.footer_h - 70.0f * s;
-        for (int i = 0; i < 2; i++) {
-            float bx = L.center_x - bw - gap * 0.5f + (float)i * (bw + gap);
-            online_hub_draw_button_box(bx, by, bw, bh,
-                                       online_result_button_label(i),
-                                       i == 0 ? ((g_online_result.queue_mode == 2) ? "competitive" : "casual") : "",
-                                       i == g_online_result.selected,
-                                       i == 0,
-                                       s);
-        }
+    for (int i = 0; i < 2; i++) {
+        float bx;
+        float by;
+        float bw;
+        float bh;
+        online_result_button_metrics(&L, i, &bx, &by, &bw, &bh);
+        online_hub_draw_button_box(bx,
+                                   by,
+                                   bw,
+                                   bh,
+                                   online_result_button_label(i),
+                                   "",
+                                   i == g_online_result.selected,
+                                   i == 0 && g_online_result.server_confirmed,
+                                   s);
     }
-    online_hub_draw_cursor();
+    (void)first_button_x;
+    (void)button_w;
+    (void)button_h;
     mods_restore_render_state();
     if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
     mods_restore_render_state();
@@ -9803,6 +11150,11 @@ void hooks_online_on_pre_swap(void) {
     int remote_room = 0;
     float x;
     float y;
+    g_online_result_toast_rendered_this_swap = 0;
+    g_online_challenge_toast_rendered_this_swap = 0;
+    if (g_online_active_match.active && ggpo_net_active()) {
+        online_viewport_poll(NULL, 0);
+    }
     if (g_online_open_pending) {
         g_online_open_pending = 0;
         g_online_return_state = g_online_pending_return_state;
@@ -9816,8 +11168,9 @@ void hooks_online_on_pre_swap(void) {
         }
     }
 
-    if (g_online_result.active) {
+    if (g_online_result.active && state_ptr != (void*)&g_online_result_state) {
         online_result_render_toast();
+        g_online_result_toast_rendered_this_swap = 1;
         online_result_tick_toast();
         mods_restore_render_state();
         if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
@@ -9825,8 +11178,10 @@ void hooks_online_on_pre_swap(void) {
     }
     if (g_online_challenge_toast.active) {
         online_challenge_toast_render();
+        if (g_online_challenge_toast.active) {
+            g_online_challenge_toast_rendered_this_swap = 1;
+        }
         online_challenge_toast_tick();
-        online_hub_draw_cursor();
         mods_restore_render_state();
         if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
         mods_restore_render_state();
@@ -9853,6 +11208,56 @@ void hooks_online_on_pre_swap(void) {
     mods_restore_render_state();
     if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
     mods_restore_render_state();
+}
+
+static int online_cursor_over_active_overlay(void* state_ptr, float x, float y) {
+    float bx;
+    float by;
+    float bw;
+    float bh;
+
+    /* Native menus and Lua custom states already drew their own cursor before
+     * these late overlays. Queue the final online cursor only where the panel
+     * would cover that earlier cursor; outside the panel, drawing again would
+     * double the native shadow/antialiased edge for no visual benefit. */
+    if ((g_online_result.active || g_online_result_toast_rendered_this_swap) &&
+        state_ptr != (void*)&g_online_result_state) {
+        online_result_toast_metrics(&bx, &by, &bw, &bh, NULL, NULL, NULL);
+        if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) return 1;
+    }
+    if (g_online_challenge_toast.active ||
+        g_online_challenge_toast_rendered_this_swap) {
+        online_challenge_toast_metrics(&bx, &by, &bw, &bh,
+                                       NULL, NULL, NULL, NULL,
+                                       NULL, NULL, NULL, NULL);
+        if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) return 1;
+    }
+    return 0;
+}
+
+void hooks_online_cursor_on_pre_swap(void) {
+    void* state_ptr = p_state_current ? p_state_current() : NULL;
+    int draw_online_cursor = state_ptr == (void*)&g_online_hub_state ||
+                             state_ptr == (void*)&g_online_result_state ||
+                             online_cursor_over_active_overlay(state_ptr,
+                                                               g_online_mouse_x,
+                                                               g_online_mouse_y);
+    if (!draw_online_cursor) {
+        g_online_result_toast_rendered_this_swap = 0;
+        g_online_challenge_toast_rendered_this_swap = 0;
+        return;
+    }
+
+    /* This hook is called after every other framework pre-swap renderer. Keep
+     * the native online cursor here, rather than in an individual screen or
+     * toast branch, so nametags, the console, and updater notifications cannot
+     * cover it and no branch can draw a duplicate/fallback cursor. */
+    online_hub_draw_cursor();
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+    mods_restore_render_state();
+    g_online_result_toast_rendered_this_swap = 0;
+    g_online_challenge_toast_rendered_this_swap = 0;
 }
 
 static int online_result_keydown(int sym) {
@@ -9892,12 +11297,16 @@ int hooks_online_hub_keydown(int sym, int scancode, int mod) {
     (void)mod;
     if (is_online_result_state_active()) return online_result_keydown(sym);
     if (!is_online_hub_state_active()) return 0;
-    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_pending_match.active) return 1;
     if (g_online_queue_mode) {
         if (sym == SDLK_ESCAPE || sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
             online_server_leave_queue();
         }
         return 1;
+    }
+    if (online_remembered_login_in_progress()) {
+        if (sym != SDLK_ESCAPE) return 1;
+        online_server_disconnect(NULL);
     }
 
     if (g_online_capture_active) {
@@ -9915,7 +11324,7 @@ int hooks_online_hub_keydown(int sym, int scancode, int mod) {
             return 1;
         }
         if (sym == SDLK_DELETE) {
-            g_online_capture_buf[0] = '\0';
+            credential_ext_secure_zero(g_online_capture_buf, sizeof(g_online_capture_buf));
             return 1;
         }
         return 1;
@@ -9990,14 +11399,27 @@ int hooks_online_hub_keydown(int sym, int scancode, int mod) {
 }
 
 int hooks_online_hub_textinput(const char* text) {
+    size_t max_len = sizeof(g_online_capture_buf) - 1u;
     if (is_online_result_state_active()) return 1;
     if (!is_online_hub_state_active()) return 0;
     if (!g_online_capture_active) return 1;
+    if (g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
+        if (g_online_capture_target == ONLINE_SETTING_USERNAME) {
+            max_len = sizeof(g_online_cfg.username) - 1u;
+        } else if (g_online_capture_target == ONLINE_SETTING_PASSWORD) {
+            max_len = sizeof(g_online_cfg.password) - 1u;
+        } else if (g_online_capture_target == ONLINE_SETTING_SERVER_HOST ||
+                   g_online_capture_target == ONLINE_SETTING_PEER_HOST) {
+            max_len = ONLINE_HUB_TEXT_MAX - 1u;
+        }
+    } else if (g_online_capture_kind == ONLINE_CAPTURE_ADD_FRIEND) {
+        max_len = sizeof(g_online_cfg.username) - 1u;
+    }
     if (text && text[0]) {
         size_t len = strlen(g_online_capture_buf);
         for (const unsigned char* p = (const unsigned char*)text; *p; p++) {
-            if (*p < 0x20) continue;
-            if (len + 1 >= sizeof(g_online_capture_buf)) break;
+            if (*p < 0x20 || *p == 0x7f) continue;
+            if (len >= max_len) break;
             g_online_capture_buf[len++] = (char)*p;
         }
         g_online_capture_buf[len] = '\0';
@@ -10010,8 +11432,10 @@ int hooks_online_hub_mousemotion(int x, int y) {
     g_online_mouse_y = (float)y;
     if (!is_online_hub_state_active() && !is_online_result_state_active()) return 0;
     if (is_online_result_state_active()) {
+        int hit = online_result_button_at((float)x, (float)y);
+        if (hit >= 0) g_online_result.selected = hit;
         return 1;
-    } else if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) {
+    } else if (g_online_pending_match.active) {
         return 1;
     } else if (g_online_queue_mode) {
         return 1;
@@ -10027,7 +11451,7 @@ int hooks_online_hub_mousemotion(int x, int y) {
 
 int hooks_online_hub_mousewheel(int y) {
     if (is_online_result_state_active()) return 1;
-    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_pending_match.active) return 1;
     if (g_online_queue_mode) return 1;
     if (!is_online_hub_state_active()) return 0;
     if (y > 0) online_move_selection(-1, 3);
@@ -10055,15 +11479,21 @@ int hooks_online_hub_mousebutton(int x, int y, int button, int down) {
     if (!down) return 1;
     if (is_online_result_state_active()) {
         if (button != 1) return 1;
+        row = online_result_button_at((float)x, (float)y);
+        if (row >= 0) {
+            g_online_result.selected = row;
+            online_result_activate();
+        }
         return 1;
     }
-    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_pending_match.active) return 1;
     if (g_online_queue_mode) {
         if (button == 1 && online_queue_cancel_button_at((float)x, (float)y)) {
             online_server_leave_queue();
         }
         return 1;
     }
+    if (online_remembered_login_in_progress()) return 1;
     if (button == 1 && g_online_context_active) {
         int action = online_context_action_at((float)x, (float)y);
         if (action) {
@@ -10077,7 +11507,7 @@ int hooks_online_hub_mousebutton(int x, int y, int button, int down) {
         g_online_tab = (OnlineHubTab)tab;
         g_online_selected_row = -1;
         g_online_scroll_row = 0;
-        g_online_capture_active = 0;
+        online_clear_capture_state();
         g_online_context_active = 0;
         online_hub_rebuild_rows();
         return 1;
@@ -10118,10 +11548,14 @@ int hooks_online_hub_control_action(int action) {
         }
     }
     if (!is_online_hub_state_active()) return 0;
-    if (g_online_pending_match.active && g_online_pending_match.launch_countdown_frames > 0) return 1;
+    if (g_online_pending_match.active) return 1;
     if (g_online_queue_mode) {
         if (action == 6) online_server_leave_queue();
         return 1;
+    }
+    if (online_remembered_login_in_progress()) {
+        if (action != 6) return 1;
+        online_server_disconnect(NULL);
     }
     if (g_online_capture_active) return 1;
     online_hub_rebuild_rows();
@@ -10157,6 +11591,162 @@ void hooks_console_on_pre_swap(void) {
 
     g_console_open_pending = 0;
     g_console_open_ready = 1;
+}
+
+static void update_toast_metrics(float* out_x, float* out_y,
+                                 float* out_w, float* out_h) {
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float sh = p_mad_h ? p_mad_h() : BASE_UI_H;
+    float ui = clampf(calc_ui_scale(), 0.72f, 1.45f);
+    float margin = clampf(14.0f * ui, 8.0f, 22.0f);
+    float avail_w = sw - margin * 2.0f;
+    float avail_h = sh - margin * 2.0f;
+    float w;
+    float h;
+    float x;
+    float y;
+
+    if (avail_w < 1.0f) avail_w = 1.0f;
+    if (avail_h < 1.0f) avail_h = 1.0f;
+    w = clampf(410.0f * ui, 286.0f, 510.0f);
+    h = clampf(112.0f * ui, 88.0f, 148.0f);
+    if (w > avail_w) w = avail_w;
+    if (h > avail_h) h = avail_h;
+    x = sw - margin - w;
+    y = margin;
+    if (x < 0.0f) x = 0.0f;
+    if (y < 0.0f) y = 0.0f;
+
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+}
+
+static void update_toast_render(UpdateStatus status, uint32_t elapsed_ms) {
+    float x;
+    float y;
+    float w;
+    float h;
+    float ui = clampf(calc_ui_scale(), 0.72f, 1.45f);
+    float alpha = 1.0f;
+    float title_scale = clampf(0.94f * ui, 0.76f, 1.20f);
+    float body_scale = clampf(0.78f * ui, 0.68f, 1.02f);
+    char latest[64];
+    char status_line[192];
+    char body[192];
+    const char* title = "FRAMEWORK UPDATE";
+
+    safe_copy(latest, sizeof(latest), update_ext_latest_version());
+    safe_copy(status_line, sizeof(status_line), update_ext_status_line());
+    if (elapsed_ms < 240u) alpha = clampf((float)elapsed_ms / 240.0f, 0.18f, 1.0f);
+    if (elapsed_ms > UPDATE_TOAST_VISIBLE_MS - 700u) {
+        float fade = (float)(UPDATE_TOAST_VISIBLE_MS - elapsed_ms) / 700.0f;
+        alpha = clampf(fade, 0.0f, alpha);
+    }
+
+    switch (status) {
+        case UPDATE_AVAILABLE:
+            title = "UPDATE AVAILABLE";
+            snprintf(body, sizeof(body), "Version %s is ready. Open Mods to install.",
+                     latest[0] ? latest : "new");
+            break;
+        case UPDATE_APPLYING:
+            title = "INSTALLING UPDATE";
+            safe_copy(body, sizeof(body), status_line[0] ? status_line : "Downloading and verifying files...");
+            break;
+        case UPDATE_RESTART_PENDING:
+            title = "UPDATE INSTALLED";
+            snprintf(body, sizeof(body), "Version %s is ready. Restart the game to finish.",
+                     latest[0] ? latest : "new");
+            break;
+        case UPDATE_ERROR:
+            title = "UPDATE NEEDS ATTENTION";
+            safe_copy(body, sizeof(body), "Open Mods > Framework to retry. Details are in the log.");
+            break;
+        default:
+            safe_copy(body, sizeof(body), status_line[0] ? status_line : "Open Mods > Framework for details.");
+            break;
+    }
+
+    update_toast_metrics(&x, &y, &w, &h);
+    {
+        float text_w = w - 40.0f * ui;
+        size_t max_chars = text_w > 0.0f
+            ? (size_t)(text_w / (9.0f * body_scale))
+            : 1u;
+        safe_copy_ellipsized(body, sizeof(body), body, max_chars);
+    }
+    hooks_ui_fill_rect(x + 4.0f * ui, y + 5.0f * ui, w, h,
+                       0.0f, 0.0f, 0.0f, 0.36f * alpha);
+    hooks_ui_fill_rect(x, y, w, h, 0.035f, 0.050f, 0.072f, 0.96f * alpha);
+    hooks_ui_fill_rect(x, y, 5.0f * ui, h,
+                       status == UPDATE_ERROR ? 0.94f : 0.30f,
+                       status == UPDATE_ERROR ? 0.34f : 0.84f,
+                       status == UPDATE_ERROR ? 0.32f : 0.96f,
+                       0.96f * alpha);
+    hooks_ui_stroke_rect(x, y, w, h, 1.25f,
+                         0.34f, 0.60f, 0.78f, 0.72f * alpha);
+    mods_restore_render_state();
+    draw_text_scaled_mode_alpha(x + 20.0f * ui, y + 19.0f * ui,
+                                title_scale, 0.92f, 0.97f, 1.0f, alpha,
+                                title, 0);
+    draw_text_scaled_mode_alpha(x + 20.0f * ui, y + 51.0f * ui,
+                                body_scale, 0.70f, 0.80f, 0.90f, alpha,
+                                body, 0);
+    draw_text_scaled_mode_alpha(x + w - 14.0f * ui, y + h - 18.0f * ui,
+                                body_scale * 0.82f, 0.48f, 0.58f, 0.68f,
+                                alpha, "click to dismiss", 2);
+    mods_restore_render_state();
+    if (p_main_sprite_batches_draw) p_main_sprite_batches_draw();
+    mods_restore_render_state();
+}
+
+void hooks_update_on_pre_swap(void) {
+    uint32_t now_ms;
+    uint32_t elapsed_ms;
+    UpdateStatus status;
+
+    if (InterlockedCompareExchange(&g_update_runtime_booted, 1, 0) == 0) {
+        update_ext_boot();
+    }
+    if (!update_ext_notice_active()) {
+        g_update_toast_started_ms = 0;
+        g_update_toast_status = -1;
+        return;
+    }
+
+    now_ms = (uint32_t)GetTickCount();
+    status = update_ext_status();
+    if (g_update_toast_status != (int)status) {
+        g_update_toast_status = (int)status;
+        g_update_toast_started_ms = now_ms;
+    }
+    elapsed_ms = now_ms - g_update_toast_started_ms;
+    if (elapsed_ms >= UPDATE_TOAST_VISIBLE_MS) {
+        update_ext_dismiss_notice();
+        g_update_toast_started_ms = 0;
+        g_update_toast_status = -1;
+        return;
+    }
+    update_toast_render(status, elapsed_ms);
+}
+
+int hooks_update_mousebutton(int x, int y, int button, int down) {
+    float tx;
+    float ty;
+    float tw;
+    float th;
+    if (!down || button != 1 || !update_ext_notice_active()) return 0;
+    update_toast_metrics(&tx, &ty, &tw, &th);
+    if ((float)x < tx || (float)x > tx + tw ||
+        (float)y < ty || (float)y > ty + th) {
+        return 0;
+    }
+    update_ext_dismiss_notice();
+    g_update_toast_started_ms = 0;
+    g_update_toast_status = -1;
+    return 1;
 }
 
 void hooks_console_pump(void) {
@@ -10303,9 +11893,20 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
         return 1;
     }
 
-    /* F6/F7 are the framework's reserved local host/join test hotkeys; keep them
-     * consumed in all modes so the vanilla game never sees them (unchanged). */
+    /* F6/F7 are the framework's reserved local host/join test hotkeys. V16
+     * starts fail closed unless `ggpo.net key` armed a one-shot clipboard key;
+     * always consume them so vanilla never sees a second action. */
     if (sym == SDLK_F6 || sym == SDLK_F7) {
+        if (!is_console_state_active()) {
+            void* cur = p_state_current ? p_state_current() : NULL;
+            if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
+                if (sym == SDLK_F6) {
+                    start_ggpo_net_host(GGPO_NET_DEFAULT_PORT, "F6");
+                } else {
+                    start_ggpo_net_join("127.0.0.1", GGPO_NET_DEFAULT_PORT, 0, "F7");
+                }
+            }
+        }
         return 1;
     }
 
@@ -10330,21 +11931,6 @@ int hooks_console_keydown(int sym, int scancode, int mod) {
             return 1;
         }
     }
-    if (!is_console_state_active() && sym == SDLK_F6) {
-        void* cur = p_state_current ? p_state_current() : NULL;
-        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
-            start_ggpo_net_host(GGPO_NET_DEFAULT_PORT, "F6");
-            return 1;
-        }
-    }
-    if (!is_console_state_active() && sym == SDLK_F7) {
-        void* cur = p_state_current ? p_state_current() : NULL;
-        if (cur == (void*)(uintptr_t)ADDR_GAME_STATE) {
-            start_ggpo_net_join("127.0.0.1", GGPO_NET_DEFAULT_PORT, 0, "F7");
-            return 1;
-        }
-    }
-
     if (sym == '`') {
         if (g_online_active_match.active && !g_online_active_match.result_reported) {
             if (is_console_state_active()) console_close();
@@ -10869,7 +12455,7 @@ void hooks_block_next_game_tick(int block) {
 static int hooks_can_run_simulated_game_update(void* state_ptr) {
     if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE) return 1;
     if (g_allow_paused_game_tick &&
-        state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED &&
+        online_state_is_ingame_menu(state_ptr) &&
         ggpo_net_active()) {
         return 1;
     }
@@ -10878,7 +12464,7 @@ static int hooks_can_run_simulated_game_update(void* state_ptr) {
 
 static int hooks_should_clear_native_pause_for_tick(void* state_ptr) {
     return g_allow_paused_game_tick &&
-           state_ptr == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED &&
+           online_state_is_ingame_menu(state_ptr) &&
            ggpo_net_active();
 }
 
@@ -11062,6 +12648,7 @@ static void render_rows(void) {
 
             case ROW_MOD_TOGGLE:
             case ROW_FW_TOGGLE:
+            case ROW_FW_ACTION:
             case ROW_CONFIG:
             case ROW_BIND: {
                 float lr = selected ? sel_r : base_r;
@@ -11071,6 +12658,8 @@ static void render_rows(void) {
                 if (row->kind == ROW_MOD_TOGGLE || row->kind == ROW_FW_TOGGLE) {
                     if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.48f; vg = 0.88f; vb = 0.58f; }
                     else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
+                } else if (row->kind == ROW_FW_ACTION) {
+                    vr = 0.48f; vg = 0.82f; vb = 0.96f;
                 } else if (row->kind == ROW_BIND) {
                     if (lua_manager_mod_bind_has_conflict(row->mod_index, row->cfg_index)) {
                         vr = 0.92f; vg = 0.72f; vb = 0.44f;
@@ -11134,7 +12723,15 @@ static void render_rows(void) {
                         draw_text_right_scaled(right_x, y, scale, ir, ig, ib, row->right);
                     }
                 } else {
-                    draw_text_centered_scaled(L.center_x, y, g_ui_scale * 0.90f, dim_r, dim_g, dim_b, row->left);
+                    if (row->right[0]) {
+                        draw_text_scaled(option_x, y, g_ui_scale * 0.88f,
+                                         dim_r, dim_g, dim_b, row->left);
+                        draw_text_right_scaled(right_x, y, g_ui_scale * 0.86f,
+                                               dim_r, dim_g, dim_b, row->right);
+                    } else {
+                        draw_text_centered_scaled(L.center_x, y, g_ui_scale * 0.90f,
+                                                  dim_r, dim_g, dim_b, row->left);
+                    }
                 }
             } break;
 
@@ -11573,7 +13170,30 @@ static void __cdecl console_enter(void) {
 }
 
 static void __cdecl console_update(void) {
-    // Intentionally no menu-button update path here.
+    int net_tick_attempted = 0;
+    int net_tick_result = 0;
+
+    /* The console intentionally has no menu-button update path, so it does not
+     * pass through hooked_main_update_with_buttons like the native/options and
+     * MODS states do. Service the online control channel and exactly one GGPO
+     * tick here while the console overlays a match. */
+    if (!ggpo_net_active() &&
+        !g_online_pending_match.active &&
+        !g_online_active_match.active) {
+        return;
+    }
+    lua_manager_on_tick();
+    online_server_update();
+    if (ggpo_net_active() && !g_online_pending_match.active) {
+        net_tick_attempted = 1;
+        g_allow_paused_game_tick++;
+        net_tick_result = online_advance_net_gameplay_tick(0);
+        g_allow_paused_game_tick--;
+    }
+    lua_manager_on_tick_post();
+    if (!net_tick_attempted || net_tick_result <= 0) {
+        hooks_finish_game_tick();
+    }
 }
 
 static void __cdecl console_render(void) {
@@ -11598,6 +13218,12 @@ static void __cdecl mods_enter(void) {
     LOG_INFO("MODS: entering mods menu");
     if (p_main_buttons_start) p_main_buttons_start();
 
+    /* Opening the framework page is an explicit acknowledgement of the launch
+     * notification.  The live status/action rows below remain available. */
+    update_ext_dismiss_notice();
+    g_update_toast_started_ms = 0;
+    g_update_toast_status = -1;
+
     capture_clear();
 
     g_mods_return_state = p_state_last ? p_state_last() : (void*)(uintptr_t)ADDR_OPTIONS_STATE;
@@ -11620,13 +13246,8 @@ static void __cdecl mods_enter(void) {
 static void __cdecl mods_update(void) {
     p_main_update_with_buttons(0);
     mods_cursor_tick();
-    /* Keep an online match ticking while the MODS menu is open mid-match (this
-     * state's update bypasses the hooked main-update that normally drives it). */
-    if (ggpo_net_active()) {
-        g_allow_paused_game_tick++;
-        (void)online_advance_net_gameplay_tick(0);
-        g_allow_paused_game_tick--;
-    }
+    /* p_main_update_with_buttons enters our detour, whose common overlay path
+     * services GGPO. Do not tick it again here: that used to advance MODS twice. */
 }
 
 static void __cdecl mods_render(void) {
@@ -11793,23 +13414,6 @@ static void* online_find_button_by_action(uintptr_t action_ptr) {
     return NULL;
 }
 
-static void* online_find_button_by_link(uintptr_t link_ptr) {
-    if (!p_button_count || !p_button_get || link_ptr == 0) return NULL;
-    {
-        int count = p_button_count();
-        if (count <= 0 || count > 3000) return NULL;
-        for (int i = 0; i < count; i++) {
-            void* btn = p_button_get(i);
-            if (!btn) continue;
-            if (IsBadReadPtr((uint8_t*)btn + BTN_OFS_LINK_PTR, (SIZE_T)sizeof(void*))) continue;
-            if ((uintptr_t)(*(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR)) == link_ptr) {
-                return btn;
-            }
-        }
-    }
-    return NULL;
-}
-
 static int install_detour(Detour* d, void* target, void* hook, size_t length) {
     if (!d || !target || !hook) return 0;
     if (length < 5 || length > sizeof(d->original)) return 0;
@@ -11943,35 +13547,6 @@ static int __cdecl online_hub_player_filter_proxy(void* btn, int event_code) {
     return 0;
 }
 
-static int online_activate_native_button(void* btn) {
-    uint32_t* tag_ptr;
-    uint32_t old_tag;
-    int ok = 0;
-    void* link_ptr = NULL;
-    int nolink = 0;
-    if (!btn || !p_btn_player_filter) return 0;
-    tag_ptr = (uint32_t*)((uint8_t*)btn + 4);
-    old_tag = *tag_ptr;
-    *tag_ptr = 0x11;
-    ok = p_btn_player_filter(btn, 3);
-    if (!ok) {
-        *tag_ptr = 0x12;
-        ok = p_btn_player_filter(btn, 3);
-    }
-    *tag_ptr = old_tag;
-    if (!ok) return 0;
-    if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_LINK_PTR, (SIZE_T)sizeof(void*))) {
-        link_ptr = *(void**)((uint8_t*)btn + BTN_OFS_LINK_PTR);
-    }
-    if (!IsBadReadPtr((uint8_t*)btn + BTN_OFS_NOLINK_FLAG, (SIZE_T)sizeof(unsigned char))) {
-        nolink = (*(unsigned char*)((uint8_t*)btn + BTN_OFS_NOLINK_FLAG) != 0);
-    }
-    if (link_ptr && !nolink && p_state_switch) {
-        p_state_switch(link_ptr);
-    }
-    return 1;
-}
-
 static int online_native_winner_player(void) {
     uintptr_t leader;
     uintptr_t loser;
@@ -12007,7 +13582,8 @@ static int online_match_state_allowed(void* state_ptr) {
  * unreachable). Release the match on the server, tear down the session, and
  * return to the hub with an explanatory message instead of hanging forever. */
 static void online_abort_connect_timeout(void) {
-    LOG_WARN("online.match: P2P did not connect within %d ticks; aborting to hub", ONLINE_CONNECT_TIMEOUT_TICKS);
+    int attempts = g_online_connect.attempts;
+    LOG_WARN("online.match: P2P did not connect after %d attempt(s); aborting to hub", attempts);
     {   /* Capture why in the log so failed connects are diagnosable after the fact. */
         char report[2048];
         char* p;
@@ -12020,8 +13596,9 @@ static void online_abort_connect_timeout(void) {
             p = nl + 1;
         }
     }
-    if (g_online_active_match.active && !g_online_active_match.result_reported) {
-        g_online_active_match.result_reported = 1;
+    if ((g_online_active_match.active && !g_online_active_match.result_reported) ||
+        g_online_pending_match.active) {
+        if (g_online_active_match.active) g_online_active_match.result_reported = 1;
         online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
     }
     if (ggpo_net_active()) stop_ggpo_net("connect timeout");
@@ -12030,21 +13607,40 @@ static void online_abort_connect_timeout(void) {
     online_hub_open();
 }
 
+static void online_abort_prematch_setup(const char* reason) {
+    LOG_ERROR("online.prematch: setup failed match=%d (%s)",
+              g_online_pending_match.match_id,
+              (reason && reason[0]) ? reason : "unknown error");
+    {
+        char report[2048];
+        char* p;
+        online_build_net_diag(report, sizeof(report));
+        for (p = report; p && *p; ) {
+            char* nl = strchr(p, '\n');
+            if (nl) *nl = '\0';
+            if (*p) LOG_WARN("net.diag: %s", p);
+            if (!nl) break;
+            p = nl + 1;
+        }
+    }
+    if (g_online_pending_match.active) {
+        online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+    }
+    if (ggpo_net_active()) stop_ggpo_net("prematch setup failed");
+    online_clear_match_state();
+    g_online_pending_connect_fail_status = 4;
+    online_hub_open();
+}
+
 static void online_monitor_active_match_state(void* state_ptr) {
     if (!g_online_active_match.active || g_online_active_match.result_reported) return;
     if (!ggpo_net_active()) {
+        /* A failed socket start is still inside the bounded pre-connect retry
+         * state machine. Once a connection was established, any teardown is a
+         * real disconnect and keeps the existing loss behavior. */
+        if (g_online_connect.attempts > 0 && !g_online_connect.established) return;
         online_finish_active_match(ONLINE_MATCH_RESULT_LOSS, "P2P disconnected; reported loss.", 1);
         return;
-    }
-    /* Connect timeout: while the P2P handshake hasn't completed, count down; if it
-     * never connects, bail to the hub rather than sit at a dead versus screen. */
-    if (!ggpo_net_connected()) {
-        if (++g_online_active_match.connect_wait_ticks >= ONLINE_CONNECT_TIMEOUT_TICKS) {
-            online_abort_connect_timeout();
-            return;
-        }
-    } else {
-        g_online_active_match.connect_wait_ticks = 0;
     }
     if (online_match_state_allowed(state_ptr)) {
         g_online_active_match.invalid_state_ticks = 0;
@@ -12115,97 +13711,82 @@ static void online_log_desync_snapshot_if_changed(void) {
 }
 
 static void online_match_pump_launch(void) {
-    void* state_ptr;
+    char err[256];
     if (!g_online_pending_match.active) return;
+    if (g_online_pending_match.setup_started_ms != 0u &&
+        (DWORD)(GetTickCount() - g_online_pending_match.setup_started_ms) >=
+            ONLINE_PREMATCH_SETUP_TIMEOUT_MS) {
+        online_abort_prematch_setup("prematch synchronization timed out");
+        return;
+    }
+    if (!is_online_hub_state_active()) {
+        online_hub_open();
+        return;
+    }
+
     if (g_online_pending_match.launch_countdown_frames > 0) {
-        if (!is_online_hub_state_active()) {
-            online_hub_open();
-            return;
-        }
         g_online_pending_match.launch_countdown_frames--;
-        if (g_online_pending_match.launch_countdown_frames > 0) return;
-        online_launch_pending_match_to_game();
-        return;
     }
-    if (g_hook_map_selector) {
-        *g_hook_map_selector = g_online_pending_match.selector;
-    }
-    state_ptr = p_state_current ? p_state_current() : NULL;
 
-    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE && ggpo_net_active()) {
-        if (!g_online_pending_match.p2p_started) {
-            g_online_pending_match.p2p_started = 1;
-            online_active_match_begin_from_pending();
-            g_online_pending_match.active = 0;
-            online_hub_set_status("");
-        }
+    /* The countdown keeps running while the bounded fresh-socket retry machine
+     * connects. If it reaches zero first, remain on the match card instead of
+     * entering GAME and displaying a frozen frame. */
+    if (!ggpo_net_active() || !ggpo_net_connected()) return;
+
+    /* A server-managed rollback match must never begin on different game or
+     * framework binaries. The transport exchanges these fingerprints in its
+     * authenticated HELLO; direct developer sessions retain their diagnostic
+     * warning path, while matchmaking fails closed before native map setup. */
+    if (ggpo_net_build_mismatch()) {
+        online_abort_prematch_setup("opponent is using a different game or framework build");
         return;
     }
 
-    if (g_online_pending_match.launch_stage <= 1) {
-        if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
-            state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
-            void* start_btn = online_find_button_by_action(MAIN_START_ACTION_PTR);
-            if (start_btn && online_activate_native_button(start_btn)) {
-                g_online_pending_match.launch_stage = 2;
-            }
-            return;
-        }
-        if (state_ptr == (void*)(uintptr_t)ADDR_PREGAME_STATE) {
-            g_online_pending_match.launch_stage = 2;
-        }
-    }
-
-    if (g_online_pending_match.launch_stage == 2) {
-        if (state_ptr == (void*)(uintptr_t)ADDR_PREGAME_STATE) {
-            void* game_btn = online_find_button_by_link(ADDR_GAME_STATE);
-            if (!game_btn) game_btn = online_find_button_by_action(MAIN_START_ACTION_PTR);
-            if (game_btn && online_activate_native_button(game_btn)) {
-                g_online_pending_match.launch_stage = 3;
-            }
-            return;
-        }
-        if (state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE ||
-            state_ptr == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL) {
+    if (!g_online_pending_match.prematch_prepared) {
+        if (!online_prepare_pending_match_state()) {
+            online_abort_prematch_setup("could not initialize native match state");
             return;
         }
     }
 
-    if (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE && !g_online_pending_match.p2p_started) {
-        online_ensure_native_game_started();
-        if (g_online_pending_match.launch_delay_frames > 0) {
-            g_online_pending_match.launch_delay_frames--;
+    if (!g_online_pending_match.prematch_released) {
+        err[0] = '\0';
+        if (!ggpo_net_prematch_hold() ||
+            !ggpo_net_set_prematch_hold(0, err, sizeof(err))) {
+            online_abort_prematch_setup(err[0] ? err : "could not publish final start state");
             return;
         }
-        g_online_pending_match.p2p_started = 1;
-        if (_stricmp(g_online_pending_match.p2p_role, "host") == 0) {
-            start_ggpo_net_host((uint16_t)g_online_pending_match.local_port, "online server match");
-            if (ggpo_net_active() && g_online_pending_match.peer_host[0] && g_online_pending_match.peer_port > 0) {
-                char err[256];
-                err[0] = '\0';
-                if (!ggpo_net_set_peer(g_online_pending_match.peer_host,
-                                       (uint16_t)g_online_pending_match.peer_port,
-                                       err,
-                                       sizeof(err))) {
-                    LOG_WARN("online.p2p: host could not apply early peer endpoint (%s)", err[0] ? err : "unknown error");
-                }
-            }
-        } else if (g_online_pending_match.peer_host[0] && g_online_pending_match.peer_port > 0) {
-            start_ggpo_net_join(g_online_pending_match.peer_host,
-                                (uint16_t)g_online_pending_match.peer_port,
-                                (uint16_t)g_online_pending_match.local_port,
-                                "online server match");
-        } else {
-            start_ggpo_net_join_deferred((uint16_t)g_online_pending_match.local_port, "online server match");
-        }
-        if (ggpo_net_active()) {
-            online_active_match_begin_from_pending();
-            g_online_pending_match.active = 0;
-            online_hub_set_status("");
-        } else {
-            online_hub_set_status("P2P session failed to start.");
-        }
+        g_online_pending_match.prematch_released = 1;
+        online_hub_set_status("Synchronizing match...");
+        LOG_INFO("online.prematch: hold released during countdown match=%d epoch=%u",
+                 g_online_pending_match.match_id,
+                 (unsigned int)ggpo_net_state_epoch());
     }
+
+    /* State/cosmetic/frame-0 exchange continues during the remaining countdown.
+     * At zero, stay in the hub until the readiness proof is complete. */
+    if (g_online_pending_match.launch_countdown_frames > 0 ||
+        !ggpo_net_prematch_ready()) {
+        return;
+    }
+
+    err[0] = '\0';
+    if (!ggpo_net_prepare_prematch_start(err, sizeof(err))) {
+        online_abort_prematch_setup(err[0] ? err : "could not restore synchronized start state");
+        return;
+    }
+    if (!p_state_switch) {
+        online_abort_prematch_setup("state switch is unavailable");
+        return;
+    }
+
+    /* The switch is the final operation: GAME enter sees an already-started,
+     * synchronized native match, and the very next visible tick has both neutral
+     * frame-0 inputs ready. */
+    p_state_switch((void*)(uintptr_t)ADDR_GAME_STATE);
+    online_active_match_begin_from_pending();
+    g_online_pending_match.active = 0;
+    online_hub_set_status("");
 }
 
 static int menu_mode_total(void) {
@@ -12293,28 +13874,10 @@ static void menu_mode_resolve_pending(void) {
 }
 
 static void menu_mode_save(void) {
-    char lines[64][256];
-    int count = 0, replaced = 0;
     const char* id = menu_mode_id(g_menu_mode);
-    FILE* f = fopen("mods/modframework.cfg", "r");
-    if (f) {
-        while (count < 64 && fgets(lines[count], sizeof(lines[count]), f)) {
-            char* p = lines[count];
-            while (*p == ' ' || *p == '\t') p++;
-            if (_strnicmp(p, "main_menu_mode", 14) == 0) {
-                snprintf(lines[count], sizeof(lines[count]), "main_menu_mode=%s\n", id);
-                replaced = 1;
-            }
-            count++;
-        }
-        fclose(f);
+    if (!update_ext_config_set("main_menu_mode", id)) {
+        LOG_WARN("menu: could not persist main_menu_mode=%s", id);
     }
-    CreateDirectoryA("mods", NULL);
-    f = fopen("mods/modframework.cfg", "w");
-    if (!f) return;
-    for (int i = 0; i < count; i++) fputs(lines[i], f);
-    if (!replaced) fprintf(f, "main_menu_mode=%s\n", id);
-    fclose(f);
 }
 
 static void menu_mode_cycle(int dir) {
@@ -12538,14 +14101,26 @@ static int online_advance_net_gameplay_tick(int arg0) {
     uint32_t raw0 = hooks_peek_player_cmds_raw(0, 2);
     uint32_t raw1 = hooks_peek_player_cmds_raw(1, 2);
     void* state_ptr = p_state_current ? p_state_current() : NULL;
+    int local_player = ggpo_net_local_player();
     uint32_t checksum = 0;
     int advanced_any = 0;
     int steps = 0;
     char err[512];
     char out[CONSOLE_LINE_TEXT];
+
+    if (g_online_pending_match.active) return 0;
+
+    /* Both locally configured control sets drive this client's one authoritative
+     * online character. The other character still receives only the peer's input
+     * through GGPO, so local player-two bindings can never leak across the wire as
+     * control of the opponent. */
+    if (local_player < 0 || local_player > 1) {
+        local_player = clampi(g_online_active_match.local_player, 0, 1);
+    }
+    if (local_player == 0) raw0 |= raw1;
+    else raw1 |= raw0;
+
     if (online_state_is_ingame_menu(state_ptr)) {
-        int local_player = ggpo_net_local_player();
-        if (local_player < 0 || local_player > 1) local_player = clampi(g_online_active_match.local_player, 0, 1);
         if (local_player == 0) raw0 = 0u;
         else raw1 = 0u;
     }
@@ -12569,6 +14144,16 @@ static int online_advance_net_gameplay_tick(int arg0) {
     do {
         int advanced = 0;
         if (!ggpo_net_advance(raw0, raw1, arg0, &checksum, &advanced, err, sizeof(err))) {
+            if (!g_online_connect.established && !ggpo_net_connected() &&
+                g_online_connect.attempts > 0) {
+                LOG_WARN("online.p2p: attempt %d/%d failed before confirmation (%s); retrying",
+                         g_online_connect.attempts,
+                         ONLINE_CONNECT_MAX_ATTEMPTS,
+                         err[0] ? err : "unknown error");
+                if (ggpo_net_active()) ggpo_net_stop_for_retry();
+                online_connect_retry_tick();
+                return 0;
+            }
             snprintf(out,
                      sizeof(out),
                      "ggpo.net: failed (%s)",
@@ -12582,6 +14167,9 @@ static int online_advance_net_gameplay_tick(int arg0) {
         advanced_any = 1;
         steps++;
     } while (steps < 4 && ggpo_net_catchup_pending());
+    /* Polling happens inside ggpo_net_advance. Evaluate the wall-clock deadline
+     * only afterward so a final queued handshake packet gets its chance. */
+    online_connect_retry_tick();
     online_match_poll_completion();
     online_log_desync_snapshot_if_changed();
     return advanced_any ? 1 : 0;
@@ -12602,51 +14190,389 @@ static int hooks_cmdline_has_flag(const char* flag) {
     return 0;
 }
 
-/* Apply -fullscreen/-windowed once, a few frames after the window exists, using
- * the game's own routine so the GL viewport is set up correctly. */
-static void hooks_apply_window_launch_args(void) {
-    static int applied = 0;
-    static int settle = 30;
-    if (applied) return;
-    if (!g_proxy_sdl_window) return;      /* window not created yet */
-    if (settle-- > 0) return;             /* let GL + atlas finish initializing */
-    applied = 1;
-    if (hooks_cmdline_has_flag("-fullscreen") || hooks_cmdline_has_flag("--fullscreen")) {
-        if (p_main_set_fullscreen && (!p_main_is_fullscreen || !p_main_is_fullscreen())) {
-            p_main_set_fullscreen(1);
-            LOG_INFO("launch: -fullscreen applied");
-        }
-    } else if (hooks_cmdline_has_flag("-windowed") || hooks_cmdline_has_flag("--windowed")) {
-        if (p_main_set_fullscreen && p_main_is_fullscreen && p_main_is_fullscreen()) {
-            p_main_set_fullscreen(0);
-            LOG_INFO("launch: -windowed applied");
-        }
-    } else if (hooks_cmdline_has_flag("-borderless") || hooks_cmdline_has_flag("--borderless")) {
-        /* Borderless fullscreen: stay in windowed mode, strip the border, size to
-         * the desktop. The game's own SIZE_CHANGED handling re-reads the drawable
-         * size, so the GL viewport/letterbox stays correct without the native
-         * exclusive-fullscreen path. -fullscreen wins if both are passed. */
-        typedef struct { int x, y, w, h; } SdlRect;
-        typedef void (__cdecl *fn_set_bordered_t)(void*, int);
-        typedef void (__cdecl *fn_set_size_t)(void*, int, int);
-        typedef void (__cdecl *fn_set_pos_t)(void*, int, int);
-        typedef int  (__cdecl *fn_get_bounds_t)(int, SdlRect*);
-        SdlRect bounds = {0, 0, 0, 0};
-        if (p_main_set_fullscreen && p_main_is_fullscreen && p_main_is_fullscreen()) {
-            p_main_set_fullscreen(0);
-        }
-        if (p_SDL_GetDisplayBounds && p_SDL_SetWindowBordered && p_SDL_SetWindowSize &&
-            p_SDL_SetWindowPosition &&
-            ((fn_get_bounds_t)p_SDL_GetDisplayBounds)(0, &bounds) == 0 &&
-            bounds.w > 0 && bounds.h > 0) {
-            ((fn_set_bordered_t)p_SDL_SetWindowBordered)(g_proxy_sdl_window, 0);
-            ((fn_set_size_t)p_SDL_SetWindowSize)(g_proxy_sdl_window, bounds.w, bounds.h);
-            ((fn_set_pos_t)p_SDL_SetWindowPosition)(g_proxy_sdl_window, bounds.x, bounds.y);
-            LOG_INFO("launch: -borderless applied %dx%d at %d,%d", bounds.w, bounds.h, bounds.x, bounds.y);
-        } else {
-            LOG_WARN("launch: -borderless unavailable (SDL window fns/bounds missing)");
+enum {
+    SDL_WINDOW_FULLSCREEN_FLAG = 0x00000001u,
+    SDL_WINDOW_FULLSCREEN_DESKTOP_FLAG = 0x00001001u,
+    WINDOW_EVENT_MOVED = 4,
+    WINDOW_EVENT_RESIZED = 5,
+    WINDOW_EVENT_SIZE_CHANGED = 6,
+    WINDOW_EVENT_MAXIMIZED = 8,
+    WINDOW_EVENT_DISPLAY_CHANGED = 18,
+    WINDOW_KEY_ACTION_QUEUE_CAP = 8,
+    WINDOW_LAUNCH_SETTLE_MS = 500,
+    WINDOW_LAUNCH_RETRY_MS = 300,
+    WINDOW_RESIZE_DEBOUNCE_MS = 180,
+    WINDOW_TRANSITION_SUPPRESS_MS = 700,
+};
+
+typedef struct SdlRectCompat {
+    int x;
+    int y;
+    int w;
+    int h;
+} SdlRectCompat;
+
+static int hooks_window_time_reached(DWORD now, DWORD deadline) {
+    return (LONG)(now - deadline) >= 0;
+}
+
+static void hooks_window_parse_launch_mode(void) {
+    int borderless;
+    int fullscreen;
+    int windowed;
+    if (g_window_runtime.command_line_parsed) return;
+    g_window_runtime.command_line_parsed = 1;
+    borderless = hooks_cmdline_has_flag("-borderless") || hooks_cmdline_has_flag("--borderless");
+    fullscreen = hooks_cmdline_has_flag("-fullscreen") || hooks_cmdline_has_flag("--fullscreen");
+    windowed = hooks_cmdline_has_flag("-windowed") || hooks_cmdline_has_flag("--windowed");
+    if (borderless) g_window_runtime.launch_mode = WINDOW_LAUNCH_BORDERLESS;
+    else if (fullscreen) g_window_runtime.launch_mode = WINDOW_LAUNCH_FULLSCREEN;
+    else if (windowed) g_window_runtime.launch_mode = WINDOW_LAUNCH_WINDOWED;
+    else g_window_runtime.launch_mode = WINDOW_LAUNCH_DEFAULT;
+    if ((borderless + fullscreen + windowed) > 1) {
+        LOG_WARN("window: conflicting launch modes; precedence is borderless, fullscreen, windowed");
+    }
+    if (g_window_runtime.launch_mode == WINDOW_LAUNCH_DEFAULT) {
+        g_window_runtime.launch_done = 1;
+    }
+}
+
+static int hooks_window_active_display(void) {
+    typedef int (__cdecl *fn_get_display_t)(void*);
+    int display = -1;
+    if (g_proxy_sdl_window && p_SDL_GetWindowDisplayIndex) {
+        display = ((fn_get_display_t)p_SDL_GetWindowDisplayIndex)(g_proxy_sdl_window);
+    }
+    if (display < 0) display = g_window_runtime.last_display_index;
+    if (display < 0) display = 0;
+    return display;
+}
+
+static int hooks_window_display_bounds(int display, int* out_w, int* out_h) {
+    typedef int (__cdecl *fn_get_bounds_t)(int, void*);
+    SdlRectCompat bounds;
+    int w = WINDOW_POLICY_MAX_W + WINDOW_POLICY_FRAME_MARGIN_W;
+    int h = WINDOW_POLICY_MAX_H + WINDOW_POLICY_FRAME_MARGIN_H;
+    int valid = 0;
+    memset(&bounds, 0, sizeof(bounds));
+    if (p_SDL_GetDisplayBounds &&
+        ((fn_get_bounds_t)p_SDL_GetDisplayBounds)(display, &bounds) == 0 &&
+        bounds.w > 0 && bounds.h > 0) {
+        w = bounds.w;
+        h = bounds.h;
+        valid = 1;
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return valid;
+}
+
+static int hooks_window_sync_native_desktop_bounds(int display, int* out_w, int* out_h) {
+    int display_w;
+    int display_h;
+    if (!hooks_window_display_bounds(display, &display_w, &display_h)) {
+        LOG_WARN("window: active display %d bounds unavailable; fullscreen transition deferred", display);
+        return 0;
+    }
+    *p_wrapper_desktop_w = display_w;
+    *p_wrapper_desktop_h = display_h;
+    if (out_w) *out_w = display_w;
+    if (out_h) *out_h = display_h;
+    LOG_INFO("window: native desktop cache set to %dx%d for display %d",
+             display_w, display_h, display);
+    return 1;
+}
+
+static unsigned int hooks_window_flags(void) {
+    typedef unsigned int (__cdecl *fn_get_flags_t)(void*);
+    if (!g_proxy_sdl_window || !p_SDL_GetWindowFlags) return 0;
+    return ((fn_get_flags_t)p_SDL_GetWindowFlags)(g_proxy_sdl_window);
+}
+
+static int hooks_window_mode_matches(WindowLaunchMode mode) {
+    unsigned int flags = hooks_window_flags();
+    int engine_fullscreen = p_main_is_fullscreen ? (p_main_is_fullscreen() != 0) :
+                            ((flags & SDL_WINDOW_FULLSCREEN_FLAG) != 0);
+    if (mode == WINDOW_LAUNCH_WINDOWED) {
+        return !engine_fullscreen && !(flags & SDL_WINDOW_FULLSCREEN_FLAG);
+    }
+    if (mode == WINDOW_LAUNCH_FULLSCREEN) {
+        return engine_fullscreen && (flags & SDL_WINDOW_FULLSCREEN_FLAG);
+    }
+    if (mode == WINDOW_LAUNCH_BORDERLESS) {
+        return engine_fullscreen &&
+               (flags & SDL_WINDOW_FULLSCREEN_DESKTOP_FLAG) == SDL_WINDOW_FULLSCREEN_DESKTOP_FLAG;
+    }
+    return 1;
+}
+
+static void hooks_window_refresh_geometry(const char* reason, int force_viewport) {
+    typedef void (__cdecl *fn_get_size_t)(void*, int*, int*);
+    int ww = -1, wh = -1, dw = -1, dh = -1;
+    int display;
+    unsigned int flags;
+    int changed;
+    GLint viewport[4] = { 0, 0, 0, 0 };
+    GLint scissor[4] = { 0, 0, 0, 0 };
+    int scissor_was_full = 0;
+    if (!g_proxy_sdl_window) return;
+    if (p_SDL_GetWindowSize) {
+        ((fn_get_size_t)p_SDL_GetWindowSize)(g_proxy_sdl_window, &ww, &wh);
+    }
+    if (p_SDL_GL_GetDrawableSize) {
+        ((fn_get_size_t)p_SDL_GL_GetDrawableSize)(g_proxy_sdl_window, &dw, &dh);
+    }
+    if (dw <= 0 || dh <= 0) {
+        dw = ww;
+        dh = wh;
+    }
+    display = hooks_window_active_display();
+    flags = hooks_window_flags();
+    changed = ww != g_window_runtime.last_window_w ||
+              wh != g_window_runtime.last_window_h ||
+              dw != g_window_runtime.last_drawable_w ||
+              dh != g_window_runtime.last_drawable_h ||
+              display != g_window_runtime.last_display_index ||
+              flags != g_window_runtime.last_window_flags;
+    if (dw > 0 && dh > 0 && (force_viewport || changed)) {
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        if (force_viewport || viewport[0] != 0 || viewport[1] != 0 ||
+            viewport[2] != dw || viewport[3] != dh) {
+            if (glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE) {
+                glGetIntegerv(GL_SCISSOR_BOX, scissor);
+                scissor_was_full = (scissor[0] == viewport[0] && scissor[1] == viewport[1] &&
+                                     scissor[2] == viewport[2] && scissor[3] == viewport[3]);
+            }
+            glViewport(0, 0, dw, dh);
+            if (scissor_was_full) glScissor(0, 0, dw, dh);
         }
     }
+    if (changed) {
+        LOG_INFO("window[%s]: display=%d window=%dx%d drawable=%dx%d flags=0x%08X viewport=%d,%d %dx%d dpi-scale=%.3fx%.3f",
+                 reason ? reason : "changed", display, ww, wh, dw, dh, flags,
+                 viewport[0], viewport[1], viewport[2], viewport[3],
+                 ww > 0 ? (double)dw / (double)ww : 0.0,
+                 wh > 0 ? (double)dh / (double)wh : 0.0);
+    }
+    g_window_runtime.last_window_w = ww;
+    g_window_runtime.last_window_h = wh;
+    g_window_runtime.last_drawable_w = dw;
+    g_window_runtime.last_drawable_h = dh;
+    g_window_runtime.last_display_index = display;
+    g_window_runtime.last_window_flags = flags;
+    g_window_runtime.geometry_dirty = 0;
+}
+
+static int hooks_window_apply_mode(WindowLaunchMode mode, const char* reason) {
+    typedef int (__cdecl *fn_sdl_set_window_fullscreen_t)(void*, unsigned int);
+    int display = hooks_window_active_display();
+    unsigned int flags = hooks_window_flags();
+    int engine_fullscreen = p_main_is_fullscreen ? (p_main_is_fullscreen() != 0) :
+                            ((flags & SDL_WINDOW_FULLSCREEN_FLAG) != 0);
+    int rc = 0;
+    DWORD now = GetTickCount();
+    if (!g_proxy_sdl_window || !p_main_set_fullscreen) return 0;
+    if (mode == WINDOW_LAUNCH_FULLSCREEN || mode == WINDOW_LAUNCH_BORDERLESS) {
+        /* main_set_fullscreen reads wrapper_desktop_w/h before its graphics
+         * recreation reaches our display override. Refresh those native caches
+         * first so a window moved to a differently sized monitor does not enter
+         * fullscreen using the previous monitor's dimensions. */
+        if (!hooks_window_sync_native_desktop_bounds(display, NULL, NULL)) return 0;
+    }
+    g_window_runtime.suppress_resize_until_ms = now + WINDOW_TRANSITION_SUPPRESS_MS;
+    g_window_runtime.pending_resize = 0;
+    g_window_runtime.pending_maximize = 0;
+    InterlockedExchange(&g_proxy_sdl_display_override, (LONG)display);
+    if (mode == WINDOW_LAUNCH_WINDOWED) {
+        if (engine_fullscreen || (flags & SDL_WINDOW_FULLSCREEN_FLAG)) {
+            int display_w, display_h;
+            int saved_w = p_main_saved_window_w ? *p_main_saved_window_w : WINDOW_POLICY_MID_W;
+            int saved_h = p_main_saved_window_h ? *p_main_saved_window_h : WINDOW_POLICY_MID_H;
+            WindowPolicySize safe;
+            hooks_window_display_bounds(display, &display_w, &display_h);
+            safe = window_policy_fit_3_2(saved_w, saved_h, display_w, display_h);
+            if (p_main_saved_window_w) *p_main_saved_window_w = safe.w;
+            if (p_main_saved_window_h) *p_main_saved_window_h = safe.h;
+            p_main_set_fullscreen(0);
+        }
+    } else if (!engine_fullscreen || !(flags & SDL_WINDOW_FULLSCREEN_FLAG)) {
+        p_main_set_fullscreen(1);
+    }
+    InterlockedExchange(&g_proxy_sdl_display_override, -1);
+    if (mode == WINDOW_LAUNCH_BORDERLESS) {
+        if (!g_proxy_sdl_window || !p_SDL_SetWindowFullscreen) return 0;
+        rc = ((fn_sdl_set_window_fullscreen_t)p_SDL_SetWindowFullscreen)(
+            g_proxy_sdl_window, SDL_WINDOW_FULLSCREEN_DESKTOP_FLAG);
+        if (rc != 0) {
+            const char* err = p_SDL_GetError ? ((const char* (__cdecl *)(void))p_SDL_GetError)() : "unknown SDL error";
+            LOG_WARN("window[%s]: desktop fullscreen failed rc=%d (%s)", reason ? reason : "mode", rc, err ? err : "unknown");
+        }
+    }
+    g_window_runtime.geometry_dirty = 1;
+    hooks_window_refresh_geometry(reason, 1);
+    return rc == 0 && hooks_window_mode_matches(mode);
+}
+
+static int hooks_window_set_native_size(int requested_w, int requested_h, const char* reason) {
+    int display = hooks_window_active_display();
+    int display_w, display_h;
+    WindowPolicySize size;
+    DWORD now = GetTickCount();
+    if (!p_main_set_window || !g_proxy_sdl_window) return 0;
+    hooks_window_display_bounds(display, &display_w, &display_h);
+    size = window_policy_fit_3_2(requested_w, requested_h, display_w, display_h);
+    g_window_runtime.suppress_resize_until_ms = now + WINDOW_TRANSITION_SUPPRESS_MS;
+    g_window_runtime.pending_resize = 0;
+    g_window_runtime.pending_maximize = 0;
+    InterlockedExchange(&g_proxy_sdl_display_override, (LONG)display);
+    p_main_set_window(size.w, size.h);
+    InterlockedExchange(&g_proxy_sdl_display_override, -1);
+    g_window_runtime.geometry_dirty = 1;
+    hooks_window_refresh_geometry(reason, 1);
+    LOG_INFO("window[%s]: native 3:2 size %dx%d on display %d", reason ? reason : "resize", size.w, size.h, display);
+    return 1;
+}
+
+static int hooks_window_cycle_native_size(void) {
+    int display = hooks_window_active_display();
+    int display_w, display_h;
+    int current_w = p_main_saved_window_w ? *p_main_saved_window_w : g_window_runtime.last_window_w;
+    WindowPolicySize next;
+    hooks_window_display_bounds(display, &display_w, &display_h);
+    next = window_policy_next_preset(current_w, display_w, display_h);
+    return hooks_window_set_native_size(next.w, next.h, "F1");
+}
+
+static int hooks_window_queue_key_action(WindowKeyAction action) {
+    unsigned int shift;
+    if (action == WINDOW_KEY_ACTION_NONE) return 0;
+    if (g_window_runtime.pending_key_action_count >= WINDOW_KEY_ACTION_QUEUE_CAP) {
+        LOG_WARN("window: key action queue full; dropping action %d", (int)action);
+        return 0;
+    }
+    shift = (unsigned int)g_window_runtime.pending_key_action_count * 2u;
+    g_window_runtime.pending_key_actions |= ((unsigned int)action & 3u) << shift;
+    g_window_runtime.pending_key_action_count++;
+    return 1;
+}
+
+static WindowKeyAction hooks_window_pop_key_action(void) {
+    WindowKeyAction action;
+    if (g_window_runtime.pending_key_action_count <= 0) return WINDOW_KEY_ACTION_NONE;
+    action = (WindowKeyAction)(g_window_runtime.pending_key_actions & 3u);
+    g_window_runtime.pending_key_actions >>= 2;
+    g_window_runtime.pending_key_action_count--;
+    return action;
+}
+
+void hooks_window_event(int event_code, int data1, int data2) {
+    DWORD now = GetTickCount();
+    g_window_runtime.geometry_dirty = 1;
+    if (event_code == WINDOW_EVENT_MOVED || event_code == WINDOW_EVENT_DISPLAY_CHANGED) {
+        g_window_runtime.last_display_index = -1;
+    }
+    if (event_code == WINDOW_EVENT_MAXIMIZED &&
+        hooks_window_time_reached(now, g_window_runtime.suppress_resize_until_ms)) {
+        /* Maximized state is intentionally transient: after the resize event
+         * burst settles, recreate once at the largest native 3:2 preset that
+         * fits this display. Generated recreation events are suppress-filtered. */
+        g_window_runtime.pending_resize = 1;
+        g_window_runtime.pending_maximize = 1;
+        g_window_runtime.resize_due_ms = now + WINDOW_RESIZE_DEBOUNCE_MS;
+    }
+    if ((event_code == WINDOW_EVENT_RESIZED || event_code == WINDOW_EVENT_SIZE_CHANGED) &&
+        data1 > 0 && data2 > 0 &&
+        hooks_window_time_reached(now, g_window_runtime.suppress_resize_until_ms)) {
+        g_window_runtime.pending_resize = 1;
+        if (!g_window_runtime.pending_maximize) {
+            g_window_runtime.pending_w = data1;
+            g_window_runtime.pending_h = data2;
+        }
+        g_window_runtime.resize_due_ms = now + WINDOW_RESIZE_DEBOUNCE_MS;
+    }
+}
+
+int hooks_window_keydown(int sym, int repeat) {
+    WindowKeyAction action;
+    if (sym != SDLK_F1 && sym != SDLK_F11) return 0;
+    if (repeat) return 1;
+    hooks_window_parse_launch_mode();
+    g_window_runtime.launch_done = 1; /* explicit user input wins over a delayed launch arg */
+    action = sym == SDLK_F1 ? WINDOW_KEY_ACTION_CYCLE_SIZE
+                            : WINDOW_KEY_ACTION_TOGGLE_FULLSCREEN;
+    (void)hooks_window_queue_key_action(action);
+    return 1;
+}
+
+static void hooks_window_pump(void) {
+    DWORD now = GetTickCount();
+    if (InterlockedCompareExchange(&g_window_runtime.busy, 1, 0) != 0) return;
+    hooks_window_parse_launch_mode();
+    if (g_proxy_sdl_window && g_window_runtime.first_window_ms == 0) {
+        g_window_runtime.first_window_ms = now;
+        g_window_runtime.next_launch_attempt_ms = now + WINDOW_LAUNCH_SETTLE_MS;
+        g_window_runtime.geometry_dirty = 1;
+    }
+    if (g_window_runtime.geometry_dirty && g_proxy_sdl_window) {
+        hooks_window_refresh_geometry("event", 0);
+    }
+    if (g_window_runtime.pending_key_action_count > 0 && g_proxy_sdl_window) {
+        WindowKeyAction action = hooks_window_pop_key_action();
+        if (action == WINDOW_KEY_ACTION_CYCLE_SIZE) {
+            (void)hooks_window_cycle_native_size();
+        } else if (action == WINDOW_KEY_ACTION_TOGGLE_FULLSCREEN) {
+            WindowLaunchMode target = (p_main_is_fullscreen && p_main_is_fullscreen())
+                ? WINDOW_LAUNCH_WINDOWED
+                : (g_window_runtime.launch_mode == WINDOW_LAUNCH_BORDERLESS
+                    ? WINDOW_LAUNCH_BORDERLESS
+                    : WINDOW_LAUNCH_FULLSCREEN);
+            (void)hooks_window_apply_mode(target, "F11");
+        }
+    }
+    if (!g_window_runtime.launch_done && g_proxy_sdl_window &&
+        hooks_window_time_reached(now, g_window_runtime.next_launch_attempt_ms)) {
+        g_window_runtime.launch_attempts++;
+        if (hooks_window_apply_mode(g_window_runtime.launch_mode, "launch")) {
+            g_window_runtime.launch_done = 1;
+            LOG_INFO("window: launch mode applied after %d attempt(s)", g_window_runtime.launch_attempts);
+        } else if (g_window_runtime.launch_attempts >= 5) {
+            g_window_runtime.launch_done = 1;
+            LOG_WARN("window: launch mode could not be verified after %d attempts", g_window_runtime.launch_attempts);
+        } else {
+            g_window_runtime.next_launch_attempt_ms = now + WINDOW_LAUNCH_RETRY_MS;
+        }
+    }
+    if (g_window_runtime.pending_resize &&
+        hooks_window_time_reached(now, g_window_runtime.resize_due_ms)) {
+        unsigned int flags = hooks_window_flags();
+        if (!(flags & SDL_WINDOW_FULLSCREEN_FLAG) &&
+            (!p_main_is_fullscreen || !p_main_is_fullscreen())) {
+            if (g_window_runtime.pending_maximize) {
+                int display = hooks_window_active_display();
+                int display_w;
+                int display_h;
+                WindowPolicySize largest;
+                hooks_window_display_bounds(display, &display_w, &display_h);
+                largest = window_policy_largest_preset(display_w, display_h);
+                (void)hooks_window_set_native_size(largest.w, largest.h, "maximize");
+            } else {
+                (void)hooks_window_set_native_size(g_window_runtime.pending_w,
+                                                   g_window_runtime.pending_h,
+                                                   "resize");
+            }
+        } else {
+            g_window_runtime.pending_resize = 0;
+            g_window_runtime.pending_maximize = 0;
+        }
+    }
+    InterlockedExchange(&g_window_runtime.busy, 0);
+}
+
+void hooks_window_on_pre_swap(void) {
+    if (!g_proxy_sdl_window) return;
+    if (InterlockedCompareExchange(&g_window_runtime.busy, 1, 0) != 0) return;
+    hooks_window_refresh_geometry("pre-swap", 0);
+    InterlockedExchange(&g_window_runtime.busy, 0);
 }
 
 static int __cdecl hooked_main_update_with_buttons(int arg0) {
@@ -12658,7 +14584,10 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 
     /* Mark the sim thread for audio-thread RNG isolation (see hooks_on_audio_thread). */
     g_sim_thread_id = GetCurrentThreadId();
-    hooks_apply_window_launch_args();
+    /* mad_run drains wrapper_handle_events before state_update reaches this
+     * hook. This is the sole destructive window-policy pump, so queued key,
+     * launch, and resize transitions cannot recreate a window mid-PollEvent. */
+    hooks_window_pump();
 
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
@@ -12686,7 +14615,9 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
              * stalls and drops. ggpo_net_active() is only true during a live match,
              * and GAME_STATE advances the netcode itself, so this covers the menu
              * overlays without double-ticking. */
-            if (ggpo_net_active() && after_update != (void*)(uintptr_t)ADDR_GAME_STATE) {
+            if (ggpo_net_active() &&
+                !g_online_pending_match.active &&
+                online_state_is_ingame_menu(after_update)) {
                 net_tick_attempted = 1;
                 g_allow_paused_game_tick++;
                 net_tick_result = online_advance_net_gameplay_tick(arg0);
@@ -13005,6 +14936,14 @@ static void __cdecl hooked_game_update(int arg0) {
         return;
     }
 
+    /* Defensive invariant: a server-managed pending match is prepared and
+     * synchronized entirely in the hub. If another path enters GAME early,
+     * never expose native simulation while the prematch barrier is active. */
+    if (g_online_pending_match.active) {
+        hooks_finish_game_tick();
+        return;
+    }
+
     lua_manager_on_tick();
     state_ptr = p_state_current ? p_state_current() : NULL;
     if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
@@ -13056,6 +14995,20 @@ static void __cdecl hooked_game_update(int arg0) {
         }
         lua_manager_on_tick_post();
         return;
+    }
+
+    if (!ggpo_net_active() &&
+        g_online_connect.attempts > 0 &&
+        !g_online_connect.established &&
+        (g_online_pending_match.active || g_online_active_match.active)) {
+        /* A failed bind/restart leaves a short no-socket gap. Keep the native game
+         * frozen while the retry state machine opens the next attempt. */
+        online_connect_retry_tick();
+        if (!ggpo_net_active()) {
+            lua_manager_on_tick_post();
+            hooks_finish_game_tick();
+            return;
+        }
     }
 
     if (ggpo_net_active()) {
@@ -13110,6 +15063,151 @@ static int __cdecl hooked_atlas_upload(int atlas, int arg2, int format) {
 static void __cdecl hooked_mapgen_init(void) {
     fn_void_void_t real = p_mapgen_init_trampoline ? p_mapgen_init_trampoline : p_mapgen_init;
     custom_maps_handle_mapgen_init(real);
+}
+
+static int content_bridge_resolve_sprite(void* user,
+                                         const char* sheet_key,
+                                         int sheet_index,
+                                         int* out_sprite_id) {
+    (void)user;
+    return lua_manager_content_resolve_sprite(sheet_key, sheet_index,
+                                              out_sprite_id);
+}
+
+static void* content_bridge_sprite_get(void* user, int sprite_id) {
+    (void)user;
+    if (!p_sprite_get || sprite_id < 0) return NULL;
+    return p_sprite_get((uint32_t)sprite_id);
+}
+
+static int content_bridge_turtle_trans(void* user, double x, double y) {
+    fn_turtle_trans_t real = g_turtle_trans_trampoline
+        ? (fn_turtle_trans_t)g_turtle_trans_trampoline
+        : p_turtle_trans;
+    (void)user;
+    if (!real) return 0;
+    real(x, y);
+    return 1;
+}
+
+static int content_bridge_turtle_set_angle(void* user, double value) {
+    (void)user;
+    if (!p_turtle_set_angle) return 0;
+    p_turtle_set_angle(value);
+    return 1;
+}
+
+static int content_bridge_turtle_set_scalex(void* user, double value) {
+    (void)user;
+    if (!p_turtle_set_scalex) return 0;
+    p_turtle_set_scalex(value);
+    return 1;
+}
+
+static int content_bridge_turtle_set_scaley(void* user, double value) {
+    (void)user;
+    if (!p_turtle_set_scaley) return 0;
+    p_turtle_set_scaley(value);
+    return 1;
+}
+
+static int content_bridge_turtle_set_rgba(void* user,
+                                          float r,
+                                          float g,
+                                          float b,
+                                          float a) {
+    (void)user;
+    if (!p_turtle_set_rgba) return 0;
+    p_turtle_set_rgba(r, g, b, a);
+    return 1;
+}
+
+static int content_bridge_sprite_batch_plot(void* user,
+                                            void* sprite,
+                                            int flip_x,
+                                            int layer) {
+    fn_sprite_batch_plot_t real = g_sprite_batch_plot_trampoline
+        ? (fn_sprite_batch_plot_t)g_sprite_batch_plot_trampoline
+        : p_sprite_batch_plot;
+    (void)user;
+    if (!real || !sprite || layer < 0 || layer > 1) return 0;
+    real((int)(intptr_t)sprite, flip_x ? 1 : 0, layer);
+    return 1;
+}
+
+static void __cdecl hooked_mapgen_build_map(void) {
+    fn_void_void_t real = p_mapgen_build_map_trampoline
+        ? p_mapgen_build_map_trampoline
+        : p_mapgen_build_map;
+    ContentBridgeBindSummary summary;
+    char err[256];
+    void* tilemap_base;
+    int tilemap_width;
+    int tilemap_height;
+    int selector;
+
+    if (!real) {
+        content_tiles_map_end();
+        return;
+    }
+    real();
+    if (InterlockedCompareExchange(&g_content_bridge_enabled, 0, 0) == 0) {
+        content_tiles_map_end();
+        return;
+    }
+    tilemap_base = g_tilemap_data_ptr
+        ? (void*)(uintptr_t)(*g_tilemap_data_ptr) : NULL;
+    tilemap_width = g_tilemap_width ? *g_tilemap_width : 0;
+    tilemap_height = g_tilemap_height ? *g_tilemap_height : 0;
+    selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    err[0] = '\0';
+    if (!content_bridge_bind_selector(tilemap_base, tilemap_width,
+                                      tilemap_height, selector,
+                                      &summary, err, sizeof(err))) {
+        LOG_WARN("content bridge: selector=%d live-map bind failed; using native visuals: %s",
+                 selector, err[0] ? err : "unknown binding failure");
+        return;
+    }
+    if (summary.bound_content_cells > 0) {
+        LOG_INFO("content bridge: selector=%d source_cells=%u bound_cells=%u definitions=%u generation=%llu",
+                 selector,
+                 (unsigned)summary.source_content_cells,
+                 (unsigned)summary.bound_content_cells,
+                 (unsigned)summary.unique_definitions,
+                 (unsigned long long)summary.custom_maps_generation);
+    }
+}
+
+static int __cdecl hooked_tile_action_ex(void* tile,
+                                         int mode,
+                                         int x,
+                                         int y,
+                                         int arg5) {
+    static const ContentBridgeDrawOps ops = {
+        NULL,
+        (void*)(uintptr_t)ADDR_TURTLE_STATE,
+        CONTENT_BRIDGE_TURTLE_STATE_SIZE,
+        content_bridge_resolve_sprite,
+        content_bridge_sprite_get,
+        content_bridge_turtle_trans,
+        content_bridge_turtle_set_angle,
+        content_bridge_turtle_set_scalex,
+        content_bridge_turtle_set_scaley,
+        content_bridge_turtle_set_rgba,
+        content_bridge_sprite_batch_plot
+    };
+    fn_tile_action_t real = p_tile_action_ex_trampoline
+        ? p_tile_action_ex_trampoline
+        : p_tile_action_ex;
+    if (InterlockedCompareExchange(&g_content_bridge_enabled, 0, 0) != 0 &&
+        mode == 2) {
+        if (content_bridge_draw_action(tile, mode, x, y,
+                                       g_game_ticks ? (uint64_t)(*g_game_ticks) : 0u,
+                                       &ops)) {
+            return 1;
+        }
+    }
+    return real ? real(tile, mode, x, y, arg5) : 0;
 }
 
 static int __cdecl hooked_high_water_action(void* tile, int mode, int arg3, int arg4, int arg5) {
@@ -13304,6 +15402,37 @@ void hooks_init(void) {
         return;
     }
     p_mapgen_init_trampoline = (fn_void_void_t)g_mapgen_init_detour.trampoline;
+
+    // mapgen_build_map starts with:
+    //   push ebx        (1)
+    //   xor ebx, ebx    (2)
+    //   sub esp, 0x28   (3)
+    // Patch exactly 6 bytes. The post-call hook binds source-room metadata to
+    // the already-generated center/left/right native cells.
+    if (!install_detour(&g_mapgen_build_map_detour,
+                        (void*)(uintptr_t)ADDR_MAPGEN_BUILD_MAP,
+                        (void*)&hooked_mapgen_build_map,
+                        6)) {
+        LOG_WARN("hooks_init: failed to detour mapgen_build_map (custom tile visuals disabled)");
+    } else {
+        p_mapgen_build_map_trampoline =
+            (fn_void_void_t)g_mapgen_build_map_detour.trampoline;
+
+        // tile_action_ex starts with push edi / push esi / push ebx followed by
+        // mov eax,[esp+0x10]. Seven bytes is the first complete boundary. A
+        // handled return suppresses only the vanilla sprite fallback.
+        if (!install_detour(&g_tile_action_ex_detour,
+                            (void*)(uintptr_t)ADDR_TILE_ACTION_EX,
+                            (void*)&hooked_tile_action_ex,
+                            7)) {
+            LOG_WARN("hooks_init: failed to detour tile_action_ex (custom tile visuals disabled)");
+            content_tiles_map_end();
+        } else {
+            p_tile_action_ex_trampoline =
+                (fn_tile_action_t)g_tile_action_ex_detour.trampoline;
+            InterlockedExchange(&g_content_bridge_enabled, 1);
+        }
+    }
 
     // high_water_action starts with:
     //   push ebx         (1)

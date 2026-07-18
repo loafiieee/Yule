@@ -6,13 +6,13 @@ This document explains how the current online multiplayer work is structured and
 
 The game currently has a working GGPO-style rollback prototype:
 
-- deterministic save/load/checksum layer
+- rollback-oriented save/load/checksum prototype
 - rollback state capture and restore
 - input injection for player 0 and player 1
 - local rollback probes
 - callback-shaped local session
 - custom UDP host/join test session
-- host-authoritative initial state sync
+- host-owned initial state sync
 - input prediction and rollback/replay
 - checksum-based desync detection
 
@@ -27,7 +27,7 @@ The custom UDP session is a prototype harness. It proves the game can run with r
   - Computes rollback checksums.
 
 - `lua_manager.c` / `lua_manager.h`
-  - Owns full game-state serialization.
+  - Owns the broad rollback-state serialization prototype.
   - Captures native globals, player structs, thing arrays, tilemap data, room state, particle state, and transient game state.
   - Applies rollback snapshots back into the native game.
   - Canonicalizes process-local or non-gameplay values before checksum comparison.
@@ -49,7 +49,8 @@ The custom UDP session is a prototype harness. It proves the game can run with r
 
 ## Hotkeys And Commands
 
-Do not use F1, F2, F9, F10, F11, or F12; the base game uses them for development controls.
+F1/F11 retain framework window controls, while F9/F10/F12 remain base-game
+development controls. The framework's rollback diagnostics use F2–F7 below.
 
 - F2: `ggpo.roundtrip`
   - Saves current state, reloads it, and checks that the rollback checksum survives the roundtrip.
@@ -61,10 +62,10 @@ Do not use F1, F2, F9, F10, F11, or F12; the base game uses them for development
   - Toggles callback-shaped local session.
 
 - F6: `ggpo.net host`
-  - Starts UDP host on port `47777` as player 0.
+  - Starts UDP host on port `47777` as player 0 after `ggpo.net key` arms a shared key.
 
 - F7: `ggpo.net join 127.0.0.1 47777`
-  - Joins localhost host as player 1.
+  - Joins localhost host as player 1 after `ggpo.net key` arms the same shared key.
 
 Console commands:
 
@@ -73,6 +74,7 @@ Console commands:
 - `ggpo.selftest [frames]`
 - `ggpo.loopback`
 - `ggpo.local`
+- `ggpo.net key` / `ggpo.net key clear`
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
 - `ggpo.net delay [frames]`
@@ -82,8 +84,10 @@ Console commands:
 - `ggpo.net smoothping [frames]`
 - `ggpo.net correction [on|off]`
 - `ggpo.net sim [loss_pct] [min_delay] [max_delay]`
+- `ggpo.net rngtrace [on|off]`
 - `ggpo.net off`
 - `ggpo.net status`
+- `net.diag` (alias: `net.trouble`)
 
 ## Rollback Model
 
@@ -131,7 +135,10 @@ Do not fix desyncs by blindly zeroing fields. First decide whether the field is:
 
 ## What Real GGPO Needs
 
-The existing code already has most of the game-side pieces GGPO needs. The next step is replacing or bypassing the custom UDP harness with GGPO sessions and callbacks.
+The existing code has callback-shaped rollback scaffolding, but its schema, input
+confirmation, correction, checksum, and floating-point P0 defects must be repaired first.
+After that contract passes the seeded chaos suite, the custom UDP harness can be replaced
+or bypassed with GGPO sessions and callbacks.
 
 Required GGPO callback mapping:
 
@@ -221,20 +228,87 @@ This keeps the client simple, gives enough performance headroom for a relay, and
 
 The built-in online hub is back in the framework and can be opened from the main-menu `ONLINE` button or the `online.hub` console command. It is translated from the old Lua hub into C-side framework UI and currently has three tabs:
 
-- Play: account login/register, Casual Queue, Competitive Queue, queue leave, and server-driven match launch.
+- Play: account login/register with a compact opt-in `Remember me` checkbox backed by Windows Credential Manager, Casual Queue, Competitive Queue, queue leave, and server-driven match launch.
 - Friends: username entry for adding friends, incoming friend requests, incoming 5-minute challenges, friend list, accept/decline actions, and friend challenges.
-- Settings: server address as a single `host:port` field and the local P2P UDP port (`Auto` by default).
+- Settings: server address as a single `host:port` field, the local P2P UDP port (`Auto` by default), and challenge notifications.
 - Game Over: after an online match ends, both clients report win/loss to the server, receive the confirmed result and Elo update, then can requeue or return to the hub.
 
 The default control server is `eggnogg.loafiieee.com:47778`, persisted in `mods\online_hub.cfg`. The prototype server lives in `online_server/server.js` and handles login/registration, public Elo, hidden server-side MMR, casual queue, competitive MMR-range queue, friends, friend requests, 5-minute challenges, shared-map selection, and P2P match setup.
 
-Gameplay remains direct P2P through `ggpo_net`. The server chooses the map from the intersection of both clients' map manifests, sends each client the local selector for that map, randomly chooses which client takes the F6-style host role, and sends the F7-style joiner the host endpoint. Clients include a LAN IPv4 hint in their map manifest; if both players appear to share one public address, the server gives the joiner the host's LAN address instead of the public NAT address. The launcher clears the pending match once P2P starts so returning to the menu cannot relaunch the same assignment. Cosmetic profile/asset packets are disabled in `ggpo_net`; online match setup no longer sends cosmetics.
+The current control channel is bounded newline-delimited JSON over nonblocking raw TCP.
+TCP connect and login response each have independent 10-second wall-clock deadlines.
+Incoming lines are capped at 8,191 bytes and parsed as complete flat JSON objects; nested
+values, duplicate/escaped-alias keys, malformed UTF-8/escapes, integer overflow, embedded
+NUL, and truncated destination values are rejected. Protocol/framing failure disconnects
+and clears a pending authentication secret. Because this channel still has no TLS or
+certificate validation, it does not protect credentials or match tokens from an on-path
+attacker.
 
-F6/F7 `ggpo.net` host/join and F2/F3/F4 rollback tools remain debug tools, not the player-facing online flow.
+After TCP connects, the client requests and validates the server's flat `server_info`
+advertisement before it sends the login/register request. Control protocol 2, match
+protocol 2, P2P protocol 16, and packet-auth capability are all required. `auth_ok` repeats
+the same fields and `match_found` repeats the match/P2P versions, so a stale or mixed
+deployment fails at the handshake (and again at match setup as defense in depth) instead
+of consuming a queue match that cannot start.
+
+Gameplay remains direct P2P through `ggpo_net`. The server chooses the map from
+the intersection of both complete client manifests (capped at 96 KiB), sends
+each client the stable key and that client's local selector, and randomly assigns
+host/join only for player slot and authoritative initial-state duties. Both peers
+publish fresh public/LAN candidates and symmetrically send authenticated HELLOs
+to every candidate; swapping host/join cannot improve NAT traversal. Every
+nonempty server `map_key` must resolve to that exact installed map, and different
+game/framework fingerprints abort server-managed prematch before native setup.
+Connection attempts, native match initialization, state transfer, and neutral
+frame-zero input exchange run behind the match-found countdown. The client stays
+in the hub if that work outlasts the timer and enters gameplay only when the
+synchronized first frame can advance. Setup has a bounded timeout and never
+exposes a frozen GAME frame. Cosmetic profile/asset packets are compile-disabled
+in `ggpo_net`; online match setup does not send cosmetics.
+
+GGPO UDP v16 authenticates every peer datagram. The server supplies both peers one
+identical 256-bit `p2p_auth_token` as exactly 64 hexadecimal characters; the older
+per-user `p2p_token` remains only server-probe authorization. `ggpo_net_set_match_token`
+decodes and domain-separates the match secret. Each packet uses HMAC-SHA-256 truncated to
+128 bits, with a direction key binding v16, sender role, and a 64-bit CSPRNG session ID.
+The receiver verifies the role and tag in constant time before source/session adoption,
+then applies an exact 4,096-packet replay window. Endpoint or session migration is
+permitted only through an authenticated HELLO at frame zero before confirmation. Missing
+keys, wrong keys, and wrong versions fail closed. This protects P2P integrity and
+authenticity only; packet contents and traffic metadata are not encrypted.
+
+### Secure password remembering
+
+`Remember me` is opt-in and disabled by default. The feature adds only the
+username and `remember_me=0|1` as credential lookup metadata; other non-secret
+connection/UI settings also remain in the config, but it never contains the password. After a
+successful login, the password is stored as a per-user Windows generic
+credential scoped to the server host, port, and normalized account name. Turning
+the option off deletes that credential, and a saved password rejected by the
+server is removed rather than retried forever. Authentication and text-entry
+buffers are securely cleared as soon as they are no longer needed. Passwords are
+never written to framework logs. Empty, malformed, embedded-NUL, or oversized records
+are rejected and deleted from their exact Credential Manager target; cleanup failure is
+reported rather than described as success. `auth_ok` must return a canonical lowercase
+`[a-z0-9_]{1,24}` account before the credential may be stored.
+
+When an exact remembered credential is available, opening Online immediately begins
+authentication. The credential form is skipped while that request is pending and
+`auth_ok` enters the normal Play/Friends/Settings menus directly. If connection or
+authentication fails, the secret is cleared and the ordinary login form returns for
+manual recovery. Player-facing copy deliberately describes only `Remember me`; storage
+backend and cleanup details remain in non-secret diagnostics rather than the login UI.
+
+F6/F7 `ggpo.net` host/join and F2/F3/F4 rollback tools remain debug tools, not
+the player-facing online flow. Direct v16 host/join requires both developers to
+copy the same 64-hex secret and run `ggpo.net key` first. That command clears the
+clipboard after deriving a one-shot in-memory key, so the secret never enters
+console history or logs.
 
 ## Latency Tuning
 
-The debug UDP harness has two high-latency profiles:
+The debug UDP harness has two high-latency profiles. These are diagnostic controls, not a
+claim that the current rollback transport is reliable:
 
 - `ggpo.net highping [frames]`
   - Conservative profile.
@@ -255,51 +329,67 @@ State correction is capped to avoid giant hard pauses:
 - if the correction arrives late, the client applies it as a visible snap instead of staying frozen for many seconds
 - correction transfers use delta chunks against the last shared correction/start-state baseline when possible, with full-state chunks as the fallback
 
-## Online UX Needed
+The freeze cap improves responsiveness but can let simulation continue beyond recoverable
+input/history and can apply a late correction without a shared barrier. Those are P0
+correctness problems; tuning the cap or prediction count is not their solution.
 
-The real frontend should be queue-first, not host/join-first.
+## Rollback Correctness Status
 
-Online hub:
+The current authenticated v16 transport still has known desync and recovery hazards. The
+full design and acceptance contract are in
+`docs/superpowers/specs/2026-07-17-online-rollback-correctness-design.md`; prioritized work
+is tracked in `TODO.txt`.
 
-- account login/create account from day one
-- current username, public Elo, and connection status
-- competitive queue button
-- casual queue button
-- queue cancel button
-- match found / connecting / synchronizing / loading states
-- ping/route display once a match is found
-- disconnect reason and recovery path
+The required P0 repairs are:
 
-Gameplay overlay/debug:
+- freeze rollback schema/size only after the selected map and deterministic content load;
+- separate monotonic latest-received and highest-contiguous remote input horizons, with
+  ACK/selective resend that cannot regress prediction under reordering;
+- gate checksum/correction/state retirement on the highest contiguous horizon and reject
+  stale/far-future frames before they can overwrite newer wrapped ring entries;
+- refuse to advance beyond recoverable input or retained-state history;
+- replace asynchronous host correction with a mutually confirmed-frame transaction that
+  validates the full blob before applying and replays buffered inputs on both peers;
+- replace pointer-dependent raw slabs with a typed, versioned, pointer-free schema and
+  explicit controller/player roles, including reconstruction of dynamic entity count and
+  allocator state across spawn/despawn/death; and
+- checksum every simulation input, including gameplay RNG and active-room dependencies,
+  while enforcing one x87/MXCSR environment for live and replay ticks.
 
-- enemy username above their character
-- local `V` indicator under the local player's character
-- optional debug-only ping, rollback, prediction, transport route, and checksum counters
+Authentication, replay rejection, and socket retry remain valuable completed layers, but
+they do not close these deterministic-state defects. Production GGPO integration is gated
+on the repaired state/input callbacks and seeded network-chaos suite; a library swap cannot
+make incomplete serialization deterministic.
 
-Post-game screen:
+## Online UX Status
 
-- custom online end screen showing winner/loser
-- match result, rating/MMR change when ranked, and disconnect/desync reason if relevant
-- rematch button when both players are eligible
-- queue again button
-- return to online hub button
+The current built-in frontend is queue-first. Players use account login/registration,
+Casual or Competitive queue, queue cancellation, friends, and challenges; the F6/F7
+host/join path is developer-only. The hub shows connection/account/Elo state and explicit
+match-found, retry, synchronizing, loading, abort, and disconnect status. Its login line
+uses a compact conventional `Remember me` checkbox, and every framework-owned online
+screen queues the game's actual mouse renderer once at the topmost render layer. It uses
+the live native global scale, black shadow pass, animated red/yellow color pass,
+`misc[7]` artwork, and native hotspot instead of the former white/custom-scale plot.
 
-Current friend and challenge prototype:
+The current Game Over state shows the outcome, opponent, map, server confirmation/rating
+text, and responsive Requeue and Hub buttons. Requeue remains in a waiting state until the
+server confirms the result. The Friends tab supports add/remove, requests, presence,
+direct challenges, accept/decline, and five-minute expiry.
 
-- friend list
-- add/remove friends
-- incoming friend requests at the top of the Friends tab
-- online presence
-- direct friend challenges
-- accept/decline challenge
-- 5-minute challenge expiry, with challenges also removed when a player disconnects
+During an established match, the pause, options, console, and Mods overlays keep rollback
+service and simulation moving while local gameplay input is neutralized. The GGPO-active
+key guard consumes F1-F12 so unsafe debug/window actions cannot mutate the match. Support
+for arbitrary native screens outside those audited overlays remains future work.
 
-Later friend work:
+Still-open UX work includes:
 
-- block/mute
-- private rematch flow
-
-For development, keep console commands available. Later, online production builds should keep game updates flowing through pause/menu states where needed and should block online-unsafe debug hotkeys.
+- ping and direct/relay route display on the player-facing match card;
+- a bilateral private rematch flow (distinct from queue-again);
+- friend-challenge map selection from the two clients' manifest intersection;
+- block/mute and richer social presence;
+- synchronized player colors if cosmetics are deliberately reintroduced; and
+- live small-window, DPI, mouse-hitbox, native-cursor, and two-client acceptance.
 
 ## Player Identity And Cosmetics
 
@@ -314,152 +404,117 @@ Current online cosmetic rules:
 - cosmetics are not included in rollback state checksums or desync decisions
 - missing or mismatched cosmetic assets should not block an online match because they are not part of the match contract
 
-## Matchmaking / Transport Needed
+## Matchmaking / Transport Status
 
-For real internet play, direct UDP localhost testing is not enough.
+The bundled Node.js prototype server currently supplies account registration/login,
+public Elo and hidden MMR, casual/competitive queues, matchmaking, friend/request/
+challenge state, shared-map selection, peer candidate signaling, per-match P2P secrets,
+result confirmation, and rating updates. The client exposes queue/match lifecycle words,
+not host/join details.
 
-Needed backend pieces:
+The current direct transport supplies symmetric public/LAN candidate probing, three
+fresh-socket attempts, bounded setup/disconnect policy, and authenticated/replay-protected
+v16 UDP packets. The client-side control transport supplies atomic queued sends, bounded
+receive framing, strict flat-JSON parsing, connect/auth deadlines, and all-or-nothing map
+manifest publication.
 
-- account registration/login
-- session tokens
-- player profiles
-- ranked and casual queue state
-- MMR/rating updates
-- matchmaking rules
-- signed match config generation
-- match result reporting
-- friend/challenge APIs
-- basic rate limiting and packet validation
+This is still a prototype service boundary. Before public internet credentials or ranked
+results are trusted, it needs at least:
 
-Needed transport pieces:
+- TLS with certificate/hostname validation on the account/control channel;
+- hardened session authentication so reconnects do not repeatedly submit passwords;
+- durable production account/match storage, rate limiting, abuse controls, and an admin
+  dashboard;
+- authoritative result validation instead of trusting two client reports;
+- relay fallback for strict NAT/CGNAT and route selection/latency display;
+- IPv6 candidate exchange and sockets; and
+- an explicit production deployment, key rotation, monitoring, and recovery plan.
 
-- signaling service for client connection setup
-- NAT traversal strategy
-- direct UDP connectivity probes
-- relay fallback for strict NATs or bad routes
-- route selection based on connectivity and latency
-- timeout, disconnect, and reconnect policy
-- per-match transport tokens so random packets cannot join a match
+GGPO itself would handle rollback protocol details, but not these accounts, queues,
+friends, signaling, NAT traversal, or relay responsibilities. Replacing the custom
+rollback UDP harness with the production GGPO library therefore remains a separate
+roadmap item.
 
-The backend should hide transport details from the frontend. The online UI should say "queueing", "match found", "connecting", or "synchronizing", not "host" or "join".
+## Implementation Milestones
 
-GGPO handles rollback protocol details, but it does not provide accounts, queues, matchmaking, friend systems, signaling, NAT traversal, or relay infrastructure by itself.
+The following prototype milestones are implemented in source and covered by focused
+tests: data/control messages, account/queue/friend/challenge server flow, built-in hub,
+strict client control transport, map manifests, symmetric direct signaling, v16 packet
+authentication, bounded P2P retry, prematch preparation behind the countdown, menu-time
+simulation, result reporting/UI, credential storage, and gameplay-Lua suspension.
 
-## Implementation Phases
-
-Phase 1: production plan and data contracts
-
-- write match config schema
-- write account/profile schema
-- write queue and match result data model
-- define client/server messages
-- define direct/relay transport abstraction
-- keep cosmetics outside the online match config
-
-Phase 2: backend skeleton
-
-- Go backend project
-- local dev config
-- PostgreSQL schema
-- account create/login
-- session token validation
-- health/status endpoint
-
-Phase 3: queue and match config
-
-- ranked queue API
-- casual queue API
-- queue cancel
-- simple matchmaking loop
-- signed match config returned to both clients
-- result submission stub
-
-Phase 4: client integration without final UI
-
-- console or debug commands for login and queue
-- backend connection status
-- receive match config
-- start deterministic online match from match config
-- keep F6/F7 harness as a debug-only path
-
-Phase 5: transport hardening
-
-- direct UDP signaling
-- NAT traversal probes
-- relay fallback
-- route choice and ping display
-- disconnect handling
-
-Phase 6: online hub and post-game UX
-
-- login/create account UI
-- online hub
-- ranked/casual queue buttons
-- queue cancel/status
-- custom winner/rematch/queue-again/hub end screen
-
-Phase 7: friends and challenges
-
-- friend list
-- friend requests
-- presence
-- challenge flow
-- remaining private rematch handling
+Remaining release milestones include the P0 rollback schema/input/history/correction/
+checksum repairs, their deterministic chaos/soak acceptance, the security and
+infrastructure items above, full mod/content/config compatibility enforcement, production
+GGPO integration, physical two-machine/NAT/window acceptance, and production operations.
+Private rematch, friend map choice, color synchronization, social integrations, and richer
+UI are later product work.
 
 ## Mod And Anti-Cheat Policy
 
-The eventual anti-cheat/mod policy should be decided before public online is enabled.
+Framework-managed Lua owners are classified from actual API use. Gameplay-affecting
+owners are suspended from match assignment through cleanup, their callbacks/mutators are
+guarded, and known transient overrides are neutralized. Cosmetic/read-only Lua may remain
+active inside that boundary. Hiding the Mods page is not the mechanism; it remains
+inspectable and explains suspension.
 
-Minimum compatibility checks:
+Server-managed prematch also rejects differing peer-reported 32-bit game/framework build
+fingerprints and requires an exact server-selected `map_key`. These identifiers catch
+ordinary incompatibility but are non-cryptographic reports from the clients, so they are
+not anti-cheat.
 
-- game executable hash
-- injected framework DLL hash/version
-- GGPO protocol version
-- enabled mod list
-- loaded map checksums
-- relevant config/rules checksums
-
-Likely policy for ranked/public queue:
-
-- disable gameplay-affecting mods
-- allow cosmetic-only mods only if they do not affect rollback state
-- require both clients to agree on custom maps
-- reject mismatched state-affecting scripts/assets
-
-Important: anti-cheat should not just hide the mod menu. The online mode needs deterministic compatibility checks before the match starts.
+Before public/ranked play, add a complete deterministic compatibility manifest covering
+the enabled gameplay-mod set, content-registry state, loaded maps/assets, relevant rules
+and configuration, and protocol/framework versions. A production policy must define
+allowed content and stronger integrity controls; framework Lua guards cannot prevent a
+different injected DLL, native patch, debugger, FFI/raw-memory write, or malicious client.
 
 ## Testing Needed
 
 Keep the current tests and add production-style tests around them.
 
-Existing manual tests:
+Existing debug/manual probes:
 
 1. F2 roundtrip save/load.
 2. F3 loopback rollback verification.
 3. F4 local callback session.
-4. F6/F7 localhost host/join session.
+4. F6/F7 authenticated localhost host/join session after `ggpo.net key`.
+
+Focused automated coverage now includes the strict control parser and hook lifecycle,
+real-socket send-queue behavior, v16 packet authentication/replay rejection and paired
+prematch flow, server auth/token generation, result-screen routing, gameplay-mod guards,
+credential storage, map V2/content bridge behavior, map-generation retirement, updater
+transactions, and window policy/static integration. The exact command set and remaining
+manual order live in `docs/superpowers/plans/2026-07-17-todo-batch-verification.md`.
 
 Additional tests to add:
 
-- automated deterministic replay test with fixed input traces
-- long soak test across rooms, deaths, respawns, score changes, and match reset
-- checksum diff dump on first desync
-- packet loss/jitter simulation via `ggpo.net sim`
-- host-authoritative state correction via `ggpo.net correction`
-- artificial input delay tests
-- mismatched map/version rejection tests
-- mod mismatch rejection tests
-- two-machine LAN test
-- internet test with NAT/relay path
+- paired deterministic sessions with thousands of changing, nonzero input frames and
+  exact per-frame canonical state/checksum assertions;
+- prediction, multi-frame rollback, input/state ring wrap, frame-number wrap, forced
+  mismatch, transactional correction, and disconnect at every correction phase;
+- seeded ordinary/burst loss, delay, reorder, duplicate, `WSAEWOULDBLOCK`, bandwidth cap,
+  and input-versus-correction traffic competition at the 64-input and 512-state edges;
+- semantic save/load tests for controller/player roles and every typed schema component;
+- differing prior maps followed by the same selected map/content layout;
+- long native soaks across rooms, deaths, respawns, score changes, match reset, hazards,
+  custom maps, menus, audio/render/window variants, and differing initial FP modes;
+- first-divergence component/field/entity/tile diagnostics and a secret-free two-peer repro
+  bundle/diff tool;
+- dynamic two-client version/map/content/mod mismatch rejection;
+- two-machine LAN and home-NAT tests; and
+- internet tests with direct/relay failover after those transports exist.
 
 Desync diagnostics should report:
 
 - frame
+- correction/session epoch and confirmation/prediction horizons
 - local checksum
 - remote checksum
-- first differing rollback blob offset
-- field name for that offset
+- component hashes and the first differing schema field/entity/tile cell
 - local/remote input commands
+- loss/reorder/duplicate/local-drop/rollback/stall/correction counters
+- x87 control word and MXCSR
 - active room
 - old active room
 - room lerp state
@@ -470,37 +525,40 @@ Desync diagnostics should report:
 
 ## Production Checklist
 
-- Real GGPO session wrapper.
-- Account creation/login from day one.
-- Queue-first online hub and status UI.
-- Competitive and casual matchmaking queues.
-- Signed backend match config.
-- Deterministic match-start flow.
-- Version/map/mod compatibility handshake.
-- Direct P2P gameplay transport.
-- NAT traversal and relay fallback.
-- Custom online end screen with winner, rematch, queue again, and hub actions.
-- Disconnect/rematch handling.
-- Hardened post-match result reporting and MMR/rating update path.
-- Cosmetics/customization plan that works offline and stays out of online transport unless explicitly reintroduced.
-- Configurable input delay if needed.
-- Packet loss/jitter testing.
-- Desync dump files.
-- Clear public/private mod policy.
-- Release build logging that is useful but not spammy.
+Implemented prototype surface:
+
+- account login/registration, queue-first hub, casual/competitive queue, friends and
+  challenges;
+- synchronized hidden prematch setup and direct authenticated P2P rollback transport;
+- complete shared-map manifests and exact server-selected map identity;
+- bounded retry/disconnect handling and a custom confirmed-result Requeue/Hub screen;
+- gameplay-Lua suspension, debug diagnostics, desync dumps, simulated loss/jitter, and
+  configurable prototype latency controls; and
+- strict client control framing/parser/deadlines (without transport encryption).
+
+Open production gates:
+
+- typed deterministic state schema, monotonic/recoverable input protocol, coordinated
+  correction, full simulation checksum coverage, canonical FP controls, and chaos/soak
+  acceptance;
+- real GGPO session wrapper;
+- TLS/certificate validation and hardened session authentication;
+- cryptographically trustworthy match configs plus complete version/map/mod/content/
+  rules compatibility enforcement;
+- relay fallback, IPv6, route choice, and two-machine internet soak testing;
+- hardened server-side result validation and durable production storage/operations;
+- a clear public/private content policy and stronger integrity boundary;
+- private rematch and the remaining UX/runtime acceptance; and
+- release logging/monitoring that is useful without exposing secrets.
 
 ## Build Command
 
-From repo root in PowerShell:
+`compile.sh` is the canonical source and library list. From the repository root with the
+32-bit MSYS2 toolchain available, run:
 
-```powershell
-$env:PATH='C:\msys64\mingw32\bin;' + $env:PATH
-$src=@('dllmain.c','stubs.c','hooks.c','custom_maps.c','lua_manager.c','ggpo_ext.c','ggpo_loopback.c','ggpo_local.c','ggpo_net.c','font_ext.c','texture_ext.c','log.c','net_ext.c')
-$libs=@('-lkernel32','-luser32','-lopengl32','-l:libluajit-5.1.dll.a','-lws2_32','-lwinhttp','-lcomdlg32','-lshell32','-lole32','-IC:\msys64\mingw32\include','-LC:\msys64\mingw32\lib')
-& C:\msys64\mingw32\bin\gcc.exe -m32 -shared -o build\SDL2_test.dll @src @libs
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& C:\msys64\mingw32\bin\gcc.exe -m32 -shared -o SDL2.dll @src @libs
-exit $LASTEXITCODE
+```bash
+bash compile.sh
 ```
 
-When real GGPO is added, update this command to include the GGPO source/library and any required include paths.
+The script links `build/SDL2_test.dll` first and only replaces `SDL2.dll` after that link
+succeeds. When real GGPO is added, update the script's source/library list there.

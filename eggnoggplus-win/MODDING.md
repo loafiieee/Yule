@@ -136,6 +136,11 @@ end)
 
 If any `on_event` handler returns `true`, the framework will **consume** the SDL event (the game won't see it).
 
+The framework also emits a synthetic `delta_time` event once per rendered frame.
+Its `value` field is the elapsed time in seconds and may be changed for offline
+time-scale effects. Changing it classifies the mod as gameplay-affecting; online
+rollback always supplies and keeps the unmodified value.
+
 ### Logging
 
 ```lua
@@ -327,6 +332,9 @@ API:
 - `mod.interop.require(namespace [,range]) -> table, version | nil, err`
 
 Namespaces are global, so use a unique prefix like `"your_mod_id:service_name"`.
+Service tables should be plain tables. The framework recursively snapshots them
+and wraps function values with the provider's enabled/suspension guard;
+metatables are intentionally not exposed across the interop boundary.
 
 ---
 
@@ -519,9 +527,12 @@ mod.ui.draw_cursor()
 
 - `mod.ui.cursor_sprite([index=7]) -> sprite_id | nil`
 - `mod.ui.draw_cursor([opts]) -> bool`
-  - Draws the vanilla cursor by default.
-  - Supports `sprite`, `index`, `scale`, `size`, `hot_x`, `hot_y`, `tint`, and `layer`.
-  - Registered custom states draw the default cursor automatically.
+  - With no options (or `{}`), calls the game's exact two-pass mouse renderer: native
+    global scale, black shadow, animated red/yellow color, hotspot, and render-state
+    restore.
+  - Passing options selects the configurable sprite renderer and supports `sprite`,
+    `index`, `scale`, `size`, `hot_x`, `hot_y`, `tint`, and `layer`.
+  - Registered custom states draw the exact native default cursor automatically.
   - `define_state` can disable it with `cursor = false` or replace it with custom cursor options.
 
 Tile preview helper:
@@ -665,6 +676,57 @@ Custom state API:
 - While a custom state is active, `mod.ui.state_name()` returns the registered state name, `on_frame` continues to run, and `on_event` can fully consume input.
 - `mod.ui.define_state(name, { enter, update, render, event, leave, cursor }) -> bool` creates the state and routes lifecycle callbacks for that mod.
 - `cursor = false` disables the automatic custom-state mouse cursor. `cursor = { ... }` passes options to `mod.ui.draw_cursor`.
+
+## Online rollback safety
+
+The framework automatically suspends gameplay-affecting Lua mods for the full
+online matchmaking/countdown/match window. Cosmetic-only mods keep receiving
+frame, layout, and input events, so overlays, UI, textures, fonts, and cosmetic
+audio can remain active without changing the rollback simulation.
+
+A mod is classified as gameplay-affecting as soon as it does any of the
+following:
+
+- registers `mod.on_tick(...)` or `mod.on_tick_post(...)`;
+- registers a bot provider or custom gameplay menu mode;
+- begins or commits a `mod.content` registration transaction;
+- changes the synthetic `delta_time` event's `e.value`; or
+- calls any state-changing `mod.game` function (input injection, state restore,
+  RNG/native-tick setters, match control, player mutation, and similar APIs).
+
+The classification is automatic and sticky for the lifetime of that loaded mod.
+Read-only `mod.game` telemetry does not classify a mod, so a HUD that only reads
+snapshots can continue online. If one package mixes a HUD with bot or gameplay
+logic, the whole package is suspended; split the cosmetic portion into a separate
+mod if it should remain visible online.
+
+While suspended:
+
+- ordinary callbacks and config action handlers for that mod are not dispatched;
+- mutating `mod.game` calls return `false, error_message`, including calls made
+  from the console or a retained Lua function reference;
+- cached interop service methods are guarded by their provider and refuse calls
+  while that provider is suspended or disabled;
+- tick/poll input overrides, raw-input blocks, blocked ticks, AI match state,
+  transient player hide/sword-offset overrides, time scaling, and stale native
+  UI buttons are cleared;
+- frame delta is forced to its unmodified value and the reported time scale is
+  `1.0`; and
+- the complete loaded mod set and Lua-code hot reload are frozen until online
+  teardown, while bind/config writes belonging to suspended gameplay mods are
+  rejected, so no entry, load, or unload callback can bypass the guard.
+
+Native UI actions that can indirectly enter, leave, or restart a match
+(`button_invoke_ptr`, `button_activate_ptr`, `enter_state`, `leave_state`, and
+`goto_main_menu`) are refused for every mod during the online safety window.
+Cosmetic drawing, overlays, button layout, texture/font reloads, audio, and
+read-only telemetry remain available.
+
+`mod.info()` includes `gameplay_affecting`, `suspended_online`, and
+`gameplay_reason` for diagnostics. `mod.online.status()` exposes the global
+`gameplay_mods_suspended` flag. Suspension does not replay missed callbacks when
+it ends; gameplay mods should naturally re-check the current state on their next
+callback.
 
 ## Gameplay API (`mod.game`)
 
@@ -956,59 +1018,137 @@ Registered texture PNGs are watched for source-file changes:
 - Updates are reloaded from disk and applied live by rebuilding graphics atlases.
 - If live rebuild fails, the framework logs that restart may still be required.
 
-- `storage.get(key [,default]) -> value`
-- `storage.set(key, value) -> true | false, err`
-- `storage.delete(key) -> bool`
-- `storage.save() -> true | false, err`
-- `storage.schema() -> int`
-- `storage.set_schema(version) -> true | false, err`
-- `storage.migrate(target_schema, fn(from_schema, target_schema)) -> true, schema | false, err`
-- `mod.interop.provide(namespace, version, table) -> true | false, err`
-- `mod.interop.require(namespace [,range]) -> table, version | nil, err`
+## Declarative content tiles (`mod.content`)
 
-- `mod.ui.state_name() -> string`
-- `mod.ui.state_ptr() -> number`
-- `mod.ui.is_state(name) -> bool`
-- `mod.ui.screen_size() -> w, h`
-- `mod.ui.mouse_pos() -> x, y`
-- `mod.ui.mouse_buttons([button]) -> left_down, left_pressed, right_down, right_pressed, middle_down, middle_pressed` or, with `button`, `down, pressed`
-- `mod.ui.begin_overlay()`
-- `mod.ui.end_overlay()`
-- `mod.ui.flush()`
-- `mod.ui.rect(x, y, w, h, opts)`
-- `mod.ui.border(x, y, w, h, opts)`
-- `mod.ui.line(x1, y1, x2, y2, opts)`
-- `mod.ui.measure_text(text [,scale]) -> w, h`
-- `mod.ui.readable_scale([scale]) -> rendered_scale`
-- `mod.ui.text_scale_factor([scale]) -> rendered_scale` (alias)
-- `mod.ui.hitbox(id, x, y, w, h [,button]) -> hovered, clicked, down`
-- `mod.ui.icon_button(id, icon, x, y, w, h [,opts]) -> clicked, hovered`
-- `mod.ui.tabs(id, items, selected, opts) -> selected, changed`
-- `mod.ui.segmented(id, items, selected, opts) -> selected, changed`
-- `mod.ui.swatch_grid(id, colors, selected, opts) -> selected, changed`
-- `mod.ui.item_grid(id, items, selected, opts) -> selected, changed`
-- `mod.ui.slider(id, value, min, max, opts) -> value, changed`
-- `mod.ui.checkbox(id, value, opts) -> value, changed`
-- `mod.ui.tooltip(text [,opts])`
-- `mod.ui.push_style(style)`, `mod.ui.pop_style()`
-- `mod.ui.theme(style)`, `mod.ui.set_theme(name)`, `mod.ui.current_style()`
-- `mod.ui.sheet_base(name) -> sprite_base | nil`
-- `mod.ui.sprite_id(sheet_or_base, index) -> sprite_id | nil, err`
-- `mod.ui.draw_sprite(sprite_id_or_frame, x, y [,opts]) -> bool`
-- `mod.ui.native_button(id, label, grid_x, grid_y [,layout_x [,layout_y]]) -> clicked`
-- `mod.ui.native_set_pos(id, x, y) -> bool`
-- `mod.ui.native_set_layout(id, layout_x, layout_y) -> bool`
-- `mod.ui.native_resize(id, w, h [,shrink]) -> bool`
-- `mod.ui.native_set_text_scale(id, sx [,sy]) -> bool`
-- `mod.ui.native_hide(id, hidden) -> bool`
-- `mod.ui.native_remove(id) -> bool`
-- `mod.ui.find_button_by_action_ptr(action_ptr [,nth]) -> ptr|nil`
-- `mod.ui.find_button_by_label(label [,nth]) -> ptr|nil`
-- `mod.ui.button_rect_ptr(ptr) -> x, y, w, h`
-- `mod.ui.button_set_pos_ptr(ptr, x, y) -> bool`
-- `mod.ui.button_resize_ptr(ptr, w, h [,shrink]) -> bool`
-- `mod.ui.button_hide_ptr(ptr, hidden) -> bool`
-- `mod.ui.button_remove_ptr(ptr) -> bool`
+`mod.content` is the owner-scoped, transactional foundation for custom map
+tiles. It separates deterministic tile definitions from volatile atlas sprite
+ids: definitions store a symbolic `owner:sheet` key, and the framework resolves
+that key again after atlas rebuilds.
+
+Register a sheet first, then commit a complete replacement set for your mod:
+
+```lua
+mod.assets.load_spritesheet("terrain", "assets/terrain.png", {
+  cell_w = 16,
+  cell_h = 16,
+  padding = 0,
+})
+
+local tx, err = mod.content.begin()
+assert(tx, err)
+
+local ok
+ok, err = tx:register_tile({
+  id = "moss_floor",
+  name = "Moss Floor",
+  native_glyph = "x",
+  sheet = "terrain",
+  sprite_index = 0,
+  frame_count = 4,
+  frame_ticks = 6,
+  animation = "loop",
+  mirror_with_room = true,
+  random_phase = true,
+  offset_x = 0,
+  offset_y = 0,
+  scale = 1,
+  angle_degrees = 0,
+  tint = {1, 1, 1, 1},
+})
+assert(ok, err)
+
+ok, err = tx:commit()
+assert(ok, err)
+```
+
+API:
+
+- `mod.content.begin() -> transaction | nil, err`
+- `transaction:register_tile(def) -> true | false, err`
+- `transaction:commit() -> true | false, err`
+- `transaction:abort() -> true | false, err`
+- `mod.content.qualify(local_id) -> "owner:id" | nil, err`
+- `mod.content.find_tile(local_or_qualified_id) -> definition | nil`
+- `mod.content.fingerprint() -> sha256_hex, tile_count, generation`
+- `mod.content.owner` is the normalized owner id, or `nil` when the manifest id
+  cannot be used as a content namespace.
+
+`mod.content.fingerprint()` describes the complete live process registry, not
+just the calling mod. Its digest/count/generation include definitions owned by
+all loaded mods and map packages, so it must not be used as a package-only
+version identifier.
+
+`find_tile` returns a detached Lua table (never a live registry pointer) with
+the normalized `key`, `owner`, `id`, display `name`, behavior/sheet/frame fields,
+both string `animation` and numeric `animation_mode`, transform/tint fields,
+flags plus their boolean forms, and the `asset_sha256` and
+`definition_sha256` digests.
+
+Content-compatible mod ids are at most 47 characters and use letters, numbers,
+`.`, `_`, and `-` without starting with `.` or `-`. The `map.` owner prefix is
+reserved for map packages, preventing a mod transaction from replacing map-owned
+definitions.
+
+A transaction is the complete definition set for its owner. Committing an empty
+transaction removes that owner's tiles. Failed validation or commit changes
+nothing. Transactions automatically abort during garbage collection, and every
+committed owner is removed when its mod disables, unloads, or hot reloads.
+Each owner may register at most 4,096 tiles, and the process-wide registry is
+capped at 65,535 tiles.
+
+Tile definition fields:
+
+- required: `id`, `native_glyph`, `sheet` (or `sprite_sheet`)
+- optional: `name`, `sprite_index`, `frame_count`, `frame_ticks`, `animation`,
+  `layer`, `mirror_with_room`, `random_phase`, `offset_x`, `offset_y`, `scale`,
+  `scale_x`, `scale_y`, `angle`/`angle_degrees`, `tint`, `asset_sha256`
+
+`animation` is `loop`, `ping_pong`/`pingpong`, or `once`. `tint` is exactly four
+RGBA numbers in `0..1`. Unknown keys, fractional integer fields, NaN/infinity,
+unknown flags, overlong strings, unsafe behavior glyphs, duplicate tile ids, and
+out-of-range values return a precise error instead of being coerced.
+
+`layer` defaults to `0` and must be `0` or `1`. These values select the engine's
+two real sprite-batch banks; arbitrary signed z-order values are not supported.
+
+For a mod-owned sheet, `sheet` names an id previously passed to
+`mod.assets.load_spritesheet`. The framework hashes the actual file bytes at
+registration time. `asset_sha256` is optional for mods, but when supplied it
+must match those bytes. Built-in keys such as `builtin:tiles` derive a stable
+identity internally and must omit `asset_sha256`. Recognized built-in content
+sheets are `builtin:sprites`, `builtin:tiles`, `builtin:misc`, and
+`builtin:glyphs`; unknown built-in names remain unresolved and use the native
+fallback.
+
+A sheet used by `mod.content` must itself be content-key compatible: at most 47
+characters using letters, numbers, `.`, `_`, and `-`, without a leading `.` or
+`-`. `mod.assets` accepts a few broader ids for UI-only use, but those cannot be
+made into an unambiguous `owner:sheet` content key.
+
+Every stored sheet name is normalized as a qualified `owner:sheet` key. External
+mod sheets are range-checked against the sprite count reported by
+`mod.assets.load_spritesheet`. After an atlas rebuild the resolver looks up the
+new base id, so tile definitions never retain volatile atlas ids.
+
+Content registration classifies the package as gameplay-affecting because its
+native fallback behavior can affect collision/update logic. Mutating content
+operations are therefore suspended during online rollback just like mutating
+`mod.game` calls.
+
+The registry, map-v2 metadata path, deterministic animation calculations,
+built-in/mod/map sheet atlas loading, bounds-checked atlas-key resolver, live
+generated-map binding, and native tile draw bridge are implemented. Bound V2
+symbolic cells resolve and draw the registered sprite; animation uses the
+rollback-tracked game tick, and missing content automatically draws the declared
+native fallback. The custom transform is relative to the engine's current tile
+transform, tint multiplies the current map/native tint, and the complete turtle
+state is restored after drawing.
+
+Only V2 map cells currently obtain live bindings. Mod-owned definitions can be
+registered and queried, but general runtime tile placement/editing remains a
+future API. There is no API for arbitrary native tile callbacks. Fixed-address
+integration still requires a manual in-game visual pass for mirrored rooms,
+external sheets, atlas rebuilds, and forced missing-asset fallback.
 
 ---
 

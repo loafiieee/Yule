@@ -12,3 +12,23 @@ ggpo.net rngtrace on
 dev on
 dev off
 help
+dev on
+help
+dev off
+help
+dev off
+dev on
+help
+ggpo.local on
+ggpo.local status
+ggpo.local host
+ggpo.net host
+ggpo.local host
+clear
+ggpo.net host
+ggpo.net
+ggpo.local host
+ggpo.net host
+state
+state.switch
+state.switch gameplay

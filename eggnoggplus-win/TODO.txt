@@ -1,14 +1,187 @@
-Known issue / not fully working:
-- Online play in the background of menus: the sim tick was added for pause/options/mods, but opening options/mods mid-match still stops the match. Needs more work (pause menu itself is fine).
+# Open work
 
-Later:
-- Expand the content API further (more weapons than just a sword, custom map tiles, etc.)
-- Reverse engineer the custom cursor used in vanilla menus so that we can use them for custom menus if wanted
-- Expand the UI library even more
-- Make the online mod do the prematch work in the prematch countdown instead of at the start of gameplay
-- take a look at water effects for custom maps, like the fumes and bubbles present in the big stinky (vanilla 3)
-- General window-sizing improvement (F11 fullscreen / F1 window sizes are a little broken on some devices even in vanilla)
-- (optional) relay fallback for hostile NAT (mobile hotspot / symmetric NAT) - direct hole-punch works for normal home networks
-- v2 custom map implementation (with support for custom tiles made by the content API?)
-- per map tilesets (for custom maps)
-- ensure all mods that affect gameplay are disabled during online play
+Release/security blockers:
+    - Protect the account/control channel with TLS, certificate/hostname validation, and
+      hardened session authentication. It is currently strict and bounded, but still raw
+      TCP; passwords and match tokens are visible to an on-path observer.
+    - Add relay fallback for hostile NAT, symmetric NAT, mobile hotspots, and CGNAT.
+    - Add IPv6 P2P sockets and IPv6 candidate exchange.
+    - Replace the peer-reported compatibility hints with a complete deterministic
+      compatibility manifest covering game/framework/protocol versions, gameplay mods,
+      content-registry state, maps/assets, rules, and relevant config. Define the public
+      content policy and stronger integrity/anti-cheat boundary.
+    - Harden match-result validation and production persistence/operations; add a secure
+      server dashboard for password resets, account deletion, moderation, audit logs, and
+      least-privilege administration.
+    - Replace the custom rollback UDP harness with the production GGPO library/session
+      wrapper after the repaired deterministic callbacks/input protocol and seeded chaos
+      suite are accepted.
+
+Netcode correctness and quality (open; the current rollback transport still has known
+desync and recovery failure modes):
+    - P0: Freeze and allocate the rollback-state layout only after the server-selected
+      map and deterministic content are installed. Fingerprint a versioned schema, then
+      validate the final layout (or a proven maximum) so different prior maps cannot
+      cause false incompatibility or undersized buffers.
+    - P0: Make remote-input confirmation monotonic. Track the highest contiguous confirmed
+      frame, never let an older recovered/reordered packet replace the predictor command,
+      and add explicit ACK/selective-resend state instead of relying on a newest-to-oldest
+      64-frame packet window. Publish checksums and make correction/retirement decisions
+      only at or below that contiguous confirmed horizon.
+    - P0: Protect input rings with wrap-safe serial arithmetic and retention-window checks.
+      Reject stale-below-retention and implausible far-future frames so a delayed packet
+      cannot overwrite a newer generation that shares its 512-slot ring index.
+    - P0: Never simulate beyond recoverable input or rollback history. Reconcile the
+      64-input resend window, 512-state history, prediction cap, and stall timeout; pause,
+      reliably recover, perform a coordinated resync, or disconnect before a permanent
+      hole/history overwrite can occur.
+    - P0: Redesign correction around a mutually confirmed-frame barrier. Snapshot only a
+      confirmed frame, buffer and acknowledge subsequent inputs on both peers, apply the
+      snapshot, then deterministically replay. Do not clear host history and continue from
+      predicted state while the joiner rewinds later.
+    - P0: Validate every correction blob's schema, size, canonical checksum, and transfer
+      completeness before touching live state, then apply it transactionally with rollback
+      on failure.
+    - P0: Replace pointer-dependent raw memory slabs with a typed, versioned, pointer-free
+      deterministic state schema. Store controller/player roles explicitly and require
+      semantic save-load equality, not only byte-copy success. Loading must reconstruct
+      dynamic entity cardinality and allocator metadata instead of requiring the live
+      `thing_count` to match a snapshot across spawn/despawn/death.
+    - P0: Checksum every simulation-affecting field, including gameplay RNG and every input
+      to active-room selection; formally separate camera/audio/presentation state. Enforce
+      one canonical x87/MXCSR environment around both live and replay ticks.
+    - P1: Preserve the first divergent canonical snapshots and report component hashes plus
+      the exact first differing field/entity/tile. Emit a secret-free per-session repro
+      bundle with fingerprints, full input trace, network-chaos seed/events, FP controls,
+      and RTT/jitter/loss/reorder/rollback/stall/correction counters; add a peer-trace diff
+      tool.
+    - P1: Expand paired automated sessions from prematch/one neutral tick to thousands of
+      nonzero-input frames with prediction, rollback, frame wraparound, forced mismatch,
+      correction, disconnect, entity spawn/despawn/death, and exact per-frame
+      state/checksum assertions.
+    - P1: Add seeded loss, burst-loss, delay, reordering, duplication, would-block, and
+      bandwidth-limit matrices at the resend/history boundaries. Add native soaks across
+      rooms, deaths, respawns, scoring, reset, hazards, custom maps, window/render variants,
+      and differing floating-point modes; require bounded stalls and reproducible failures.
+    - P1: Define local-input sampling across prediction/time-sync stalls so stale physical
+      input is never assigned to an unintended future frame. Capture/canonicalize state
+      once per frame and reuse it for history, checksums, and component diagnostics.
+    - P1: Prioritize and pace input, ACK, heartbeat, and correction traffic with real
+      backpressure; correction chunks must not starve current inputs, and local socket
+      would-block/drop events must be counted instead of silently treated as success.
+    - P1/P2: Replace service-tick RTT and fixed margins with monotonic sequence-aware
+      RTT/jitter/loss measurements, safe-boundary adaptive input delay, and GGPO-style time
+      sync with bounded replay/catch-up work instead of freeze-then-ignore behavior.
+    - P2: Add established-match reconnect/resume, authenticated NAT rebinding, coordinated
+      direct-to-relay failover, MTU discovery, congestion/pacing, and player-visible ping,
+      jitter, loss, rollback, stall, and route health. Gate production GGPO integration on
+      the deterministic schema/input protocol and seeded chaos suite above.
+
+Runtime acceptance still required:
+    - Restart with the installed verified DLL and compare every online-screen cursor
+      directly with the vanilla main menu. Verify identical global scale, black shadow,
+      red/yellow pulse, hotspot, and topmost ordering at every F1/window/fullscreen/DPI
+      combination; source/static coverage is complete, but live visual acceptance is not.
+    - Verify the login's compact square `Remember me` checkbox at the smallest window,
+      including mouse/keyboard/controller hitboxes, direct remembered sign-in to the hub
+      menus, cancellation/failure recovery, and a live remembered-login lifecycle.
+    - Run two real clients through retry, slow prematch setup, countdown, immediate first
+      gameplay tick, result confirmation, Requeue/Hub, disconnect, and abort paths. The
+      public server now passes the match-v2/P2P-v16/UDP deployment preflight; this live
+      game round remains required after the stale-server match failure was repaired.
+    - Soak pause/options/console/Mods during a match and verify simulation continues with
+      neutral menu input; audit any additional native screens before supporting them.
+    - Test both local control sets under both server player assignments, including mixed
+      keyboard/controller input, and confirm they control only the assigned fighter.
+    - Soak one gameplay-affecting and one cosmetic-only mod through assignment, retries,
+      normal completion, and aborts; verify only gameplay owners suspend/guard and that
+      they resume exactly once with neutral transient state.
+    - Test F1 presets, F11, maximize normalization, `-windowed`, `-fullscreen`, and
+      `-borderless` across unlike-resolution monitors and 100-200% DPI. Confirm online
+      viewport/UI/mouse alignment after moves and resizes.
+    - Run the documented **V2 Symbolic Tile Demo** visual pass: external atlas
+      animation/tint, built-in transform/layer, native fallback, mirrored outer rooms,
+      tint hot reload, and invalid-edit last-known-good behavior. Repeated atlas-retirement
+      memory and two-client fingerprint soaks remain release QA; the packaged fixture and
+      parser/bridge paths now have one-command automated coverage.
+    - Verify the updater's in-game status/toggle/no-freeze behavior, then exercise a release
+      copy against production HTTPS with a running/mapped `SDL2.dll`, crash interruption,
+      and multiple instances. Parser/hash/apply/recovery and loopback download are now
+      covered by the isolated one-command test.
+
+Feature backlog:
+    - Finish the broad custom-content API as a coherent, polished system: additional
+      weapons, entities/map objects, placement, lifecycle callbacks, validated metadata,
+      online fingerprints/policy, examples, diagnostics, editor integration, and full
+      native/runtime tests. The declarative tile registry and V2 map bridge are only the
+      first complete slice.
+    - Expand the UI library heavily, including reusable responsive layout, controls,
+      focus/navigation, scrolling, theming, accessibility, and robust hitbox scaling.
+    - Build a custom map creator/editor around the documented V2 format and content
+      registry.
+    - Heavily expand audio/music and bytebeat support, including JS-256-style expressions,
+      floatbeat, validation, resource limits, authoring diagnostics, and documentation.
+    - Add a friend-challenge map picker from the two players' compatible-map intersection.
+    - Add bilateral private rematch, block/mute, and richer social presence.
+    - If online cosmetics are deliberately reintroduced, synchronize player color choices
+      and the local P1/P2 palette preference without affecting rollback state.
+    - Add Discord Rich Presence, LFG-focused launch arguments, and safe `yule://` deep
+      links for opening the hub, requests, challenges, and joining sessions.
+
+
+# Completed (source implementation and focused automated coverage)
+
+    - Strict online control transport: atomic queued writes/backpressure, strict flat JSON,
+      framing limits, independent connect/auth deadlines, secret cleanup, and complete
+      all-or-nothing map manifests. TLS remains the release blocker listed above.
+    - Authenticated P2P UDP v16: per-match 256-bit tokens, directional HMAC-SHA-256/128,
+      CSPRNG sessions, constant-time verification, replay window, and fail-closed key use.
+    - Server match-protocol deployment guard: the client now requires a flat `server_info`
+      capability handshake before login, rechecks auth/match version fields, and fails
+      before queue/P2P setup on incompatibility. A public TCP+UDP preflight and isolated
+      two-client runtime test prove that both peers receive one shared 64-hex match key
+      and distinct probe keys. The public server was backed up, atomically updated,
+      restarted, and verified on both listeners; legacy unauthenticated fallback remains
+      forbidden.
+    - Bounded P2P connection retry: three fresh sockets/mappings with symmetric candidate
+      punching and clean hub recovery after exhaustion.
+    - Prematch preparation behind the countdown: connection, native reset, state transfer,
+      and neutral frame zero complete before GAME is shown, eliminating the frozen first
+      gameplay frame.
+    - Online simulation through the audited pause/options/console/Mods overlays, with menu
+      input neutralized and both local control sets merged into the assigned fighter.
+    - Server-managed build/map compatibility gates and automatic suspension/guarding of
+      framework-managed gameplay Lua for the full match lifecycle.
+    - Custom online result state with server-confirmed outcome/rating text and responsive
+      Requeue/Hub keyboard, controller, and mouse actions.
+    - V2 custom-map parser and declarative content tile bridge: symbolic cells, per-map
+      atlases, validation, animation/tint/transform/layers, atomic reload, native fallback,
+      generation-safe retirement, and Lua registry API. A selectable demo now covers an
+      external animated atlas, built-in transform/layer, deliberate fallback, and mirrored
+      rooms, with a one-command package/parser regression test.
+    - General window policy source repair: F1 3:2 presets, F11, maximize normalization,
+      display-aware fullscreen cache, safe event-boundary recreation, desktop borderless,
+      launch-flag conflict handling, and local-only viewport refresh.
+    - Secure opt-in credential implementation: exact server/account Windows Credential
+      Manager targets, save only after `auth_ok`, deletion on opt-out/rejection/identity
+      change, malformed-record cleanup, and secure memory clearing. A valid remembered
+      account now authenticates automatically, hides the login form while pending, and
+      opens directly into the hub menus with backend-neutral player-facing copy.
+    - Exact native framework cursor integration: the fake built-in cursor and later
+      white/custom-scale approximation were removed. Online UI, automatic custom-state
+      cursors, and no-option `mod.ui.draw_cursor()` now share the game's actual two-pass
+      renderer with native global scale, shadow, pulse color, hotspot, and state restore;
+      online still queues it only once/topmost. Live acceptance remains listed above.
+    - Framework version checking: asynchronous launch check, live Mods-menu
+      status/retry/install actions, and a bounded dismissible update notification.
+    - Automatic transactional framework updates: default-on, SHA-256/size verification,
+      bounded downloads, path safety, crash-safe V2 journal, full-set verification,
+      rollback/recovery, single-writer locking, and restart-required status. The isolated
+      one-command test now runs a real loopback download and transactional apply entirely
+      in disposable build directories.
+    - Atomic updater-owned config writes that preserve comments and unrelated settings;
+      main-menu mode persistence now uses this API instead of rewriting a fixed buffer.
+    - Configurable Lua cursor options for deliberate custom sprite/index, scale, hotspot,
+      tint, and layer choices, including per-state automatic/disabled/custom policies.
+    - Custom-map water ambience/effects: native water glyphs, per-room water colors,
+      bubbles, boil, and fume ambience.

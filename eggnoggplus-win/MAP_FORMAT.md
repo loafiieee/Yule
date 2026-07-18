@@ -1,6 +1,6 @@
 # Eggnogg+ Custom Map Format
 
-Status: draft for review
+Status: v1 supported; v2 parsing, registry, atlas loading, and native tile draw bridge implemented; in-game visual acceptance pending
 
 This document defines the first custom map format for Eggnogg+.
 
@@ -32,6 +32,8 @@ Rules:
 - The folder name is the fallback map id.
 - Folders starting with `_` are ignored by the scanner.
 - A map folder must contain both `data.map` and `data.json`.
+- Reparse-point map folders and reparse-point package files are rejected.
+- `data.json` and `data.map` are each capped at 4 MiB.
 
 ## Design summary
 
@@ -275,7 +277,7 @@ Named values for `v1`:
 - `dust` = `6`
 - `bats` = `7`
 - `bubbles` = `8`
-- `boil` = `9`
+- `boil` / `fumes` = `9`
 
 If we discover a better canonical name for one of the numbered styles later, we can add it as an alias without changing the stored integer meaning.
 
@@ -501,6 +503,21 @@ Custom maps should sort after vanilla maps, using:
 2. `name`
 3. folder `id`
 
+## Online identity and local selectors
+
+The online manifest identifies a validated custom package as
+`custom:<normalized-id>:<sig>`, where `sig` is derived from the package's
+`data.json` and `data.map` text. External V2 asset SHA-256 values are mandatory
+inside `data.json`, so those declared asset identities participate in the map
+key. Vanilla entries use `vanilla:<index>`.
+
+Numeric selectors are local registry positions and may change when installed
+maps are added, removed, renamed, or reordered. The server matches the stable
+manifest key, then sends each peer its own selector; peers must not compare or
+persist another client's numeric selector. The broader process-wide content
+registry fingerprint is available for diagnostics, but online enforcement of
+that fingerprint remains future work.
+
 ## Loader behavior
 
 The loader should scan `maps/` on startup or on map registry build.
@@ -642,9 +659,9 @@ On success, log the resolved registration info:
 
 This makes it much easier to confirm that parsed values match intent.
 
-## Recommended implementation order
+## Historical implementation order
 
-When coding begins, the safest order is:
+The implementation followed this dependency order:
 
 1. scanner and registry
 2. `data.json` parser
@@ -670,9 +687,263 @@ Not supported in `v1`:
 
 Those can be added later, but they should not blur the first loader implementation.
 
-## Review checklist
+## V2 symbolic tiles and per-map tilesets
 
-Before coding to this spec, confirm:
+`eggnogg-map/v2` is a backwards-compatible extension of the fixed `33x12`,
+center-out mirrored map model. All v1 metadata, rules, room ordering, ambience,
+and appearance fields keep the same meaning. Existing v1 packages require no
+changes.
+
+V2 adds a top-level `tileset` whose definitions bind otherwise-unused printable
+ASCII symbols in `data.map` to namespaced declarative tiles. The loader always
+converts a symbolic cell to its validated `native_glyph` before handing the room
+template to the engine. This preserves known collision/update behavior even if
+the custom definition or visual asset later becomes unavailable.
+
+```jsonc
+{
+  "format": "eggnogg-map/v2",
+  "id": "mossy_caverns",
+  "name": "Mossy Caverns",
+  "author": "potato",
+  "layout": {
+    "kind": "mirrored_source_rooms",
+    "room_format": "vanilla_33x12",
+    "order": ["center", "outer"]
+  },
+  "tileset": {
+    "tiles": [
+      {
+        "id": "moss_floor",
+        "symbol": "$",
+        "name": "Moss Floor",
+        "native_glyph": "x",
+        "sprite_sheet": "terrain.png",
+        "asset_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "cell_w": 16,
+        "cell_h": 16,
+        "padding": 0,
+        "sprite_index": 0,
+        "frame_count": 4,
+        "frame_ticks": 6,
+        "animation": "loop",
+        "layer": 0,
+        "mirror_with_room": true,
+        "random_phase": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale_x": 1,
+        "scale_y": 1,
+        "angle_degrees": 0,
+        "tint": [1, 1, 1, 1]
+      }
+    ]
+  }
+}
+```
+
+The corresponding cell in `data.map` is just the declared one-byte symbol:
+
+```text
+[center]
+"$                                "
+```
+
+The row still contains exactly 33 cells and the room still contains exactly 12
+rows.
+
+### Five-minute V2 test
+
+The repository includes `maps/v2_symbolic_demo`, a deliberately small runtime
+acceptance map. It uses three symbols:
+
+- `$` is a green, animated tile loaded from the map's own `tiles.png` atlas;
+- `%` is a tall, tilted orange tile from `builtin:tiles`, drawn in layer bank 1;
+- `&` deliberately requests a nonexistent built-in sprite, so the declared
+  native `x` fallback must appear instead of a custom blue tile.
+
+To validate the package and parser without starting the game, run this from the
+repository folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\run_v2_map_test.ps1
+```
+
+`PASS` proves that the checked-in JSON, 33-by-12 room text, external PNG hash,
+symbol table, and parser regression cases are valid. It does not prove the
+fixed-address renderer; use this short visual pass for that:
+
+1. Restart Eggnogg+ so the installed framework DLL is loaded.
+2. Choose **PLAY**, advance the normal map selector to
+   **V2 Symbolic Tile Demo**, and start the match.
+3. In the center room, confirm the `$` groups animate green, the `%` groups are
+   orange/tall/tilted, and the `&` groups use ordinary native `x` visuals rather
+   than the blue tint declared on the intentionally missing sprite.
+4. Walk into both outer rooms. They are copies of the same source room; the
+   right copy must apply `mirror_with_room` while the center-out layout remains
+   playable.
+5. Check `mods/modframework.log` for all three successful stages:
+   `[maps][v2_symbolic_demo] registered`,
+   `map content: packed map.v2_symbolic_demo:tiles.png`, and
+   `content bridge: ... definitions=3`.
+
+For a safe hot-reload check, leave the match open, change only the first tile's
+green `tint` in `maps/v2_symbolic_demo/data.json`, save, and wait about two
+seconds. The `$` cells should change color without restarting. Restore the
+checked-in tint afterward. To exercise last-known-good rejection, temporarily
+set that tile's `layer` to `2`; the invalid edit must be rejected in the log and
+the currently loaded map must remain unchanged. Restore `layer` to `0` before
+continuing.
+
+Generation-retirement is a memory-lifetime invariant rather than a reliable
+visual observation. Its automated coverage remains the retirement/static and
+content-bridge tests; long live-edit memory soaks remain release QA.
+
+### V2 namespace and identifiers
+
+- A map's content owner is derived as `map.<id>` and normalized to lowercase.
+- V2 therefore requires a stable `id` that can form a content namespace.
+- Owner and tile ids use ASCII letters, numbers, `.`, `_`, and `-`.
+- An id may not start with `.` or `-`.
+- A tile's qualified key is `map.<id>:<tile-id>`.
+- Owner and local ids are capped at 47 characters each. Because `map.` is part
+  of the owner, a v2 map `id` is capped at 43 characters; diagnostics report an
+  overlong or invalid id instead of truncating it.
+- Two packages may not claim the same map id or content namespace.
+
+### `tileset.tiles[]`
+
+Required fields:
+
+- `id`: local tile id, unique within this map
+- `symbol`: exactly one printable ASCII byte that is not already a vanilla map
+  glyph, unique within this map
+- `native_glyph`: a safe, single-cell vanilla behavior glyph
+- `sprite_sheet`: `builtin:<name>` or a direct `.png` filename in the map folder
+
+Optional fields and defaults:
+
+- `name`: display/debug name; defaults to `id`
+- `asset_sha256`: required for an external PNG and forbidden for a built-in key
+- `cell_w`, `cell_h`: external-sheet cell size, default `16`, range `1..512`
+- `padding`: external-sheet spacing in pixels, default `0`, range `0..64`
+- `sprite_index`: first frame, default `0`, range `0..1000000`
+- `frame_count`: consecutive frames, default `1`, range `1..256`
+- `frame_ticks`: deterministic ticks per frame, default `1`, range `1..3600`
+- `animation`: `loop` (default), `ping_pong`, or `once`
+- `layer`: native sprite-batch bank, default `0`; valid values are `0` and `1`
+- `mirror_with_room`: horizontal visual flip on the mirrored side, default `false`
+- `random_phase`: deterministic per-cell animation phase, default `false`
+- `offset_x`, `offset_y`: finite offsets in `-4096..4096`, default `0`
+- `scale_x`, `scale_y`: finite non-zero scale in `-64..64`, default `1`
+- `angle_degrees`: finite rotation in `-360000..360000`, default `0`
+- `tint`: four finite RGBA channels in `0..1`, default `[1,1,1,1]`
+
+A package may declare at most 64 tile definitions and 16 unique external-sheet
+grid configurations. Reusing the same filename/hash/grid does not consume
+another sheet slot.
+
+Safe single-cell behavior glyphs are deliberately narrower than the full v1
+glyph set. Multi-cell generators, blank/no-op glyphs, waterfalls, and other
+glyphs that back-fill neighboring cells cannot be used as `native_glyph`.
+The loader reports the exact rejected definition.
+
+Built-in keys currently recognized by the runtime resolver are
+`builtin:sprites`, `builtin:tiles`, `builtin:misc`, and `builtin:glyphs`.
+External grid fields are forbidden on built-in keys because the native atlas
+already defines their slicing.
+
+### Asset security and compatibility
+
+External v2 sprite sheets are intentionally constrained:
+
+- the path must be a direct filename in the map folder (no subdirectories,
+  drive names, `..`, alternate data streams, or absolute paths);
+- the file may not be a directory or reparse point;
+- it must have a valid PNG signature/IHDR and dimensions from `1x1` through
+  `4096x4096`;
+- it must be non-empty and no larger than 64 MiB;
+- its dimensions must form a whole `cell_w` by `cell_h` grid with the declared
+  inter-cell `padding`, with at most 65,535 cells;
+- `sprite_index + frame_count` must stay inside that grid;
+- `asset_sha256` is mandatory and must match the bytes on disk; and
+- every map asset participates in hot-reload change detection.
+
+Before every atlas upload, the bridge rechecks the PNG header, non-reparse
+status, and full SHA-256, then packs each valid sheet with its declared grid.
+Its symbolic key is cached with the resulting atlas range. A missing, modified,
+mis-sliced, or unsuccessfully packed file is not resolved and therefore
+degrades to the native fallback instead of loading stale metadata.
+
+The normal hot-reload poll rescans map packages, commits a valid registry swap,
+and rebuilds the graphics atlas when the map generation changes. Reload is held
+stable during online rollback. If an atlas rebuild is temporarily unavailable
+or fails, the new definitions stay safe and unresolved until a later retry.
+
+The tile-definition fingerprint includes its normalized qualified id, display
+name, behavior, animation, transform, tint, layer, flags, symbolic sheet key,
+and asset SHA-256.
+Definitions are sorted before hashing, so declaration order does not affect the
+registry fingerprint. This fingerprint is suitable for a later online content
+compatibility gate.
+
+### Atomic reload and fallback behavior
+
+Every map owns a complete content transaction. A successful rescan replaces all
+affected map owners in one registry swap. Duplicate ids/symbols, conflicting
+owners, allocation failure, or a validation error in a previously valid package
+leaves the prior hot-loaded map/content registry intact. A newly added invalid
+folder is diagnosed and skipped without blocking unrelated valid packages. The
+failed filesystem signature is remembered so the loader does not spam retries
+until a file changes again.
+
+The native engine keeps direct pointers to the custom map name, author, and room rows.
+During hot reload the framework pins only the registry generation that supplied the
+currently installed native room definitions. Once another custom or vanilla definition
+is installed, that old generation is released; intermediate saved versions that were
+never installed are reclaimed immediately. This keeps editor-driven reload memory
+bounded without invalidating a live native pointer.
+
+At runtime, a symbolic cell retains both its generated native fallback glyph and
+a compact reference to the registered qualified tile definition. Removed
+definitions never leave stale pointers: active metadata re-resolves on registry
+generation changes and falls back to the native render path when a definition is
+missing. A hot reload that changes `native_glyph` also falls back until the map
+is regenerated; an already-created engine cell is never relabeled with new
+collision behavior in place.
+
+### Native v2 rendering bridge
+
+The v2 package parser, validation, namespaced registry, hashes, atomic hot
+reload, compact per-cell metadata, deterministic animation selection, C/Lua
+query surfaces, atlas packing, and native draw bridge are implemented.
+
+After native map generation completes, the bridge requires the exact fixed
+layout dimensions `(2 * source_rooms - 1) * 33` by `12`. Source room `0` binds
+to the center. Every later source room binds once on the left with source x
+unchanged and once on the right at local x `32 - source_x`. Only the right copy
+is marked mirrored.
+
+During native tile draw mode, an exactly aligned bound cell resolves its current
+animation frame from the rollback-tracked game tick. The custom transform is
+composed with the tile transform already prepared by the engine, its tint
+multiplies the current native/map tint, and all 96 bytes of turtle state are
+restored after the sprite is queued. `layer` selects native batch `0` or `1`;
+there is no arbitrary signed z-order in this engine.
+
+If metadata is stale, dimensions differ, a definition/sheet/sprite is missing,
+or any transform/batch operation cannot run, the bridge returns unhandled and
+the engine draws the declared `native_glyph`. A partial bind is discarded in
+full. V2 does not permit custom native callbacks.
+
+The code path is covered by strict unit tests, but fixed-address integration
+still needs an in-game visual pass on the supported executable for built-in and
+external sheets, mirrored rooms, atlas rebuilds, and forced missing-asset
+fallback.
+
+## Conformance checklist
+
+When changing the implemented format, preserve these constraints:
 
 - `33x12` fixed source rooms for `v1`
 - mirrored center-out layout for `v1`
@@ -681,6 +952,7 @@ Before coding to this spec, confirm:
 - `rules.mode` affects natural spawn loadout only
 - map-authored sword pickups remain valid in karate maps
 - water hazard is authored through native room glyphs, room by room
-- unknown keys warn instead of error
+- v1 compatibility keys warn when unknown; v2 `tileset` and tile-definition
+  keys reject unknown fields so misspelled content settings cannot be ignored
 - non-null `hook` is rejected in `v1`
 - verbose multi-error logging is mandatory

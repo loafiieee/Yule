@@ -1,0 +1,81 @@
+{
+  "format": "eggnogg-map/v2",
+  "id": "v2_symbolic_demo",
+  "name": "V2 Symbolic Tile Demo",
+  "author": "Eggnogg+",
+  "description": "Runtime acceptance fixture for symbolic tiles, per-map atlases, transforms, mirroring, and native fallback.",
+  "sort_order": 1000,
+  "rules": {
+    "mode": "swords",
+    "round_end_rooms": "inner_only",
+    "score_target": null,
+    "armed_respawn_limit": 4
+  },
+  "layout": {
+    "kind": "mirrored_source_rooms",
+    "room_format": "vanilla_33x12",
+    "order": ["center", "outer"]
+  },
+  "tileset": {
+    "tiles": [
+      {
+        "id": "external_green_animation",
+        "symbol": "$",
+        "name": "External green animation",
+        "native_glyph": "x",
+        "sprite_sheet": "tiles.png",
+        "asset_sha256": "bc7203e68fdf244e563bf859e7ffc879359b4917c57cb1cc81455fc55ecfcf94",
+        "cell_w": 16,
+        "cell_h": 16,
+        "padding": 0,
+        "sprite_index": 4,
+        "frame_count": 3,
+        "frame_ticks": 8,
+        "animation": "ping_pong",
+        "layer": 0,
+        "mirror_with_room": true,
+        "random_phase": true,
+        "scale_x": 1.15,
+        "scale_y": 1.15,
+        "tint": [0.25, 1.0, 0.35, 1.0]
+      },
+      {
+        "id": "builtin_orange_transform",
+        "symbol": "%",
+        "name": "Built-in orange transform",
+        "native_glyph": "x",
+        "sprite_sheet": "builtin:tiles",
+        "sprite_index": 4,
+        "frame_count": 3,
+        "frame_ticks": 12,
+        "animation": "loop",
+        "layer": 1,
+        "mirror_with_room": true,
+        "offset_x": -8,
+        "offset_y": -2,
+        "scale_x": 0.8,
+        "scale_y": 1.35,
+        "angle_degrees": 12,
+        "tint": [1.0, 0.3, 0.15, 0.95]
+      },
+      {
+        "id": "intentional_native_fallback",
+        "symbol": "&",
+        "name": "Intentional native fallback",
+        "native_glyph": "x",
+        "sprite_sheet": "builtin:tiles",
+        "sprite_index": 999999,
+        "layer": 0,
+        "tint": [0.2, 0.4, 1.0, 1.0]
+      }
+    ]
+  },
+  "rooms": {
+    "center": {
+      "ambient": "dust"
+    },
+    "outer": {
+      "ambient": "bubbles"
+    }
+  }
+}

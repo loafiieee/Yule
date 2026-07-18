@@ -1131,12 +1131,47 @@ __attribute__((naked)) void SDL_CreateThread() { asm("jmp *%0" : : "m"(p_SDL_Cre
  * its window, so a raw fullscreen flag just makes a huge window it renders a small
  * corner of. */
 void* g_proxy_sdl_window = NULL;
+/* A native main_set_window/main_set_fullscreen call asks SDL for display 0 and
+ * recreates the window with SDL_WINDOWPOS_CENTERED_DISPLAY(0). The runtime sets
+ * this one-shot override around those calls so F1/F11 stay on the monitor that
+ * owned the old window. It remains -1 during normal SDL use. */
+volatile LONG g_proxy_sdl_display_override = -1;
+
+int __cdecl SDL_GetDisplayBounds(int display_index, void* rect) {
+    typedef int (__cdecl *get_bounds_t)(int, void*);
+    LONG override_index = InterlockedCompareExchange(&g_proxy_sdl_display_override, -1, -1);
+    if (!p_SDL_GetDisplayBounds) return -1;
+    if (display_index == 0 && override_index >= 0) {
+        display_index = (int)override_index;
+    }
+    return ((get_bounds_t)p_SDL_GetDisplayBounds)(display_index, rect);
+}
+
 void* __cdecl SDL_CreateWindow(const char* title, int x, int y, int w, int h, unsigned int flags) {
     typedef void* (__cdecl *create_t)(const char*, int, int, int, int, unsigned int);
+    LONG override_index = InterlockedCompareExchange(&g_proxy_sdl_display_override, -1, -1);
+    if (override_index >= 0) {
+        const unsigned int centered_mask = 0x2FFF0000u;
+        if (((unsigned int)x & 0xFFFF0000u) == centered_mask) {
+            x = (int)(centered_mask | ((unsigned int)override_index & 0xFFFFu));
+        }
+        if (((unsigned int)y & 0xFFFF0000u) == centered_mask) {
+            y = (int)(centered_mask | ((unsigned int)override_index & 0xFFFFu));
+        }
+    }
     void* win = ((create_t)p_SDL_CreateWindow)(title, x, y, w, h, flags);
     g_proxy_sdl_window = win;
     return win;
 }
+
+void __cdecl SDL_DestroyWindow(void* window) {
+    typedef void (__cdecl *destroy_t)(void*);
+    (void)InterlockedCompareExchangePointer((PVOID volatile*)&g_proxy_sdl_window,
+                                            NULL,
+                                            window);
+    ((destroy_t)p_SDL_DestroyWindow)(window);
+}
+
 __attribute__((naked)) void SDL_CreateWindowAndRenderer() { asm("jmp *%0" : : "m"(p_SDL_CreateWindowAndRenderer)); }
 __attribute__((naked)) void SDL_CreateWindowFrom() { asm("jmp *%0" : : "m"(p_SDL_CreateWindowFrom)); }
 __attribute__((naked)) void SDL_DXGIGetOutputInfo() { asm("jmp *%0" : : "m"(p_SDL_DXGIGetOutputInfo)); }
@@ -1149,7 +1184,6 @@ __attribute__((naked)) void SDL_DestroyMutex() { asm("jmp *%0" : : "m"(p_SDL_Des
 __attribute__((naked)) void SDL_DestroyRenderer() { asm("jmp *%0" : : "m"(p_SDL_DestroyRenderer)); }
 __attribute__((naked)) void SDL_DestroySemaphore() { asm("jmp *%0" : : "m"(p_SDL_DestroySemaphore)); }
 __attribute__((naked)) void SDL_DestroyTexture() { asm("jmp *%0" : : "m"(p_SDL_DestroyTexture)); }
-__attribute__((naked)) void SDL_DestroyWindow() { asm("jmp *%0" : : "m"(p_SDL_DestroyWindow)); }
 __attribute__((naked)) void SDL_DetachThread() { asm("jmp *%0" : : "m"(p_SDL_DetachThread)); }
 __attribute__((naked)) void SDL_Direct3D9GetAdapterIndex() { asm("jmp *%0" : : "m"(p_SDL_Direct3D9GetAdapterIndex)); }
 __attribute__((naked)) void SDL_DisableScreenSaver() { asm("jmp *%0" : : "m"(p_SDL_DisableScreenSaver)); }
@@ -1225,7 +1259,6 @@ __attribute__((naked)) void SDL_GetCursor() { asm("jmp *%0" : : "m"(p_SDL_GetCur
 __attribute__((naked)) void SDL_GetDefaultAssertionHandler() { asm("jmp *%0" : : "m"(p_SDL_GetDefaultAssertionHandler)); }
 __attribute__((naked)) void SDL_GetDefaultCursor() { asm("jmp *%0" : : "m"(p_SDL_GetDefaultCursor)); }
 __attribute__((naked)) void SDL_GetDesktopDisplayMode() { asm("jmp *%0" : : "m"(p_SDL_GetDesktopDisplayMode)); }
-__attribute__((naked)) void SDL_GetDisplayBounds() { asm("jmp *%0" : : "m"(p_SDL_GetDisplayBounds)); }
 __attribute__((naked)) void SDL_GetDisplayMode() { asm("jmp *%0" : : "m"(p_SDL_GetDisplayMode)); }
 __attribute__((naked)) void SDL_GetDisplayName() { asm("jmp *%0" : : "m"(p_SDL_GetDisplayName)); }
 __attribute__((naked)) void SDL_GetError() { asm("jmp *%0" : : "m"(p_SDL_GetError)); }

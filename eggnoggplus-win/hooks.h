@@ -25,6 +25,17 @@ int hooks_console_mousebutton(int x, int y, int button, int down);
 void hooks_console_pump(void);
 void hooks_console_on_pre_swap(void);
 void hooks_online_on_pre_swap(void);
+/* Final framework renderer: queues the real native cursor after all overlays. */
+void hooks_online_cursor_on_pre_swap(void);
+void hooks_update_on_pre_swap(void);
+int hooks_update_mousebutton(int x, int y, int button, int down);
+
+// Runtime-only window policy. Event callbacks only queue work; destructive
+// transitions run after event draining in the hooked main-update boundary.
+// Pre-swap only reconciles drawable-sized GL viewport state.
+int hooks_window_keydown(int sym, int repeat);
+void hooks_window_event(int event_code, int data1, int data2);
+void hooks_window_on_pre_swap(void);
 
 // Mods menu input handling
 int hooks_mods_menu_keydown(int sym, int scancode, int mod);

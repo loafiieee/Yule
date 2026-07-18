@@ -1,0 +1,242 @@
+# Authenticated P2P Packet Transport
+
+**Date:** 2026-07-17  
+**Protocol:** GGPO UDP v16  
+**Primary code:** `ggpo_net.c`, `ggpo_net.h`, `hooks.c`, `online_server/server.js`  
+**Status:** client, server, packet-layer wiring, deployment preflight, and server runtime protocol coverage implemented; real two-machine gameplay/retry acceptance remains
+
+## Outcome
+
+Every GGPO peer datagram is authenticated before it may influence the selected
+peer address, remote session, handshake, state transfer, cosmetics, rollback,
+input, or disconnect state. A random Internet sender cannot win the first-HELLO
+race, replace a pre-match session, inject inputs/state, or replay an old packet
+without the current match secret.
+
+This layer provides peer-packet authentication and integrity. It does **not**
+encrypt packet contents, hide traffic metadata, or make the existing control
+connection secure.
+
+## Match secrets
+
+The server creates two different kinds of secret and they must not be confused:
+
+- `p2p_token` remains a per-user capability used only to authorize that user's
+  UDP discovery probe at the server.
+- `p2p_auth_token` is one 256-bit value created with
+  `crypto.randomBytes(32).toString("hex")` and sent identically to both peers in
+  their `match_found` messages. It is the shared input to peer-packet
+  authentication.
+
+`ggpo_net_set_match_token()` accepts exactly 64 hexadecimal characters, decodes
+them to 32 bytes, and immediately derives the root authentication key. The net
+layer does not retain or log the token text. Invalid replacement input clears
+any previously armed key so a stale match key cannot be used accidentally.
+
+The derived pending key is consumed by one successful `ggpo_net_start_*()` call.
+Every fresh-socket retry must therefore call `ggpo_net_set_match_token()` again.
+The in-session root and direction keys are erased with `SecureZeroMemory` during
+teardown. The online owner must also erase its `p2p_auth_token` text buffers when
+the match is established, cancelled, rejected, or completed.
+
+Starting a peer session without an armed token fails closed. Direct developer
+host/join uses `ggpo.net key`: it reads the shared 64-hex value from the
+clipboard, requires successful clipboard clearing, derives the one-shot key,
+and erases the temporary text. The secret is never typed into console history,
+persisted, or logged. F6/F7 and direct host/join then consume that armed key;
+they never fall back to unauthenticated v15 traffic.
+
+## Wire format and key schedule
+
+Protocol v16 gives every P2P packet type this packed common prefix:
+
+```text
+magic:u32 | version:u16 | type:u16 | session_id:u64 | sender_player:u32 |
+sequence:u64 | tag:16 bytes
+```
+
+All integer wire values and KDF context integers use the existing Windows/x86
+little-endian representation. The protocol remains version-locked; packets with
+another version are ignored before dispatch.
+
+Windows CNG (`BCrypt`) performs HMAC-SHA-256. Domain strings are exact ASCII bytes
+without a trailing NUL:
+
+```text
+root = HMAC-SHA-256(
+  key = decoded p2p_auth_token,
+  data = "EGGNOGG+ GGPO v16 match auth root"
+)
+
+direction_key = HMAC-SHA-256(
+  key = root,
+  data = "EGGNOGG+ GGPO v16 direction key" ||
+         version:u16 || sender_player:u32 || session_id:u64
+)
+
+full_tag = HMAC-SHA-256(
+  key = direction_key,
+  data = "EGGNOGG+ GGPO v16 packet tag" ||
+         datagram_length:u32 || datagram_bytes_with_tag_zeroed
+)
+
+wire_tag = first 16 bytes of full_tag
+```
+
+The 128-bit wire tag keeps the fixed 60 Hz input datagram below the project's
+1,400-byte safety ceiling while retaining a 128-bit online-forgery bound. The
+sender role and session are both authenticated and included in direction-key
+derivation. A receiver accepts only its expected remote role, preventing a
+captured outbound packet from being reflected back into its sender.
+
+Every peer protocol type uses this path: HELLO, INPUT, BYE, state chunks and
+acknowledgements, resync requests, cosmetic profile packets, and cosmetic asset
+chunks. The server discovery JSON probe is not a peer protocol packet and keeps
+its separate per-user authorization token.
+
+## Session entropy, replay handling, and endpoint adoption
+
+- Each socket attempt gets a nonzero 64-bit session ID from
+  `BCryptGenRandom(BCRYPT_USE_SYSTEM_PREFERRED_RNG)`. RNG failure aborts start;
+  there is no timestamp, address, or game-RNG fallback.
+- Each sender starts a 64-bit sequence at 1 and increments it for every logical
+  peer datagram before loss/delay simulation.
+- The receiver maintains an exact 4,096-sequence replay window per authenticated
+  remote session. A sequence already seen is rejected. A sequence at least 4,096
+  behind the highest accepted value is rejected. Previously unseen out-of-order
+  packets inside the window remain valid for normal UDP reordering.
+- Authentication, expected-role validation, and constant-time tag comparison
+  happen before any packet handler runs.
+- The first authenticated remote session must arrive in a HELLO. A new session is
+  accepted only from an authenticated HELLO while still at frame 0, before the
+  start state is loaded, and before bidirectional confirmation. Retired session
+  IDs cannot become current again.
+- Before confirmation, an authenticated HELLO may select a working LAN/public
+  hole-punch candidate. After confirmation, the peer source address is pinned;
+  even a correctly authenticated packet from another endpoint cannot migrate it.
+
+Authentication failures are silently dropped to avoid log amplification. A
+saturating `ggpo_net_auth_rejected_packets()` counter and `net.diag` authentication
+line provide diagnostics without exposing key material.
+
+## Online client integration contract
+
+The online flow must:
+
+1. Parse `p2p_auth_token` into dedicated 65-byte pending and retry-state buffers.
+2. Copy it from the pending match to the retry owner, never to long-lived match
+   history or result state.
+3. Require and pass it to `ggpo_net_set_match_token()` immediately before every
+   host/deferred-join start, including fresh-socket retries.
+4. Treat missing, malformed, or rejected tokens as a pre-match setup failure.
+5. Never include it in logs, status strings, diagnostics, crash text, or probe
+   JSON; the separate `p2p_token` remains the probe credential.
+6. Securely erase owner buffers when no further retry can occur.
+
+## Deployment compatibility contract
+
+Packet authentication is a coordinated client/server protocol change. After TCP
+completion the current client requests `server_info` and validates the exact control,
+match, P2P, and packet-auth capability versions before sending login credentials. It
+revalidates `auth_ok`, then rechecks the match/P2P versions and required
+`p2p_auth_token` in `match_found`. An old or partially restarted server therefore fails
+during the pre-authentication handshake; the later prematch checks remain defense in
+depth and never open an unauthenticated peer session.
+
+The server makes deployment state observable without an account. On connect and
+in response to `{"type":"server_info"}`, it sends one flat object containing:
+
+```text
+control_protocol=2 | match_protocol=2 | p2p_protocol=16 | cap_p2p_auth=1
+```
+
+`auth_ok` repeats all four scalar fields. Each `match_found` repeats the match
+and P2P protocol numbers and includes the shared token. Arrays/nested capability
+objects are forbidden because the strict client control parser accepts only
+flat bounded JSON.
+
+`online_server/check_deployment.py` probes those fields without logging in and
+also requires the UDP discovery socket to answer `udp_ping`. Its default target
+is `eggnogg.loafiieee.com:47778`; host and port may be overridden positionally.
+An absent `server_info` is reported as an outdated deployment. This is an
+operations check, not a substitute for the two-client runtime test. There is
+deliberately no legacy unauthenticated fallback.
+
+## Security boundary and explicit limitations
+
+The control client/server connection currently sends newline-delimited JSON over
+raw TCP without TLS or server authentication. An on-path attacker can observe or
+replace `match_found`, steal `p2p_auth_token`, and then forge v16 UDP packets. The
+UDP MAC closes off-path spoofing/injection and accidental cross-match traffic; it
+does not repair that control-plane weakness. Authenticated TLS for the control
+channel remains required for end-to-end server and match security.
+
+The UDP payload is plaintext. Inputs, state chunks, cosmetic data, packet sizes,
+addresses, and timing remain observable. Either legitimate peer possesses the
+shared key and can construct valid packets. This design does not defend against a
+malicious authenticated opponent or a compromised server/client process.
+
+## Verification evidence
+
+Run:
+
+```powershell
+python tests\prematch_net_test.py
+python tests\online_server_auth_static_test.py
+python tests\online_server_match_protocol_test.py
+python tests\online_flow_integration_static_test.py
+python online_server\check_deployment.py
+```
+
+The test compiles 32-bit C11 with `-Wall -Wextra -Werror`, `GGPO_NET_TEST`,
+WinSock, and BCrypt, then uses real localhost UDP sockets to cover:
+
+- same-key host/join handshake, held countdown service, authoritative state
+  synchronization, and immediate first visible gameplay tick;
+- one-shot state-load failure followed by successful authenticated retransmit;
+- missing-key start rejected before a socket session becomes active;
+- byte-for-byte replay of each otherwise-valid host datagram: gameplay still
+  connects through the originals while the join peer rejects every duplicate;
+- different match keys on each peer: neither side connects and both record MAC
+  rejections;
+- a same-key host whose packets are modified after tag generation: the join peer
+  rejects every modified datagram and neither side connects.
+
+Observed result on 2026-07-17: all cases passed. A full DLL link also requires
+`-lbcrypt`, which is already present in `compile.sh`.
+
+The dynamic server test starts an isolated Node process with temporary account,
+rating, and secret files; probes `server_info`; registers two clients; matches
+them; and proves they receive the same 64-hex packet-auth token, different
+per-user rendezvous tokens, opposite roles, and exact protocol versions. Static
+tests additionally guard token issuance plus short-lived hook ownership, strict
+parsing, per-attempt re-arming, and secure text-buffer erasure.
+
+### Public deployment record
+
+On 2026-07-17, the match failures numbered 120 through 123 were traced to the
+public process still running the June 21 server file, which did not contain
+`p2p_auth_token`. There were zero established control clients at deployment.
+Only `server.js` was replaced; accounts, ratings, and the server secret were not
+touched.
+
+- Service: `eggnogg.service` on `loaf-server1`
+- Deployed file: `/home/loaf/Yule/eggnoggplus-win/online_server/server.js`
+- Deployed SHA-256: `943c4a36f749da6f6ee246dd7e1fd60d87471fbd9c6e222de01a060126e908a7`
+- Backup: `/home/loaf/Yule/eggnoggplus-win/online_server/server.js.backup-20260717-234114`
+- Backup SHA-256: `cf910c469e5f76340ead83d85cac2027469c2ef7180f1b719eed16b9b5caf9df`
+
+The systemd service restarted successfully with both TCP and UDP bound on
+47,778. The public deployment probe returned control v2, match v2, P2P v16,
+packet authentication, and UDP discovery available.
+
+Exact rollback command (run from the development machine):
+
+```powershell
+ssh loaf@192.168.0.143 'cd /home/loaf/Yule/eggnoggplus-win/online_server && cp -p -- server.js.backup-20260717-234114 server.js.rollback && mv -- server.js.rollback server.js && kill -TERM "$(systemctl show -p MainPID --value eggnogg.service)"'
+```
+
+Manual acceptance still required: complete one real server-issued match across
+two game processes, force one fresh-socket retry, and confirm both normal
+connection and `net.diag` authentication counters without any secret appearing
+in logs.

@@ -5,20 +5,49 @@
 #include "net_ext.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #include <string.h>
 #include <stdio.h>
 
 #define NET_MAX_CONN 4
+#define NET_SEND_QUEUE_CAPACITY (128 * 1024)
 
 typedef struct {
     SOCKET fd;
     int    used;
     int    connecting; /* async connect in progress */
     int    connected;
+    int    send_offset;
+    int    send_length;
+    char   send_queue[NET_SEND_QUEUE_CAPACITY];
 } NetConn;
 
 static NetConn g_net[NET_MAX_CONN];
 static int     g_wsa_ready = 0;
+
+/* Drain as much copied output as Winsock currently accepts.  Keeping the
+ * bytes in our own bounded queue makes one logical net_send() atomic from the
+ * caller's perspective: a short non-blocking send can no longer truncate a
+ * JSON line after the caller's temporary buffer has gone out of scope. */
+static int net_flush_send_queue(int slot) {
+    NetConn *c;
+    if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].connected) return -1;
+    c = &g_net[slot];
+    while (c->send_length > 0) {
+        int r = send(c->fd, c->send_queue + c->send_offset, c->send_length, 0);
+        if (r == SOCKET_ERROR) {
+            if (WSAGetLastError() == WSAEWOULDBLOCK) return 1;
+            closesocket(c->fd);
+            SecureZeroMemory(c, sizeof(*c));
+            return -1;
+        }
+        if (r <= 0) return 1;
+        c->send_offset += r;
+        c->send_length -= r;
+    }
+    c->send_offset = 0;
+    return 1;
+}
 
 static void ensure_wsa(void) {
     if (!g_wsa_ready) {
@@ -85,11 +114,18 @@ int net_check_connect(int slot) {
     struct timeval tv = {0, 0}; /* non-blocking poll */
     if (select(0, NULL, &wfds, &efds, &tv) <= 0) return 0;
 
-    if (FD_ISSET(c->fd, &efds)) {
-        net_close(slot);
-        return -1;
-    }
-    if (FD_ISSET(c->fd, &wfds)) {
+    if (FD_ISSET(c->fd, &efds) || FD_ISSET(c->fd, &wfds)) {
+        int socket_error = 0;
+        int socket_error_len = (int)sizeof(socket_error);
+        if (getsockopt(c->fd,
+                       SOL_SOCKET,
+                       SO_ERROR,
+                       (char*)&socket_error,
+                       &socket_error_len) == SOCKET_ERROR ||
+            socket_error != 0) {
+            net_close(slot);
+            return -1;
+        }
         c->connecting = 0;
         c->connected  = 1;
         return 1;
@@ -98,18 +134,35 @@ int net_check_connect(int slot) {
 }
 
 int net_send(int slot, const char *data, int len) {
+    NetConn *c;
+    int free_space;
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].connected) return -1;
-    int r = send(g_net[slot].fd, data, len, 0);
-    if (r == SOCKET_ERROR) {
-        if (WSAGetLastError() == WSAEWOULDBLOCK) return 0;
-        net_close(slot);
-        return -1;
+    if (len < 0 || (len > 0 && !data)) return -1;
+    if (len == 0) return 0;
+    if (net_flush_send_queue(slot) < 0) return -1;
+    c = &g_net[slot];
+
+    /* Compact only when needed; this keeps the common path free of memmove. */
+    free_space = NET_SEND_QUEUE_CAPACITY - (c->send_offset + c->send_length);
+    if (free_space < len && c->send_offset > 0) {
+        memmove(c->send_queue,
+                c->send_queue + c->send_offset,
+                (size_t)c->send_length);
+        c->send_offset = 0;
+        free_space = NET_SEND_QUEUE_CAPACITY - c->send_length;
     }
-    return r;
+    /* A logical message is accepted in full or not at all.  In particular,
+     * online_server_send_raw() must never report success for a partial line. */
+    if (free_space < len) return 0;
+    memcpy(c->send_queue + c->send_offset + c->send_length, data, (size_t)len);
+    c->send_length += len;
+    if (net_flush_send_queue(slot) < 0) return -1;
+    return len;
 }
 
 int net_recv(int slot, char *buf, int maxlen) {
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].connected) return -1;
+    if (net_flush_send_queue(slot) < 0) return -1;
     int r = recv(g_net[slot].fd, buf, maxlen, 0);
     if (r == 0) { net_close(slot); return -1; } /* clean close */
     if (r == SOCKET_ERROR) {
@@ -133,7 +186,9 @@ int net_connecting(int slot) {
 void net_close(int slot) {
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].used) return;
     closesocket(g_net[slot].fd);
-    memset(&g_net[slot], 0, sizeof(g_net[slot]));
+    /* The copied queue may still contain authentication JSON. Ensure teardown
+     * is not optimized away as a dead ordinary memset. */
+    SecureZeroMemory(&g_net[slot], sizeof(g_net[slot]));
 }
 
 int net_local_ipv4(char *buf, int buflen) {

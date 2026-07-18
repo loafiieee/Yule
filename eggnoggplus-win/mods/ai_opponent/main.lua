@@ -218,7 +218,7 @@ mod.on_frame(function()
     end
   end
   if m.training then
-    Trainer.overlay()
+    if config.get("show_train_overlay", true) then Trainer.overlay() end
     return
   end
   if human_train then

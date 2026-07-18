@@ -84,7 +84,11 @@
 - `input.clear <player>`
 
 ### Rollback netplay
+- `net.diag` (alias: `net.trouble`)
+- `ggpo.loopback [toggle|on|off|status]`
 - `ggpo.local [toggle|on|off|status]`
+- `ggpo.net key` (arm a one-shot v16 shared key from the clipboard and clear the clipboard)
+- `ggpo.net key clear`
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
 - `ggpo.net delay [frames]`
@@ -94,6 +98,7 @@
 - `ggpo.net smoothping [frames]`
 - `ggpo.net correction [on|off]`
 - `ggpo.net sim [loss_pct] [min_delay] [max_delay]`
+- `ggpo.net rngtrace [on|off]`
 - `ggpo.net status`
 - `ggpo.net off`
 - `ggpo.selftest [frames]`
@@ -135,6 +140,7 @@
 - `ggpo.net correction on`
 - `ggpo.net sim 5 2 8`
 - `ggpo.net sim off`
+- `ggpo.net key`
 - `ggpo.net host 47777`
 - `ggpo.net join 127.0.0.1 47777`
 
@@ -152,3 +158,7 @@
   - `mods.config.set my_mod welcome_text "hello world"`
 - `input.override` mask accepts decimal or hex (`0x...`).
 - `frames < 0` keeps an override active until cleared.
+- V16 direct host/join fails closed without a shared 64-hex key. Copy the same
+  key on both machines and run `ggpo.net key` before `host`/`join` (or F6/F7).
+  The key is read from and then removed from the clipboard; it is never typed
+  into console history, persisted, or logged, and one successful start consumes it.

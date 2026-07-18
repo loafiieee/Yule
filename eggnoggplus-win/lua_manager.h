@@ -13,6 +13,12 @@ extern "C" {
 // Framework API version (bump on breaking Lua API changes)
 int lua_manager_framework_api(void);
 
+/* Resolve a mod.content symbolic sheet key (owner:sheet) after the current
+ * atlas build. Returns 0 while the owner/sheet is absent or not yet packed. */
+int lua_manager_content_resolve_sprite(const char* qualified_sheet,
+                                       int sprite_index,
+                                       int* out_sprite_id);
+
 // True when any enabled mod has called mod.game.register_bot_provider().
 int lua_manager_has_bot_provider(void);
 
@@ -59,6 +65,15 @@ const char* lua_manager_get_mod_version(int mod_index);
 const char* lua_manager_get_mod_author(int mod_index);
 const char* lua_manager_get_mod_description(int mod_index);
 int         lua_manager_get_mod_enabled(int mod_index);
+// Runtime safety classification used by online rollback matches. A mod becomes
+// gameplay-affecting automatically when it registers deterministic tick hooks,
+// registers a bot/menu-mode provider or custom content, changes delta time, or
+// calls a mutating mod.game API. Gameplay-affecting mods are suspended while
+// the online guard is active; cosmetic-only mods continue to receive
+// frame/event/layout callbacks.
+int         lua_manager_get_mod_gameplay_affecting(int mod_index);
+int         lua_manager_get_mod_suspended(int mod_index);
+const char* lua_manager_get_mod_suspend_reason(int mod_index);
 int         lua_manager_get_mod_error_count(int mod_index);
 int         lua_manager_get_mod_dependency_count(int mod_index);
 const char* lua_manager_get_mod_dependency_id(int mod_index, int dep_index);
@@ -70,6 +85,14 @@ int         lua_manager_mod_conflict_active(int mod_index, int conflict_index);
 int         lua_manager_get_mod_diagnostics(int mod_index, LuaModDiagnostics* out_diag);
 int         lua_manager_set_mod_trace_events(int mod_index, int enabled);
 int         lua_manager_set_mod_enabled(int mod_index, int enabled);
+
+// Online lifecycle guard. begin/end are idempotent and are intended to bracket
+// the entire matchmaking/countdown/match window (begin as soon as a match is
+// assigned, end only after every online/retry session has been torn down).
+// begin returns the number of already-classified gameplay mods being suspended.
+int  lua_manager_online_suspend_begin(void);
+void lua_manager_online_suspend_end(void);
+int  lua_manager_online_suspend_active(void);
 
 // Config entry types
 enum {

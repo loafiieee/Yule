@@ -18,6 +18,12 @@ const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
 const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
+/* Match protocol 2 requires one server-issued 256-bit packet-auth key shared
+ * by exactly the two peers. Keep these fields scalar because the game client's
+ * strict control parser deliberately rejects nested JSON and arrays. */
+const CONTROL_PROTOCOL_VERSION = 2;
+const MATCH_PROTOCOL_VERSION = 2;
+const P2P_PROTOCOL_VERSION = 16;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 // Recently chosen map keys (most-recent last). Used to even out random map
 // selection so the pool cycles through every option before any repeats, instead
@@ -56,6 +62,13 @@ function normalizeRemoteAddress(raw) {
 
 function makeP2pToken() {
   return crypto.randomBytes(16).toString("hex");
+}
+
+/* Shared only by the two clients in one match. The per-user p2p_tokens remain
+ * separate because they authorize rendezvous probes; this independent
+ * high-entropy value authenticates the peer gameplay datagrams themselves. */
+function makeP2pAuthToken() {
+  return crypto.randomBytes(32).toString("hex");
 }
 
 function udpDiag(line) {
@@ -283,6 +296,16 @@ function sendError(client, message) {
   send(client, { type: "error", message });
 }
 
+function sendServerInfo(client) {
+  send(client, {
+    type: "server_info",
+    control_protocol: CONTROL_PROTOCOL_VERSION,
+    match_protocol: MATCH_PROTOCOL_VERSION,
+    p2p_protocol: P2P_PROTOCOL_VERSION,
+    cap_p2p_auth: 1,
+  });
+}
+
 function connectedClient(username) {
   return onlineByUser.get(username) || null;
 }
@@ -393,6 +416,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     started_at: now(),
     results: new Map(),
     p2p_tokens: {},
+    p2p_auth_token: makeP2pAuthToken(),
     p2p_endpoints: new Map(),
     p2p_notified: {},
   };
@@ -413,6 +437,8 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
 
   send(hostClient, {
     type: "match_found",
+    match_protocol: MATCH_PROTOCOL_VERSION,
+    p2p_protocol: P2P_PROTOCOL_VERSION,
     match_id: match.id,
     source,
     queue: queueName,
@@ -424,6 +450,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     peer_port: 0,
     local_port: clientP2pPort(hostClient),
     p2p_token: match.p2p_tokens[hostClient.username],
+    p2p_auth_token: match.p2p_auth_token,
     map_key: shared.key,
     map_label: shared.label,
     map_sel: hostMapSel,
@@ -433,6 +460,8 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
   });
   send(joinClient, {
     type: "match_found",
+    match_protocol: MATCH_PROTOCOL_VERSION,
+    p2p_protocol: P2P_PROTOCOL_VERSION,
     match_id: match.id,
     source,
     queue: queueName,
@@ -444,6 +473,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     peer_port: 0,
     local_port: clientP2pPort(joinClient),
     p2p_token: match.p2p_tokens[joinClient.username],
+    p2p_auth_token: match.p2p_auth_token,
     map_key: shared.key,
     map_label: shared.label,
     map_sel: joinMapSel,
@@ -669,7 +699,15 @@ function authOk(client, username) {
   client.mapIndex = mapIndex(client.maps);
   onlineByUser.set(username, client);
   ensureUserShape(username);
-  send(client, { type: "auth_ok", username, elo: publicElo(username) });
+  send(client, {
+    type: "auth_ok",
+    username,
+    elo: publicElo(username),
+    control_protocol: CONTROL_PROTOCOL_VERSION,
+    match_protocol: MATCH_PROTOCOL_VERSION,
+    p2p_protocol: P2P_PROTOCOL_VERSION,
+    cap_p2p_auth: 1,
+  });
   sendFriendSnapshot(client);
   refreshFriendsFor(username);
   broadcastQueueCounts();
@@ -1000,6 +1038,7 @@ function handleMatchEnd(client, msg) {
 
 function dispatch(client, msg) {
   switch (msg.type) {
+    case "server_info": sendServerInfo(client); break;
     case "register": handleRegister(client, msg); break;
     case "login": handleLogin(client, msg); break;
     case "map_manifest": handleMapManifest(client, msg); break;
@@ -1128,6 +1167,7 @@ const server = net.createServer((socket) => {
   socket.setEncoding("utf8");
   socket.setNoDelay(true);
   socket.setTimeout(120000);
+  sendServerInfo(client);
 
   socket.on("data", (chunk) => {
     client.buf += chunk;

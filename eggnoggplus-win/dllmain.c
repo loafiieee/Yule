@@ -3,6 +3,7 @@
 #include "hooks.h"
 #include "lua_manager.h"
 #include "custom_maps.h"
+#include "content_tiles.h"
 
 
 #include <stdint.h>
@@ -231,6 +232,18 @@ typedef struct {
     Uint32 type;
     Uint32 timestamp;
     Uint32 windowID;
+    Uint8 event;
+    Uint8 padding1;
+    Uint8 padding2;
+    Uint8 padding3;
+    int data1;
+    int data2;
+} SDL_WindowEvent;
+
+typedef struct {
+    Uint32 type;
+    Uint32 timestamp;
+    Uint32 windowID;
     Uint32 which;
     Uint8 button;
     Uint8 state;
@@ -325,6 +338,7 @@ typedef struct {
 
 typedef union {
     Uint32 type;
+    SDL_WindowEvent window;
     SDL_KeyboardEvent key;
     SDL_MouseButtonEvent button;
     SDL_MouseMotionEvent motion;
@@ -342,6 +356,7 @@ typedef union {
 #define SDL_KEYUP           0x301
 #define SDL_TEXTINPUT       0x303
 #define SDL_QUIT            0x100
+#define SDL_WINDOWEVENT     0x200
 #define SDL_MOUSEMOTION     0x400
 #define SDL_MOUSEBUTTONDOWN 0x401
 #define SDL_MOUSEBUTTONUP   0x402
@@ -464,9 +479,12 @@ void SDL_GL_SwapWindow(SDL_Window* window) {
     }
     g_last_real_qpc = now;
 
+    hooks_window_on_pre_swap();
     lua_manager_on_frame();
     hooks_online_on_pre_swap();
     hooks_console_on_pre_swap();
+    hooks_update_on_pre_swap();
+    hooks_online_cursor_on_pre_swap();
     if (real_SwapWindow) real_SwapWindow(window);
 }
 
@@ -483,8 +501,18 @@ int SDL_PollEvent(SDL_Event* event) {
 
         int consumed = 0;
         switch (event->type) {
+            case SDL_WINDOWEVENT:
+                hooks_window_event((int)event->window.event,
+                                   event->window.data1,
+                                   event->window.data2);
+                consumed = 0;
+                break;
             case SDL_KEYDOWN:
                 if (hooks_console_keydown(event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod)) {
+                    consumed = 1;
+                    break;
+                }
+                if (hooks_window_keydown(event->key.keysym.sym, event->key.repeat)) {
                     consumed = 1;
                     break;
                 }
@@ -516,6 +544,11 @@ int SDL_PollEvent(SDL_Event* event) {
                     event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.mod, 0, 0, 0);
                 break;
             case SDL_MOUSEBUTTONDOWN:
+                if (hooks_update_mousebutton(event->button.x, event->button.y,
+                                             event->button.button, 1)) {
+                    consumed = 1;
+                    break;
+                }
                 if (hooks_console_active()) {
                     hooks_console_mousebutton(event->button.x, event->button.y, event->button.button, 1);
                     consumed = 1;
@@ -716,6 +749,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         hooks_init();
     }
     else if (fdwReason == DLL_PROCESS_DETACH) {
+        content_tiles_shutdown();
         custom_maps_shutdown();
         lua_manager_shutdown();
         if (real_sdl) FreeLibrary(real_sdl);

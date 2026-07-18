@@ -11,7 +11,11 @@ int  net_connect      (const char *host, int port);
    Returns  1 = now connected,  0 = still pending,  -1 = failed/closed. */
 int  net_check_connect(int slot);
 
-/* Send raw bytes.  Returns bytes queued, 0 if send buffer full, -1 on error. */
+/* Copy one logical message into a bounded output queue, then drain whatever
+   Winsock currently accepts.  Returns len when the complete message was
+   accepted, 0 when local backpressure leaves insufficient room, or -1 on
+   invalid input/socket failure.  A positive result never means a partial
+   message, and the caller may reuse/free data immediately. */
 int  net_send         (int slot, const char *data, int len);
 
 /* Receive available bytes into buf (non-blocking).

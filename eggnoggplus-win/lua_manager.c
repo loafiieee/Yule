@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <limits.h>
+#include <math.h>
 #include <luajit-2.1/lua.h>
 #include <luajit-2.1/lauxlib.h>
 #include <luajit-2.1/lualib.h>
@@ -19,7 +20,9 @@
 #include "font_ext.h"
 #include "texture_ext.h"
 #include "custom_maps.h"
+#include "content_registry.h"
 #include "ggpo_net.h"
+#include "cursor_ext.h"
 
 static lua_State *L = NULL;
 
@@ -482,6 +485,19 @@ typedef struct ModAssetSheet {
     uint32_t flags;
 } ModAssetSheet;
 
+typedef struct MapAssetAtlasSheet {
+    char key[128];
+    int base_id;
+    int count;
+} MapAssetAtlasSheet;
+
+static MapAssetAtlasSheet* g_map_asset_atlas_sheets = NULL;
+static int g_map_asset_atlas_sheet_count = 0;
+static int g_map_asset_atlas_sheet_cap = 0;
+static uint64_t g_map_asset_registry_generation = 0;
+static uint64_t g_map_asset_deferred_generation = 0;
+static ULONGLONG g_map_asset_next_poll_ms = 0;
+
 #define MOD_COLOR_MASK_MAX_LAYERS 8
 #define MOD_COLOR_MASK_MAX_COLORS 128
 #define MOD_COLOR_MASK_MAX_PIXELS (2048u * 2048u)
@@ -513,6 +529,8 @@ static void ui_reset_render_state(void);
 static int ptr_readable(const void* p, SIZE_T len);
 static LoadedMod* get_mod_by_index(int mod_index);
 static LoadedMod* get_mod_by_id_ci(const char* mod_id);
+static void mod_suspend_transient_state(LoadedMod* mod);
+static int lua_absindex_compat(lua_State* Ls, int idx);
 
 
 #define MOD_ID_LIST_MAX 32
@@ -550,6 +568,10 @@ struct LoadedMod {
     int  error_count;
     int  trace_events;
     int  bot_provider;  /* set via mod.game.register_bot_provider() */
+    int  gameplay_affecting;
+    int  suspend_notice_logged;
+    int  content_registered;
+    char gameplay_reason[96];
 
     ModPerfCounter perf_frame;
     ModPerfCounter perf_tick;
@@ -740,6 +762,7 @@ static int        g_mod_cap = 0;
 static InteropProvider* g_interop_providers = NULL;
 static int g_interop_provider_count = 0;
 static int g_interop_provider_cap = 0;
+static int g_online_suspend_active = 0;
 
 // UI input state shared across mods.
 static int g_ui_mouse_x = 0;
@@ -2903,13 +2926,30 @@ static void interop_clear_all(lua_State* Ls) {
     g_interop_provider_cap = 0;
 }
 
+static int mods_reserve_stable_slots(int capacity) {
+    LoadedMod* nm;
+    if (capacity <= g_mod_cap) return 1;
+    /* Every Lua closure, interop provider, and custom menu mode stores its
+     * LoadedMod owner pointer. Moving g_mods after the first mod is loaded
+     * would leave those guards pointing into freed memory. scan_and_load_mods
+     * knows the complete candidate count, so reserve once before any closure
+     * is created and keep owner addresses stable for the runtime lifetime. */
+    if (g_mod_count != 0) return 0;
+    nm = (LoadedMod*)realloc(g_mods, sizeof(LoadedMod) * (size_t)capacity);
+    if (!nm) return 0;
+    g_mods = nm;
+    g_mod_cap = capacity;
+    return 1;
+}
+
 static LoadedMod* mods_add(void) {
     if (g_mod_count + 1 > g_mod_cap) {
-        int newcap = (g_mod_cap == 0) ? 8 : (g_mod_cap * 2);
-        LoadedMod* nm = (LoadedMod*)realloc(g_mods, sizeof(LoadedMod) * newcap);
-        if (!nm) return NULL;
-        g_mods = nm;
-        g_mod_cap = newcap;
+        /* This should only be reachable if a caller forgot the up-front
+         * reservation. Never realloc live owner objects. */
+        if (!mods_reserve_stable_slots((g_mod_cap == 0) ? 8 : (g_mod_cap * 2))) {
+            LOG_ERROR("Mod runtime capacity exhausted; refusing to invalidate Lua owner pointers");
+            return NULL;
+        }
     }
     LoadedMod* m = &g_mods[g_mod_count++];
     memset(m, 0, sizeof(*m));
@@ -2999,6 +3039,85 @@ static void log_mod(LoadedMod* mod, const char* level, const char* msg) {
         return;
     }
     log_write(level, "[mod:%s] %s", mod->id[0] ? mod->id : "?", msg);
+}
+
+static int mod_is_gameplay_suspended(const LoadedMod* mod) {
+    return mod && g_online_suspend_active && mod->gameplay_affecting;
+}
+
+static int mod_is_runtime_active(const LoadedMod* mod) {
+    return mod && mod->enabled && !mod_is_gameplay_suspended(mod);
+}
+
+static int lua_mod_change_guard(lua_State* Ls, LoadedMod* mod, const char* api_name) {
+    if (!mod || !mod->enabled) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "%s is unavailable because its mod is disabled",
+                        api_name ? api_name : "mod API");
+        return 0;
+    }
+    if (mod_is_gameplay_suspended(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "%s is locked while this gameplay mod is suspended online",
+                        api_name ? api_name : "mod API");
+        return 0;
+    }
+    return 1;
+}
+
+/* Native button actions and state transitions can enter, leave, or restart a
+ * match without going through mod.game. Keep those calls available to UI mods
+ * offline, but fail closed for every mod during the online safety window. */
+static int lua_online_native_action_error(lua_State* Ls, const char* api_name,
+                                          int nil_first) {
+    if (!g_online_suspend_active) return 0;
+    if (nil_first) lua_pushnil(Ls);
+    else lua_pushboolean(Ls, 0);
+    lua_pushfstring(Ls, "%s is unavailable during online play",
+                    api_name ? api_name : "native UI action");
+    return 2;
+}
+
+static void mod_mark_gameplay_affecting(LoadedMod* mod, const char* reason) {
+    char msg[256];
+    if (!mod) return;
+    if (!mod->gameplay_affecting) {
+        mod->gameplay_affecting = 1;
+        snprintf(mod->gameplay_reason, sizeof(mod->gameplay_reason), "%s",
+                 (reason && reason[0]) ? reason : "gameplay API use");
+        snprintf(msg, sizeof(msg), "classified gameplay-affecting (%s)", mod->gameplay_reason);
+        log_mod(mod, "INFO", msg);
+    }
+    if (g_online_suspend_active && !mod->suspend_notice_logged) {
+        snprintf(msg, sizeof(msg), "suspended for online rollback safety (%s)",
+                 mod->gameplay_reason[0] ? mod->gameplay_reason : "gameplay API use");
+        log_mod(mod, "INFO", msg);
+        mod->suspend_notice_logged = 1;
+    }
+    if (g_online_suspend_active) mod_suspend_transient_state(mod);
+}
+
+/* Every state-changing mod.game binding is an owner-aware closure. This both
+ * classifies the owner and closes the console/hot-reload escape hatch where a
+ * suspended mod could otherwise retain a plain C function and mutate native
+ * memory directly. Callers return the two values already customary for API
+ * failures: false, error_message. */
+static int lua_game_mutation_guard(lua_State* Ls, const char* api_name) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    char reason[128];
+    snprintf(reason, sizeof(reason), "mod.game.%s", api_name ? api_name : "mutation");
+    if (!mod || !mod->enabled) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "%s is unavailable because its mod is disabled", reason);
+        return 0;
+    }
+    mod_mark_gameplay_affecting(mod, reason);
+    if (mod_is_gameplay_suspended(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "%s is suspended during online play", reason);
+        return 0;
+    }
+    return 1;
 }
 
 static double perf_now_ms(void) {
@@ -3745,6 +3864,54 @@ static void mod_asset_sheets_clear(LoadedMod* mod) {
     mod->asset_batch_dirty = 0;
 }
 
+static void map_asset_atlas_sheets_clear(void) {
+    free(g_map_asset_atlas_sheets);
+    g_map_asset_atlas_sheets = NULL;
+    g_map_asset_atlas_sheet_count = 0;
+    g_map_asset_atlas_sheet_cap = 0;
+}
+
+static int map_asset_atlas_sheet_add(const char* key, int base_id, int count) {
+    MapAssetAtlasSheet* bigger;
+    int new_cap;
+    if (!key || !key[0] || base_id < 0 || count <= 0) return 0;
+    if (g_map_asset_atlas_sheet_count == g_map_asset_atlas_sheet_cap) {
+        if (g_map_asset_atlas_sheet_cap > INT_MAX / 2) return 0;
+        new_cap = g_map_asset_atlas_sheet_cap ? g_map_asset_atlas_sheet_cap * 2 : 8;
+        if (new_cap < g_map_asset_atlas_sheet_cap ||
+            (size_t)new_cap > SIZE_MAX / sizeof(*bigger)) {
+            return 0;
+        }
+        bigger = (MapAssetAtlasSheet*)realloc(
+            g_map_asset_atlas_sheets, (size_t)new_cap * sizeof(*bigger));
+        if (!bigger) return 0;
+        g_map_asset_atlas_sheets = bigger;
+        g_map_asset_atlas_sheet_cap = new_cap;
+    }
+    snprintf(g_map_asset_atlas_sheets[g_map_asset_atlas_sheet_count].key,
+             sizeof(g_map_asset_atlas_sheets[g_map_asset_atlas_sheet_count].key),
+             "%s", key);
+    g_map_asset_atlas_sheets[g_map_asset_atlas_sheet_count].base_id = base_id;
+    g_map_asset_atlas_sheets[g_map_asset_atlas_sheet_count].count = count;
+    g_map_asset_atlas_sheet_count++;
+    return 1;
+}
+
+static int map_asset_atlas_sheet_resolve(const char* key,
+                                         int sprite_index,
+                                         int* out_sprite_id) {
+    int i;
+    if (!key || sprite_index < 0 || !out_sprite_id) return 0;
+    for (i = 0; i < g_map_asset_atlas_sheet_count; i++) {
+        const MapAssetAtlasSheet* sheet = &g_map_asset_atlas_sheets[i];
+        if (strcmp(sheet->key, key) != 0) continue;
+        if (sprite_index >= sheet->count) return 0;
+        *out_sprite_id = sheet->base_id + sprite_index;
+        return 1;
+    }
+    return 0;
+}
+
 static void lua_push_asset_sheet_info(lua_State* Ls, const ModAssetSheet* s) {
     lua_newtable(Ls);
     if (!s) return;
@@ -3781,6 +3948,7 @@ static int mod_assets_can_rebuild_now(void) {
 }
 
 void lua_manager_before_atlas_upload(int atlas_ptr) {
+    int map_sheet_count;
     if (g_mod_asset_injection_active) return;
     if (!atlas_ptr || !mod_assets_native_load_ready()) return;
     if (!p_freetype_atlas || !ptr_readable((const void*)p_freetype_atlas, sizeof(uintptr_t)) || *p_freetype_atlas == 0) {
@@ -3788,6 +3956,7 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
     }
 
     g_mod_asset_injection_active = 1;
+    map_asset_atlas_sheets_clear();
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod->enabled || mod->asset_sheet_count <= 0) continue;
@@ -3834,6 +4003,54 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
         }
         mod->asset_batch_dirty = 0;
     }
+    map_sheet_count = custom_maps_content_sheet_count();
+    for (int si = 0; si < map_sheet_count; si++) {
+        CustomMapContentSheetInfo sheet;
+        CustomMapContentSheetInfo verified_sheet;
+        int before;
+        int after;
+        int loaded;
+        int packed_count;
+        if (!custom_maps_content_sheet_get(si, &sheet)) {
+            LOG_WARN("map content: sheet %d is missing or changed; native fallback remains active",
+                     si);
+            continue;
+        }
+        before = p_sprite_count();
+        loaded = p_atlas_load_spritesheet(atlas_ptr,
+                                          NULL,
+                                          sheet.cell_w,
+                                          sheet.cell_h,
+                                          sheet.padding,
+                                          sheet.atlas_flags,
+                                          sheet.full_path);
+        after = p_sprite_count();
+        packed_count = after - before;
+        if (loaded < 0 || packed_count <= 0 || packed_count != sheet.sprite_count) {
+            LOG_WARN("map content: failed to pack %s (expected=%d actual=%d code=%d)",
+                     sheet.key, sheet.sprite_count, packed_count, loaded);
+            continue;
+        }
+        if (!custom_maps_content_sheet_get(si, &verified_sheet) ||
+            strcmp(verified_sheet.key, sheet.key) != 0 ||
+            strcmp(verified_sheet.asset_sha256, sheet.asset_sha256) != 0 ||
+            verified_sheet.cell_w != sheet.cell_w ||
+            verified_sheet.cell_h != sheet.cell_h ||
+            verified_sheet.padding != sheet.padding) {
+            LOG_WARN("map content: %s changed while it was being packed; atlas range discarded",
+                     sheet.key);
+            continue;
+        }
+        if (!map_asset_atlas_sheet_add(sheet.key, before, packed_count)) {
+            LOG_WARN("map content: packed %s but could not cache its atlas range",
+                     sheet.key);
+            continue;
+        }
+        LOG_INFO("map content: packed %s base=%d count=%d",
+                 sheet.key, before, packed_count);
+    }
+    g_map_asset_registry_generation = custom_maps_generation();
+    g_map_asset_deferred_generation = 0;
     g_mod_asset_injection_active = 0;
 }
 
@@ -4071,6 +4288,642 @@ static void push_assets_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_build_color_masks, 1); lua_setfield(Ls, -2, "build_color_masks");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_sprite_id, 1);        lua_setfield(Ls, -2, "sprite_id");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_assets_info, 1);             lua_setfield(Ls, -2, "info");
+}
+
+/* =============================
+ * Declarative custom content API
+ * ============================= */
+
+#define LUA_CONTENT_TX_METATABLE "eggnoggplus.content_tx.v1"
+
+typedef struct LuaContentTx {
+    ContentRegistryTx* transaction;
+    LoadedMod* mod;
+} LuaContentTx;
+
+static int lua_content_fail(lua_State* Ls, const char* message) {
+    lua_pushboolean(Ls, 0);
+    lua_pushstring(Ls, (message && message[0]) ? message : "content API error");
+    return 2;
+}
+
+static int lua_content_nil_fail(lua_State* Ls, const char* message) {
+    lua_pushnil(Ls);
+    lua_pushstring(Ls, (message && message[0]) ? message : "content API error");
+    return 2;
+}
+
+static int lua_content_guard(lua_State* Ls, LoadedMod* mod, const char* operation) {
+    char reason[128];
+    snprintf(reason, sizeof(reason), "mod.content.%s", operation ? operation : "mutation");
+    if (!mod || !mod->enabled) {
+        lua_content_fail(Ls, "mod is not active");
+        return 0;
+    }
+    mod_mark_gameplay_affecting(mod, reason);
+    if (mod_is_gameplay_suspended(mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "%s is suspended during online play", reason);
+        return 0;
+    }
+    return 1;
+}
+
+static int lua_content_mod_owner_valid(const LoadedMod* mod,
+                                       char* err,
+                                       size_t err_cap) {
+    char unused_key[CONTENT_KEY_MAX];
+    if (!mod || !mod->id[0]) {
+        snprintf(err, err_cap, "mod content owner is missing");
+        return 0;
+    }
+    if (_strnicmp(mod->id, "map.", 4) == 0) {
+        snprintf(err, err_cap, "the 'map.' content-owner prefix is reserved for map packages");
+        return 0;
+    }
+    return content_registry_make_key(mod->id, "owner", unused_key, err, err_cap);
+}
+
+static LuaContentTx* lua_content_check_tx(lua_State* Ls, int index) {
+    return (LuaContentTx*)luaL_checkudata(Ls, index, LUA_CONTENT_TX_METATABLE);
+}
+
+static int lua_content_tx_gc(lua_State* Ls) {
+    LuaContentTx* handle = lua_content_check_tx(Ls, 1);
+    if (handle && handle->transaction) {
+        content_registry_abort(handle->transaction);
+        handle->transaction = NULL;
+    }
+    handle->mod = NULL;
+    return 0;
+}
+
+static int lua_content_tx_abort(lua_State* Ls) {
+    LuaContentTx* handle = lua_content_check_tx(Ls, 1);
+    if (!handle || !handle->transaction) {
+        return lua_content_fail(Ls, "content transaction is already closed");
+    }
+    content_registry_abort(handle->transaction);
+    handle->transaction = NULL;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_content_known_tile_key(const char* key) {
+    static const char* const keys[] = {
+        "id", "name", "native_glyph", "sheet", "sprite_sheet",
+        "sprite_index", "frame_count", "frame_ticks", "animation",
+        "layer", "mirror_with_room", "random_phase", "offset_x",
+        "offset_y", "scale", "scale_x", "scale_y", "angle",
+        "angle_degrees", "tint", "asset_sha256"
+    };
+    size_t i;
+    if (!key) return 0;
+    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        if (strcmp(key, keys[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int lua_content_validate_tile_keys(lua_State* Ls, int table_index,
+                                          char* err, size_t err_cap) {
+    if (table_index < 0 && table_index > LUA_REGISTRYINDEX) {
+        table_index = lua_gettop(Ls) + table_index + 1;
+    }
+    lua_pushnil(Ls);
+    while (lua_next(Ls, table_index) != 0) {
+        size_t key_len = 0;
+        const char* key = lua_type(Ls, -2) == LUA_TSTRING
+            ? lua_tolstring(Ls, -2, &key_len) : NULL;
+        if (!key || strlen(key) != key_len || !lua_content_known_tile_key(key)) {
+            if (!key) snprintf(err, err_cap, "tile definition keys must be strings");
+            else if (strlen(key) != key_len) {
+                snprintf(err, err_cap, "tile definition keys cannot contain NUL bytes");
+            }
+            else snprintf(err, err_cap, "unknown tile definition key '%s'", key);
+            lua_pop(Ls, 2);
+            return 0;
+        }
+        lua_pop(Ls, 1);
+    }
+    return 1;
+}
+
+static int lua_content_read_string(lua_State* Ls, int table_index, const char* key,
+                                   int required, char* out, size_t out_cap,
+                                   char* err, size_t err_cap) {
+    size_t len = 0;
+    const char* value;
+    if (!out || out_cap == 0) {
+        snprintf(err, err_cap, "internal string buffer error for tile.%s", key);
+        return 0;
+    }
+    out[0] = '\0';
+    lua_getfield(Ls, table_index, key);
+    if (lua_isnil(Ls, -1)) {
+        lua_pop(Ls, 1);
+        if (required) {
+            snprintf(err, err_cap, "tile.%s is required", key);
+            return 0;
+        }
+        return 1;
+    }
+    if (lua_type(Ls, -1) != LUA_TSTRING) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s must be a string", key);
+        return 0;
+    }
+    value = lua_tolstring(Ls, -1, &len);
+    if (strlen(value) != len) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s cannot contain NUL bytes", key);
+        return 0;
+    }
+    if (required && len == 0) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s cannot be empty", key);
+        return 0;
+    }
+    if (len >= out_cap) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s is too long (max %u characters)",
+                 key, (unsigned)(out_cap - 1));
+        return 0;
+    }
+    memcpy(out, value, len);
+    out[len] = '\0';
+    lua_pop(Ls, 1);
+    return 1;
+}
+
+static int lua_content_get_integer(lua_State* Ls, int table_index, const char* key,
+                                   int fallback, int minimum, int maximum, int* out,
+                                   char* err, size_t err_cap) {
+    double value;
+    int integer;
+    lua_getfield(Ls, table_index, key);
+    if (lua_isnil(Ls, -1)) {
+        lua_pop(Ls, 1);
+        *out = fallback;
+        return 1;
+    }
+    if (lua_type(Ls, -1) != LUA_TNUMBER) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s must be an integer", key);
+        return 0;
+    }
+    value = lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    if (!isfinite(value) || value < (double)minimum || value > (double)maximum) {
+        snprintf(err, err_cap, "tile.%s must be in %d..%d", key, minimum, maximum);
+        return 0;
+    }
+    integer = (int)value;
+    if ((double)integer != value) {
+        snprintf(err, err_cap, "tile.%s must be an integer", key);
+        return 0;
+    }
+    *out = integer;
+    return 1;
+}
+
+static int lua_content_get_float(lua_State* Ls, int table_index, const char* key,
+                                 float fallback, float* out,
+                                 char* err, size_t err_cap) {
+    double value;
+    lua_getfield(Ls, table_index, key);
+    if (lua_isnil(Ls, -1)) {
+        lua_pop(Ls, 1);
+        *out = fallback;
+        return 1;
+    }
+    if (lua_type(Ls, -1) != LUA_TNUMBER) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s must be a finite number", key);
+        return 0;
+    }
+    value = lua_tonumber(Ls, -1);
+    lua_pop(Ls, 1);
+    if (!isfinite(value) || value < -1000000.0 || value > 1000000.0) {
+        snprintf(err, err_cap, "tile.%s must be a finite number", key);
+        return 0;
+    }
+    *out = (float)value;
+    return 1;
+}
+
+static int lua_content_get_boolean(lua_State* Ls, int table_index, const char* key,
+                                   int fallback, int* out,
+                                   char* err, size_t err_cap) {
+    lua_getfield(Ls, table_index, key);
+    if (lua_isnil(Ls, -1)) {
+        lua_pop(Ls, 1);
+        *out = fallback;
+        return 1;
+    }
+    if (lua_type(Ls, -1) != LUA_TBOOLEAN) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.%s must be boolean", key);
+        return 0;
+    }
+    *out = lua_toboolean(Ls, -1) ? 1 : 0;
+    lua_pop(Ls, 1);
+    return 1;
+}
+
+static int lua_content_get_tint(lua_State* Ls, int table_index, float tint[4],
+                                char* err, size_t err_cap) {
+    size_t length;
+    int i;
+    for (i = 0; i < 4; i++) tint[i] = 1.0f;
+    lua_getfield(Ls, table_index, "tint");
+    if (lua_isnil(Ls, -1)) {
+        lua_pop(Ls, 1);
+        return 1;
+    }
+    if (!lua_istable(Ls, -1) || (length = lua_objlen(Ls, -1)) != 4) {
+        lua_pop(Ls, 1);
+        snprintf(err, err_cap, "tile.tint must be a 4-number array");
+        return 0;
+    }
+    {
+        int tint_index = lua_absindex_compat(Ls, -1);
+        lua_pushnil(Ls);
+        while (lua_next(Ls, tint_index) != 0) {
+            double key_number;
+            int key_integer;
+            if (lua_type(Ls, -2) != LUA_TNUMBER ||
+                !isfinite(key_number = lua_tonumber(Ls, -2)) ||
+                key_number < 1.0 || key_number > 4.0) {
+                lua_pop(Ls, 2);
+                snprintf(err, err_cap, "tile.tint may only contain array keys 1..4");
+                return 0;
+            }
+            key_integer = (int)key_number;
+            if ((double)key_integer != key_number) {
+                lua_pop(Ls, 2);
+                snprintf(err, err_cap, "tile.tint may only contain array keys 1..4");
+                return 0;
+            }
+            lua_pop(Ls, 1);
+        }
+    }
+    for (i = 0; i < 4; i++) {
+        double value;
+        lua_rawgeti(Ls, -1, i + 1);
+        if (lua_type(Ls, -1) != LUA_TNUMBER ||
+            !isfinite(value = lua_tonumber(Ls, -1)) || value < 0.0 || value > 1.0) {
+            lua_pop(Ls, 2);
+            snprintf(err, err_cap, "tile.tint channels must be finite numbers in 0..1");
+            return 0;
+        }
+        tint[i] = (float)value;
+        lua_pop(Ls, 1);
+    }
+    lua_pop(Ls, 1);
+    return 1;
+}
+
+static int lua_content_tx_register_tile(lua_State* Ls) {
+    LuaContentTx* handle = lua_content_check_tx(Ls, 1);
+    LoadedMod* mod;
+    ContentTileInput input;
+    const ModAssetSheet* sheet = NULL;
+    char id[CONTENT_LOCAL_ID_MAX];
+    char name[CONTENT_NAME_MAX];
+    char glyph[2];
+    char sheet_arg[CONTENT_SHEET_KEY_MAX];
+    char animation[24];
+    char expected_sha[CONTENT_SHA256_HEX_SIZE];
+    char qualified_sheet[CONTENT_SHEET_KEY_MAX];
+    char actual_sha[CONTENT_SHA256_HEX_SIZE];
+    char err[256];
+    int mirror = 0;
+    int random_phase = 0;
+    int has_sheet = 0;
+    int has_sprite_sheet = 0;
+    int has_angle = 0;
+    int has_angle_degrees = 0;
+    float uniform_scale = 1.0f;
+
+    memset(&input, 0, sizeof(input));
+    memset(qualified_sheet, 0, sizeof(qualified_sheet));
+    memset(actual_sha, 0, sizeof(actual_sha));
+    err[0] = '\0';
+    if (!handle || !handle->transaction) {
+        return lua_content_fail(Ls, "content transaction is already closed");
+    }
+    mod = handle->mod;
+    if (!lua_content_guard(Ls, mod, "register_tile")) return 2;
+    if (!lua_istable(Ls, 2)) {
+        return lua_content_fail(Ls, "register_tile expects a definition table");
+    }
+    if (!lua_content_validate_tile_keys(Ls, 2, err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+
+    lua_getfield(Ls, 2, "sheet");
+    has_sheet = !lua_isnil(Ls, -1);
+    lua_pop(Ls, 1);
+    lua_getfield(Ls, 2, "sprite_sheet");
+    has_sprite_sheet = !lua_isnil(Ls, -1);
+    lua_pop(Ls, 1);
+    if (has_sheet && has_sprite_sheet) {
+        return lua_content_fail(Ls, "use tile.sheet or tile.sprite_sheet, not both");
+    }
+    lua_getfield(Ls, 2, "angle");
+    has_angle = !lua_isnil(Ls, -1);
+    lua_pop(Ls, 1);
+    lua_getfield(Ls, 2, "angle_degrees");
+    has_angle_degrees = !lua_isnil(Ls, -1);
+    lua_pop(Ls, 1);
+    if (has_angle && has_angle_degrees) {
+        return lua_content_fail(Ls, "use tile.angle or tile.angle_degrees, not both");
+    }
+
+    if (!lua_content_read_string(Ls, 2, "id", 1, id, sizeof(id), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "name", 0, name, sizeof(name), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "native_glyph", 1, glyph, sizeof(glyph), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, has_sheet ? "sheet" : "sprite_sheet", 1,
+                                 sheet_arg, sizeof(sheet_arg), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "animation", 0,
+                                 animation, sizeof(animation), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "asset_sha256", 0,
+                                 expected_sha, sizeof(expected_sha), err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+    input.id = id;
+    input.name = name[0] ? name : NULL;
+    input.native_glyph = glyph[0];
+
+    if (_strnicmp(sheet_arg, "builtin:", 8) == 0) {
+        snprintf(qualified_sheet, sizeof(qualified_sheet), "%s", sheet_arg);
+        if (expected_sha[0]) {
+            return lua_content_fail(Ls, "tile.asset_sha256 is only valid for external sprite sheets");
+        }
+    } else {
+        int sheet_index = mod_asset_sheet_find(mod, sheet_arg);
+        if (sheet_index < 0) {
+            snprintf(err, sizeof(err),
+                     "tile sheet '%s' is not registered with mod.assets.load_spritesheet", sheet_arg);
+            return lua_content_fail(Ls, err);
+        }
+        sheet = &mod->asset_sheets[sheet_index];
+        if (!content_registry_make_key(mod->id, sheet->id, qualified_sheet,
+                                       err, sizeof(err)) ||
+            !content_registry_sha256_file(sheet->fullpath, NULL, actual_sha,
+                                          err, sizeof(err))) {
+            return lua_content_fail(Ls, err);
+        }
+        if (expected_sha[0] && _stricmp(expected_sha, actual_sha) != 0) {
+            return lua_content_fail(Ls, "tile.asset_sha256 does not match the sprite sheet on disk");
+        }
+    }
+    input.sprite_sheet = qualified_sheet;
+    input.asset_sha256_hex = sheet ? actual_sha : NULL;
+
+    if (!lua_content_get_integer(Ls, 2, "sprite_index", 0, 0, 1000000,
+                                 &input.sprite_index, err, sizeof(err)) ||
+        !lua_content_get_integer(Ls, 2, "frame_count", 1, 1, 256,
+                                 &input.frame_count, err, sizeof(err)) ||
+        !lua_content_get_integer(Ls, 2, "frame_ticks", 1, 1, 3600,
+                                 &input.frame_ticks, err, sizeof(err)) ||
+        !lua_content_get_integer(Ls, 2, "layer", 0, 0, 1,
+                                 &input.layer, err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+    if (sheet && sheet->count > 0 &&
+        (input.sprite_index >= sheet->count ||
+         input.frame_count > sheet->count - input.sprite_index)) {
+        return lua_content_fail(Ls, "tile animation exceeds the registered sprite sheet");
+    }
+    if (!animation[0] || strcmp(animation, "loop") == 0) {
+        input.animation_mode = CONTENT_ANIMATION_LOOP;
+    } else if (strcmp(animation, "ping_pong") == 0 || strcmp(animation, "pingpong") == 0) {
+        input.animation_mode = CONTENT_ANIMATION_PING_PONG;
+    } else if (strcmp(animation, "once") == 0) {
+        input.animation_mode = CONTENT_ANIMATION_ONCE;
+    } else {
+        return lua_content_fail(Ls, "tile.animation must be loop, ping_pong, or once");
+    }
+
+    if (!lua_content_get_boolean(Ls, 2, "mirror_with_room", 0, &mirror,
+                                 err, sizeof(err)) ||
+        !lua_content_get_boolean(Ls, 2, "random_phase", 0, &random_phase,
+                                 err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+    if (mirror) input.flags |= CONTENT_TILE_MIRROR_WITH_ROOM;
+    if (random_phase) input.flags |= CONTENT_TILE_RANDOM_PHASE;
+
+    if (!lua_content_get_float(Ls, 2, "offset_x", 0.0f, &input.offset_x,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "offset_y", 0.0f, &input.offset_y,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "scale", 1.0f, &uniform_scale,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "scale_x", uniform_scale, &input.scale_x,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "scale_y", uniform_scale, &input.scale_y,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, has_angle ? "angle" : "angle_degrees",
+                               0.0f, &input.angle_degrees, err, sizeof(err)) ||
+        !lua_content_get_tint(Ls, 2, input.tint, err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+    input.tint_provided = 1;
+
+    if (!content_registry_tx_register_tile(handle->transaction, &input,
+                                           err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static int lua_content_tx_commit(lua_State* Ls) {
+    LuaContentTx* handle = lua_content_check_tx(Ls, 1);
+    LoadedMod* mod;
+    char err[256] = { 0 };
+    if (!handle || !handle->transaction) {
+        return lua_content_fail(Ls, "content transaction is already closed");
+    }
+    mod = handle->mod;
+    if (!lua_content_guard(Ls, mod, "commit")) return 2;
+    if (!content_registry_commit(handle->transaction, err, sizeof(err))) {
+        return lua_content_fail(Ls, err);
+    }
+    handle->transaction = NULL;
+    if (mod) mod->content_registered = 1;
+    lua_pushboolean(Ls, 1);
+    return 1;
+}
+
+static void lua_content_ensure_tx_metatable(lua_State* Ls) {
+    if (luaL_newmetatable(Ls, LUA_CONTENT_TX_METATABLE)) {
+        lua_pushcfunction(Ls, lua_content_tx_gc);
+        lua_setfield(Ls, -2, "__gc");
+        lua_newtable(Ls);
+        lua_pushcfunction(Ls, lua_content_tx_register_tile);
+        lua_setfield(Ls, -2, "register_tile");
+        lua_pushcfunction(Ls, lua_content_tx_commit);
+        lua_setfield(Ls, -2, "commit");
+        lua_pushcfunction(Ls, lua_content_tx_abort);
+        lua_setfield(Ls, -2, "abort");
+        lua_setfield(Ls, -2, "__index");
+    }
+    lua_pop(Ls, 1);
+}
+
+static int lua_content_begin(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    ContentRegistryTx* transaction;
+    LuaContentTx* handle;
+    char err[256] = { 0 };
+    if (!lua_content_guard(Ls, mod, "begin")) {
+        lua_pushnil(Ls);
+        lua_replace(Ls, -3);
+        return 2;
+    }
+    if (!lua_content_mod_owner_valid(mod, err, sizeof(err))) {
+        return lua_content_nil_fail(Ls, err);
+    }
+    transaction = content_registry_begin(mod->id, err, sizeof(err));
+    if (!transaction) return lua_content_nil_fail(Ls, err);
+    handle = (LuaContentTx*)lua_newuserdata(Ls, sizeof(*handle));
+    memset(handle, 0, sizeof(*handle));
+    handle->transaction = transaction;
+    handle->mod = mod;
+    luaL_getmetatable(Ls, LUA_CONTENT_TX_METATABLE);
+    lua_setmetatable(Ls, -2);
+    return 1;
+}
+
+static int lua_content_qualify(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    size_t local_id_len = 0;
+    const char* local_id = luaL_checklstring(Ls, 1, &local_id_len);
+    char key[CONTENT_KEY_MAX];
+    char err[256] = { 0 };
+    if (strlen(local_id) != local_id_len) {
+        return lua_content_nil_fail(Ls, "content id cannot contain NUL bytes");
+    }
+    if (!lua_content_mod_owner_valid(mod, err, sizeof(err)) ||
+        !content_registry_make_key(mod->id, local_id, key, err, sizeof(err))) {
+        return lua_content_nil_fail(Ls, err);
+    }
+    lua_pushstring(Ls, key);
+    return 1;
+}
+
+static void lua_content_push_tile(lua_State* Ls, const ContentTileDef* tile) {
+    static const char hex_digits[] = "0123456789abcdef";
+    char asset_sha256[CONTENT_SHA256_HEX_SIZE];
+    const char* animation = "loop";
+    int i;
+    if (tile->animation_mode == CONTENT_ANIMATION_PING_PONG) animation = "ping_pong";
+    else if (tile->animation_mode == CONTENT_ANIMATION_ONCE) animation = "once";
+    for (i = 0; i < CONTENT_SHA256_SIZE; i++) {
+        asset_sha256[i * 2] = hex_digits[tile->asset_sha256[i] >> 4];
+        asset_sha256[i * 2 + 1] = hex_digits[tile->asset_sha256[i] & 15];
+    }
+    asset_sha256[64] = '\0';
+    lua_newtable(Ls);
+    lua_pushstring(Ls, tile->key); lua_setfield(Ls, -2, "key");
+    lua_pushstring(Ls, tile->owner); lua_setfield(Ls, -2, "owner");
+    lua_pushstring(Ls, tile->local_id); lua_setfield(Ls, -2, "id");
+    lua_pushstring(Ls, tile->name); lua_setfield(Ls, -2, "name");
+    {
+        char glyph[2] = { tile->native_glyph, '\0' };
+        lua_pushstring(Ls, glyph); lua_setfield(Ls, -2, "native_glyph");
+    }
+    lua_pushstring(Ls, tile->sprite_sheet); lua_setfield(Ls, -2, "sprite_sheet");
+    lua_pushinteger(Ls, tile->sprite_index); lua_setfield(Ls, -2, "sprite_index");
+    lua_pushinteger(Ls, tile->frame_count); lua_setfield(Ls, -2, "frame_count");
+    lua_pushinteger(Ls, tile->frame_ticks); lua_setfield(Ls, -2, "frame_ticks");
+    lua_pushinteger(Ls, tile->animation_mode); lua_setfield(Ls, -2, "animation_mode");
+    lua_pushstring(Ls, animation); lua_setfield(Ls, -2, "animation");
+    lua_pushinteger(Ls, tile->layer); lua_setfield(Ls, -2, "layer");
+    lua_pushinteger(Ls, (lua_Integer)tile->flags); lua_setfield(Ls, -2, "flags");
+    lua_pushboolean(Ls, (tile->flags & CONTENT_TILE_MIRROR_WITH_ROOM) != 0);
+    lua_setfield(Ls, -2, "mirror_with_room");
+    lua_pushboolean(Ls, (tile->flags & CONTENT_TILE_RANDOM_PHASE) != 0);
+    lua_setfield(Ls, -2, "random_phase");
+    lua_pushnumber(Ls, tile->offset_x); lua_setfield(Ls, -2, "offset_x");
+    lua_pushnumber(Ls, tile->offset_y); lua_setfield(Ls, -2, "offset_y");
+    lua_pushnumber(Ls, tile->scale_x); lua_setfield(Ls, -2, "scale_x");
+    lua_pushnumber(Ls, tile->scale_y); lua_setfield(Ls, -2, "scale_y");
+    lua_pushnumber(Ls, tile->angle_degrees); lua_setfield(Ls, -2, "angle_degrees");
+    lua_newtable(Ls);
+    for (i = 0; i < 4; i++) {
+        lua_pushnumber(Ls, tile->tint[i]);
+        lua_rawseti(Ls, -2, i + 1);
+    }
+    lua_setfield(Ls, -2, "tint");
+    lua_pushstring(Ls, tile->definition_sha256_hex);
+    lua_setfield(Ls, -2, "definition_sha256");
+    lua_pushstring(Ls, asset_sha256);
+    lua_setfield(Ls, -2, "asset_sha256");
+}
+
+static int lua_content_find(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    size_t requested_len = 0;
+    const char* requested = luaL_checklstring(Ls, 1, &requested_len);
+    char key[CONTENT_KEY_MAX];
+    char err[256] = { 0 };
+    ContentTileDef tile;
+    if (strlen(requested) != requested_len) {
+        return lua_content_nil_fail(Ls, "content key cannot contain NUL bytes");
+    }
+    if (strchr(requested, ':')) {
+        if (strlen(requested) >= sizeof(key)) {
+            return lua_content_nil_fail(Ls, "qualified content key is too long");
+        }
+        snprintf(key, sizeof(key), "%s", requested);
+    } else if (!lua_content_mod_owner_valid(mod, err, sizeof(err)) ||
+               !content_registry_make_key(mod->id, requested, key, err, sizeof(err))) {
+        return lua_content_nil_fail(Ls, err);
+    }
+    if (!content_registry_tile_find(key, &tile)) {
+        lua_pushnil(Ls);
+        return 1;
+    }
+    lua_content_push_tile(Ls, &tile);
+    return 1;
+}
+
+static int lua_content_fingerprint(lua_State* Ls) {
+    uint8_t digest[CONTENT_SHA256_SIZE];
+    char hex[CONTENT_SHA256_HEX_SIZE];
+    if (!content_registry_fingerprint(digest, hex)) {
+        return lua_content_nil_fail(Ls, "failed to hash content registry");
+    }
+    lua_pushstring(Ls, hex);
+    lua_pushinteger(Ls, (lua_Integer)content_registry_tile_count());
+    lua_pushnumber(Ls, (lua_Number)content_registry_generation());
+    return 3;
+}
+
+static void push_content_api_table(lua_State* Ls, LoadedMod* mod) {
+    char owner[CONTENT_KEY_MAX];
+    char err[128];
+    lua_content_ensure_tx_metatable(Ls);
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_content_begin, 1); lua_setfield(Ls, -2, "begin");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_content_qualify, 1); lua_setfield(Ls, -2, "qualify");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_content_find, 1); lua_setfield(Ls, -2, "find_tile");
+    lua_pushcfunction(Ls, lua_content_fingerprint); lua_setfield(Ls, -2, "fingerprint");
+    if (lua_content_mod_owner_valid(mod, err, sizeof(err)) &&
+        content_registry_make_key(mod->id, "owner", owner, err, sizeof(err))) {
+        char* colon = strchr(owner, ':');
+        if (colon) *colon = '\0';
+        lua_pushstring(Ls, owner);
+    } else {
+        lua_pushnil(Ls);
+    }
+    lua_setfield(Ls, -2, "owner");
 }
 
 static int audio_opts_get_int(lua_State* Ls, int arg_index, const char* key, int fallback) {
@@ -4765,32 +5618,10 @@ static void ui_reset_render_state(void) {
 }
 
 static void ui_draw_default_custom_state_cursor(void) {
-    int sprite_id;
-    void* sprite_ptr;
-    float scale;
-
     if (g_ui_default_custom_cursor_suppressed) return;
     if (!hooks_custom_state_active_name()) return;
-    if (!p_misc_id || !p_sprite_get || !p_sprite_batch_plot || !p_turtle_set_pos ||
-        !p_turtle_set_scale || !p_turtle_set_angle) {
-        return;
-    }
-    if (!p_turtle_set_rgba && !p_turtle_set_rgb) return;
-
-    sprite_id = *p_misc_id + 7;  // Vanilla menu cursor: top-right 16x16 cell in misc.png.
-    if (sprite_id < 0) return;
-
-    sprite_ptr = p_sprite_get((uint32_t)sprite_id);
-    if (!sprite_ptr) return;
-
-    scale = ui_readable_text_scale(1.0f);
-    p_turtle_set_angle(0.0);
-    p_turtle_set_scale((double)scale, (double)scale);
-    if (p_turtle_set_rgba) p_turtle_set_rgba(1.0f, 1.0f, 1.0f, 1.0f);
-    else p_turtle_set_rgb(1.0f, 1.0f, 1.0f);
-    p_turtle_set_pos((double)((float)g_ui_mouse_x + 8.0f * scale),
-                     (double)((float)g_ui_mouse_y + 8.0f * scale));
-    p_sprite_batch_plot((int)(intptr_t)sprite_ptr, 0, 0);
+    (void)cursor_ext_draw_vanilla_mouse((float)g_ui_mouse_x,
+                                        (float)g_ui_mouse_y);
 }
 
 static void ui_draw_text_mode_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text, int mode) {
@@ -5125,6 +5956,22 @@ static void mod_ui_free(LoadedMod* mod) {
     mod->ui_string_cap = 0;
 }
 
+static void mod_suspend_transient_state(LoadedMod* mod) {
+    if (!mod) return;
+    mod->ui_hitbox_count = 0;
+    for (int bi = 0; bi < mod->bind_count; bi++) {
+        mod->binds[bi].down = 0;
+        mod->binds[bi].pressed = 0;
+        mod->binds[bi].released = 0;
+    }
+    for (int ui = 0; ui < mod->ui_native_count; ui++) {
+        UiNativeButton* button = mod->ui_native_buttons[ui];
+        if (!button || !button->btn_ptr) continue;
+        ui_detach_button_for_unload(button->btn_ptr);
+        button->btn_ptr = NULL;
+    }
+}
+
 static void mod_ui_push_hitbox(LoadedMod* mod, float x, float y, float w, float h) {
     if (!mod) return;
     if (w <= 0.0f || h <= 0.0f) return;
@@ -5157,7 +6004,7 @@ static int ui_hit_any_visible_button(int x, int y) {
     void* state_ptr = ui_current_state_ptr();
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         if (mod->ui_hitbox_count <= 0) continue;
         if (mod->ui_state_ptr != state_ptr) continue;
         for (int i = 0; i < mod->ui_hitbox_count; i++) {
@@ -6454,7 +7301,7 @@ static UiNativeButton* ui_native_find_by_btn_ptr(void* btn_ptr) {
     if (!btn_ptr) return NULL;
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         for (int bi = 0; bi < mod->ui_native_count; bi++) {
             UiNativeButton* b = mod->ui_native_buttons[bi];
             if (!b) continue;
@@ -6614,6 +7461,7 @@ static int lua_mod_on_frame(lua_State *Ls) {
 
 static int lua_mod_on_tick(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    mod_mark_gameplay_affecting(mod, "mod.on_tick handler");
     luaL_checktype(Ls, 1, LUA_TFUNCTION);
     lua_pushvalue(Ls, 1);
     int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
@@ -6623,6 +7471,7 @@ static int lua_mod_on_tick(lua_State *Ls) {
 
 static int lua_mod_on_tick_post(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    mod_mark_gameplay_affecting(mod, "mod.on_tick_post handler");
     luaL_checktype(Ls, 1, LUA_TFUNCTION);
     lua_pushvalue(Ls, 1);
     int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
@@ -6668,6 +7517,9 @@ static int lua_mod_info(lua_State *Ls) {
     lua_pushstring(Ls, mod->entry);       lua_setfield(Ls, -2, "entry");
     lua_pushinteger(Ls, mod->api_version);lua_setfield(Ls, -2, "api_version");
     lua_pushboolean(Ls, mod->enabled);    lua_setfield(Ls, -2, "enabled");
+    lua_pushboolean(Ls, mod->gameplay_affecting); lua_setfield(Ls, -2, "gameplay_affecting");
+    lua_pushboolean(Ls, mod_is_gameplay_suspended(mod)); lua_setfield(Ls, -2, "suspended_online");
+    lua_pushstring(Ls, mod->gameplay_reason); lua_setfield(Ls, -2, "gameplay_reason");
     lua_pushstring(Ls, mod->folder_path); lua_setfield(Ls, -2, "folder_path");
     return 1;
 }
@@ -6688,6 +7540,7 @@ static int lua_mod_get_path(lua_State *Ls) {
 // Like Lua's dofile(), but always runs in *this mod's* environment and is relative to the mod folder.
 static int lua_mod_dofile(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "mod.dofile")) return 2;
     const char* rel = luaL_checkstring(Ls, 1);
     char path[MAX_PATH];
     snprintf(path, sizeof(path), "%s\\%s", mod->folder_path, rel);
@@ -6747,6 +7600,7 @@ static int lua_cfg_get(lua_State* Ls) {
 
 static int lua_cfg_set(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "config.set")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     int idx = mod_config_find_index(mod, key);
     if (idx < 0) {
@@ -6805,6 +7659,7 @@ static int lua_cfg_set(lua_State* Ls) {
 
 static int lua_cfg_on_action(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "config.on_action")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     luaL_checktype(Ls, 2, LUA_TFUNCTION);
 
@@ -6858,6 +7713,7 @@ static int lua_storage_get(lua_State* Ls) {
 
 static int lua_storage_set(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "storage.set")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     int ok = 0;
 
@@ -6907,6 +7763,7 @@ static int lua_storage_set(lua_State* Ls) {
 
 static int lua_storage_delete(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "storage.delete")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     int existed = mod_storage_remove_key(mod, key);
     if (!mod->storage_suspend_save && !mod_storage_save(mod)) {
@@ -6926,6 +7783,7 @@ static int lua_storage_schema(lua_State* Ls) {
 
 static int lua_storage_set_schema(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "storage.set_schema")) return 2;
     int schema = (int)luaL_checkinteger(Ls, 1);
     if (schema < 0) {
         lua_pushboolean(Ls, 0);
@@ -6944,6 +7802,7 @@ static int lua_storage_set_schema(lua_State* Ls) {
 
 static int lua_storage_migrate(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "storage.migrate")) return 2;
     int target_schema = (int)luaL_checkinteger(Ls, 1);
     int from_schema = mod->storage_schema_version;
     char errbuf[256];
@@ -6975,6 +7834,14 @@ static int lua_storage_migrate(lua_State* Ls) {
         return 2;
     }
 
+    if (mod_is_gameplay_suspended(mod)) {
+        lua_pop(Ls, 2);
+        if (mod->storage_suspend_save > 0) mod->storage_suspend_save--;
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "storage migration owner became suspended during the callback");
+        return 2;
+    }
+
     if (lua_isboolean(Ls, -2) && !lua_toboolean(Ls, -2)) {
         const char* err = lua_tostring(Ls, -1);
         lua_pop(Ls, 2);
@@ -7000,6 +7867,7 @@ static int lua_storage_migrate(lua_State* Ls) {
 
 static int lua_storage_save(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "storage.save")) return 2;
     if (!mod_storage_save(mod)) {
         lua_pushboolean(Ls, 0);
         lua_pushstring(Ls, "failed to save storage file");
@@ -7022,8 +7890,101 @@ static void push_storage_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushstring(Ls, mod->storage_path);                                             lua_setfield(Ls, -2, "path");
 }
 
+/* Interop service methods are wrapped at registration time, rather than only
+ * checking interop.require(). Consumers commonly cache the returned service
+ * table before matchmaking; the wrapper keeps those cached method references
+ * revocable when their provider becomes gameplay-suspended or disabled. */
+static int lua_interop_guarded_call(lua_State* Ls) {
+    LoadedMod* owner = (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+    int nargs = lua_gettop(Ls);
+    if (!mod_is_runtime_active(owner)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "interop provider is suspended or disabled");
+        return 2;
+    }
+
+    lua_pushvalue(Ls, lua_upvalueindex(2));
+    lua_insert(Ls, 1);
+    if (lua_pcall(Ls, nargs, LUA_MULTRET, 0) != 0) {
+        return lua_error(Ls);
+    }
+
+    if (!mod_is_runtime_active(owner)) {
+        lua_settop(Ls, 0);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "interop provider became suspended during the call");
+        return 2;
+    }
+    return lua_gettop(Ls);
+}
+
+static int interop_push_guarded_value(lua_State* Ls, int source_index,
+                                      LoadedMod* owner, int seen_index,
+                                      int depth) {
+    int source = lua_absindex_compat(Ls, source_index);
+    int seen = lua_absindex_compat(Ls, seen_index);
+    int type = lua_type(Ls, source);
+
+    if (type == LUA_TFUNCTION) {
+        lua_pushlightuserdata(Ls, owner);
+        lua_pushvalue(Ls, source);
+        lua_pushcclosure(Ls, lua_interop_guarded_call, 2);
+        return 1;
+    }
+    if (type != LUA_TTABLE) {
+        lua_pushvalue(Ls, source);
+        return 1;
+    }
+    if (depth >= 32) return 0;
+
+    /* Preserve aliases and terminate cycles while recursively guarding nested
+     * service namespaces. Metatables are intentionally not copied: an __index
+     * function would otherwise be an unguarded executable escape hatch. */
+    lua_pushvalue(Ls, source);
+    lua_rawget(Ls, seen);
+    if (!lua_isnil(Ls, -1)) return 1;
+    lua_pop(Ls, 1);
+
+    lua_newtable(Ls);
+    {
+        int guarded = lua_absindex_compat(Ls, -1);
+        lua_pushvalue(Ls, source);
+        lua_pushvalue(Ls, guarded);
+        lua_rawset(Ls, seen);
+
+        lua_pushnil(Ls);
+        while (lua_next(Ls, source) != 0) {
+            int value = lua_absindex_compat(Ls, -1);
+            lua_pushvalue(Ls, -2);
+            if (!interop_push_guarded_value(Ls, value, owner, seen, depth + 1)) {
+                return 0;
+            }
+            lua_rawset(Ls, guarded);
+            lua_pop(Ls, 1);
+        }
+    }
+    return 1;
+}
+
+static int interop_push_guarded_service_table(lua_State* Ls, int source_index,
+                                              LoadedMod* owner) {
+    int top = lua_gettop(Ls);
+    int source = lua_absindex_compat(Ls, source_index);
+    lua_newtable(Ls); /* original table -> guarded table cycle/alias map */
+    {
+        int seen = lua_absindex_compat(Ls, -1);
+        if (!interop_push_guarded_value(Ls, source, owner, seen, 0)) {
+            lua_settop(Ls, top);
+            return 0;
+        }
+        lua_remove(Ls, seen);
+    }
+    return 1;
+}
+
 static int lua_interop_provide(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "interop.provide")) return 2;
     const char* ns = luaL_checkstring(Ls, 1);
     const char* version = luaL_optstring(Ls, 2, mod->version);
     SemVersion parsed;
@@ -7050,7 +8011,11 @@ static int lua_interop_provide(lua_State* Ls) {
         return 2;
     }
 
-    lua_pushvalue(Ls, 3);
+    if (!interop_push_guarded_service_table(Ls, 3, mod)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "interop service table nesting exceeds 32 levels");
+        return 2;
+    }
     ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
 
     if (idx < 0) {
@@ -7076,6 +8041,8 @@ static int lua_interop_provide(lua_State* Ls) {
 }
 
 static int lua_interop_require(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "interop.require")) return 2;
     const char* ns = luaL_checkstring(Ls, 1);
     const char* range = luaL_optstring(Ls, 2, "");
     int idx = interop_find_index_by_ns(ns);
@@ -7090,6 +8057,11 @@ static int lua_interop_require(lua_State* Ls) {
                  g_interop_providers[idx].version, range);
         lua_pushnil(Ls);
         lua_pushstring(Ls, err);
+        return 2;
+    }
+    if (!mod_is_runtime_active(g_interop_providers[idx].owner)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "interop provider is suspended or disabled");
         return 2;
     }
     lua_rawgeti(Ls, LUA_REGISTRYINDEX, g_interop_providers[idx].table_ref);
@@ -7177,6 +8149,14 @@ static int lua_ui_set_default_cursor_visible(lua_State* Ls) {
     if (!visible) g_ui_default_custom_cursor_suppressed = 1;
     else g_ui_default_custom_cursor_suppressed = 0;
     return 0;
+}
+
+static int lua_ui_draw_native_cursor(lua_State* Ls) {
+    int drew = cursor_ext_draw_vanilla_mouse((float)g_ui_mouse_x,
+                                             (float)g_ui_mouse_y);
+    if (drew) g_ui_default_custom_cursor_suppressed = 1;
+    lua_pushboolean(Ls, drew);
+    return 1;
 }
 
 static int lua_ui_hitbox(lua_State* Ls) {
@@ -8057,6 +9037,8 @@ static int lua_ui_button_set_label_ptr(lua_State* Ls) {
 
 
 static int lua_ui_button_invoke_ptr(lua_State* Ls) {
+    int blocked = lua_online_native_action_error(Ls, "mod.ui.button_invoke_ptr", 1);
+    if (blocked) return blocked;
     void* btn = ui_lua_ptr_to_button(Ls, 1);
     int event_code = (int)luaL_optinteger(Ls, 2, 3);
 
@@ -8130,6 +9112,8 @@ static int lua_ui_button_invoke_ptr(lua_State* Ls) {
 
 
 static int lua_ui_button_activate_ptr(lua_State* Ls) {
+    int blocked = lua_online_native_action_error(Ls, "mod.ui.button_activate_ptr", 1);
+    if (blocked) return blocked;
     void* btn = ui_lua_ptr_to_button(Ls, 1);
     int event_code = (int)luaL_optinteger(Ls, 2, 3);
 
@@ -8438,6 +9422,7 @@ static int lua_game_native_tick(lua_State* Ls) {
 }
 
 static int lua_game_set_native_tick(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_native_tick")) return 2;
     uint32_t value = lua_game_u32_arg(Ls, 1);
     if (!ptr_writable((void*)p_native_game_ticks, sizeof(uint32_t))) {
         lua_pushboolean(Ls, 0);
@@ -8458,6 +9443,7 @@ static int lua_game_rng_seed(lua_State* Ls) {
 }
 
 static int lua_game_set_rng_seed(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_rng_seed")) return 2;
     uint32_t value = lua_game_u32_arg(Ls, 1);
     if (!ptr_writable((void*)p_mrand_seed, sizeof(uint32_t))) {
         lua_pushboolean(Ls, 0);
@@ -8533,6 +9519,7 @@ static int lua_game_player_colour_index(lua_State* Ls) {
 }
 
 static int lua_game_set_player_colour_index(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_player_colour_index")) return 2;
     int player_index = (int)luaL_checkinteger(Ls, 1);
     int clothing = (int)luaL_checkinteger(Ls, 2);
     int colour_index = (int)luaL_checkinteger(Ls, 3);
@@ -8573,6 +9560,7 @@ static int lua_read_rgba_arg(lua_State* Ls, int idx, float out[4]) {
 }
 
 static int lua_game_set_player_render_colours(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_player_render_colours")) return 2;
     int player_index = (int)luaL_checkinteger(Ls, 1) & 1;
     uintptr_t player_ptr = game_get_player_ptr(player_index);
     float skin[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -8608,6 +9596,7 @@ static int lua_game_set_player_render_colours(lua_State* Ls) {
 }
 
 static int lua_game_set_player_body_hidden(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_player_body_hidden")) return 2;
     int player_index = (int)luaL_checkinteger(Ls, 1) & 1;
     int hidden = lua_toboolean(Ls, 2) ? 1 : 0;
     hooks_set_player_body_hidden(player_index, hidden);
@@ -8622,6 +9611,7 @@ static int lua_game_player_body_hidden(lua_State* Ls) {
 }
 
 static int lua_game_set_player_sword_idle_offset(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_player_sword_idle_offset")) return 2;
     int player_index = (int)luaL_checkinteger(Ls, 1) & 1;
     float x = (float)luaL_optnumber(Ls, 2, 0.0);
     float y = (float)luaL_optnumber(Ls, 3, 0.0);
@@ -8679,6 +9669,7 @@ static int lua_game_full_state_blob(lua_State* Ls) {
 }
 
 static int lua_game_apply_full_state_blob(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "apply_full_state_blob")) return 2;
     size_t blob_len = 0;
     const char* blob = luaL_checklstring(Ls, 1, &blob_len);
     char err[128];
@@ -8694,6 +9685,7 @@ static int lua_game_apply_full_state_blob(lua_State* Ls) {
 }
 
 static int lua_game_block_next_tick(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "block_next_tick")) return 2;
     int block = lua_isnoneornil(Ls, 1) ? 1 : (lua_toboolean(Ls, 1) ? 1 : 0);
     hooks_block_next_game_tick(block);
     lua_pushboolean(Ls, 1);
@@ -8701,6 +9693,7 @@ static int lua_game_block_next_tick(lua_State* Ls) {
 }
 
 static int lua_game_simulate_ticks(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "simulate_ticks")) return 2;
     int count = (int)luaL_optinteger(Ls, 1, 1);
     int arg0 = (int)luaL_optinteger(Ls, 2, 0);
     int ran = 0;
@@ -8858,6 +9851,7 @@ static int lua_game_tile_solid(lua_State* Ls) {
 
 static int lua_game_register_bot_provider(lua_State* Ls) {
     LoadedMod* mod = (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+    if (!lua_game_mutation_guard(Ls, "register_bot_provider")) return 2;
     if (mod) mod->bot_provider = 1;
     lua_pushboolean(Ls, 1);
     return 1;
@@ -8903,7 +9897,7 @@ int lua_manager_menu_mode_info(int idx, const char** out_id, const char** out_la
     if (idx < 0 || idx >= MENU_MODE_MAX) return 0;
     {
         LuaMenuMode* mm = &g_menu_modes[idx];
-        if (!mm->used || !mm->active) return 0;
+        if (!mm->used || !mm->active || !mod_is_runtime_active(mm->owner)) return 0;
         if (out_id) *out_id = mm->id;
         if (out_label) *out_label = mm->label;
         if (out_r) *out_r = mm->r;
@@ -8920,7 +9914,8 @@ int lua_manager_menu_mode_activate(int idx, int player_index) {
     int proceed = 0;
     if (!L || idx < 0 || idx >= MENU_MODE_MAX) return 0;
     mm = &g_menu_modes[idx];
-    if (!mm->used || !mm->active || mm->cb_ref == LUA_NOREF || mm->cb_ref == LUA_REFNIL) return 0;
+    if (!mm->used || !mm->active || !mod_is_runtime_active(mm->owner) ||
+        mm->cb_ref == LUA_NOREF || mm->cb_ref == LUA_REFNIL) return 0;
     lua_rawgeti(L, LUA_REGISTRYINDEX, mm->cb_ref);
     lua_pushinteger(L, player_index);
     if (lua_pcall(L, 1, 1, 0) != 0) {
@@ -8935,6 +9930,7 @@ int lua_manager_menu_mode_activate(int idx, int player_index) {
 
 static int lua_game_register_menu_mode(lua_State* Ls) {
     LoadedMod* mod = (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+    if (!lua_game_mutation_guard(Ls, "register_menu_mode")) return 2;
     const char* id;
     const char* label;
     LuaMenuMode* slot = NULL;
@@ -8990,6 +9986,7 @@ static int lua_game_register_menu_mode(lua_State* Ls) {
 }
 
 static int lua_game_arm_ai_match(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "arm_ai_match")) return 2;
     int ai_player = (int)luaL_checkinteger(Ls, 1);
     int training = lua_toboolean(Ls, 2);
     hooks_arm_ai_match(ai_player, training);
@@ -9000,6 +9997,7 @@ static int lua_game_arm_ai_match(lua_State* Ls) {
 /* start_match([selector]) - start/restart a native local match, optionally on
  * a specific map selector (see map_count). Refused during online play. */
 static int lua_game_start_match(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "start_match")) return 2;
     int selector = (int)luaL_optinteger(Ls, 1, -1);
     int total = custom_maps_total_selectors();
     if (selector >= total) selector = total > 0 ? (selector % total) : -1;
@@ -9059,6 +10057,7 @@ static int lua_game_ai_match(lua_State* Ls) {
 }
 
 static int lua_game_set_input(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "set_input")) return 2;
     int ok = 0;
     int player_index = (int)luaL_checkinteger(Ls, 1);
     uint32_t cmd_mask = lua_game_mask_from_value(Ls, 2, &ok);
@@ -9077,6 +10076,7 @@ static int lua_game_set_input(lua_State* Ls) {
 }
 
 static int lua_game_input_override(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "input_override")) return 2;
     int ok = 0;
     int player_index = (int)luaL_checkinteger(Ls, 1);
     uint32_t cmd_mask = lua_game_mask_from_value(Ls, 2, &ok);
@@ -9095,6 +10095,7 @@ static int lua_game_input_override(lua_State* Ls) {
 }
 
 static int lua_game_input_clear(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "input_clear")) return 2;
     int player_index = (int)luaL_checkinteger(Ls, 1);
     hooks_clear_tick_input(player_index);
     hooks_clear_input_override(player_index);
@@ -9130,6 +10131,7 @@ static int lua_game_input_status(lua_State* Ls) {
 }
 
 static int lua_game_block_raw_input(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "block_raw_input")) return 2;
     int player_index = (int)luaL_checkinteger(Ls, 1);
     int blocked = lua_toboolean(Ls, 2) ? 1 : 0;
     hooks_set_raw_input_blocked(player_index, blocked);
@@ -9519,6 +10521,7 @@ static int game_apply_sword_table(lua_State* Ls, int idx) {
 }
 
 static int lua_game_apply_snapshot(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "apply_snapshot")) return 2;
     int idx = 1;
     int applied = 0;
     int snapshot_player_index = 0;
@@ -9610,6 +10613,7 @@ static int lua_game_apply_snapshot(lua_State* Ls) {
 }
 
 static int lua_game_apply_sword_snapshot(lua_State* Ls) {
+    if (!lua_game_mutation_guard(Ls, "apply_sword_snapshot")) return 2;
     int idx = 1;
     int applied = 0;
     int thing_count = game_get_thing_count();
@@ -9674,6 +10678,7 @@ static int lua_game_apply_sword_snapshot(lua_State* Ls) {
 static int lua_input_bind(lua_State* Ls) {
 
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "mod.input.bind")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     const char* default_name = luaL_optstring(Ls, 2, "");
     const char* label = luaL_optstring(Ls, 3, key);
@@ -9708,6 +10713,7 @@ static int lua_input_get(lua_State* Ls) {
 
 static int lua_input_set(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "mod.input.set")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     const char* value = luaL_checkstring(Ls, 2);
     int idx = mod_bind_find_index(mod, key);
@@ -9731,6 +10737,7 @@ static int lua_input_set(lua_State* Ls) {
 
 static int lua_input_clear(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
+    if (!lua_mod_change_guard(Ls, mod, "mod.input.clear")) return 2;
     const char* key = luaL_checkstring(Ls, 1);
     int idx = mod_bind_find_index(mod, key);
     if (idx < 0) {
@@ -10335,18 +11342,23 @@ static int lua_ui_create_state(lua_State *L) {
 }
 
 static int lua_ui_enter_state(lua_State *L) {
+    int blocked = lua_online_native_action_error(L, "mod.ui.enter_state", 0);
+    if (blocked) return blocked;
     const char* name = luaL_checkstring(L, 1);
     lua_pushboolean(L, hooks_enter_custom_state(name));
     return 1;
 }
 
 static int lua_ui_leave_state(lua_State *L) {
+    int blocked = lua_online_native_action_error(L, "mod.ui.leave_state", 0);
+    if (blocked) return blocked;
     lua_pushboolean(L, hooks_leave_custom_state());
     return 1;
 }
 
 static int lua_ui_goto_main_menu(lua_State *L) {
-    (void)L;
+    int blocked = lua_online_native_action_error(L, "mod.ui.goto_main_menu", 0);
+    if (blocked) return blocked;
     if (!p_state_switch) {
         lua_pushboolean(L, 0);
         return 1;
@@ -10365,6 +11377,7 @@ static void push_ui_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_pos, 1);  lua_setfield(Ls, -2, "mouse_pos");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_mouse_buttons, 1); lua_setfield(Ls, -2, "mouse_buttons");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_set_default_cursor_visible, 1); lua_setfield(Ls, -2, "_set_default_cursor_visible");
+    lua_pushcfunction(Ls, lua_ui_draw_native_cursor); lua_setfield(Ls, -2, "_draw_native_cursor");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_hitbox, 1);     lua_setfield(Ls, -2, "hitbox");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_rect, 1);       lua_setfield(Ls, -2, "rect");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_border, 1);     lua_setfield(Ls, -2, "border");
@@ -10418,6 +11431,7 @@ lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_ui_button_activate_ptr,
 /* ---- mod.game map selector helpers -------------------------------- */
 
 static int lua_game_set_map_selector(lua_State *L) {
+    if (!lua_game_mutation_guard(L, "set_map_selector")) return 2;
     int n = (int)luaL_checkinteger(L, 1);
     volatile int *sel = (volatile int *)(uintptr_t)ADDR_MAP_SELECTOR;
     *sel = n;
@@ -10464,27 +11478,27 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_entities, 1);       lua_setfield(Ls, -2, "entities");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_tick_count, 1);     lua_setfield(Ls, -2, "tick_count");
     lua_pushcfunction(Ls, lua_game_native_tick);                                       lua_setfield(Ls, -2, "native_tick");
-    lua_pushcfunction(Ls, lua_game_set_native_tick);                                   lua_setfield(Ls, -2, "set_native_tick");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_native_tick, 1); lua_setfield(Ls, -2, "set_native_tick");
     lua_pushcfunction(Ls, lua_game_rng_seed);                                          lua_setfield(Ls, -2, "rng_seed");
-    lua_pushcfunction(Ls, lua_game_set_rng_seed);                                      lua_setfield(Ls, -2, "set_rng_seed");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_rng_seed, 1);    lua_setfield(Ls, -2, "set_rng_seed");
     lua_pushcfunction(Ls, lua_game_native_state);                                      lua_setfield(Ls, -2, "native_state");
     lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_colour");
     lua_pushcfunction(Ls, lua_game_player_colour);                                     lua_setfield(Ls, -2, "player_color");
     lua_pushcfunction(Ls, lua_game_player_colour_index);                               lua_setfield(Ls, -2, "player_colour_index");
     lua_pushcfunction(Ls, lua_game_player_colour_index);                               lua_setfield(Ls, -2, "player_color_index");
-    lua_pushcfunction(Ls, lua_game_set_player_colour_index);                           lua_setfield(Ls, -2, "set_player_colour_index");
-    lua_pushcfunction(Ls, lua_game_set_player_colour_index);                           lua_setfield(Ls, -2, "set_player_color_index");
-    lua_pushcfunction(Ls, lua_game_set_player_render_colours);                         lua_setfield(Ls, -2, "set_player_render_colours");
-    lua_pushcfunction(Ls, lua_game_set_player_render_colours);                         lua_setfield(Ls, -2, "set_player_render_colors");
-    lua_pushcfunction(Ls, lua_game_set_player_body_hidden);                             lua_setfield(Ls, -2, "set_player_body_hidden");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_player_colour_index, 1); lua_setfield(Ls, -2, "set_player_colour_index");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_player_colour_index, 1); lua_setfield(Ls, -2, "set_player_color_index");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_player_render_colours, 1); lua_setfield(Ls, -2, "set_player_render_colours");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_player_render_colours, 1); lua_setfield(Ls, -2, "set_player_render_colors");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_player_body_hidden, 1); lua_setfield(Ls, -2, "set_player_body_hidden");
     lua_pushcfunction(Ls, lua_game_player_body_hidden);                                 lua_setfield(Ls, -2, "player_body_hidden");
-    lua_pushcfunction(Ls, lua_game_set_player_sword_idle_offset);                       lua_setfield(Ls, -2, "set_player_sword_idle_offset");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_player_sword_idle_offset, 1); lua_setfield(Ls, -2, "set_player_sword_idle_offset");
     lua_pushcfunction(Ls, lua_game_state_checksum);                                    lua_setfield(Ls, -2, "state_checksum");
     lua_pushcfunction(Ls, lua_game_full_state_blob);                                   lua_setfield(Ls, -2, "full_state_blob");
-    lua_pushcfunction(Ls, lua_game_apply_full_state_blob);                             lua_setfield(Ls, -2, "apply_full_state_blob");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_full_state_blob, 1); lua_setfield(Ls, -2, "apply_full_state_blob");
     lua_pushcfunction(Ls, lua_game_full_state_size);                                   lua_setfield(Ls, -2, "full_state_size");
-    lua_pushcfunction(Ls, lua_game_block_next_tick);                                   lua_setfield(Ls, -2, "block_next_tick");
-    lua_pushcfunction(Ls, lua_game_simulate_ticks);                                    lua_setfield(Ls, -2, "simulate_ticks");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_block_next_tick, 1); lua_setfield(Ls, -2, "block_next_tick");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_simulate_ticks, 1);  lua_setfield(Ls, -2, "simulate_ticks");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds, 1);      lua_setfield(Ls, -2, "poll_cmds");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_poll_cmds_raw, 1);  lua_setfield(Ls, -2, "poll_cmds_raw");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_input, 1);      lua_setfield(Ls, -2, "set_input");
@@ -10496,9 +11510,9 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_apply_sword_snapshot, 1); lua_setfield(Ls, -2, "apply_sword_snapshot");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_bot_provider, 1); lua_setfield(Ls, -2, "register_bot_provider");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_register_menu_mode, 1);    lua_setfield(Ls, -2, "register_menu_mode");
-    lua_pushcfunction(Ls, lua_game_arm_ai_match);                                        lua_setfield(Ls, -2, "arm_ai_match");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_arm_ai_match, 1);      lua_setfield(Ls, -2, "arm_ai_match");
     lua_pushcfunction(Ls, lua_game_ai_match);                                            lua_setfield(Ls, -2, "ai_match");
-    lua_pushcfunction(Ls, lua_game_start_match);                                         lua_setfield(Ls, -2, "start_match");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_start_match, 1);       lua_setfield(Ls, -2, "start_match");
     lua_pushcfunction(Ls, lua_game_map_count);                                           lua_setfield(Ls, -2, "map_count");
     lua_pushcfunction(Ls, lua_game_map_size);                                            lua_setfield(Ls, -2, "map_size");
     lua_pushcfunction(Ls, lua_game_combat_ledger);                                       lua_setfield(Ls, -2, "combat_ledger");
@@ -10510,12 +11524,13 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_solid");
     lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_pos_solid");
     /* map selector (online mod) */
-    lua_pushcfunction(Ls, lua_game_set_map_selector); lua_setfield(Ls, -2, "set_map_selector");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_map_selector, 1); lua_setfield(Ls, -2, "set_map_selector");
     lua_pushcfunction(Ls, lua_game_get_map_selector); lua_setfield(Ls, -2, "get_map_selector");
 }
 
 static int lua_online_status(lua_State* Ls) {
     lua_newtable(Ls);
+    lua_pushboolean(Ls, g_online_suspend_active); lua_setfield(Ls, -2, "gameplay_mods_suspended");
     lua_pushboolean(Ls, ggpo_net_active()); lua_setfield(Ls, -2, "active");
     lua_pushboolean(Ls, ggpo_net_connected()); lua_setfield(Ls, -2, "connected");
     lua_pushstring(Ls, ggpo_net_mode_name()); lua_setfield(Ls, -2, "mode");
@@ -11124,6 +12139,11 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     push_assets_api_table(Ls, mod);
     lua_setfield(Ls, -2, "assets");
 
+    // Transactional declarative tiles. Definitions are owner-scoped to this
+    // mod and are removed automatically when the mod unloads.
+    push_content_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "content");
+
     // Persistent key/value storage with schema migration helpers.
     push_storage_api_table(Ls, mod);
     lua_setfield(Ls, -2, "storage");
@@ -11637,6 +12657,9 @@ static const char* k_mod_ui_helpers_lua =
     "end\n"
     "\n"
     "function ui.draw_cursor(opts)\n"
+    "  if opts == nil or (type(opts) == 'table' and next(opts) == nil) then\n"
+    "    if ui._draw_native_cursor and ui._draw_native_cursor() then return true end\n"
+    "  end\n"
     "  opts = opts or {}\n"
     "  local mx, my = ui.mouse_pos()\n"
     "  local scale = tonumber(opts.scale) or (ui.readable_scale and ui.readable_scale(1.0)) or 1\n"
@@ -12169,11 +13192,17 @@ static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
         return 0;
     }
 
+    if (mod_is_gameplay_suspended(mod)) {
+        mod_suspend_transient_state(mod);
+    }
+
     // Apply persisted bind overrides after the mod has had a chance to register named binds.
     mod_bind_load(mod);
 
     // Call on_load if registered
-    call_lua_ref0(L, mod, mod->on_load_ref, "on_load");
+    if (!mod_is_gameplay_suspended(mod)) {
+        call_lua_ref0(L, mod, mod->on_load_ref, "on_load");
+    }
     LOG_INFO("Loaded mod: %s", mod->id);
     return 1;
 }
@@ -12227,7 +13256,7 @@ static int create_lua_runtime(void) {
 static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     if (!mod || !L) return;
 
-    if (call_on_unload_cb && mod->enabled) {
+    if (call_on_unload_cb && mod->enabled && !mod_is_gameplay_suspended(mod)) {
         call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
     }
 
@@ -12251,6 +13280,14 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
 
     interop_remove_owner(L, mod);
     menu_modes_remove_owner(mod);
+    if (mod->content_registered) {
+        char content_err[256];
+        if (!content_registry_remove_owner(mod->id, content_err, sizeof(content_err))) {
+            LOG_WARN("Failed to remove content owner %s: %s", mod->id,
+                     content_err[0] ? content_err : "unknown error");
+        }
+        mod->content_registered = 0;
+    }
     mod_config_clear(L, mod);
     mod_bind_clear(mod);
     mod_storage_clear(mod);
@@ -12637,6 +13674,17 @@ static int scan_and_load_mods(void) {
         if (active[i]) active_count++;
     }
 
+    if (!mods_reserve_stable_slots(active_count)) {
+        LOG_ERROR("Out of memory while reserving stable mod runtime slots");
+        free(active);
+        free(indegree);
+        free(placed);
+        free(ordered);
+        free(edges);
+        free(discovered);
+        return scanned;
+    }
+
     // Kahn topological sort with deterministic tie-breaks.
     int ordered_count = 0;
     while (ordered_count < active_count) {
@@ -12913,6 +13961,7 @@ static void hot_reload_schedule_menu_state_reset_if_needed(int structural_change
 
 static void hot_reload_apply_pending_menu_state_reset(void) {
     if (!g_pending_menu_state_reset) return;
+    if (g_online_suspend_active) return;
 
     void* target = g_pending_menu_state_ptr;
     g_pending_menu_state_ptr = NULL;
@@ -12924,6 +13973,10 @@ static void hot_reload_apply_pending_menu_state_reset(void) {
 }
 
 static int reload_mod_runtime(const char* reason) {
+    if (g_online_suspend_active) {
+        LOG_WARN("Hot reload blocked while online gameplay-mod suspension is active");
+        return 0;
+    }
     if (reason && reason[0]) {
         LOG_INFO("Hot reload: %s", reason);
     }
@@ -12949,6 +14002,21 @@ static int reload_mod_runtime(const char* reason) {
 }
 
 static void hot_reload_poll(void) {
+    ULONGLONG map_now = GetTickCount64();
+    if (!g_online_suspend_active && map_now >= g_map_asset_next_poll_ms) {
+        uint64_t map_generation;
+        g_map_asset_next_poll_ms = map_now + HOT_RELOAD_INTERVAL_MS;
+        map_generation = custom_maps_generation();
+        if (map_generation != g_map_asset_registry_generation) {
+            if (!mod_assets_can_rebuild_now() ||
+                !reload_engine_gfx_atlases("custom map content changed")) {
+                if (g_map_asset_deferred_generation != map_generation) {
+                    LOG_WARN("Map content hot reload: atlas rebuild deferred; native fallback remains available");
+                    g_map_asset_deferred_generation = map_generation;
+                }
+            }
+        }
+    }
 #if !AUTO_HOT_RELOAD_ENABLED
     return;
 #else
@@ -12963,6 +14031,11 @@ static void hot_reload_poll(void) {
     ULONGLONG now = GetTickCount64();
     if (now < g_hot_reload_next_poll_ms) return;
     g_hot_reload_next_poll_ms = now + HOT_RELOAD_INTERVAL_MS;
+
+    /* Keep the loaded mod set and every owner classification stable for the
+     * complete matchmaking/countdown/match window. A changed signature remains
+     * pending naturally and is picked up by the first poll after suspension. */
+    if (g_online_suspend_active) return;
 
     uint64_t sig = hot_reload_compute_signature();
     if (sig == g_hot_reload_signature) {
@@ -12998,13 +14071,75 @@ static float g_time_scale = 1.0f;
 static int g_manual_time_scale_enabled = 0;
 static float g_manual_time_scale = 1.0f;
 
+static void online_suspend_clear_native_overrides(void) {
+    for (int player = 0; player < 2; player++) {
+        hooks_clear_tick_input(player);
+        hooks_clear_input_override(player);
+        hooks_set_raw_input_blocked(player, 0);
+        hooks_set_player_body_hidden(player, 0);
+        hooks_set_player_sword_idle_offset(player, 0.0f, 0.0f);
+    }
+    hooks_block_next_game_tick(0);
+    hooks_clear_ai_match();
+    g_manual_time_scale_enabled = 0;
+    g_manual_time_scale = 1.0f;
+    g_time_scale = 1.0f;
+}
+
+int lua_manager_online_suspend_begin(void) {
+    int suspended_count = 0;
+    if (!g_online_suspend_active) {
+        g_online_suspend_active = 1;
+        /* A menu refresh queued by an immediately preceding hot reload must
+         * not switch native state after matchmaking has claimed the screen. */
+        g_pending_menu_state_reset = 0;
+        g_pending_menu_state_ptr = NULL;
+        online_suspend_clear_native_overrides();
+        LOG_INFO("Online mod safety: gameplay-affecting Lua mods suspended; cosmetic mods remain active");
+    } else {
+        /* Reassert neutral state if begin is called again during a retry or a
+         * rematch transition. This makes the lifecycle API deliberately
+         * idempotent without allowing a stale override to leak between tries. */
+        online_suspend_clear_native_overrides();
+    }
+
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        LoadedMod* mod = &g_mods[mi];
+        if (!mod->enabled || !mod->gameplay_affecting) continue;
+        suspended_count++;
+        mod_mark_gameplay_affecting(mod, mod->gameplay_reason);
+    }
+    return suspended_count;
+}
+
+void lua_manager_online_suspend_end(void) {
+    if (!g_online_suspend_active) return;
+    online_suspend_clear_native_overrides();
+    g_online_suspend_active = 0;
+    for (int mi = 0; mi < g_mod_count; mi++) {
+        g_mods[mi].suspend_notice_logged = 0;
+    }
+    g_force_layout_refresh = 1;
+    LOG_INFO("Online mod safety: gameplay-affecting Lua mods resumed");
+}
+
+int lua_manager_online_suspend_active(void) {
+    return g_online_suspend_active;
+}
+
 void lua_manager_init() {
+    content_registry_init();
+    map_asset_atlas_sheets_clear();
+    g_map_asset_registry_generation = 0;
+    g_map_asset_deferred_generation = 0;
+    g_map_asset_next_poll_ms = 0;
     font_ext_init();
     texture_ext_init();
     g_unloading_for_shutdown = 0;
     g_manual_time_scale_enabled = 0;
     g_manual_time_scale = 1.0f;
     g_time_scale = 1.0f;
+    g_online_suspend_active = 0;
     reset_runtime_ui_state();
 
     LOG_INFO("Mod framework API version: %d", MOD_API_VERSION);
@@ -13030,6 +14165,11 @@ void lua_manager_shutdown() {
 
     font_ext_shutdown();
     texture_ext_shutdown();
+    map_asset_atlas_sheets_clear();
+    g_map_asset_registry_generation = 0;
+    g_map_asset_deferred_generation = 0;
+    g_map_asset_next_poll_ms = 0;
+    content_registry_shutdown();
     audio_runtime_shutdown();
     orphan_ui_strings_free_all();
     g_hot_reload_signature = 0;
@@ -13044,6 +14184,7 @@ void lua_manager_shutdown() {
     g_manual_time_scale_enabled = 0;
     g_manual_time_scale = 1.0f;
     g_time_scale = 1.0f;
+    g_online_suspend_active = 0;
 }
 
 // =============================
@@ -13055,6 +14196,12 @@ float lua_manager_get_time_scale(void) {
 }
 
 int lua_manager_set_time_scale(float scale) {
+    if (g_online_suspend_active) {
+        g_manual_time_scale_enabled = 0;
+        g_manual_time_scale = 1.0f;
+        g_time_scale = 1.0f;
+        return 0;
+    }
     if (scale < 0.05f) scale = 0.05f;
     if (scale > 100.0f) scale = 100.0f;
     g_manual_time_scale = scale;
@@ -13175,7 +14322,12 @@ static int ui_handle_event(const char* type, int x, int y, int button) {
 
 double lua_manager_on_delta_time(double dt_seconds) {
     if (!L) {
-        if (g_manual_time_scale_enabled) {
+        if (g_online_suspend_active) {
+            g_manual_time_scale_enabled = 0;
+            g_manual_time_scale = 1.0f;
+            g_time_scale = 1.0f;
+            return dt_seconds;
+        } else if (g_manual_time_scale_enabled) {
             g_time_scale = g_manual_time_scale;
             return dt_seconds * (double)g_manual_time_scale;
         }
@@ -13184,7 +14336,8 @@ double lua_manager_on_delta_time(double dt_seconds) {
     }
 
     if (dt_seconds <= 0.0) {
-        g_time_scale = g_manual_time_scale_enabled ? g_manual_time_scale : 1.0f;
+        g_time_scale = (g_online_suspend_active || !g_manual_time_scale_enabled)
+                     ? 1.0f : g_manual_time_scale;
         return dt_seconds;
     }
 
@@ -13195,7 +14348,7 @@ double lua_manager_on_delta_time(double dt_seconds) {
 
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         int* refs = NULL;
         int ref_count = 0;
         if (!reflist_snapshot(&mod->on_event, &refs, &ref_count)) {
@@ -13205,6 +14358,13 @@ double lua_manager_on_delta_time(double dt_seconds) {
         }
 
         for (int i = 0; i < ref_count; i++) {
+            double before = dt_seconds;
+            int before_is_number = 0;
+            lua_getfield(L, -1, "value");
+            before_is_number = lua_isnumber(L, -1);
+            if (before_is_number) before = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+
             lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
             lua_pushvalue(L, -2); // event table
             if (lua_pcall(L, 1, 1, 0) != 0) {
@@ -13214,9 +14374,28 @@ double lua_manager_on_delta_time(double dt_seconds) {
                 log_mod(mod, "ERROR", buf);
                 lua_pop(L, 1);
                 mod->error_count++;
-                continue;
+            } else {
+                lua_pop(L, 1); // handler return
             }
-            lua_pop(L, 1); // handler return
+
+            lua_getfield(L, -1, "value");
+            {
+                int after_is_number = lua_isnumber(L, -1);
+                double after = after_is_number ? lua_tonumber(L, -1) : 0.0;
+                if (after_is_number != before_is_number ||
+                    (after_is_number && after != before)) {
+                    mod_mark_gameplay_affecting(mod, "delta_time modification");
+                }
+            }
+            lua_pop(L, 1);
+
+            if (g_online_suspend_active) {
+                /* Cosmetic event handlers still get the real frame delta, but
+                 * no handler may alter the clock that drives online gameplay. */
+                lua_pushnumber(L, dt_seconds);
+                lua_setfield(L, -2, "value");
+            }
+            if (mod_is_gameplay_suspended(mod)) break;
         }
         free(refs);
     }
@@ -13229,6 +14408,13 @@ double lua_manager_on_delta_time(double dt_seconds) {
     }
     lua_pop(L, 1); // value
     lua_pop(L, 1); // event
+
+    if (g_online_suspend_active) {
+        g_manual_time_scale_enabled = 0;
+        g_manual_time_scale = 1.0f;
+        g_time_scale = 1.0f;
+        return dt_seconds;
+    }
 
     // Update time scale multiplier (manual override is applied after mod events).
     double scale = out / dt_seconds;
@@ -13253,7 +14439,7 @@ void lua_manager_on_tick(void) {
 
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         int* refs = NULL;
         int ref_count = 0;
         if (!reflist_snapshot(&mod->on_tick, &refs, &ref_count)) {
@@ -13284,7 +14470,7 @@ void lua_manager_on_tick_post(void) {
 
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         int* refs = NULL;
         int ref_count = 0;
         if (!reflist_snapshot(&mod->on_tick_post, &refs, &ref_count)) {
@@ -13339,7 +14525,7 @@ void lua_manager_on_frame() {
         if (_stricmp(new_name, old_name) != 0) {
             for (int mi = 0; mi < g_mod_count; mi++) {
                 LoadedMod* mod = &g_mods[mi];
-                if (!mod->enabled) continue;
+                if (!mod_is_runtime_active(mod)) continue;
                 for (int i = 0; i < mod->on_layout_count; i++) {
                     LayoutHandler* h = &mod->on_layout[i];
                     double started_ms;
@@ -13357,6 +14543,7 @@ void lua_manager_on_frame() {
                         mod->error_count++;
                     }
                     mod_perf_counter_record(&mod->perf_layout, perf_now_ms() - started_ms);
+                    if (mod_is_gameplay_suspended(mod)) break;
                 }
             }
         }
@@ -13389,7 +14576,7 @@ void lua_manager_on_frame() {
 
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         int* refs = NULL;
         int ref_count = 0;
         if (!reflist_snapshot(&mod->on_frame, &refs, &ref_count)) {
@@ -13410,6 +14597,7 @@ void lua_manager_on_frame() {
                 mod->error_count++;
             }
             mod_perf_counter_record(&mod->perf_frame, perf_now_ms() - started_ms);
+            if (mod_is_gameplay_suspended(mod)) break;
         }
         free(refs);
     }
@@ -13459,7 +14647,7 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         int mod_consumed = 0;
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         int* refs = NULL;
         int ref_count = 0;
         if (!reflist_snapshot(&mod->on_event, &refs, &ref_count)) {
@@ -13480,14 +14668,16 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
                 lua_pop(L, 1);
                 mod->error_count++;
                 mod_perf_counter_record(&mod->perf_event, perf_now_ms() - started_ms);
+                if (mod_is_gameplay_suspended(mod)) break;
                 continue;
             }
-            if (lua_toboolean(L, -1)) {
+            if (!mod_is_gameplay_suspended(mod) && lua_toboolean(L, -1)) {
                 consumed = 1;
                 mod_consumed = 1;
             }
             lua_pop(L, 1); // handler return
             mod_perf_counter_record(&mod->perf_event, perf_now_ms() - started_ms);
+            if (mod_is_gameplay_suspended(mod)) break;
         }
         free(refs);
         mod_trace_event_log(mod, type, sym, x, y, button, ref_count, mod_consumed);
@@ -13502,7 +14692,7 @@ void lua_manager_on_key_event(int sym, int is_down) {
 
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
-        if (!mod->enabled) continue;
+        if (!mod_is_runtime_active(mod)) continue;
         for (int bi = 0; bi < mod->bind_count; bi++) {
             InputBinding* bind = &mod->binds[bi];
             int was_down;
@@ -13642,9 +14832,73 @@ int lua_manager_framework_api(void) {
     return MOD_API_VERSION;
 }
 
+static int content_builtin_sprite_resolve(const char* local_id,
+                                          int sprite_index,
+                                          int* out_sprite_id) {
+    volatile int* bases[] = { p_sprites_id, p_tiles_id, p_misc_id, p_glyphs_id };
+    int base;
+    int limit;
+    size_t i;
+    if (!local_id || sprite_index < 0 || !out_sprite_id ||
+        (strcmp(local_id, "sprites") != 0 && strcmp(local_id, "tiles") != 0 &&
+         strcmp(local_id, "misc") != 0 && strcmp(local_id, "glyphs") != 0) ||
+        !ui_sheet_base_from_name(local_id, &base) ||
+        !p_sprite_count || IsBadCodePtr((FARPROC)(void*)p_sprite_count)) {
+        return 0;
+    }
+    limit = p_sprite_count();
+    for (i = 0; i < sizeof(bases) / sizeof(bases[0]); i++) {
+        int candidate;
+        if (!bases[i]) continue;
+        candidate = *bases[i];
+        if (candidate > base && candidate < limit) limit = candidate;
+    }
+    if (limit <= base || sprite_index >= limit - base) return 0;
+    *out_sprite_id = base + sprite_index;
+    return 1;
+}
+
+int lua_manager_content_resolve_sprite(const char* qualified_sheet,
+                                       int sprite_index,
+                                       int* out_sprite_id) {
+    const char* colon;
+    char owner[CONTENT_OWNER_MAX];
+    char local_id[CONTENT_LOCAL_ID_MAX];
+    size_t owner_len;
+    LoadedMod* mod;
+    int sheet_index;
+    const ModAssetSheet* sheet;
+    if (!qualified_sheet || !out_sprite_id || sprite_index < 0) return 0;
+    colon = strchr(qualified_sheet, ':');
+    if (!colon || strchr(colon + 1, ':')) return 0;
+    owner_len = (size_t)(colon - qualified_sheet);
+    if (owner_len == 0 || owner_len >= sizeof(owner) ||
+        strlen(colon + 1) >= sizeof(local_id)) {
+        return 0;
+    }
+    memcpy(owner, qualified_sheet, owner_len);
+    owner[owner_len] = '\0';
+    snprintf(local_id, sizeof(local_id), "%s", colon + 1);
+    if (_stricmp(owner, "builtin") == 0) {
+        return content_builtin_sprite_resolve(local_id, sprite_index, out_sprite_id);
+    }
+    if (_strnicmp(owner, "map.", 4) == 0) {
+        return map_asset_atlas_sheet_resolve(qualified_sheet, sprite_index,
+                                             out_sprite_id);
+    }
+    mod = get_mod_by_id_ci(owner);
+    if (!mod_is_runtime_active(mod)) return 0;
+    sheet_index = mod_asset_sheet_find(mod, local_id);
+    if (sheet_index < 0) return 0;
+    sheet = &mod->asset_sheets[sheet_index];
+    if (sheet->base_id < 0 || sprite_index >= sheet->count) return 0;
+    *out_sprite_id = sheet->base_id + sprite_index;
+    return 1;
+}
+
 int lua_manager_has_bot_provider(void) {
     for (int mi = 0; mi < g_mod_count; mi++) {
-        if (g_mods[mi].enabled && g_mods[mi].bot_provider) return 1;
+        if (mod_is_runtime_active(&g_mods[mi]) && g_mods[mi].bot_provider) return 1;
     }
     return 0;
 }
@@ -13827,6 +15081,14 @@ int lua_manager_console_eval_mod(const char* mod_id, const char* code, char* out
         console_out_set(out, out_sz, "mod not found");
         return 0;
     }
+    if (!m->enabled) {
+        console_out_set(out, out_sz, "target mod is disabled");
+        return 0;
+    }
+    if (mod_is_gameplay_suspended(m)) {
+        console_out_set(out, out_sz, "target gameplay mod is suspended during online play");
+        return 0;
+    }
     return console_lua_eval_impl(code, 1, m->env_ref, out, out_sz);
 }
 
@@ -13988,7 +15250,26 @@ static void full_state_sanitize_live_rollback_fields(void) {
 
 int lua_manager_game_state_load_rollback(const void* src, size_t src_len, char* err, size_t err_cap) {
     unsigned long long framework_tick_count = g_game_tick_count;
+    float local_game_w = 0.0f;
+    float local_game_h = 0.0f;
+    int preserve_game_w = ptr_readable((const void*)p_game_w, sizeof(float));
+    int preserve_game_h = ptr_readable((const void*)p_game_h, sizeof(float));
+    if (preserve_game_w) local_game_w = *p_game_w;
+    if (preserve_game_h) local_game_h = *p_game_h;
+
     int ok = full_state_apply_blob(src, src_len, err, err_cap);
+
+    /* game_w/game_h are derived from each peer's local window and drawable.
+     * They remain in the full blob for ordinary save/load compatibility, but
+     * applying a remote/rollback snapshot must never replace local render
+     * geometry (or an old snapshot can also undo a local resize). */
+    if (preserve_game_w && ptr_writable((void*)p_game_w, sizeof(float))) {
+        *p_game_w = local_game_w;
+    }
+    if (preserve_game_h && ptr_writable((void*)p_game_h, sizeof(float))) {
+        *p_game_h = local_game_h;
+    }
+
     if (ok) {
         full_state_sanitize_live_rollback_fields();
     }
@@ -14272,6 +15553,21 @@ int lua_manager_get_mod_enabled(int mod_index) {
     return m ? m->enabled : 0;
 }
 
+int lua_manager_get_mod_gameplay_affecting(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? (m->gameplay_affecting != 0) : 0;
+}
+
+int lua_manager_get_mod_suspended(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? (m->enabled && mod_is_gameplay_suspended(m)) : 0;
+}
+
+const char* lua_manager_get_mod_suspend_reason(int mod_index) {
+    LoadedMod* m = get_mod_by_index(mod_index);
+    return m ? m->gameplay_reason : "";
+}
+
 int lua_manager_get_mod_error_count(int mod_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     return m ? m->error_count : 0;
@@ -14327,6 +15623,11 @@ int lua_manager_set_mod_trace_events(int mod_index, int enabled) {
 int lua_manager_set_mod_enabled(int mod_index, int enabled) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    /* Loading executes the entry chunk/on_load; disabling executes on_unload
+     * and may cascade into dependents. Freeze the complete loaded set so an
+     * unclassified/disabled gameplay mod cannot enter through either path. */
+    if (g_online_suspend_active) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (!!enabled == !!m->enabled) return 1;
     if (enabled) {
         return enable_single_mod_runtime(mod_index);
@@ -14425,6 +15726,7 @@ int lua_manager_set_mod_bind_value(int mod_index, int bind_index, int sym) {
     InputBinding* b;
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     b = mod_bind_by_index(m, bind_index);
     if (!b) return 0;
     b->sym = sym;
@@ -14445,6 +15747,7 @@ int lua_manager_mod_bind_has_conflict(int mod_index, int bind_index) {
 int lua_manager_config_toggle_bool(int mod_index, int entry_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_BOOL) return 0;
@@ -14456,6 +15759,7 @@ int lua_manager_config_toggle_bool(int mod_index, int entry_index) {
 int lua_manager_config_increment_int(int mod_index, int entry_index, int delta) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_INT) return 0;
@@ -14470,6 +15774,7 @@ int lua_manager_config_increment_int(int mod_index, int entry_index, int delta) 
 int lua_manager_config_increment_float(int mod_index, int entry_index, double delta) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_FLOAT) return 0;
@@ -14484,6 +15789,7 @@ int lua_manager_config_increment_float(int mod_index, int entry_index, double de
 int lua_manager_config_set_string(int mod_index, int entry_index, const char* value) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_STRING) return 0;
@@ -14496,6 +15802,7 @@ int lua_manager_config_set_string(int mod_index, int entry_index, const char* va
 int lua_manager_config_cycle_option(int mod_index, int entry_index, int delta) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_OPTIONS || e->option_count <= 0) return 0;
@@ -14510,6 +15817,7 @@ int lua_manager_config_cycle_option(int mod_index, int entry_index, int delta) {
 int lua_manager_config_set_option(int mod_index, int entry_index, const char* value) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m) return 0;
+    if (mod_is_gameplay_suspended(m)) return 0;
     if (entry_index < 0 || entry_index >= m->cfg_count) return 0;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_OPTIONS) return 0;
@@ -14522,6 +15830,7 @@ int lua_manager_config_set_option(int mod_index, int entry_index, const char* va
 void lua_manager_config_trigger_action(int mod_index, int entry_index) {
     LoadedMod* m = get_mod_by_index(mod_index);
     if (!m || !L) return;
+    if (!mod_is_runtime_active(m)) return;
     if (entry_index < 0 || entry_index >= m->cfg_count) return;
     ConfigEntry* e = &m->cfg_entries[entry_index];
     if (e->type != LUA_CFG_ACTION) return;
@@ -14558,6 +15867,7 @@ void lua_manager_config_trigger_action(int mod_index, int entry_index) {
                 lua_pop(L, 1);
                 m->error_count++;
             }
+            if (mod_is_gameplay_suspended(m)) break;
         }
 
         free(refs);

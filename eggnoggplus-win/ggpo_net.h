@@ -28,6 +28,11 @@ int ggpo_net_active(void);
 /* True after the current socket/session has bidirectional reachability proof.
  * State sync/gameplay use an additional internal peer-acknowledgement gate. */
 int ggpo_net_connected(void);
+/* True only after both peers have acknowledged the current authenticated
+ * socket/session. Prematch setup and state transfer must use this stricter gate;
+ * ggpo_net_connected() is the earlier reachability proof used to avoid dueling
+ * retry rotations. */
+int ggpo_net_link_ready(void);
 GgpoNetMode ggpo_net_mode(void);
 const char* ggpo_net_mode_name(void);
 int ggpo_net_local_player(void);

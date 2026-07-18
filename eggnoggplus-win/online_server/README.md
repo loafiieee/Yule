@@ -43,10 +43,10 @@ and send HELLOs symmetrically.
 
 The server sends an unauthenticated, flat `server_info` welcome on every TCP
 connection and answers an explicit `{"type":"server_info"}` request. Match
-protocol 2 advertises:
+protocol 3 advertises:
 
 ```json
-{"type":"server_info","control_protocol":2,"match_protocol":2,"p2p_protocol":16,"cap_p2p_auth":1}
+{"type":"server_info","control_protocol":2,"match_protocol":3,"p2p_protocol":16,"cap_p2p_auth":1}
 ```
 
 The same scalar version/capability fields are repeated in `auth_ok`, and each
@@ -58,6 +58,28 @@ The game client explicitly requests `server_info` after TCP completion and does 
 its login/register message until every required capability matches. It validates the
 repeated `auth_ok` and `match_found` fields as well, so an old or partially restarted
 deployment is rejected before queueing and again before peer setup.
+
+Match protocol 3 adds a server-authoritative gameplay-start barrier. After the
+authenticated P2P link, authoritative state, and neutral frame zero are fully
+ready, each client sends `match_started`. The server broadcasts
+`match_started` with `committed:1` only after both assigned clients are ready;
+clients remain on the hub match card until that commit. Before commit,
+`match_abort`, disconnect, timeout, or an accidental `match_end` cancels setup
+for both players without a winner, result screen, or Elo change. After commit,
+an abort/disconnect is a forfeit. Normal completion is settled only when both
+clients report the same winner; a conflicting pair or an unconfirmed single
+report times out as a no-contest and cannot change Elo.
+`MATCH_REPORT_TIMEOUT_MS` controls that confirmation window and defaults to
+10 seconds; the legacy `MATCH_SINGLE_REPORT_GRACE_MS` environment name remains
+an override alias for deployment compatibility, but no longer awards a lone
+report.
+Every lifecycle message requires the exact positive current `match_id`, so a
+delayed message from an older match cannot cancel or finish a newer one.
+
+The server closes a control socket after 120 seconds without client traffic.
+Authenticated clients send a small JSON `ping` every 30 seconds and accept the
+matching `pong`, so an idle hub or a long match is not mistaken for a disconnect.
+This heartbeat is control-plane liveness only; gameplay remains direct P2P.
 
 Run the preflight against the public deployment (the defaults require no
 arguments), or name another host and port:

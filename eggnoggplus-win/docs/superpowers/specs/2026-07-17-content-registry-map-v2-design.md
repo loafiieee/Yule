@@ -152,6 +152,7 @@ rules, room overrides, ambience, and appearance fields. It adds:
     "symbol": "$",
     "native_glyph": "x",
     "sprite_sheet": "terrain.png",
+    // Optional integrity pin. Normal map packages can omit this.
     "asset_sha256": "<64 lowercase or uppercase hex characters>",
     "sprite_index": 0
   }]
@@ -178,7 +179,15 @@ must:
 - be from 1 byte through 64 MiB;
 - contain a PNG signature and IHDR with dimensions `1x1..4096x4096`;
 - form a whole sprite grid for `cell_w`, `cell_h`, and `padding`; and
-- exactly match the required `asset_sha256`.
+- exactly match `asset_sha256` when the package deliberately supplies that
+  optional integrity pin.
+
+The loader always computes SHA-256 from the bytes on disk. That runtime digest
+is stored in the registry definition, participates in the scanned map/online
+compatibility identity, and is rechecked before atlas upload even when the JSON
+omits `asset_sha256`. Authors therefore do not need a hand-maintained hash just
+to use a local PNG, while changing the PNG still changes compatibility identity
+and triggers hot reload. Built-in sheets cannot declare `asset_sha256`.
 
 External-sheet geometry is declared on the tile reference. `cell_w` and `cell_h`
 default to 16 and are limited to `1..512`; `padding` defaults to 0 and is limited to
@@ -188,8 +197,9 @@ Sheet keys incorporate the asset digest and geometry, so the same file packed wi
 different cell geometry cannot alias one atlas range.
 
 `custom_maps_content_sheet_for_key` repeats the non-reparse, PNG-header, and SHA-256
-checks before exposing a resolved path. A changed or missing asset therefore becomes an
-unresolved visual rather than silently using stale metadata.
+checks against the runtime digest captured during the scan before exposing a resolved
+path. A changed or missing asset therefore becomes an unresolved visual rather than
+silently using stale metadata.
 
 ## Native map binding and draw contract
 

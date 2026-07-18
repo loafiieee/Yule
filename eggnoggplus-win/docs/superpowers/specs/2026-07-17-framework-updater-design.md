@@ -121,6 +121,7 @@ Channel paths are installation-relative and URL-safe. Validation rejects:
 - empty segments, `.` and `..`;
 - alternate data streams and query/fragment characters;
 - trailing dots/spaces and reserved Windows device names;
+- any path segment ending in the updater-owned `.update-recovery` suffix;
 - case-insensitive duplicates;
 - collisions between a target and another target's `.old` backup; and
 - overlong paths.
@@ -159,14 +160,33 @@ The transaction is:
 If a move or post-install hash fails, replacements are rolled back in reverse order. If
 rollback itself is incomplete, the journal remains for the next launch.
 
-Recovery interprets an uncommitted journal as interrupted and restores originals. For a
-committed V2 journal, recovery hashes the complete installed target set before deleting
-even one `.old` backup or clearing the journal. If every target matches, backups are
-cleaned and the journal is removed. If any target is missing or mismatched and every
-required original backup is still available, recovery atomically rewrites the phase to
-`applying` and rolls the entire transaction back; a crash during that rollback resumes
-normally. If rollback artifacts are incomplete, recovery makes no destructive guess and
-retains the journal and remaining files for the next run/manual repair.
+For an uncommitted V2 journal, recovery first hashes the complete declared release set.
+If every target is present with the exact declared size and SHA-256, and no recovery
+quarantine exists, the interrupted apply is promoted to `committed` and completed
+forward. This covers the common interruption after the last target move but before the
+commit record reached disk, without needlessly replacing a framework DLL that the new
+process may already have mapped. Cleanup-only and reduced mixed journals are not eligible
+for this promotion. Any other uncommitted journal takes the rollback path.
+
+For a committed V2 journal, recovery hashes the complete installed target set before
+deleting even one `.old` backup or clearing the journal. If every target matches, backups
+are cleaned and the journal is removed. If any target is missing or mismatched and every
+required original backup is still available, recovery rewrites the phase to `applying`
+before attempting a whole-transaction rollback. If rollback artifacts are incomplete,
+recovery makes no destructive guess and retains the journal and remaining files for the
+next run or manual repair.
+
+Rollback renames an installed target to `<target>.update-recovery` before restoring its
+`.old` file. This permits disk repair when Windows allows a mapped image to be renamed but
+not deleted. If the quarantine cannot yet be deleted, recovery writes a bounded,
+backward-compatible cleanup journal and reports restart required. A mixed recovery writes
+only unresolved original entries plus retained cleanup entries, so completed work is not
+repeated. Every unresolved entry—whether sourced from V1 or V2—uses a syntactically valid
+but deliberately non-authorizing digest sentinel. Applying rollback does not consume that
+digest, and the sentinel prevents a later matching subset from being promoted as though it
+were the complete release. Any mutation that restores or removes an original release
+target requires a restart; a later cleanup-only launch that merely deletes an
+already-released quarantine does not require an additional restart.
 
 V1 `applying` journals remain backward-recoverable. A V1 `committed` journal contains no
 expected digest, so it cannot prove that an existing target is the installed payload; it
@@ -176,13 +196,29 @@ corrupt journals are likewise not guessed through.
 ### Loaded DLL replacement boundary
 
 The current installer does not unload framework modules, schedule a reboot-time move,
-or launch an external replacement helper. It attempts a write-through rename of the
-live target (for example `SDL2.dll`) to `.old`, then moves the staged file into the target
-path. If Windows permits that rename for the mapped image, the current process continues
-executing its already-mapped old code and the new target is loaded only after restart;
-the committed backup is intentionally left for next-launch verification. If the rename
-is rejected (for example by a sharing/locking condition), apply reports failure and uses
-the normal rollback path.
+or launch a stable external replacement helper. It attempts a write-through rename of
+the live target (for example `SDL2.dll`) to `.old`, then moves the staged file into the
+target path. If Windows permits that rename for the mapped image, the current process
+continues executing its already-mapped old code and the new target is loaded only after
+restart; the committed backup is intentionally left for next-launch verification. If the
+rename is rejected (for example by a sharing/locking condition), apply reports failure
+and uses the normal rollback path.
+
+The journal makes interrupted state diagnosable and recoverable once updater code can
+run; it cannot make the direct-import bootstrap itself power-fail safe. A crash or power
+loss between `target -> .old` and `staged -> target`, or between `target ->
+.update-recovery` and `.old -> target`, can leave a directly imported DLL pathname
+missing. Windows loads those imports before this in-process updater executes, so that
+specific state cannot self-repair on the next game launch. Write-through requests improve
+flush ordering but are not claimed as an atomic power-failure transaction.
+
+Manual recovery for that bootstrap boundary is intentionally conservative: close every
+game instance; only if the normal target is missing and the adjacent `.old` is a regular
+file, restore that `.old` to the missing pathname. Never overwrite an existing target.
+Leave the journal, staging directory, log, and every `.update-recovery` file in place for
+verified reconciliation on the next launch. A small stable launcher or out-of-process
+recovery helper, shipped outside the replacement set, is required before every
+interruption point can be called automatically boot-recoverable.
 
 The standalone regression suite does not load and replace the actual injected
 `SDL2.dll`, so successful replacement of the mapped proxy is not claimed as automated
@@ -196,6 +232,8 @@ coverage. It remains a release-machine test on every supported Windows version.
 - A hash or size mismatch produces `ERROR`; the live install remains unchanged.
 - A busy mutex reports that another instance is updating.
 - Interrupted or failed swaps recover or retain enough journal state to retry recovery.
+- A loader-blocking missing DLL requires the documented closed-game `.old` restore until
+  an out-of-process recovery helper exists.
 - UI check/apply calls are no-ops in incompatible states.
 
 ## Verification
@@ -208,8 +246,12 @@ The standalone `UPDATE_EXT_TEST` suite covers:
 - unsafe, reserved, duplicate, and colliding paths;
 - config preservation;
 - V2 journal size/SHA persistence;
+- applying-journal complete-set roll-forward and cleanup-journal exclusion;
+- reduced V1/V2 digest-sentinel non-authorization and access-error retention;
 - interrupted recovery, whole-set committed verification, valid committed cleanup,
-  corrupt/missing target rollback, missing-backup retention, and V1 compatibility;
+  mapped-target quarantine handoff, mixed reduced journals, corrupt/missing target
+  rollback, missing-backup retention, reserved recovery-namespace rejection, and V1
+  compatibility;
 - validated, comment-preserving public config writes; and
 - check-worker status gating.
 
@@ -242,4 +284,5 @@ Release verification still required:
 - Delta/binary-patch downloads.
 - Cryptographic release signatures or Authenticode verification.
 - Restarting the game automatically.
+- A stable out-of-process updater/recovery launcher.
 - Running blocking worker shutdown under the loader lock.

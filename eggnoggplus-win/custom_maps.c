@@ -327,6 +327,33 @@ static uint32_t weak_map_hash32(const char* a, const char* b) {
     return (uint32_t)h;
 }
 
+/* Preserve the established text signature for v1/built-in-only packages, but
+ * bind every external v2 sheet to the bytes the loader actually hashed.  This
+ * lets authors omit redundant hand-maintained asset_sha256 fields without
+ * allowing two different PNGs to advertise the same online map key. */
+static uint32_t weak_map_package_hash32(const char* json_text,
+                                        const char* map_text,
+                                        const CustomMap* map) {
+    const uint64_t modp = 4294967291ull;
+    uint64_t h = weak_map_hash32(json_text, map_text);
+    int i;
+    if (!map || map->content_sheet_count <= 0) return (uint32_t)h;
+    for (i = 0; i < map->content_sheet_count; i++) {
+        const MapContentSheet* sheet = &map->content_sheets[i];
+        const unsigned char* p;
+        static const unsigned char separator = 0xffu;
+        h = ((h * 16777619ull) + separator) % modp;
+        for (p = (const unsigned char*)sheet->relative_path; *p; p++) {
+            h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+        }
+        h = ((h * 16777619ull) + separator) % modp;
+        for (p = (const unsigned char*)sheet->asset_sha256; *p; p++) {
+            h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+        }
+    }
+    return (uint32_t)h;
+}
+
 static void copy_lower_ascii(char* dst, size_t dst_sz, const char* src) {
     size_t i;
     if (!dst || dst_sz == 0) return;
@@ -1606,9 +1633,9 @@ static int parse_v2_tileset(MapDiagnostics* diag,
                                                          err, sizeof(err))) {
                     diag_log(diag, 1, "[data.json][%s.sprite_sheet] error: %s", path, err);
                     valid = 0;
-                } else if (!expected_sha[0] || _stricmp(expected_sha, actual_sha) != 0) {
+                } else if (expected_sha[0] && _stricmp(expected_sha, actual_sha) != 0) {
                     diag_log(diag, 1,
-                             "[data.json][%s.asset_sha256] error: required SHA-256 does not match file bytes",
+                             "[data.json][%s.asset_sha256] error: declared SHA-256 does not match file bytes",
                              path);
                     valid = 0;
                 } else {
@@ -2623,7 +2650,7 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
 
     {
         char id_lower[CUSTOM_MAP_MAX_ID];
-        uint32_t sig = weak_map_hash32(json_text, map_text);
+        uint32_t sig = weak_map_package_hash32(json_text, map_text, &custom_map);
         copy_lower_ascii(id_lower, sizeof(id_lower), custom_map.id[0] ? custom_map.id : custom_map.folder_id);
         snprintf(custom_map.online_sig, sizeof(custom_map.online_sig), "%08x", (unsigned int)sig);
         snprintf(custom_map.online_key, sizeof(custom_map.online_key), "custom:%s:%s", id_lower, custom_map.online_sig);

@@ -18,11 +18,11 @@ const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
 const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
-/* Match protocol 2 requires one server-issued 256-bit packet-auth key shared
- * by exactly the two peers. Keep these fields scalar because the game client's
- * strict control parser deliberately rejects nested JSON and arrays. */
+/* Match protocol 3 adds an explicit two-client gameplay commit. Before both
+ * clients send match_started, aborts, premature results, disconnects, and stale
+ * cleanup cancel without a winner or rating change. */
 const CONTROL_PROTOCOL_VERSION = 2;
-const MATCH_PROTOCOL_VERSION = 2;
+const MATCH_PROTOCOL_VERSION = 3;
 const P2P_PROTOCOL_VERSION = 16;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 // Recently chosen map keys (most-recent last). Used to even out random map
@@ -31,8 +31,20 @@ const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 const RECENT_MAP_KEYS = [];
 const RECENT_MAP_MAX = 64;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
-const MATCH_SINGLE_REPORT_GRACE_MS = Number.parseInt(process.env.MATCH_SINGLE_REPORT_GRACE_MS || "750", 10);
-const MATCH_STALE_MS = Number.parseInt(process.env.MATCH_STALE_MS || `${10 * 60 * 1000}`, 10);
+/* A normal result is authoritative only when both still-connected peers report
+ * the same winner.  Keep the old environment name as a deployment-compatible
+ * fallback, but a lone report now expires to a no-contest instead of awarding
+ * the reporter a win. */
+const MATCH_REPORT_TIMEOUT_MS = Number.parseInt(
+  process.env.MATCH_REPORT_TIMEOUT_MS || process.env.MATCH_SINGLE_REPORT_GRACE_MS || "10000",
+  10,
+);
+const MATCH_SETUP_STALE_MS = Number.parseInt(
+  process.env.MATCH_SETUP_STALE_MS || process.env.MATCH_STALE_MS || `${10 * 60 * 1000}`,
+  10,
+);
+const MATCH_SWEEP_INTERVAL_MS = Number.parseInt(process.env.MATCH_SWEEP_INTERVAL_MS || "5000", 10);
+const CLIENT_IDLE_TIMEOUT_MS = Number.parseInt(process.env.CLIENT_IDLE_TIMEOUT_MS || "120000", 10);
 const COMPETITIVE_BASE_RANGE = Number.parseInt(process.env.COMPETITIVE_BASE_RANGE || "150", 10);
 const COMPETITIVE_RANGE_PER_SEC = Number.parseInt(process.env.COMPETITIVE_RANGE_PER_SEC || "8", 10);
 const COMPETITIVE_MAX_RANGE = Number.parseInt(process.env.COMPETITIVE_MAX_RANGE || "650", 10);
@@ -413,8 +425,11 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     challenge_id: challengeId,
     map: shared,
     competitive: queueName === "competitive",
-    started_at: now(),
+    created_at: now(),
     results: new Map(),
+    started_by: new Set(),
+    committed: false,
+    committed_at: 0,
     p2p_tokens: {},
     p2p_auth_token: makeP2pAuthToken(),
     p2p_endpoints: new Map(),
@@ -964,7 +979,7 @@ function finishMatch(match, winner, reason = "") {
     const c = connectedClient(username);
     const elo = publicElo(username);
     const rating = ratings[username] || {};
-    if (c) {
+    if (c && c.match_id === match.id) {
       c.match_id = 0;
       send(c, {
         type: "match_result",
@@ -992,19 +1007,65 @@ function cancelMatch(match, reason = "cancelled") {
   }
   for (const username of [match.a, match.b]) {
     const c = connectedClient(username);
-    if (c) {
+    if (c && c.match_id === match.id) {
       c.match_id = 0;
-      send(c, { type: "match_end", match_id: match.id, reason });
+      send(c, { type: "match_abort", match_id: match.id, reason });
     }
   }
   activeMatches.delete(match.id);
 }
 
+function matchForClientMessage(client, msg) {
+  if (!client || !client.username || !client.match_id) return null;
+  const matchId = msg && msg.match_id;
+  if (!Number.isInteger(matchId) || matchId <= 0 || matchId !== client.match_id) return null;
+  const match = activeMatches.get(matchId);
+  if (!match || match.finished || !matchHasUser(match, client.username)) return null;
+  return match;
+}
+
+function handleMatchStarted(client, msg) {
+  const match = matchForClientMessage(client, msg);
+  if (!match) return sendError(client, "invalid or stale match start");
+  if (!match.started_by.has(client.username)) {
+    match.started_by.add(client.username);
+    console.log(`[match#${match.id}] gameplay ready ${client.username} (${match.started_by.size}/2)`);
+  }
+  if (match.committed) {
+    send(client, { type: "match_started", match_id: match.id, committed: 1 });
+    return;
+  }
+  if (match.started_by.size < 2) return;
+  match.committed = true;
+  match.committed_at = now();
+  for (const username of [match.a, match.b]) {
+    const c = connectedClient(username);
+    if (c && c.match_id === match.id) {
+      send(c, { type: "match_started", match_id: match.id, committed: 1 });
+    }
+  }
+  console.log(`[match#${match.id}] gameplay committed`);
+}
+
+function handleMatchAbort(client, msg) {
+  const match = matchForClientMessage(client, msg);
+  if (!match) return sendError(client, "invalid or stale match abort");
+  const reasonText = String((msg && msg.reason) || "match setup aborted")
+    .replace(/[\r\n\t]/g, " ")
+    .slice(0, 160);
+  if (!match.committed) {
+    cancelMatch(match, reasonText || "match setup aborted");
+    return;
+  }
+  const winner = client.username === match.a ? match.b : match.a;
+  finishMatch(match, winner, reasonText || "opponent forfeited");
+}
+
 function handleMatchEnd(client, msg) {
-  if (!client.match_id) return;
-  const match = activeMatches.get(client.match_id);
-  if (!match) {
-    client.match_id = 0;
+  const match = matchForClientMessage(client, msg);
+  if (!match) return sendError(client, "invalid or stale match result");
+  if (!match.committed) {
+    cancelMatch(match, "premature match result");
     return;
   }
   const result = String(msg.result || "").toLowerCase();
@@ -1015,25 +1076,21 @@ function handleMatchEnd(client, msg) {
     if (match.results.size >= 2) {
       const winners = [...match.results.values()];
       const agreed = winners.every((w) => w === winners[0]);
-      finishMatch(match, winners[0], agreed ? "reported" : "conflicting reports");
+      if (agreed) finishMatch(match, winners[0], "reported");
+      else cancelMatch(match, "conflicting match reports; no contest");
       return;
     }
     send(client, { type: "match_report_ack", match_id: match.id, pending: 1 });
     if (!match.result_timer) {
       match.result_timer = setTimeout(() => {
         if (!activeMatches.has(match.id) || match.finished || match.results.size < 1) return;
-        finishMatch(match, [...match.results.values()][0], "single report");
-      }, MATCH_SINGLE_REPORT_GRACE_MS);
+        cancelMatch(match, "match result was not confirmed; no contest");
+      }, MATCH_REPORT_TIMEOUT_MS);
       if (typeof match.result_timer.unref === "function") match.result_timer.unref();
     }
     return;
   }
-  for (const username of [match.a, match.b]) {
-    const c = connectedClient(username);
-    if (c) c.match_id = 0;
-  }
   sendError(client, "match result must be win or loss");
-  activeMatches.delete(match.id);
 }
 
 function dispatch(client, msg) {
@@ -1051,6 +1108,8 @@ function dispatch(client, msg) {
     case "challenge": handleChallenge(client, msg); break;
     case "challenge_accept": handleChallengeAccept(client, msg); break;
     case "challenge_decline": handleChallengeDecline(client, msg); break;
+    case "match_started": handleMatchStarted(client, msg); break;
+    case "match_abort": handleMatchAbort(client, msg); break;
     case "match_end": handleMatchEnd(client, msg); break;
     case "ping": send(client, { type: "pong", seq: msg.seq || 0 }); break;
     default: sendError(client, "unknown message type");
@@ -1093,9 +1152,8 @@ function destroyClient(client) {
     if (match) {
       const other = client.username === match.a ? match.b : match.a;
       const otherClient = connectedClient(other);
-      if (otherClient) {
-        finishMatch(match, other, "opponent disconnected");
-      }
+      if (!match.committed) cancelMatch(match, "opponent disconnected before gameplay");
+      else if (otherClient) finishMatch(match, other, "opponent disconnected");
       else activeMatches.delete(match.id);
     }
   }
@@ -1139,15 +1197,13 @@ setInterval(() => {
     for (const client of clients) if (client.username) sendFriendSnapshot(client);
   }
   for (const match of [...activeMatches.values()]) {
-    if (match.finished || cutoff - match.started_at <= MATCH_STALE_MS) continue;
-    if (match.results && match.results.size > 0) {
-      finishMatch(match, [...match.results.values()][0], "stale single report");
-    } else {
-      cancelMatch(match, "stale match");
+    if (match.finished || match.committed) continue;
+    if (cutoff - match.created_at > MATCH_SETUP_STALE_MS) {
+      cancelMatch(match, "stale match setup");
     }
   }
   tryMatchmaking();
-}, 5000);
+}, MATCH_SWEEP_INTERVAL_MS);
 
 const server = net.createServer((socket) => {
   const client = {
@@ -1166,7 +1222,7 @@ const server = net.createServer((socket) => {
   clients.add(client);
   socket.setEncoding("utf8");
   socket.setNoDelay(true);
-  socket.setTimeout(120000);
+  socket.setTimeout(CLIENT_IDLE_TIMEOUT_MS);
   sendServerInfo(client);
 
   socket.on("data", (chunk) => {

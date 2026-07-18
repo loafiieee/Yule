@@ -67,6 +67,21 @@ try {
     if ($server -and -not $server.HasExited) {
         Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
     }
+    $buildRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'build'))
+    if (Test-Path -LiteralPath $buildRoot) {
+        Get-ChildItem -LiteralPath $buildRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -like 'update_ext_test_tmp_*' -or
+                $_.Name -like 'update_ext_http_tmp_*'
+            } |
+            ForEach-Object {
+                $candidate = [System.IO.Path]::GetFullPath($_.FullName)
+                if ([System.IO.Path]::GetDirectoryName($candidate) -eq $buildRoot) {
+                    Remove-Item -LiteralPath $candidate -Recurse -Force `
+                        -ErrorAction SilentlyContinue
+                }
+            }
+    }
     $env:UPDATE_EXT_TEST_CHANNEL_BASE = $oldTestBase
     Pop-Location -ErrorAction SilentlyContinue
 }

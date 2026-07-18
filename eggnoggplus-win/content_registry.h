@@ -86,7 +86,8 @@ typedef struct ContentTileInput {
      * whose historical/default tint is opaque white. */
     int tint_provided;
 
-    /* Required for mod/map assets. Built-in sheets may use a key beginning
+    /* External definitions require the loader-computed (and optionally
+     * author-pinned) asset digest. Built-in sheets may use a key beginning
      * with "builtin:"; their stable identity is derived from that key. */
     const char* asset_sha256_hex;
 } ContentTileInput;

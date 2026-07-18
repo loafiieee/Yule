@@ -45,6 +45,15 @@ def reserve_port_pair() -> tuple[int, int]:
             sock.close()
 
 
+def reserve_port() -> int:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+    finally:
+        sock.close()
+
+
 def build() -> None:
     BUILD.mkdir(exist_ok=True)
     gcc = find_gcc()
@@ -81,8 +90,14 @@ def run_pair(
     replay_host: bool = False,
     require_host_rejects: bool = False,
     require_join_rejects: bool = False,
+    restart_join: bool = False,
+    restart_host_late: bool = False,
 ) -> None:
     host_port, join_port = reserve_port_pair()
+    restart_requested = restart_join or restart_host_late
+    restart_port = reserve_port() if restart_requested else 0
+    while restart_requested and restart_port in (host_port, join_port):
+        restart_port = reserve_port()
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     mode = "reject" if expect_rejection else "normal"
     host_args = [str(EXE), "host", str(host_port), str(join_port), host_token, mode]
@@ -90,7 +105,17 @@ def run_pair(
         host_args.append("tamper")
     elif replay_host:
         host_args.append("replay")
-    join_args = [str(EXE), join_role, str(join_port), str(host_port), join_token, mode]
+    join_mode = "restart" if restart_join else mode
+    join_args = [str(EXE), join_role, str(join_port), str(host_port), join_token, join_mode]
+    if restart_join:
+        host_args[5] = "watchrestart"
+        host_args.append(str(restart_port))
+        join_args.append(str(restart_port))
+    elif restart_host_late:
+        host_args[5] = "restartlate"
+        join_args[5] = "watchrestartlate"
+        host_args.append(str(restart_port))
+        join_args.append(str(restart_port))
     host = subprocess.Popen(
         host_args,
         cwd=ROOT,
@@ -140,6 +165,15 @@ def run_pair(
             raise AssertionError("the one-shot state-load failure was not exercised")
         if join_err.count("receiving host state") < 2:
             raise AssertionError("the failed state assembly was not retried")
+    if restart_join and "restarted=1" not in join_out:
+        raise AssertionError(f"the join peer did not exercise prematch socket recovery\n{join_out}")
+    if restart_host_late and (
+        "restarted=1" not in host_out or "restarted=1" not in join_out
+    ):
+        raise AssertionError(
+            "the post-state-sync host restart was not exercised on both peers\n"
+            f"{host_out}\n{join_out}"
+        )
     print(host_out.strip())
     print(join_out.strip())
 
@@ -165,6 +199,8 @@ def main() -> int:
             )
         print(no_key.stdout.strip())
         run_pair("join", expect_recovery=False)
+        run_pair("join", expect_recovery=False, restart_join=True)
+        run_pair("join", expect_recovery=False, restart_host_late=True)
         run_pair(
             "join",
             expect_recovery=False,

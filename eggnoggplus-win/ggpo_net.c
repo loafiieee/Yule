@@ -486,6 +486,7 @@ static uint32_t g_net_local_dll_id = 0;
 
 static int ggpo_net_send_packet(uint16_t type);
 static void ggpo_net_clear_rollback_history(void);
+static void ggpo_net_reset_authoritative_state_bookkeeping(void);
 
 /* Per-frame RNG trace ring (diagnostic, populated only when rngtrace is on).
  * Stored in RAM with no I/O during play; dumped to the log when a desync fires
@@ -1179,6 +1180,18 @@ static int ggpo_net_link_confirmed(void) {
            g_net.peer_confirmed_session;
 }
 
+/* A peer may legitimately replace its UDP socket while both clients are still
+ * behind the prematch barrier.  In particular, the matchmaking retry machine
+ * rotates the NAT mapping after a timeout.  Once gameplay has loaded frame 0,
+ * however, accepting a new session or endpoint would splice two matches
+ * together, so recovery is deliberately limited to this narrow window. */
+static int ggpo_net_prematch_recovery_allowed(void) {
+    return g_net.active &&
+           g_net.prematch_used &&
+           g_net.frame == 0u &&
+           !g_net.start_state_loaded;
+}
+
 static int ggpo_net_remote_session_retired(uint64_t session_id) {
     for (int i = 0; i < g_net.retired_remote_session_count; i++) {
         if (g_net.retired_remote_session_ids[i] == session_id) return 1;
@@ -1245,6 +1258,31 @@ static void ggpo_net_reset_unconfirmed_peer_attempt(void) {
     memset(g_net.sim_queue, 0, sizeof(g_net.sim_queue));
 }
 
+/* A fully confirmed peer can still rotate its socket while the match remains
+ * behind the frame-0 barrier. Unlike the lightweight pre-confirmation reset,
+ * this discards every partially assembled/acknowledged state generation. The
+ * surviving host keeps its captured authoritative state; a surviving join
+ * forgets the old host epoch and waits for the restarted host's fresh epoch 2. */
+static void ggpo_net_reset_confirmed_prematch_peer_attempt(void) {
+    ggpo_net_reset_unconfirmed_peer_attempt();
+    ggpo_net_reset_authoritative_state_bookkeeping();
+    if (g_net.mode == GGPO_NET_MODE_HOST) {
+        g_net.state_synced = 1;
+        g_net.remote_state_synced = 0;
+        if (g_net.initial_state && g_net.initial_state_len > 0u) {
+            (void)ggpo_net_set_correction_base(g_net.initial_state,
+                                               g_net.initial_state_len,
+                                               g_net.initial_checksum);
+        }
+    } else {
+        g_net.state_epoch = 0u;
+        g_net.state_synced = 0;
+        g_net.remote_state_synced = 1;
+        g_net.remote_state_epoch_seen = 0u;
+        g_net.hold_remote_epoch_floor = GGPO_NET_INITIAL_STATE_EPOCH;
+    }
+}
+
 /* Adopt session id and source atomically. A different session id is accepted only
  * from a HELLO-equivalent caller while the pre-frame-0 link is still unconfirmed;
  * delayed packets from retired attempts can therefore never flip the session back. */
@@ -1254,6 +1292,7 @@ static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
                                          int allow_attempt_migration) {
     int source_matches;
     int can_migrate;
+    int recovered_confirmed_prematch = 0;
     if (!from || session_id == 0u) return 0;
     if (ggpo_net_remote_session_retired(session_id)) return 0;
 
@@ -1261,7 +1300,10 @@ static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
     can_migrate = allow_attempt_migration &&
                   g_net.frame == 0u &&
                   !g_net.start_state_loaded &&
-                  !ggpo_net_link_confirmed();
+                  (!ggpo_net_link_confirmed() ||
+                   (ggpo_net_prematch_recovery_allowed() &&
+                    g_net.has_remote_session_id &&
+                    g_net.remote_session_id != session_id));
 
     if (!g_net.has_remote_session_id) {
         if (!allow_attempt_migration) return 0;
@@ -1270,12 +1312,20 @@ static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
     } else if (g_net.remote_session_id != session_id) {
         uint64_t old_session;
         if (!can_migrate) return 0;
+        recovered_confirmed_prematch = ggpo_net_link_confirmed();
         old_session = g_net.remote_session_id;
         ggpo_net_retire_remote_session(old_session);
-        ggpo_net_reset_unconfirmed_peer_attempt();
+        if (recovered_confirmed_prematch) {
+            ggpo_net_reset_confirmed_prematch_peer_attempt();
+        } else {
+            ggpo_net_reset_unconfirmed_peer_attempt();
+        }
         g_net.remote_session_id = session_id;
         g_net.has_remote_session_id = 1;
-        LOG_INFO("ggpo.net: migrated unconfirmed peer session old=%016llX new=%016llX",
+        LOG_INFO("ggpo.net: %s peer session old=%016llX new=%016llX",
+                 recovered_confirmed_prematch
+                    ? "recovered confirmed prematch"
+                    : "migrated unconfirmed",
                  (unsigned long long)old_session,
                  (unsigned long long)session_id);
     }
@@ -1337,6 +1387,10 @@ static int ggpo_net_authenticate_received(void* data,
      * datagram cannot move the endpoint. Retry-time endpoint migration remains
      * available to authenticated HELLO packets below. */
     if (ggpo_net_link_confirmed() &&
+        !(prefix->type == GGPO_NET_PACKET_HELLO &&
+          ggpo_net_prematch_recovery_allowed() &&
+          g_net.has_remote_session_id &&
+          prefix->session_id != g_net.remote_session_id) &&
         (!g_net.has_peer_addr || !ggpo_net_addr_equal(&g_net.peer_addr, from))) {
         ggpo_net_auth_reject();
         goto done;
@@ -1370,7 +1424,10 @@ static int ggpo_net_authenticate_received(void* data,
     can_migrate = prefix->type == GGPO_NET_PACKET_HELLO &&
                   g_net.frame == 0u &&
                   !g_net.start_state_loaded &&
-                  !ggpo_net_link_confirmed();
+                  (!ggpo_net_link_confirmed() ||
+                   (ggpo_net_prematch_recovery_allowed() &&
+                    g_net.has_remote_session_id &&
+                    prefix->session_id != g_net.remote_session_id));
     if (g_net.auth_rx_session == 0u) {
         /* Session and replay state begin only from an authenticated HELLO, just
          * like endpoint adoption in the packet handler. */
@@ -2048,7 +2105,8 @@ static int ggpo_net_send_packet(uint16_t type) {
  * endpoint (LAN + public). Whichever one the peer's packets come back from is
  * adopted as peer_addr. Once connected we only talk to the working peer_addr. */
 static void ggpo_net_send_handshake_burst(uint32_t count) {
-    if (!g_net.active || ggpo_net_link_confirmed() || g_net.sock == INVALID_SOCKET) return;
+    if (!g_net.active || ggpo_net_link_confirmed() ||
+        g_net.sock == INVALID_SOCKET) return;
     if (count == 0u) count = 1u;
     for (uint32_t i = 0; i < count; i++) {
         int sent_any = 0;
@@ -3650,6 +3708,10 @@ int ggpo_net_connected(void) {
     return (g_net.connected && g_net.session_confirmed) ? 1 : 0;
 }
 
+int ggpo_net_link_ready(void) {
+    return (g_net.active && ggpo_net_link_confirmed()) ? 1 : 0;
+}
+
 GgpoNetMode ggpo_net_mode(void) {
     return g_net.mode;
 }
@@ -4412,6 +4474,7 @@ int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap)
 int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap) {
     struct sockaddr_in addr;
     int changed = 0;
+    int replace_stale_prematch_candidates = 0;
     if (!g_net.active || g_net.sock == INVALID_SOCKET) {
         ggpo_net_set_err(err, err_cap, "net session is not active");
         return 0;
@@ -4423,12 +4486,31 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
     if (!ggpo_net_resolve_peer(host, remote_port, &addr, err, err_cap)) {
         return 0;
     }
+    /* A server endpoint update during prematch means the peer rotated to a new
+     * socket/NAT mapping.  The old candidate generation is dead; retaining all
+     * three routes for every retry both directs heartbeats at stale sockets and
+     * eventually exhausts the fixed candidate array before attempt three. */
+    replace_stale_prematch_candidates =
+        g_net.has_peer_addr &&
+        !ggpo_net_addr_equal(&g_net.peer_addr, &addr) &&
+        ggpo_net_prematch_recovery_allowed();
+    if (replace_stale_prematch_candidates) {
+        memset(g_net.candidates, 0, sizeof(g_net.candidates));
+        g_net.candidate_count = 0;
+        g_net.last_handshake_burst_tick = 0u;
+        changed = 1;
+        LOG_INFO("ggpo.net: replaced stale prematch peer candidates with %s:%u",
+                 host ? host : "",
+                 (unsigned int)remote_port);
+    }
+
     /* Always register as a hole-punch candidate. */
     ggpo_net_add_candidate_addr(&addr);
     if (g_net.has_peer_addr) {
         if (ggpo_net_addr_equal(&g_net.peer_addr, &addr)) {
             /* already our primary; just (re)punch. */
-        } else if (ggpo_net_link_confirmed()) {
+        } else if (ggpo_net_link_confirmed() &&
+                   !ggpo_net_prematch_recovery_allowed()) {
             ggpo_net_set_err(err, err_cap, "already connected to a different peer");
             return 0;
         } else {
@@ -4450,7 +4532,16 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
              (unsigned int)g_net.local_port,
              g_net.candidate_count);
     g_net.last_handshake_burst_tick = 0u;
-    ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST * 2u);
+    if (replace_stale_prematch_candidates && ggpo_net_link_confirmed()) {
+        /* Keep the confirmed endpoint pinned until this replacement proves a
+         * fresh authenticated peer session. Probe only the server-published
+         * address; same-session packets from it remain rejected. */
+        for (uint32_t i = 0; i < GGPO_NET_PUNCH_HELLO_BURST * 2u; i++) {
+            (void)ggpo_net_send_packet_to(GGPO_NET_PACKET_HELLO, &addr);
+        }
+    } else {
+        ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST * 2u);
+    }
     return 1;
 }
 

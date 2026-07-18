@@ -29,8 +29,9 @@ match assignment
   -> held P2P attempt(s) while hub countdown is visible
   -> native map/reset initialization in the hub
   -> authoritative state + neutral frame-0 exchange
-  -> readiness proof
-  -> switch to GAME as the final operation
+  -> local readiness proof + restorable frame zero
+  -> report READY and wait for the server's two-client commit
+  -> switch to GAME only after commit
   -> active rollback match
   -> result/disconnect cleanup and hub/result screen
 ```
@@ -39,9 +40,11 @@ The distinction between `pending` and `active` is an invariant. A connected sock
 an active match. `g_online_connect.established` is set only after the synchronized state
 has been prepared and the GAME switch succeeds.
 
-The complete pending/setup window has a 45-second wall-clock timeout. Setup failure or
-timeout sends a loss result when possible, tears down transport and mod suspension,
-records network diagnostics, and returns to the hub with a recoverable status.
+The complete pending/setup window has a 45-second wall-clock timeout. Before the
+server commits gameplay, setup failure or timeout sends `match_abort`, tears down
+transport and mod suspension, records network diagnostics, and returns to the hub
+with a recoverable status. It never manufactures a winner, result screen, or Elo
+change for a match that did not start.
 
 ## Fresh-socket P2P retry
 
@@ -52,15 +55,16 @@ P2P starts immediately when a valid match assignment is received.
 - A socket that could not start gets a short 250 ms rollover window.
 - Attempt 1 honors the configured local port.
 - Later attempts request port `0`, creating a fresh ephemeral socket/NAT mapping.
-- Each retry republishes the new endpoint through the server probe path and reapplies
-  direct, public, and LAN peer candidates.
+- Each retry republishes the new endpoint through the server probe path. The server
+  selects exactly one symmetric route generation—loopback, LAN, or public—and both
+  clients probe only that selected peer endpoint for the attempt.
 - A retry closes the old socket without sending `BYE`, because the peer may have received
   its final HELLO and could otherwise reject a viable race.
 - Host/join authority is never swapped. Those roles affect authoritative state sync, not
   the symmetric hole-punch.
 
 The match card reports `attempt N/3`. After attempt 3, the client logs the detailed
-`net.diag` report, reports a loss/release to the control server, and returns to the hub.
+`net.diag` report, cancels the uncommitted setup on the control server, and returns to the hub.
 There is no automatic reconnect after gameplay is established; a live-match teardown
 uses the normal disconnect/loss policy.
 
@@ -94,9 +98,12 @@ Every v16 peer datagram has an HMAC-SHA-256 tag truncated to 128 bits. Direction
 the protocol version, sender role, and a 64-bit CSPRNG session ID. Tags are compared in
 constant time before any source/session adoption or handler dispatch. An exact
 4,096-sequence replay window rejects duplicates and stale traffic. Endpoint/session
-migration is limited to an authenticated HELLO at frame zero before bidirectional
-confirmation; afterward the peer endpoint is pinned. This provides authentication and
-integrity, not confidentiality—the UDP payload remains plaintext.
+migration within one session is limited to an authenticated HELLO at frame zero before
+bidirectional confirmation. A confirmed prematch peer may adopt one authenticated fresh
+session/endpoint only while still at frame zero and before the synchronized start state
+is loaded; this is the bounded fresh-socket retry recovery path. Same-session packets
+from alternate endpoints remain rejected after confirmation. This provides authentication
+and integrity, not confidentiality—the UDP payload remains plaintext.
 
 Hold changes are epoch-numbered and are illegal after gameplay begins. A new retry
 reengages the hold and clears pending preparation so state from an older socket cannot
@@ -140,8 +147,28 @@ to GAME and freeze there.
 
 At readiness, `ggpo_net_prepare_prematch_start` loads the synchronized state, restores
 only the two already-proven neutral frame-zero inputs cleared by that load, and sends one
-final input packet. Switching to GAME is then the final operation. The next visible
-gameplay tick has a remote input and can advance from frame 0 to frame 1 immediately.
+final input packet. The client then sends `match_started` and remains in the hub. The
+server records READY idempotently and broadcasts `match_started {committed:1}` only after
+both assigned clients are ready. That exact current-match commit is the final permission
+to switch to GAME. The next visible gameplay tick has a remote input and can advance from
+frame 0 to frame 1 immediately.
+
+The loaded frame-zero state closes the transport retry window. Therefore any P2P service
+failure after local start preparation or READY aborts the setup; it cannot open a fresh
+socket and reuse stale readiness. A failure before start preparation may retry, but must
+clear every preparation, release, start, READY, and commit latch first.
+
+After commit, match duration is not governed by the pending-setup TTL. The authenticated
+control client sends a 30-second heartbeat to satisfy the server's 120-second receive-idle
+timeout, so a quiet committed game is resolved only by result/disconnect handling rather
+than an arbitrary ten-minute setup sweep or two-minute control idle.
+
+The commit and a post-commit forfeit result may share one TCP receive batch. If
+that happens before the launch pump promotes pending metadata, the client
+resolves the exact committed pending match directly and never enters a GAME the
+server has already retired. Normal completion requires two reports naming the
+same winner; a lone-report timeout or conflict is a no-contest with no Elo
+mutation.
 
 There are two defensive backstops:
 
@@ -204,6 +231,11 @@ calculation.
 - A countdown reaching zero is not itself readiness.
 - Pending setup never advances a gameplay frame.
 - A failed state load aborts before GAME is shown.
+- GAME entry requires the server's exact-match two-client start commit.
+- A pre-commit abort, disconnect, stale timeout, or premature result is a no-contest.
+- A delayed lifecycle message with another match ID cannot affect the current match.
+- A batched commit plus immediate result cannot be discarded or enter stale gameplay.
+- Unilateral and conflicting normal result reports cannot select a winner or change Elo.
 - Match input during the countdown is always neutral.
 - Setup/connection failure releases mod suspension and pending state.
 - Active match completion/disconnect stops netcode, captures result state, and ends the

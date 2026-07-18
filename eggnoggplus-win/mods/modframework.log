@@ -1,65 +1,61 @@
-[23:59:43] [INFO] Mod framework initializing...
-[23:59:43] [INFO] Mod framework API version: 1
-[23:59:43] [INFO] Scanning mods/ folder...
-[23:59:43] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
-[23:59:43] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
-[23:59:43] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
-[23:59:43] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
-[23:59:43] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
-[23:59:43] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
-[23:59:43] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
-[23:59:43] [INFO] Loaded mod: ai_opponent
-[23:59:43] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
-[23:59:43] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
-[23:59:43] [INFO] [mod:options_demo] Loaded options demo
-[23:59:43] [INFO] [mod:options_demo] difficulty=normal greeting=hello
-[23:59:43] [INFO] Loaded mod: options_demo
-[23:59:43] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
-[23:59:43] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[23:59:43] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
-[23:59:43] [INFO] [mod:speedhack] speed=1
-[23:59:43] [INFO] Loaded mod: speedhack
-[23:59:43] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[23:59:43] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[23:59:43] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[23:59:43] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[23:59:43] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[23:59:43] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[23:59:43] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[23:59:43] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[23:59:43] [INFO] Loaded mod: texture_pack_test
-[23:59:43] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[23:59:43] [INFO] [maps] scanning maps/ for custom maps
-[23:59:43] [INFO] [maps][example_map] scanning folder: maps\example_map
-[23:59:43] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[23:59:43] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[23:59:43] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[23:59:43] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[23:59:43] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[23:59:43] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[23:59:43] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
-[23:59:43] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[23:59:43] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[23:59:43] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[23:59:43] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
-[23:59:43] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
-[23:59:43] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
-[23:59:43] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
-[23:59:43] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
-[23:59:43] [INFO] [maps] registry ready: 3 custom maps (was 0)
-[23:59:43] [INFO] hooks_init: custom MODS menu ready
-[23:59:44] [INFO] map content: packed map.v2_symbolic_demo:sheet-8820c88e-16x16-p0 base=704 count=128
-[23:59:44] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[23:59:44] [INFO] update: boot local=1.0 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
-[23:59:44] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[23:59:44] [INFO] update: current (local=1.0 channel=1.0)
-[23:59:45] [INFO] online.credentials: loaded remembered login server=eggnogg.loafiieee.com:47778 user=loaf
-[23:59:45] [INFO] online.hub: Connecting to online server...
-[23:59:45] [INFO] ONLINE HUB: enter
-[23:59:45] [INFO] online.hub: Checking online server...
-[23:59:45] [INFO] online.hub: Signing in...
-[23:59:45] [INFO] online.credentials: updated remembered login server=eggnogg.loafiieee.com:47778 user=loaf
-[23:59:45] [INFO] online.hub: Logged in.
-[23:59:47] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[23:59:51] [INFO] [mod:speedhack] Unloaded
-[23:59:51] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[11:23:44] [INFO] Mod framework initializing...
+[11:23:44] [INFO] Mod framework API version: 1
+[11:23:44] [INFO] Scanning mods/ folder...
+[11:23:44] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
+[11:23:44] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
+[11:23:44] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
+[11:23:44] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
+[11:23:44] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
+[11:23:44] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
+[11:23:44] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
+[11:23:44] [INFO] Loaded mod: ai_opponent
+[11:23:44] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[11:23:44] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[11:23:44] [INFO] [mod:options_demo] Loaded options demo
+[11:23:44] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[11:23:44] [INFO] Loaded mod: options_demo
+[11:23:44] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[11:23:44] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[11:23:44] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[11:23:44] [INFO] [mod:speedhack] speed=1
+[11:23:44] [INFO] Loaded mod: speedhack
+[11:23:44] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[11:23:44] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[11:23:44] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[11:23:44] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[11:23:44] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[11:23:44] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[11:23:44] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[11:23:44] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[11:23:44] [INFO] Loaded mod: texture_pack_test
+[11:23:44] [INFO] Done. 4 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[11:23:44] [INFO] [maps] scanning maps/ for custom maps
+[11:23:44] [INFO] [maps][example_map] scanning folder: maps\example_map
+[11:23:44] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[11:23:44] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[11:23:44] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[11:23:44] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[11:23:44] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[11:23:44] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[11:23:44] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[11:23:44] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[11:23:44] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[11:23:44] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[11:23:44] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[11:23:44] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[11:23:44] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[11:23:44] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[11:23:44] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
+[11:23:44] [INFO] [maps] registry ready: 3 custom maps (was 0)
+[11:23:44] [INFO] hooks_init: custom MODS menu ready
+[11:23:45] [INFO] map content: packed map.v2_symbolic_demo:sheet-f3b797ab-16x16-p0 base=704 count=128
+[11:23:45] [INFO] [maps][v2_symbolic_demo] applying custom map for selector index 7
+[11:23:45] [INFO] content bridge: selector=7 source_cells=37 bound_cells=54 definitions=3 generation=2
+[11:23:45] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
+[11:23:45] [INFO] update: boot local=1.0 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[11:23:45] [INFO] update: current (local=1.0 channel=1.0)
+[11:23:52] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
+[11:23:52] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
+[11:23:53] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
+[11:23:54] [INFO] [mod:speedhack] Unloaded
+[11:23:54] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

@@ -47,6 +47,9 @@
 #define UPDATE_JOURNAL_MAGIC_V1     "YULE_UPDATE_JOURNAL 1"
 #define UPDATE_JOURNAL_MAGIC_V2     "YULE_UPDATE_JOURNAL 2"
 #define UPDATE_JOURNAL_MAGIC        UPDATE_JOURNAL_MAGIC_V2
+#define UPDATE_RECOVERY_SUFFIX      ".update-recovery"
+#define UPDATE_UNKNOWN_SHA256       \
+    "0000000000000000000000000000000000000000000000000000000000000000"
 
 typedef struct UpdateManifest {
     char version[64];
@@ -76,6 +79,13 @@ static volatile LONG g_update_notice = 0;
 static volatile LONG g_update_booted = 0;
 static volatile LONG g_update_cancel = 0;
 static volatile LONG g_update_apply_requested = 0;
+static volatile LONG g_update_recovery_restart = 0;
+
+#ifdef UPDATE_EXT_TEST
+/* Simulates Windows keeping a renamed image section alive until process exit. */
+static int g_update_test_hold_recovery_quarantine = 0;
+static const char* g_update_test_probe_error_path = NULL;
+#endif
 
 #if defined(__GNUC__)
 static __thread char g_update_tls_latest[64];
@@ -728,6 +738,49 @@ static int update_path_is_safe(const char* path) {
     return 1;
 }
 
+static int update_path_has_recovery_suffix(const char* path) {
+    size_t path_len;
+    size_t suffix_len = sizeof(UPDATE_RECOVERY_SUFFIX) - 1u;
+    if (!path) return 0;
+    path_len = strlen(path);
+    return path_len >= suffix_len &&
+           _stricmp(path + path_len - suffix_len,
+                    UPDATE_RECOVERY_SUFFIX) == 0;
+}
+
+static int update_path_uses_recovery_namespace(const char* path) {
+    const char* segment;
+    const char* p;
+    size_t suffix_len = sizeof(UPDATE_RECOVERY_SUFFIX) - 1u;
+    if (!path) return 0;
+    segment = path;
+    for (p = path;; p++) {
+        if (*p == '/' || *p == '\\' || *p == '\0') {
+            size_t segment_len = (size_t)(p - segment);
+            if (segment_len >= suffix_len &&
+                _strnicmp(segment + segment_len - suffix_len,
+                          UPDATE_RECOVERY_SUFFIX, suffix_len) == 0) {
+                return 1;
+            }
+            if (*p == '\0') break;
+            segment = p + 1;
+        }
+    }
+    return 0;
+}
+
+/* Release paths leave room for the updater-owned cleanup suffix. Journals use
+ * update_path_is_safe directly so cleanup-only handoff entries remain valid. */
+static int update_release_path_is_safe(const char* path) {
+    size_t len;
+    if (!update_path_is_safe(path) ||
+        update_path_uses_recovery_namespace(path)) {
+        return 0;
+    }
+    len = strlen(path);
+    return len + sizeof(UPDATE_RECOVERY_SUFFIX) - 1u <= UPDATE_MAX_PATH;
+}
+
 static void update_path_normalize(char* path) {
     while (*path) {
         if (*path == '\\') *path = '/';
@@ -803,7 +856,7 @@ static int update_json_files_array(UpdateJsonReader* r,
         }
         if (!have_path || !have_sha || !have_size ||
             file.size > UPDATE_FILE_MAX_BYTES ||
-            !update_path_is_safe(file.path) ||
+            !update_release_path_is_safe(file.path) ||
             !update_sha256_valid(file.sha256)) return 0;
         update_path_normalize(file.path);
         if (update_files_have_collision(files, count, file.path)) return 0;
@@ -983,6 +1036,36 @@ static int update_path_exists(const char* path, int* is_directory) {
     DWORD attrs = GetFileAttributesA(path);
     if (attrs == INVALID_FILE_ATTRIBUTES) return 0;
     if (is_directory) *is_directory = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    return 1;
+}
+
+/* Unlike update_path_exists, this distinguishes a genuinely absent path from
+ * an attribute-query failure. Recovery must never interpret access denied or
+ * an I/O error as evidence that a journal or quarantine is gone. */
+static int update_path_query(const char* path, int* out_exists,
+                             DWORD* out_attributes) {
+    DWORD attrs;
+    DWORD error;
+    if (!path || !out_exists) return 0;
+#ifdef UPDATE_EXT_TEST
+    if (g_update_test_probe_error_path &&
+        _stricmp(path, g_update_test_probe_error_path) == 0) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return 0;
+    }
+#endif
+    attrs = GetFileAttributesA(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+            return 0;
+        }
+        *out_exists = 0;
+        if (out_attributes) *out_attributes = INVALID_FILE_ATTRIBUTES;
+        return 1;
+    }
+    *out_exists = 1;
+    if (out_attributes) *out_attributes = attrs;
     return 1;
 }
 
@@ -1637,7 +1720,7 @@ static int update_build_download_url(const char* base, const char* relative,
     size_t a = strlen(base);
     size_t b = strlen(relative);
     int separator = a > 0 && base[a - 1] != '/';
-    if (!update_path_is_safe(relative) ||
+    if (!update_release_path_is_safe(relative) ||
         a + (size_t)separator + b + 1u > cap) return 0;
     memcpy(out, base, a);
     if (separator) out[a++] = '/';
@@ -1699,6 +1782,7 @@ typedef struct UpdateApplyEntry {
     char target[UPDATE_ABS_CAP];
     char staged[UPDATE_ABS_CAP];
     char backup[UPDATE_ABS_CAP];
+    char quarantine[UPDATE_ABS_CAP];
     int had_original;
     int swapped;
 } UpdateApplyEntry;
@@ -1717,9 +1801,14 @@ typedef struct UpdateJournal {
 } UpdateJournal;
 
 static int update_delete_file_if_present(const char* path) {
-    int is_dir = 0;
-    if (!update_path_exists(path, &is_dir)) return 1;
-    if (is_dir) return 0;
+    DWORD attrs = INVALID_FILE_ATTRIBUTES;
+    int exists = 0;
+    if (!update_path_query(path, &exists, &attrs)) return 0;
+    if (!exists) return 1;
+    if (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
+        SetLastError(ERROR_DIRECTORY);
+        return 0;
+    }
     if (DeleteFileA(path)) return 1;
     return GetLastError() == ERROR_FILE_NOT_FOUND;
 }
@@ -1727,6 +1816,38 @@ static int update_delete_file_if_present(const char* path) {
 static int update_journal_path(char out[UPDATE_ABS_CAP]) {
     return update_join_path(out, UPDATE_ABS_CAP, g_update.root,
                             UPDATE_JOURNAL_REL);
+}
+
+static int update_recovery_quarantine_path(char out[UPDATE_ABS_CAP],
+                                           const char* target) {
+    size_t len;
+    if (!out || !target) return 0;
+    len = strlen(target);
+    if (len + sizeof(UPDATE_RECOVERY_SUFFIX) > UPDATE_ABS_CAP) return 0;
+    memcpy(out, target, len);
+    memcpy(out + len, UPDATE_RECOVERY_SUFFIX,
+           sizeof(UPDATE_RECOVERY_SUFFIX));
+    return 1;
+}
+
+static int update_delete_recovery_quarantine(const char* path) {
+    DWORD attrs = INVALID_FILE_ATTRIBUTES;
+    int exists = 0;
+    if (!update_path_query(path, &exists, &attrs)) return 0;
+    if (!exists) return 1;
+    if (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
+        SetLastError(ERROR_DIRECTORY);
+        return 0;
+    }
+#ifdef UPDATE_EXT_TEST
+    if (g_update_test_hold_recovery_quarantine > 0) {
+        g_update_test_hold_recovery_quarantine--;
+        SetLastError(ERROR_SHARING_VIOLATION);
+        return 0;
+    }
+#endif
+    if (DeleteFileA(path)) return 1;
+    return GetLastError() == ERROR_FILE_NOT_FOUND;
 }
 
 static int update_journal_write_state(UpdateJournal* journal,
@@ -1798,6 +1919,86 @@ static int update_journal_write(const UpdateApplyEntry* entries, size_t count,
         journal.files[i].has_integrity = 1;
     }
     return update_journal_write_state(&journal, committed);
+}
+
+static int update_journal_add_cleanup(UpdateJournal* cleanup,
+                                      const UpdateJournal* source,
+                                      size_t source_index,
+                                      const char* quarantine) {
+    WIN32_FILE_ATTRIBUTE_DATA file_info;
+    uint64_t size;
+    size_t index;
+    int written;
+    if (!cleanup || !source || source_index >= source->count ||
+        cleanup->count >= UPDATE_MAX_FILES || !quarantine) return 0;
+    index = cleanup->count;
+    written = snprintf(cleanup->files[index].path,
+                       sizeof(cleanup->files[index].path), "%s%s",
+                       source->files[source_index].path,
+                       UPDATE_RECOVERY_SUFFIX);
+    if (written < 0 ||
+        (size_t)written >= sizeof(cleanup->files[index].path) ||
+        !update_path_is_safe(cleanup->files[index].path)) return 0;
+    if (source->files[source_index].has_integrity) {
+        if (!update_copy(cleanup->files[index].sha256,
+                         sizeof(cleanup->files[index].sha256),
+                         source->files[source_index].sha256)) return 0;
+        size = source->files[source_index].size;
+    } else {
+        if (!GetFileAttributesExA(quarantine, GetFileExInfoStandard,
+                                  &file_info) ||
+            (file_info.dwFileAttributes &
+             (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+            return 0;
+        }
+        size = ((uint64_t)file_info.nFileSizeHigh << 32) |
+               (uint64_t)file_info.nFileSizeLow;
+        if (size > UPDATE_FILE_MAX_BYTES ||
+            !update_sha256_file(quarantine, size,
+                                cleanup->files[index].sha256)) return 0;
+    }
+    cleanup->files[index].size = size;
+    cleanup->files[index].had_original = 0;
+    cleanup->files[index].has_integrity = 1;
+    cleanup->count++;
+    return 1;
+}
+
+static int update_journal_add_unresolved(UpdateJournal* unresolved,
+                                         const UpdateJournal* source,
+                                         size_t source_index) {
+    size_t index;
+    if (!unresolved || !source || source_index >= source->count ||
+        unresolved->count >= UPDATE_MAX_FILES) return 0;
+    index = unresolved->count;
+    if (!update_copy(unresolved->files[index].path,
+                     sizeof(unresolved->files[index].path),
+                     source->files[source_index].path)) return 0;
+    /* A reduced journal no longer describes the complete release set. Its
+     * applying recovery does not need integrity metadata, so use a valid but
+     * deliberately non-authorizing sentinel for V1 and V2 alike. This prevents
+     * a later retry from promoting a matching subset into a split-version
+     * committed transaction. */
+    if (!update_copy(unresolved->files[index].sha256,
+                     sizeof(unresolved->files[index].sha256),
+                     UPDATE_UNKNOWN_SHA256)) return 0;
+    unresolved->files[index].size = 0;
+    unresolved->files[index].had_original =
+        source->files[source_index].had_original;
+    unresolved->files[index].has_integrity = 1;
+    unresolved->count++;
+    return 1;
+}
+
+static void update_journal_mark_unresolved(UpdateJournal* unresolved,
+                                           const UpdateJournal* source,
+                                           size_t source_index,
+                                           int* recovery_ok,
+                                           int* journal_plan_ok) {
+    if (!update_journal_add_unresolved(unresolved, source, source_index)) {
+        if (journal_plan_ok) *journal_plan_ok = 0;
+    }
+    if (recovery_ok) *recovery_ok = 0;
 }
 
 static int update_decimal_u64(const char* begin, const char* end,
@@ -1914,22 +2115,60 @@ fail:
 }
 
 static int update_regular_file_or_missing(const char* path, int* out_exists) {
-    DWORD attrs;
-    DWORD error;
+    DWORD attrs = INVALID_FILE_ATTRIBUTES;
     if (!path || !out_exists) return 0;
-    attrs = GetFileAttributesA(path);
-    if (attrs == INVALID_FILE_ATTRIBUTES) {
-        error = GetLastError();
-        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
-            return 0;
-        }
-        *out_exists = 0;
-        return 1;
-    }
+    if (!update_path_query(path, out_exists, &attrs)) return 0;
+    if (!*out_exists) return 1;
     if (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
+        SetLastError(ERROR_DIRECTORY);
         return 0;
     }
     *out_exists = 1;
+    return 1;
+}
+
+static int update_revert_cleanup_plan(const UpdateJournal* cleanup,
+                                      const int had_original[UPDATE_MAX_FILES]) {
+    size_t i;
+    if (!cleanup || !had_original) return 0;
+    for (i = cleanup->count; i-- > 0;) {
+        char original_rel[UPDATE_MAX_PATH + 1];
+        char target[UPDATE_ABS_CAP];
+        char quarantine[UPDATE_ABS_CAP];
+        char backup[UPDATE_ABS_CAP];
+        size_t path_len = strlen(cleanup->files[i].path);
+        size_t suffix_len = sizeof(UPDATE_RECOVERY_SUFFIX) - 1u;
+        if (path_len <= suffix_len ||
+            !update_path_has_recovery_suffix(cleanup->files[i].path) ||
+            path_len - suffix_len >= sizeof(original_rel)) return 0;
+        memcpy(original_rel, cleanup->files[i].path, path_len - suffix_len);
+        original_rel[path_len - suffix_len] = '\0';
+        if (!update_prepare_relative_path(g_update.root, original_rel,
+                                          target, sizeof(target), 0) ||
+            !update_prepare_relative_path(g_update.root,
+                                          cleanup->files[i].path,
+                                          quarantine, sizeof(quarantine), 0)) {
+            return 0;
+        }
+        if (had_original[i]) {
+            if (!update_backup_path(backup, sizeof(backup), target) ||
+                !MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH)) {
+                return 0;
+            }
+            if (!MoveFileExA(quarantine, target,
+                             MOVEFILE_REPLACE_EXISTING |
+                                 MOVEFILE_WRITE_THROUGH)) {
+                (void)MoveFileExA(backup, target,
+                                  MOVEFILE_REPLACE_EXISTING |
+                                      MOVEFILE_WRITE_THROUGH);
+                return 0;
+            }
+        } else if (!MoveFileExA(quarantine, target,
+                                MOVEFILE_REPLACE_EXISTING |
+                                    MOVEFILE_WRITE_THROUGH)) {
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -1946,19 +2185,105 @@ static int update_journal_file_matches(const char* target,
     return update_file_matches(target, &spec);
 }
 
+/* An applying V2 journal can be promoted safely when the complete release set
+ * is already installed exactly as declared. This is the common crash window
+ * after the last target move but before phase=committed reached disk, and it
+ * avoids rolling a currently mapped framework DLL backward. Cleanup-only and
+ * mixed reduced journals are intentionally ineligible. */
+static int update_journal_targets_are_complete(const UpdateJournal* journal,
+                                               int* out_complete) {
+    size_t i;
+    if (!journal || !out_complete) return 0;
+    *out_complete = 0;
+    if (journal->version < 2 || journal->committed) return 1;
+    for (i = 0; i < journal->count; i++) {
+        char target[UPDATE_ABS_CAP];
+        char quarantine[UPDATE_ABS_CAP];
+        DWORD target_attrs = INVALID_FILE_ATTRIBUTES;
+        int target_exists = 0;
+        int quarantine_exists = 0;
+        if (!journal->files[i].has_integrity) return 0;
+        if (strcmp(journal->files[i].sha256,
+                   UPDATE_UNKNOWN_SHA256) == 0) return 1;
+        if (!update_release_path_is_safe(journal->files[i].path)) return 1;
+        if (!update_prepare_relative_path(g_update.root,
+                                          journal->files[i].path,
+                                          target, sizeof(target), 0) ||
+            !update_recovery_quarantine_path(quarantine, target) ||
+            !update_path_query(target, &target_exists, &target_attrs) ||
+            !update_path_query(quarantine, &quarantine_exists, NULL)) {
+            return 0;
+        }
+        if (!target_exists ||
+            (target_attrs & (FILE_ATTRIBUTE_DIRECTORY |
+                             FILE_ATTRIBUTE_REPARSE_POINT)) ||
+            quarantine_exists ||
+            !update_journal_file_matches(target, journal, i)) {
+            return 1;
+        }
+    }
+    *out_complete = 1;
+    return 1;
+}
+
 static int update_recover_journal(void) {
     char journal_path[UPDATE_ABS_CAP];
     UpdateJournal journal;
+    UpdateJournal cleanup;
+    UpdateJournal unresolved;
+    UpdateJournal reduced;
+    int cleanup_had_original[UPDATE_MAX_FILES];
     int journal_exists;
     int is_dir = 0;
     size_t i;
     int ok = 1;
+    int journal_plan_ok = 1;
+    memset(&cleanup, 0, sizeof(cleanup));
+    memset(&unresolved, 0, sizeof(unresolved));
+    memset(&reduced, 0, sizeof(reduced));
+    memset(cleanup_had_original, 0, sizeof(cleanup_had_original));
+    cleanup.version = 2;
+    cleanup.committed = 0;
+    unresolved.version = 2;
+    unresolved.committed = 0;
+    reduced.version = 2;
+    reduced.committed = 0;
     if (!update_journal_path(journal_path)) return 0;
-    journal_exists = update_path_exists(journal_path, &is_dir);
+    {
+        DWORD journal_attrs = INVALID_FILE_ATTRIBUTES;
+        if (!update_path_query(journal_path, &journal_exists,
+                               &journal_attrs)) {
+            LOG_ERROR("update: cannot inspect transaction journal winerr=%lu; refusing to update",
+                      (unsigned long)GetLastError());
+            return 0;
+        }
+        is_dir = journal_exists &&
+                 (journal_attrs & (FILE_ATTRIBUTE_DIRECTORY |
+                                   FILE_ATTRIBUTE_REPARSE_POINT));
+    }
     if (!journal_exists) return 1;
     if (is_dir || !update_journal_load(&journal)) {
         LOG_ERROR("update: transaction journal is corrupt; refusing to update");
         return 0;
+    }
+    if (!journal.committed && journal.version >= 2) {
+        int targets_complete = 0;
+        if (!update_journal_targets_are_complete(&journal,
+                                                 &targets_complete)) {
+            LOG_ERROR("update: cannot safely inspect applying transaction targets; retaining journal and recovery artifacts winerr=%lu",
+                      (unsigned long)GetLastError());
+            return 0;
+        }
+        if (targets_complete) {
+            if (!update_journal_write_state(&journal, 1)) {
+                LOG_ERROR("update: verified applying targets but cannot commit recovery journal winerr=%lu",
+                          (unsigned long)GetLastError());
+                return 0;
+            }
+            journal.committed = 1;
+            InterlockedExchange(&g_update_recovery_restart, 1);
+            LOG_WARN("update: all interrupted-update targets verified; completing transaction forward");
+        }
     }
     if (journal.committed) {
         int targets_valid = 1;
@@ -1986,10 +2311,13 @@ static int update_recover_journal(void) {
             }
             if (!target_exists ||
                 !update_journal_file_matches(target, &journal, i)) {
+                LOG_WARN("update: committed recovery target is missing or corrupt file=%s",
+                         journal.files[i].path);
                 targets_valid = 0;
             }
-            if ((journal.files[i].had_original && !backup_exists) ||
-                (!journal.files[i].had_original && backup_exists)) {
+            if (journal.files[i].had_original && !backup_exists) {
+                rollback_possible = 0;
+            } else if (!journal.files[i].had_original && backup_exists) {
                 rollback_possible = 0;
             }
         }
@@ -2012,7 +2340,8 @@ static int update_recover_journal(void) {
                 }
             }
             if (!DeleteFileA(journal_path)) {
-                LOG_ERROR("update: committed targets verified but journal cleanup failed");
+                LOG_ERROR("update: committed targets verified but journal cleanup failed winerr=%lu",
+                          (unsigned long)GetLastError());
                 return 0;
             }
             return 1;
@@ -2040,42 +2369,249 @@ static int update_recover_journal(void) {
     for (i = journal.count; i-- > 0;) {
         char target[UPDATE_ABS_CAP];
         char backup[UPDATE_ABS_CAP];
-        int target_dir = 0;
-        int backup_dir = 0;
-        int target_exists;
-        int backup_exists;
-        if (!update_prepare_relative_path(g_update.root, journal.files[i].path,
-                                          target, sizeof(target), 0) ||
-            snprintf(backup, sizeof(backup), "%s.old", target) < 0 ||
-            strlen(backup) >= sizeof(backup) - 1) {
-            ok = 0;
+        char quarantine[UPDATE_ABS_CAP];
+        int target_exists = 0;
+        int backup_exists = 0;
+        int quarantine_exists = 0;
+        int quarantined = 0;
+        /* Cleanup-only applying entries are deliberately consumable by both
+         * this updater and older recovery code. Older versions already delete
+         * had_original=0 targets directly; do the same instead of appending a
+         * second reserved suffix. */
+        if (update_path_has_recovery_suffix(journal.files[i].path)) {
+            if (journal.files[i].had_original ||
+                !update_prepare_relative_path(g_update.root,
+                                              journal.files[i].path,
+                                              target, sizeof(target), 0) ||
+                !update_regular_file_or_missing(target, &target_exists)) {
+                LOG_ERROR("update: invalid recovery-cleanup entry file=%s winerr=%lu",
+                          journal.files[i].path,
+                          (unsigned long)GetLastError());
+                update_journal_mark_unresolved(&unresolved, &journal, i,
+                                               &ok, &journal_plan_ok);
+                continue;
+            }
+            if (target_exists) {
+                if (!DeleteFileA(target)) {
+                    LOG_ERROR("update: cannot remove released recovery quarantine file=%s winerr=%lu",
+                              journal.files[i].path,
+                              (unsigned long)GetLastError());
+                    update_journal_mark_unresolved(&unresolved, &journal, i,
+                                                   &ok, &journal_plan_ok);
+                }
+            }
             continue;
         }
-        target_exists = update_path_exists(target, &target_dir);
-        backup_exists = update_path_exists(backup, &backup_dir);
-        if (target_dir || backup_dir) {
-            ok = 0;
+        if (!update_prepare_relative_path(g_update.root, journal.files[i].path,
+                                          target, sizeof(target), 0) ||
+            !update_backup_path(backup, sizeof(backup), target) ||
+            !update_recovery_quarantine_path(quarantine, target)) {
+            LOG_ERROR("update: recovery path validation failed file=%s",
+                      journal.files[i].path);
+            update_journal_mark_unresolved(&unresolved, &journal, i,
+                                           &ok, &journal_plan_ok);
             continue;
+        }
+        if (!update_regular_file_or_missing(target, &target_exists)) {
+            LOG_ERROR("update: recovery cannot inspect target file=%s winerr=%lu",
+                      journal.files[i].path, (unsigned long)GetLastError());
+            update_journal_mark_unresolved(&unresolved, &journal, i,
+                                           &ok, &journal_plan_ok);
+            continue;
+        }
+        if (!update_regular_file_or_missing(backup, &backup_exists)) {
+            LOG_ERROR("update: recovery cannot inspect backup file=%s winerr=%lu",
+                      journal.files[i].path, (unsigned long)GetLastError());
+            update_journal_mark_unresolved(&unresolved, &journal, i,
+                                           &ok, &journal_plan_ok);
+            continue;
+        }
+        if (!update_regular_file_or_missing(quarantine, &quarantine_exists)) {
+            LOG_ERROR("update: recovery cannot inspect quarantine file=%s winerr=%lu",
+                      journal.files[i].path, (unsigned long)GetLastError());
+            update_journal_mark_unresolved(&unresolved, &journal, i,
+                                           &ok, &journal_plan_ok);
+            continue;
+        }
+        /* A retained quarantine means the previous recovery restored the disk
+         * transaction while this process still had the rejected DLL mapped.
+         * A clean restart releases it, so remove it before finalizing. */
+        if (quarantine_exists) {
+            if (!update_delete_recovery_quarantine(quarantine)) {
+                LOG_ERROR("update: recovery cannot clean prior quarantine file=%s winerr=%lu",
+                          journal.files[i].path, (unsigned long)GetLastError());
+                update_journal_mark_unresolved(&unresolved, &journal, i,
+                                               &ok, &journal_plan_ok);
+                continue;
+            }
         }
         if (journal.files[i].had_original) {
             if (backup_exists) {
-                if (target_exists && !DeleteFileA(target)) {
-                    ok = 0;
-                } else if (!MoveFileExA(backup, target,
+                /* Renaming a mapped DLL is supported even when deleting it is
+                 * denied. Keep the renamed image until process exit, restore
+                 * the original pathname, and retain the journal until the
+                 * quarantine can be deleted on the next launch. */
+                if (target_exists &&
+                    !MoveFileExA(target, quarantine, MOVEFILE_WRITE_THROUGH)) {
+                    LOG_ERROR("update: recovery cannot quarantine target file=%s winerr=%lu",
+                              journal.files[i].path,
+                              (unsigned long)GetLastError());
+                    update_journal_mark_unresolved(&unresolved, &journal, i,
+                                                   &ok, &journal_plan_ok);
+                    continue;
+                }
+                quarantined = target_exists;
+                if (quarantined) {
+                    InterlockedExchange(&g_update_recovery_restart, 1);
+                }
+                if (!MoveFileExA(backup, target,
+                                 MOVEFILE_REPLACE_EXISTING |
+                                     MOVEFILE_WRITE_THROUGH)) {
+                    DWORD restore_error = GetLastError();
+                    int transaction_state_restored = 1;
+                    (void)restore_error;
+                    if (quarantined) {
+                        if (!MoveFileExA(quarantine, target,
+                                         MOVEFILE_REPLACE_EXISTING |
+                                             MOVEFILE_WRITE_THROUGH)) {
+                            LOG_ERROR("update: recovery also failed to restore quarantined target file=%s winerr=%lu",
+                                      journal.files[i].path,
+                                      (unsigned long)GetLastError());
+                            transaction_state_restored = 0;
+                        }
+                    }
+                    LOG_ERROR("update: recovery cannot restore backup file=%s winerr=%lu",
+                              journal.files[i].path,
+                              (unsigned long)restore_error);
+                    if (transaction_state_restored) {
+                        update_journal_mark_unresolved(
+                            &unresolved, &journal, i, &ok,
+                            &journal_plan_ok);
+                    } else {
+                        journal_plan_ok = 0;
+                        ok = 0;
+                    }
+                    continue;
+                }
+                InterlockedExchange(&g_update_recovery_restart, 1);
+                if (quarantined &&
+                    !update_delete_recovery_quarantine(quarantine)) {
+                    size_t cleanup_index = cleanup.count;
+                    LOG_WARN("update: recovery quarantine remains mapped file=%s winerr=%lu",
+                             journal.files[i].path,
+                             (unsigned long)GetLastError());
+                    if (!update_journal_add_cleanup(&cleanup, &journal, i,
+                                                    quarantine)) {
+                        LOG_ERROR("update: cannot journal quarantine cleanup file=%s",
+                                  journal.files[i].path);
+                        if (MoveFileExA(target, backup,
+                                        MOVEFILE_WRITE_THROUGH) &&
+                            MoveFileExA(quarantine, target,
                                         MOVEFILE_REPLACE_EXISTING |
                                             MOVEFILE_WRITE_THROUGH)) {
-                    ok = 0;
+                            update_journal_mark_unresolved(
+                                &unresolved, &journal, i, &ok,
+                                &journal_plan_ok);
+                        } else {
+                            journal_plan_ok = 0;
+                            ok = 0;
+                        }
+                    } else {
+                        cleanup_had_original[cleanup_index] = 1;
+                        InterlockedExchange(&g_update_recovery_restart, 1);
+                    }
                 }
             } else if (!target_exists) {
-                ok = 0;
+                LOG_ERROR("update: recovery target and required backup are both missing file=%s",
+                          journal.files[i].path);
+                update_journal_mark_unresolved(&unresolved, &journal, i,
+                                               &ok, &journal_plan_ok);
             }
             /* No backup means this entry had not moved yet; its target is the
              * untouched original and must be left in place. */
-        } else if (target_exists && !DeleteFileA(target)) {
-            ok = 0;
+        } else if (target_exists) {
+            if (!MoveFileExA(target, quarantine, MOVEFILE_WRITE_THROUGH)) {
+                LOG_ERROR("update: recovery cannot quarantine new target file=%s winerr=%lu",
+                          journal.files[i].path,
+                          (unsigned long)GetLastError());
+                update_journal_mark_unresolved(&unresolved, &journal, i,
+                                               &ok, &journal_plan_ok);
+                continue;
+            }
+            InterlockedExchange(&g_update_recovery_restart, 1);
+            if (!update_delete_recovery_quarantine(quarantine)) {
+                size_t cleanup_index = cleanup.count;
+                LOG_WARN("update: recovery quarantine remains mapped file=%s winerr=%lu",
+                         journal.files[i].path,
+                         (unsigned long)GetLastError());
+                if (!update_journal_add_cleanup(&cleanup, &journal, i,
+                                                quarantine)) {
+                    LOG_ERROR("update: cannot journal quarantine cleanup file=%s",
+                              journal.files[i].path);
+                    if (MoveFileExA(quarantine, target,
+                                    MOVEFILE_REPLACE_EXISTING |
+                                        MOVEFILE_WRITE_THROUGH)) {
+                        update_journal_mark_unresolved(
+                            &unresolved, &journal, i, &ok,
+                            &journal_plan_ok);
+                    } else {
+                        journal_plan_ok = 0;
+                        ok = 0;
+                    }
+                } else {
+                    cleanup_had_original[cleanup_index] = 0;
+                    InterlockedExchange(&g_update_recovery_restart, 1);
+                }
+            }
         }
     }
-    if (ok && !DeleteFileA(journal_path)) ok = 0;
+    if (unresolved.count + cleanup.count > UPDATE_MAX_FILES) {
+        journal_plan_ok = 0;
+    }
+    if (journal_plan_ok) {
+        for (i = 0; i < unresolved.count; i++) {
+            reduced.files[reduced.count++] = unresolved.files[i];
+        }
+        /* Cleanup entries are last so legacy recovery's reverse walk releases
+         * quarantines before retrying any unresolved original entries. */
+        for (i = 0; i < cleanup.count; i++) {
+            reduced.files[reduced.count++] = cleanup.files[i];
+        }
+    }
+    if (!journal_plan_ok) {
+        if (cleanup.count > 0 &&
+            !update_revert_cleanup_plan(&cleanup, cleanup_had_original)) {
+            LOG_ERROR("update: could not restore original journal state after recovery-plan failure");
+        }
+        LOG_ERROR("update: could not build a safe reduced recovery journal; original journal retained");
+        return 0;
+    }
+    if (reduced.count > 0) {
+        /* Publish even when some entries failed. This drops completed work and
+         * atomically preserves both cleanup-only quarantines and only the
+         * unresolved original entries for old or new updater code. */
+        if (!update_journal_write_state(&reduced, 0)) {
+            LOG_ERROR("update: cannot publish backward-compatible reduced recovery journal winerr=%lu",
+                      (unsigned long)GetLastError());
+            if (cleanup.count > 0 &&
+                !update_revert_cleanup_plan(&cleanup,
+                                            cleanup_had_original)) {
+                LOG_ERROR("update: could not restore original journal state after journal-write failure");
+            }
+            return 0;
+        }
+        if (unresolved.count > 0) ok = 0;
+    } else if (ok && !DeleteFileA(journal_path)) {
+        LOG_ERROR("update: recovery cannot finalize transaction journal winerr=%lu",
+                  (unsigned long)GetLastError());
+        ok = 0;
+    } else if (!ok) {
+        LOG_ERROR("update: recovery failed without a preservable journal entry");
+        return 0;
+    }
+    if (ok && InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
+        LOG_WARN("update: files restored on disk; restart required to finish recovery cleanup");
+    }
     if (!ok) LOG_ERROR("update: recovery incomplete; will retry next launch");
     return ok;
 }
@@ -2111,13 +2647,25 @@ static void update_reconcile_legacy_backups(void) {
 
 static int update_recover_under_mutex(void) {
     HANDLE mutex = update_named_mutex("Install");
+    char staging_root[UPDATE_ABS_CAP];
     int ok;
     if (!update_lock_mutex(mutex, 15000)) {
         if (mutex) CloseHandle(mutex);
         return 0;
     }
     ok = update_recover_journal();
-    if (ok) update_reconcile_legacy_backups();
+    if (ok && !InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
+        update_reconcile_legacy_backups();
+        if (!update_join_path(staging_root, sizeof(staging_root), g_update.root,
+                              UPDATE_STAGING_REL)) {
+            LOG_ERROR("update: recovered transaction but staging path is too long");
+            ok = 0;
+        } else if (!update_remove_tree(staging_root)) {
+            LOG_ERROR("update: recovered transaction but could not clean update staging winerr=%lu",
+                      (unsigned long)GetLastError());
+            ok = 0;
+        }
+    }
     ReleaseMutex(mutex);
     CloseHandle(mutex);
     return ok;
@@ -2127,10 +2675,15 @@ static int update_targets_match(const UpdateManifest* manifest) {
     size_t i;
     for (i = 0; i < manifest->file_count; i++) {
         char target[UPDATE_ABS_CAP];
+        char quarantine[UPDATE_ABS_CAP];
         DWORD attrs;
+        int quarantine_exists = 0;
         if (!update_prepare_relative_path(g_update.root,
                                           manifest->files[i].path,
-                                          target, sizeof(target), 0)) return 0;
+                                          target, sizeof(target), 0) ||
+            !update_recovery_quarantine_path(quarantine, target) ||
+            !update_path_query(quarantine, &quarantine_exists, NULL) ||
+            quarantine_exists) return 0;
         attrs = GetFileAttributesA(target);
         if (attrs == INVALID_FILE_ATTRIBUTES) return 0;
         if ((attrs & FILE_ATTRIBUTE_DIRECTORY) ||
@@ -2145,9 +2698,9 @@ static int update_rollback(UpdateApplyEntry* entries, size_t count) {
     size_t i;
     int ok = 1;
     for (i = count; i-- > 0;) {
-        int backup_dir = 0;
-        int backup_exists = update_path_exists(entries[i].backup, &backup_dir);
-        if (backup_dir) {
+        int backup_exists = 0;
+        if (!update_regular_file_or_missing(entries[i].backup,
+                                            &backup_exists)) {
             ok = 0;
             continue;
         }
@@ -2187,6 +2740,11 @@ static int update_apply_manifest(const UpdateManifest* manifest,
     mutex_locked = 1;
     if (!update_recover_journal()) {
         snprintf(error, error_cap, "an earlier update needs recovery");
+        goto done;
+    }
+    if (InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
+        snprintf(error, error_cap,
+                 "earlier update restored; restart before installing");
         goto done;
     }
     update_reconcile_legacy_backups();
@@ -2232,10 +2790,29 @@ static int update_apply_manifest(const UpdateManifest* manifest,
         entry = &entries[count];
         entry->spec = *spec;
         entry->had_original = exists;
-        if (!update_backup_path(entry->backup, sizeof(entry->backup),
-                                entry->target)) {
-            snprintf(error, error_cap, "backup path is too long: %s", spec->path);
-            goto fail;
+        {
+            int quarantine_exists = 0;
+            if (!update_backup_path(entry->backup, sizeof(entry->backup),
+                                    entry->target) ||
+                !update_recovery_quarantine_path(entry->quarantine,
+                                                 entry->target)) {
+                snprintf(error, error_cap,
+                         "recovery path is too long: %s", spec->path);
+                goto fail;
+            }
+            if (!update_path_query(entry->quarantine, &quarantine_exists,
+                                   NULL)) {
+                snprintf(error, error_cap,
+                         "cannot inspect reserved recovery path: %s",
+                         spec->path);
+                goto fail;
+            }
+            if (quarantine_exists) {
+                snprintf(error, error_cap,
+                         "reserved recovery path already exists: %s",
+                         spec->path);
+                goto fail;
+            }
         }
         /* A stale backup with no journal is reconciled conservatively. */
         if (update_path_exists(entry->backup, NULL)) {
@@ -2388,7 +2965,16 @@ static int update_run_check(void) {
     UpdateManifest manifest;
     int comparison;
     if (!update_recover_under_mutex()) {
-        update_set_error("could not recover an interrupted update");
+        update_set_status(UPDATE_ERROR,
+                          "recovery blocked - see modframework.log");
+        InterlockedExchange(&g_update_notice, 1);
+        return 0;
+    }
+    if (InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
+        update_set_status(UPDATE_RESTART_PENDING,
+                          "recovery complete - restart");
+        InterlockedExchange(&g_update_notice, 1);
+        LOG_WARN("update: restart the game to finish recovery");
         return 0;
     }
     if (update_cancelled()) return 0;
@@ -2615,11 +3201,64 @@ static void update_test_prepare_swap(const char* target,
                                      const char* backup,
                                      const char* original,
                                      const char* replacement) {
+    /* Each scenario below models a fresh process unless it explicitly resets
+     * the flag between two recovery launches. */
+    InterlockedExchange(&g_update_recovery_restart, 0);
+    g_update_test_probe_error_path = NULL;
+    g_update_test_hold_recovery_quarantine = 0;
     assert(update_delete_file_if_present(target));
     assert(update_delete_file_if_present(staged));
     assert(update_delete_file_if_present(backup));
     update_test_write(target, original);
     update_test_write(staged, replacement);
+}
+
+/* Models the applying-journal loop shipped before quarantine-aware recovery. */
+static int update_test_legacy_applying_recover(void) {
+    UpdateJournal journal;
+    char journal_path[UPDATE_ABS_CAP];
+    size_t i;
+    int ok = 1;
+    if (!update_journal_path(journal_path) ||
+        !update_journal_load(&journal) || journal.committed) return 0;
+    for (i = journal.count; i-- > 0;) {
+        char target[UPDATE_ABS_CAP];
+        char backup[UPDATE_ABS_CAP];
+        int target_dir = 0;
+        int backup_dir = 0;
+        int target_exists;
+        int backup_exists;
+        if (!update_prepare_relative_path(g_update.root,
+                                          journal.files[i].path,
+                                          target, sizeof(target), 0) ||
+            !update_backup_path(backup, sizeof(backup), target)) {
+            ok = 0;
+            continue;
+        }
+        target_exists = update_path_exists(target, &target_dir);
+        backup_exists = update_path_exists(backup, &backup_dir);
+        if (target_dir || backup_dir) {
+            ok = 0;
+            continue;
+        }
+        if (journal.files[i].had_original) {
+            if (backup_exists) {
+                if (target_exists && !DeleteFileA(target)) {
+                    ok = 0;
+                } else if (!MoveFileExA(backup, target,
+                                        MOVEFILE_REPLACE_EXISTING |
+                                            MOVEFILE_WRITE_THROUGH)) {
+                    ok = 0;
+                }
+            } else if (!target_exists) {
+                ok = 0;
+            }
+        } else if (target_exists && !DeleteFileA(target)) {
+            ok = 0;
+        }
+    }
+    if (ok && !DeleteFileA(journal_path)) ok = 0;
+    return ok;
 }
 
 static void update_test_json(void) {
@@ -2665,12 +3304,30 @@ static void update_test_json(void) {
         "\"size\":1},{\"path\":\"X.DLL\","
         "\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\","
         "\"size\":1}]}", files, UPDATE_MAX_FILES, &count));
+    assert(!update_json_scan_files(
+        "{\"files\":[{\"path\":\"SDL2.dll.update-recovery\","
+        "\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\","
+        "\"size\":1}]}", files, UPDATE_MAX_FILES, &count));
+    assert(!update_json_scan_files(
+        "{\"files\":[{\"path\":\"cache.update-recovery/payload.bin\","
+        "\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\","
+        "\"size\":1}]}", files, UPDATE_MAX_FILES, &count));
+    assert(!update_json_scan_files(
+        "{\"files\":[{\"path\":\"cache\","
+        "\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\","
+        "\"size\":1},{\"path\":\"cache.update-recovery/payload.bin\","
+        "\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\","
+        "\"size\":1}]}", files, UPDATE_MAX_FILES, &count));
     assert(!update_json_get_string(
         "{\"version\":\"1.0\",\"version\":\"2.0\"}",
         "version", value, sizeof(value)));
     assert(!update_json_get_string("{\"version\":\"unterminated}",
                                    "version", value, sizeof(value)));
     assert(update_path_is_safe("bin/SDL2.dll"));
+    assert(update_path_is_safe("SDL2.dll.update-recovery"));
+    assert(!update_release_path_is_safe("SDL2.dll.update-recovery"));
+    assert(!update_release_path_is_safe(
+        "cache.UPDATE-RECOVERY/payload.bin"));
     assert(!update_path_is_safe("C:/escape.dll"));
     assert(!update_path_is_safe("mods//escape.dll"));
     assert(!update_path_is_safe("file.dll:stream"));
@@ -2687,9 +3344,11 @@ static void update_test_storage(void) {
     char target[UPDATE_ABS_CAP];
     char staged[UPDATE_ABS_CAP];
     char backup[UPDATE_ABS_CAP];
+    char quarantine[UPDATE_ABS_CAP];
     char target2[UPDATE_ABS_CAP];
     char staged2[UPDATE_ABS_CAP];
     char backup2[UPDATE_ABS_CAP];
+    char quarantine2[UPDATE_ABS_CAP];
     char journal_path[UPDATE_ABS_CAP];
     char cfg[UPDATE_ABS_CAP];
     char value[64];
@@ -2716,9 +3375,11 @@ static void update_test_storage(void) {
     assert(update_join_path(target, sizeof(target), root, "sample.dll"));
     assert(update_join_path(staged, sizeof(staged), staging, "sample.dll"));
     assert(update_backup_path(backup, sizeof(backup), target));
+    assert(update_recovery_quarantine_path(quarantine, target));
     assert(update_join_path(target2, sizeof(target2), root, "sample2.dll"));
     assert(update_join_path(staged2, sizeof(staged2), staging, "sample2.dll"));
     assert(update_backup_path(backup2, sizeof(backup2), target2));
+    assert(update_recovery_quarantine_path(quarantine2, target2));
     assert(update_journal_path(journal_path));
 
     memset(&entry, 0, sizeof(entry));
@@ -2729,7 +3390,8 @@ static void update_test_storage(void) {
     entry.had_original = 1;
     update_test_set_expected(&entry, "replacement");
 
-    /* Simulate a process dying after the new file moved but before commit. */
+    /* A V2 applying journal whose entire installed set matches is completed
+     * forward. This avoids rolling an already-installed mapped DLL backward. */
     update_test_prepare_swap(target, staged, backup,
                              "original", "replacement");
     assert(update_journal_write(&entry, 1, 0));
@@ -2743,10 +3405,218 @@ static void update_test_storage(void) {
     }
     assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
     assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    InterlockedExchange(&g_update_recovery_restart, 0);
     assert(update_recover_journal());
-    update_test_expect_file(target, "original");
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "replacement");
+    assert(!update_path_exists(backup, NULL));
+    assert(!update_path_exists(quarantine, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+
+    /* A mismatched applying target still rolls back, and any target mutation
+     * latches restart-required even when quarantine deletion succeeds. */
+    update_test_prepare_swap(target, staged, backup,
+                             "rollback-original", "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    update_test_write(target, "rollback-corrupt");
+    assert(update_recover_journal());
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "rollback-original");
+    assert(!update_path_exists(backup, NULL));
+    assert(!update_path_exists(quarantine, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+
+    /* A pre-existing quarantine makes an otherwise complete V2 set
+     * ineligible for roll-forward, so it cannot be orphaned by commit cleanup. */
+    update_test_prepare_swap(target, staged, backup,
+                             "quarantine-original", "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    update_test_write(quarantine, "stale-quarantine");
+    assert(update_recover_journal());
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "quarantine-original");
+    assert(!update_path_exists(backup, NULL));
+    assert(!update_path_exists(quarantine, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+
+    /* Attribute-query failures are not treated as missing durability
+     * artifacts. A denied journal probe leaves every transaction file alone. */
+    update_test_prepare_swap(target, staged, backup,
+                             "probe-original", "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    g_update_test_probe_error_path = journal_path;
+    assert(!update_recover_journal());
+    update_test_expect_file(target, "probe-original");
+    assert(!update_path_exists(backup, NULL));
+    assert(update_path_exists(journal_path, NULL));
+    g_update_test_probe_error_path = NULL;
+    assert(DeleteFileA(journal_path));
+
+    /* Immediate rollback deletion uses the same missing-vs-error rule. */
+    g_update_test_probe_error_path = target;
+    assert(!update_delete_file_if_present(target));
+    update_test_expect_file(target, "probe-original");
+    g_update_test_probe_error_path = NULL;
+
+    /* Immediate rollback must also retain its journal when `.old` cannot be
+     * inspected; inaccessible cannot be collapsed into absent. */
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    update_test_write(target, "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    g_update_test_probe_error_path = backup;
+    assert(!update_rollback(&entry, 1));
+    update_test_expect_file(target, "replacement");
+    update_test_expect_file(backup, "probe-original");
+    assert(update_path_exists(journal_path, NULL));
+    g_update_test_probe_error_path = NULL;
+    assert(update_recover_journal());
+    assert(update_path_exists(target, NULL));
     assert(!update_path_exists(backup, NULL));
     assert(!update_path_exists(journal_path, NULL));
+
+    /* The same fail-closed rule applies to the reserved quarantine probe. */
+    update_test_prepare_swap(target, staged, backup,
+                             "probe-quarantine-original", "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    g_update_test_probe_error_path = quarantine;
+    assert(!update_recover_journal());
+    update_test_expect_file(target, "replacement");
+    update_test_expect_file(backup, "probe-quarantine-original");
+    assert(update_path_exists(journal_path, NULL));
+    g_update_test_probe_error_path = NULL;
+    assert(update_recover_journal());
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "replacement");
+    assert(!update_path_exists(backup, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+
+    /* A mapped replacement can be renamed but not deleted until process exit.
+     * Recovery restores the original disk pathname immediately, retains the
+     * journal/quarantine, and finishes cleanup after the next restart. */
+    update_test_prepare_swap(target, staged, backup,
+                             "original-mapped", "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    update_test_write(target, "mapped-corrupt");
+    g_update_test_hold_recovery_quarantine = 1;
+    assert(update_recover_journal());
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "original-mapped");
+    assert(!update_path_exists(backup, NULL));
+    assert(update_path_exists(quarantine, NULL));
+    assert(update_path_exists(journal_path, NULL));
+    {
+        UpdateJournal cleanup_journal;
+        assert(update_journal_load(&cleanup_journal));
+        assert(!cleanup_journal.committed && cleanup_journal.count == 1);
+        assert(!cleanup_journal.files[0].had_original);
+        assert(strcmp(cleanup_journal.files[0].path,
+                      "sample.dll.update-recovery") == 0);
+    }
+    assert(update_test_legacy_applying_recover());
+    update_test_expect_file(target, "original-mapped");
+    assert(!update_path_exists(quarantine, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+
+    /* The restart handoff is transaction-wide: all files are restored before
+     * the journal is retained, and the next launch cleans the one simulated
+     * mapped quarantine before finalizing the complete set. */
+    batch[0] = entry;
+    memset(&batch[1], 0, sizeof(batch[1]));
+    assert(update_copy(batch[1].spec.path, sizeof(batch[1].spec.path),
+                       "sample2.dll"));
+    assert(update_copy(batch[1].target, sizeof(batch[1].target), target2));
+    assert(update_copy(batch[1].staged, sizeof(batch[1].staged), staged2));
+    assert(update_copy(batch[1].backup, sizeof(batch[1].backup), backup2));
+    batch[1].had_original = 1;
+    update_test_set_expected(&batch[1], "replacement-two");
+    update_test_prepare_swap(target, staged, backup,
+                             "mapped-original-one", "replacement");
+    update_test_prepare_swap(target2, staged2, backup2,
+                             "mapped-original-two", "replacement-two");
+    assert(update_journal_write(batch, 2, 0));
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(target2, backup2, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged2, target2, MOVEFILE_WRITE_THROUGH));
+    update_test_write(target2, "mapped-corrupt-two");
+    g_update_test_hold_recovery_quarantine = 2;
+    InterlockedExchange(&g_update_recovery_restart, 0);
+    assert(update_recover_journal());
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "mapped-original-one");
+    update_test_expect_file(target2, "mapped-original-two");
+    assert(!update_path_exists(backup, NULL));
+    assert(!update_path_exists(backup2, NULL));
+    assert(update_path_exists(quarantine, NULL));
+    assert(update_path_exists(quarantine2, NULL));
+    assert(update_path_exists(journal_path, NULL));
+    {
+        UpdateJournal cleanup_journal;
+        assert(update_journal_load(&cleanup_journal));
+        assert(!cleanup_journal.committed && cleanup_journal.count == 2);
+        assert(!cleanup_journal.files[0].had_original);
+        assert(!cleanup_journal.files[1].had_original);
+        assert(update_path_has_recovery_suffix(cleanup_journal.files[0].path));
+        assert(update_path_has_recovery_suffix(cleanup_journal.files[1].path));
+    }
+    InterlockedExchange(&g_update_recovery_restart, 0);
+    assert(update_recover_journal());
+    assert(!InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "mapped-original-one");
+    update_test_expect_file(target2, "mapped-original-two");
+    assert(!update_path_exists(quarantine, NULL));
+    assert(!update_path_exists(quarantine2, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+
+    /* Mixed partial recovery must publish a reduced journal even though the
+     * overall attempt is blocked: legacy code first deletes the mapped-file
+     * quarantine, then retains only the still-failing original work. */
+    update_test_prepare_swap(target, staged, backup,
+                             "mixed-original-one", "replacement");
+    assert(update_delete_file_if_present(target2));
+    assert(update_delete_file_if_present(staged2));
+    assert(update_delete_file_if_present(backup2));
+    assert(update_delete_file_if_present(quarantine2));
+    assert(CreateDirectoryA(target2, NULL));
+    assert(update_journal_write(batch, 2, 0));
+    assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+    assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
+    update_test_write(target, "mixed-corrupt-one");
+    g_update_test_hold_recovery_quarantine = 1;
+    assert(!update_recover_journal());
+    assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+    update_test_expect_file(target, "mixed-original-one");
+    assert(update_path_exists(quarantine, NULL));
+    assert(update_path_exists(journal_path, NULL));
+    {
+        UpdateJournal mixed_journal;
+        assert(update_journal_load(&mixed_journal));
+        assert(!mixed_journal.committed && mixed_journal.count == 2);
+        assert(mixed_journal.files[0].had_original);
+        assert(strcmp(mixed_journal.files[0].path, "sample2.dll") == 0);
+        assert(strcmp(mixed_journal.files[0].sha256,
+                      UPDATE_UNKNOWN_SHA256) == 0);
+        assert(!mixed_journal.files[1].had_original);
+        assert(strcmp(mixed_journal.files[1].path,
+                      "sample.dll.update-recovery") == 0);
+    }
+    assert(!update_test_legacy_applying_recover());
+    assert(!update_path_exists(quarantine, NULL));
+    assert(update_path_exists(journal_path, NULL));
+    assert(RemoveDirectoryA(target2));
+    update_test_write(target2, "mixed-untouched-two");
+    assert(update_test_legacy_applying_recover());
+    assert(!update_path_exists(journal_path, NULL));
+    update_test_expect_file(target, "mixed-original-one");
+    update_test_expect_file(target2, "mixed-untouched-two");
 
     /* A valid committed transaction is rehashed before cleanup, keeps the
      * replacement, and removes both its backup and journal. */
@@ -2832,6 +3702,68 @@ static void update_test_storage(void) {
     update_test_expect_file(target, "corrupt-retained");
     assert(update_path_exists(journal_path, NULL));
     assert(DeleteFileA(journal_path));
+
+    /* A reduced V2 subset cannot be promoted just because its one remaining
+     * target matches that release. The complete set is no longer represented. */
+    {
+        UpdateJournal source;
+        UpdateJournal reduced_subset;
+        update_test_prepare_swap(target2, staged2, backup2,
+                                 "subset-original", "replacement-two");
+        assert(MoveFileExA(target2, backup2, MOVEFILE_WRITE_THROUGH));
+        assert(MoveFileExA(staged2, target2, MOVEFILE_WRITE_THROUGH));
+        memset(&source, 0, sizeof(source));
+        memset(&reduced_subset, 0, sizeof(reduced_subset));
+        source.version = 2;
+        source.count = 2;
+        source.files[1].had_original = 1;
+        source.files[1].has_integrity = 1;
+        source.files[1].size = batch[1].spec.size;
+        assert(update_copy(source.files[1].path,
+                           sizeof(source.files[1].path), "sample2.dll"));
+        assert(update_copy(source.files[1].sha256,
+                           sizeof(source.files[1].sha256),
+                           batch[1].spec.sha256));
+        reduced_subset.version = 2;
+        assert(update_journal_add_unresolved(&reduced_subset, &source, 1));
+        assert(strcmp(reduced_subset.files[0].sha256,
+                      UPDATE_UNKNOWN_SHA256) == 0);
+        assert(update_journal_write_state(&reduced_subset, 0));
+        assert(update_recover_journal());
+        assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+        update_test_expect_file(target2, "subset-original");
+        assert(!update_path_exists(backup2, NULL));
+        assert(!update_path_exists(journal_path, NULL));
+    }
+
+    /* A V1 entry upgraded into a reduced V2 journal carries a deliberately
+     * non-authorizing digest. Even an empty target cannot pass roll-forward. */
+    {
+        UpdateJournal legacy_source;
+        UpdateJournal upgraded;
+        update_test_prepare_swap(target, staged, backup,
+                                 "sentinel-original", "unused");
+        assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
+        update_test_write(target, "");
+        memset(&legacy_source, 0, sizeof(legacy_source));
+        memset(&upgraded, 0, sizeof(upgraded));
+        legacy_source.version = 1;
+        legacy_source.count = 1;
+        legacy_source.files[0].had_original = 1;
+        assert(update_copy(legacy_source.files[0].path,
+                           sizeof(legacy_source.files[0].path),
+                           "sample.dll"));
+        upgraded.version = 2;
+        assert(update_journal_add_unresolved(&upgraded, &legacy_source, 0));
+        assert(strcmp(upgraded.files[0].sha256,
+                      UPDATE_UNKNOWN_SHA256) == 0);
+        assert(update_journal_write_state(&upgraded, 0));
+        assert(update_recover_journal());
+        assert(InterlockedCompareExchange(&g_update_recovery_restart, 0, 0));
+        update_test_expect_file(target, "sentinel-original");
+        assert(!update_path_exists(backup, NULL));
+        assert(!update_path_exists(journal_path, NULL));
+    }
 
     /* V1 applying journals remain recoverable. V1 committed journals lack an
      * expected digest, so they fail safely without deleting either artifact. */

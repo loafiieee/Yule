@@ -87,8 +87,10 @@ Runtime acceptance still required:
       menus, cancellation/failure recovery, and a live remembered-login lifecycle.
     - Run two real clients through retry, slow prematch setup, countdown, immediate first
       gameplay tick, result confirmation, Requeue/Hub, disconnect, and abort paths. The
-      public server now passes the match-v2/P2P-v16/UDP deployment preflight; this live
-      game round remains required after the stale-server match failure was repaired.
+      coordinated match-v3/P2P-v16 server with its two-client start commit is deployed,
+      backed up, restarted, and passing TCP+UDP preflight on both LAN and public names.
+      Test loopback (two clients on one PC), LAN, and public routes; no source-only test
+      replaces this live game round.
     - Soak pause/options/console/Mods during a match and verify simulation continues with
       neutral menu input; audit any additional native screens before supporting them.
     - Test both local control sets under both server player assignments, including mixed
@@ -110,6 +112,10 @@ Runtime acceptance still required:
       covered by the isolated one-command test.
 
 Feature backlog:
+    - Add a stable out-of-process updater/launcher, shipped outside the framework
+      replacement set, to own verified DLL swaps and recovery before eggnoggplus.exe
+      imports SDL2.dll. Exercise power-loss cut points so the current closed-game `.old`
+      bootstrap fallback is no longer necessary.
     - Finish the broad custom-content API as a coherent, polished system: additional
       weapons, entities/map objects, placement, lifecycle callbacks, validated metadata,
       online fingerprints/policy, examples, diagnostics, editor integration, and full
@@ -133,32 +139,45 @@ Feature backlog:
 
     - Strict online control transport: atomic queued writes/backpressure, strict flat JSON,
       framing limits, independent connect/auth deadlines, secret cleanup, and complete
-      all-or-nothing map manifests. TLS remains the release blocker listed above.
+      all-or-nothing map manifests. A 30-second authenticated heartbeat keeps idle hubs
+      and long matches alive across the server's receive-idle timeout. TLS remains the
+      release blocker listed above.
     - Authenticated P2P UDP v16: per-match 256-bit tokens, directional HMAC-SHA-256/128,
       CSPRNG sessions, constant-time verification, replay window, and fail-closed key use.
     - Server match-protocol deployment guard: the client now requires a flat `server_info`
       capability handshake before login, rechecks auth/match version fields, and fails
       before queue/P2P setup on incompatibility. A public TCP+UDP preflight and isolated
       two-client runtime test prove that both peers receive one shared 64-hex match key
-      and distinct probe keys. The public server was backed up, atomically updated,
-      restarted, and verified on both listeners; legacy unauthenticated fallback remains
-      forbidden.
-    - Bounded P2P connection retry: three fresh sockets/mappings with symmetric candidate
-      punching and clean hub recovery after exhaustion.
+      and distinct probe keys. The coordinated match-v3 public server was backed up,
+      atomically deployed, restarted, hash-verified, and checked on both listeners; the
+      real two-game round remains in Runtime acceptance. Legacy unauthenticated fallback
+      remains forbidden.
+    - Bounded P2P connection retry: three fresh sockets/mappings, one deterministic
+      server-selected loopback/LAN/public route per attempt, authenticated fresh-session
+      recovery when only one peer rolls its socket, and clean hub recovery after exhaustion.
     - Prematch preparation behind the countdown: connection, native reset, state transfer,
-      and neutral frame zero complete before GAME is shown, eliminating the frozen first
-      gameplay frame.
+      and neutral frame zero complete before GAME is shown. Match protocol 3 keeps both
+      clients behind the hub until each reports a restorable frame zero and the server
+      commits gameplay; every pre-commit timeout, abort, disconnect, stale setup, or
+      premature result is a no-contest instead of a fake win/loss.
     - Online simulation through the audited pause/options/console/Mods overlays, with menu
       input neutralized and both local control sets merged into the assigned fighter.
     - Server-managed build/map compatibility gates and automatic suspension/guarding of
       framework-managed gameplay Lua for the full match lifecycle.
-    - Custom online result state with server-confirmed outcome/rating text and responsive
-      Requeue/Hub keyboard, controller, and mouse actions.
+    - Custom online result state with server-confirmed outcome/rating text, responsive
+      Requeue/Hub keyboard, controller, and mouse actions, stable hub return ownership,
+      fail-safe rejection of stale/inactive result transitions, and committed-game-only
+      result admission so failed setup returns directly to one stable hub state. Normal
+      results now require two reports naming the same winner; unilateral timeouts and
+      conflicts are no-contests with no Elo change. A commit plus immediate forfeit result
+      in one TCP batch resolves directly without entering a server-deleted GAME.
     - V2 custom-map parser and declarative content tile bridge: symbolic cells, per-map
       atlases, validation, animation/tint/transform/layers, atomic reload, native fallback,
       generation-safe retirement, and Lua registry API. A selectable demo now covers an
       external animated atlas, built-in transform/layer, deliberate fallback, and mirrored
-      rooms, with a one-command package/parser regression test.
+      rooms, with a one-command package/parser regression test. External PNG bytes are
+      always hashed into map/online identity; `asset_sha256` is only an optional package
+      integrity pin, not a hand-maintained authoring requirement.
     - General window policy source repair: F1 3:2 presets, F11, maximize normalization,
       display-aware fullscreen cache, safe event-boundary recreation, desktop borderless,
       launch-flag conflict handling, and local-only viewport refresh.
@@ -175,10 +194,12 @@ Feature backlog:
     - Framework version checking: asynchronous launch check, live Mods-menu
       status/retry/install actions, and a bounded dismissible update notification.
     - Automatic transactional framework updates: default-on, SHA-256/size verification,
-      bounded downloads, path safety, crash-safe V2 journal, full-set verification,
-      rollback/recovery, single-writer locking, and restart-required status. The isolated
-      one-command test now runs a real loopback download and transactional apply entirely
-      in disposable build directories.
+      bounded downloads, reserved-namespace path safety, V2 integrity journal,
+      complete-set verified roll-forward, conservative rollback/quarantine recovery,
+      single-writer locking, and restart-required status. The isolated one-command test
+      runs a real loopback apply plus reduced-journal and recovery regressions entirely in
+      disposable build directories. The direct-import helper gap remains in Feature
+      backlog instead of being described as power-fail-safe.
     - Atomic updater-owned config writes that preserve comments and unrelated settings;
       main-menu mode persistence now uses this API instead of rewriting a fixed buffer.
     - Configurable Lua cursor options for deliberate custom sprite/index, scale, hotspot,

@@ -107,13 +107,16 @@ its separate per-user authorization token.
   packets inside the window remain valid for normal UDP reordering.
 - Authentication, expected-role validation, and constant-time tag comparison
   happen before any packet handler runs.
-- The first authenticated remote session must arrive in a HELLO. A new session is
-  accepted only from an authenticated HELLO while still at frame 0, before the
-  start state is loaded, and before bidirectional confirmation. Retired session
-  IDs cannot become current again.
-- Before confirmation, an authenticated HELLO may select a working LAN/public
-  hole-punch candidate. After confirmation, the peer source address is pinned;
-  even a correctly authenticated packet from another endpoint cannot migrate it.
+- The first authenticated remote session must arrive in a HELLO. Before strict
+  link confirmation, an authenticated HELLO may select the server-chosen
+  loopback/LAN/public route. A same-session packet from another endpoint cannot
+  migrate a confirmed pin.
+- During server-managed prematch only, a confirmed frame-zero peer may adopt an
+  authenticated HELLO carrying a fresh remote session ID before the synchronized
+  start state is loaded. This lets one peer's bounded fresh-socket retry recover
+  without accepting alternate-source traffic from the old session. Retired
+  session IDs cannot become current again, and migration is disabled once start
+  state has been loaded or gameplay has advanced.
 
 Authentication failures are silently dropped to avoid log amplification. A
 saturating `ggpo_net_auth_rejected_packets()` counter and `net.diag` authentication
@@ -147,7 +150,7 @@ The server makes deployment state observable without an account. On connect and
 in response to `{"type":"server_info"}`, it sends one flat object containing:
 
 ```text
-control_protocol=2 | match_protocol=2 | p2p_protocol=16 | cap_p2p_auth=1
+control_protocol=2 | match_protocol=3 | p2p_protocol=16 | cap_p2p_auth=1
 ```
 
 `auth_ok` repeats all four scalar fields. Each `match_found` repeats the match
@@ -234,6 +237,53 @@ Exact rollback command (run from the development machine):
 
 ```powershell
 ssh loaf@192.168.0.143 'cd /home/loaf/Yule/eggnoggplus-win/online_server && cp -p -- server.js.backup-20260717-234114 server.js.rollback && mv -- server.js.rollback server.js && kill -TERM "$(systemctl show -p MainPID --value eggnogg.service)"'
+```
+
+### Match-v3 start-barrier deployment
+
+On 2026-07-18, the deterministic-route and two-client READY/commit server was
+deployed after the paired prematch and isolated server lifecycle suites passed.
+There were zero established control clients immediately before replacement.
+Only `server.js` was changed; accounts, ratings, and the server secret were not
+touched.
+
+- Service: `eggnogg.service` on `loaf-server1`
+- Deployed file: `/home/loaf/Yule/eggnoggplus-win/online_server/server.js`
+- Deployed SHA-256: `68ebbb70d3a7643e687898fceeff8c1bb4cce4d43b63bcc29a9a7ffa8e63328e`
+- Backup: `/home/loaf/Yule/eggnoggplus-win/online_server/server.js.backup-20260718-012324`
+- Backup SHA-256: `943c4a36f749da6f6ee246dd7e1fd60d87471fbd9c6e222de01a060126e908a7`
+
+Systemd restarted the service under a new process. Both the LAN endpoint and
+`eggnogg.loafiieee.com:47778` then passed the TCP+UDP probe with control v2,
+match v3, P2P v16, packet authentication, and UDP discovery available.
+
+Exact rollback command for this deployment:
+
+```powershell
+ssh loaf@192.168.0.143 'cd /home/loaf/Yule/eggnoggplus-win/online_server && cp -p -- server.js.backup-20260718-012324 server.js.rollback && mv -- server.js.rollback server.js && kill -TERM "$(systemctl show -p MainPID --value eggnogg.service)"'
+```
+
+### Match-result settlement hardening deployment
+
+Later on 2026-07-18, a focused follow-up removed unilateral and
+insertion-order result settlement: normal completion now requires two reports
+that name the same winner, while a single-report timeout or conflict is a
+no-contest with no Elo mutation. The isolated lifecycle suite covered both
+negative cases and the agreed-result path before deployment. There were zero
+established control clients, and only `server.js` was replaced.
+
+- Deployed SHA-256: `4ee2c51e02d0814966d8a5ad0d62fafadd13549676ffc51e4b5aa0e1757cd173`
+- Backup: `/home/loaf/Yule/eggnoggplus-win/online_server/server.js.backup-20260718-111345`
+- Backup SHA-256: `68ebbb70d3a7643e687898fceeff8c1bb4cce4d43b63bcc29a9a7ffa8e63328e`
+
+Systemd restarted under a new PID. The deployed hash matched the reviewed
+source, and both LAN and public TCP+UDP probes again reported control v2,
+match v3, P2P v16, packet authentication, and UDP discovery available.
+
+Exact rollback command for this follow-up:
+
+```powershell
+ssh loaf@192.168.0.143 'cd /home/loaf/Yule/eggnoggplus-win/online_server && cp -p -- server.js.backup-20260718-111345 server.js.rollback && mv -- server.js.rollback server.js && kill -TERM "$(systemctl show -p MainPID --value eggnogg.service)"'
 ```
 
 Manual acceptance still required: complete one real server-issued match across

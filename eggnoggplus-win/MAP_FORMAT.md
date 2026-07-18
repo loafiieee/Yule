@@ -507,9 +507,10 @@ Custom maps should sort after vanilla maps, using:
 
 The online manifest identifies a validated custom package as
 `custom:<normalized-id>:<sig>`, where `sig` is derived from the package's
-`data.json` and `data.map` text. External V2 asset SHA-256 values are mandatory
-inside `data.json`, so those declared asset identities participate in the map
-key. Vanilla entries use `vanilla:<index>`.
+`data.json` and `data.map` text plus the loader-computed SHA-256 of every
+external V2 sprite sheet. Authors do not need to calculate or maintain those
+digests. Changing a PNG therefore changes the advertised map key even when
+`data.json` is untouched. Vanilla entries use `vanilla:<index>`.
 
 Numeric selectors are local registry positions and may change when installed
 maps are added, removed, renamed, or reordered. The server matches the stable
@@ -719,7 +720,6 @@ the custom definition or visual asset later becomes unavailable.
         "name": "Moss Floor",
         "native_glyph": "x",
         "sprite_sheet": "terrain.png",
-        "asset_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "cell_w": 16,
         "cell_h": 16,
         "padding": 0,
@@ -769,8 +769,10 @@ repository folder:
 powershell -ExecutionPolicy Bypass -File .\tests\run_v2_map_test.ps1
 ```
 
-`PASS` proves that the checked-in JSON, 33-by-12 room text, external PNG hash,
-symbol table, and parser regression cases are valid. It does not prove the
+`PASS` proves that the checked-in JSON, 33-by-12 room text, runtime PNG hashing,
+asset-bound online identity, symbol table, and parser regression cases are
+valid. The regression changes external PNG bytes and verifies that the scanned
+online map key changes without an `asset_sha256` field. It does not prove the
 fixed-address renderer; use this short visual pass for that:
 
 1. Restart Eggnogg+ so the installed framework DLL is loaded.
@@ -824,7 +826,9 @@ Required fields:
 Optional fields and defaults:
 
 - `name`: display/debug name; defaults to `id`
-- `asset_sha256`: required for an external PNG and forbidden for a built-in key
+- `asset_sha256`: optional external-PNG integrity pin; when present it must be
+  64 hexadecimal characters and match the runtime-computed digest; omit it for
+  normal map authoring, and always omit it for a built-in key
 - `cell_w`, `cell_h`: external-sheet cell size, default `16`, range `1..512`
 - `padding`: external-sheet spacing in pixels, default `0`, range `0..64`
 - `sprite_index`: first frame, default `0`, range `0..1000000`
@@ -866,14 +870,16 @@ External v2 sprite sheets are intentionally constrained:
 - its dimensions must form a whole `cell_w` by `cell_h` grid with the declared
   inter-cell `padding`, with at most 65,535 cells;
 - `sprite_index + frame_count` must stay inside that grid;
-- `asset_sha256` is mandatory and must match the bytes on disk; and
+- the loader always computes the file's SHA-256; an optional declared
+  `asset_sha256` must match it; and
 - every map asset participates in hot-reload change detection.
 
 Before every atlas upload, the bridge rechecks the PNG header, non-reparse
-status, and full SHA-256, then packs each valid sheet with its declared grid.
-Its symbolic key is cached with the resulting atlas range. A missing, modified,
-mis-sliced, or unsuccessfully packed file is not resolved and therefore
-degrades to the native fallback instead of loading stale metadata.
+status, and full SHA-256 against the digest captured during the registry scan,
+then packs each valid sheet with its declared grid. Its symbolic key is cached
+with the resulting atlas range. A missing, modified, mis-sliced, or
+unsuccessfully packed file is not resolved and therefore degrades to the native
+fallback instead of loading stale metadata.
 
 The normal hot-reload poll rescans map packages, commits a valid registry swap,
 and rebuilds the graphics atlas when the map generation changes. Reload is held
@@ -882,7 +888,7 @@ or fails, the new definitions stay safe and unresolved until a later retry.
 
 The tile-definition fingerprint includes its normalized qualified id, display
 name, behavior, animation, transform, tint, layer, flags, symbolic sheet key,
-and asset SHA-256.
+and runtime-computed asset SHA-256.
 Definitions are sorted before hashing, so declaration order does not affect the
 registry fingerprint. This fingerprint is suitable for a later online content
 compatibility gate.

@@ -316,10 +316,11 @@ extern void SDL_free(void* mem);
 #define ONLINE_PREMATCH_SETUP_TIMEOUT_MS 45000u
 #define ONLINE_SERVER_CONNECT_TIMEOUT_MS 10000u
 #define ONLINE_SERVER_AUTH_TIMEOUT_MS    10000u
+#define ONLINE_SERVER_HEARTBEAT_MS       30000u
 #define ONLINE_SERVER_LINE_CAP            8192u
 #define ONLINE_MAP_MANIFEST_MAX_BYTES    (96u * 1024u)
 #define ONLINE_CONTROL_PROTOCOL_VERSION      2
-#define ONLINE_MATCH_PROTOCOL_VERSION        2
+#define ONLINE_MATCH_PROTOCOL_VERSION        3
 #define ONLINE_RESULT_TOAST_FRAMES 420
 #define ONLINE_CHALLENGE_TOAST_FADE_FRAMES 30
 #define UPDATE_TOAST_VISIBLE_MS 12000u
@@ -1104,7 +1105,9 @@ static void start_ggpo_net_join(const char* host, uint16_t remote_port, uint16_t
 static void start_ggpo_net_join_deferred(uint16_t local_port, const char* source);
 static void stop_ggpo_net(const char* source);
 static void online_hub_open(void);
+static void online_hub_close_to_return_state(void);
 static void online_hub_set_status(const char* msg);
+static void online_clear_match_state(void);
 
 /* --- Main-menu mode-cycling PLAY button ------------------------------------
  * Modes 0 (PLAY) and 1 (ONLINE) are framework built-ins; modes >= 2 map to
@@ -1190,6 +1193,9 @@ typedef struct OnlinePendingMatch {
     int launch_countdown_frames;
     int prematch_prepared;
     int prematch_released;
+    int prematch_start_prepared;
+    int server_start_reported;
+    int server_committed;
     DWORD setup_started_ms;
     int match_id;
     int role;
@@ -1223,6 +1229,7 @@ typedef struct OnlineConnectRetry {
     int public_port;
     char lan_host[ONLINE_HUB_TEXT_MAX];
     int lan_port;
+    char peer_route[32];
     char p2p_token[96];
     char p2p_auth_token[GGPO_NET_MATCH_TOKEN_HEX_BYTES + 1];
     int probe_cooldown;
@@ -1237,6 +1244,7 @@ typedef struct OnlineActiveMatch {
     int competitive;
     int queue_mode;
     int result_reported;
+    int server_committed;
     int invalid_state_ticks;
     OnlineMatchResult result;
     char opponent[48];
@@ -1313,6 +1321,9 @@ static int g_online_register_after_connect = 0;
 static int g_online_auth_pending = 0;
 static int g_online_server_info_pending = 0;
 static DWORD g_online_server_deadline_ms = 0;
+static DWORD g_online_server_heartbeat_deadline_ms = 0;
+static int g_online_server_heartbeat_seq = 0;
+static int g_online_server_heartbeat_acked_seq = 0;
 static char g_online_recv_buf[65536];
 static size_t g_online_recv_len = 0;
 static int g_online_queue_mode = 0; /* 0 none, 1 casual, 2 competitive */
@@ -7318,6 +7329,48 @@ static int online_server_send_raw(const char* line) {
     return sent == len;
 }
 
+static void online_server_heartbeat_reset(void) {
+    g_online_server_heartbeat_deadline_ms = 0;
+    g_online_server_heartbeat_seq = 0;
+    g_online_server_heartbeat_acked_seq = 0;
+}
+
+static void online_server_heartbeat_arm(uint32_t now) {
+    g_online_server_heartbeat_deadline_ms = (DWORD)online_control_deadline_after(
+        now, ONLINE_SERVER_HEARTBEAT_MS);
+}
+
+/* Node's control socket has a receive-idle timeout. Keep an authenticated hub
+ * or long-running gameplay session alive even when the player has no other
+ * control-plane traffic. A heartbeat is considered sent only after net_send
+ * atomically accepts the complete line; backpressure retries on the next pump. */
+static void online_server_heartbeat_tick(uint32_t now) {
+    char line[96];
+    int next_seq;
+    if (g_online_server_state != ONLINE_SERVER_CONNECTED ||
+        g_online_server_slot < 0 || !g_online_authed) {
+        return;
+    }
+    if (g_online_server_heartbeat_deadline_ms == 0u) {
+        online_server_heartbeat_arm(now);
+        return;
+    }
+    if (!online_control_deadline_reached(
+            now, (uint32_t)g_online_server_heartbeat_deadline_ms)) {
+        return;
+    }
+    next_seq = (g_online_server_heartbeat_seq >= 0x7FFFFFFF)
+        ? 1
+        : g_online_server_heartbeat_seq + 1;
+    snprintf(line, sizeof(line),
+             "{\"type\":\"ping\",\"seq\":%d}\n",
+             next_seq);
+    if (online_server_send_raw(line)) {
+        g_online_server_heartbeat_seq = next_seq;
+        online_server_heartbeat_arm(now);
+    }
+}
+
 static int online_server_send_map_manifest(void) {
     char* maps_json = NULL;
     char* line = NULL;
@@ -7418,6 +7471,7 @@ static void online_server_disconnect(const char* reason) {
     g_online_auth_pending = 0;
     g_online_server_info_pending = 0;
     g_online_server_deadline_ms = 0;
+    online_server_heartbeat_reset();
     g_online_recv_len = 0;
     g_online_queue_mode = 0;
     if (discard_auth_secret || !is_online_hub_state_active()) {
@@ -7527,14 +7581,42 @@ static void online_server_send_match_end(OnlineMatchResult result) {
     int match_id = g_online_active_match.match_id;
     if (result == ONLINE_MATCH_RESULT_WIN) text = "win";
     else if (result == ONLINE_MATCH_RESULT_LOSS) text = "loss";
-    if (match_id <= 0 && g_online_pending_match.active) {
-        match_id = g_online_pending_match.match_id;
-    }
-    if (match_id <= 0) return;
+    if (match_id <= 0 || !g_online_active_match.server_committed) return;
     if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
     snprintf(line, sizeof(line), "{\"type\":\"match_end\",\"match_id\":%d,\"result\":\"%s\"}\n",
              match_id,
              text);
+    online_server_send_raw(line);
+}
+
+static void online_server_send_match_started(void) {
+    char line[128];
+    int match_id = g_online_pending_match.match_id;
+    if (!g_online_pending_match.active || match_id <= 0 ||
+        g_online_pending_match.server_start_reported) return;
+    if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
+    snprintf(line, sizeof(line),
+             "{\"type\":\"match_started\",\"match_id\":%d}\n",
+             match_id);
+    if (online_server_send_raw(line)) {
+        g_online_pending_match.server_start_reported = 1;
+    }
+}
+
+static void online_server_send_match_abort(const char* reason) {
+    char escaped[192];
+    char line[320];
+    int match_id = g_online_pending_match.active
+        ? g_online_pending_match.match_id
+        : g_online_active_match.match_id;
+    if (match_id <= 0) return;
+    if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
+    online_json_escape(escaped, sizeof(escaped),
+                       (reason && reason[0]) ? reason : "match setup aborted");
+    snprintf(line, sizeof(line),
+             "{\"type\":\"match_abort\",\"match_id\":%d,\"reason\":\"%s\"}\n",
+             match_id,
+             escaped);
     online_server_send_raw(line);
 }
 
@@ -7568,8 +7650,7 @@ static void online_open_result_screen(void) {
     }
 }
 
-static void online_active_match_begin_from_pending(void) {
-    online_clear_waterfall_audio_state("match begin");
+static void online_active_match_capture_from_pending(void) {
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
     g_online_active_match.active = 1;
     g_online_active_match.match_id = g_online_pending_match.match_id;
@@ -7579,20 +7660,34 @@ static void online_active_match_begin_from_pending(void) {
     }
     g_online_active_match.competitive = g_online_pending_match.competitive;
     g_online_active_match.queue_mode = g_online_pending_match.queue_mode;
+    g_online_active_match.server_committed = g_online_pending_match.server_committed;
     safe_copy(g_online_active_match.p2p_token, sizeof(g_online_active_match.p2p_token), g_online_pending_match.p2p_token);
     safe_copy(g_online_active_match.opponent, sizeof(g_online_active_match.opponent), g_online_pending_match.opponent);
     safe_copy(g_online_active_match.map_label, sizeof(g_online_active_match.map_label), g_online_pending_match.map_label);
+    /* No retry can occur after a server commit, whether GAME is entered or the
+     * server immediately resolves a committed disconnect. Retain only ggpo_net's
+     * in-session derived keys long enough for the caller to stop the socket. */
+    online_p2p_auth_tokens_clear();
+}
+
+static void online_active_match_begin_from_pending(void) {
+    online_clear_waterfall_audio_state("match begin");
+    online_active_match_capture_from_pending();
     g_online_connect.connected_once = 1;
     g_online_connect.established = 1;
-    /* No retry can occur after synchronized gameplay begins. Retain the
-     * in-session derived keys inside ggpo_net, but erase both owner text copies
-     * and any unused pending start key now. */
-    online_p2p_auth_tokens_clear();
     online_viewport_poll("match-start", 1);
 }
 
 static void online_finish_active_match(OnlineMatchResult result, const char* status, int send_report) {
     if (!g_online_active_match.active) return;
+    if (!g_online_active_match.server_committed) {
+        online_server_send_match_abort(status);
+        if (ggpo_net_active()) stop_ggpo_net("uncommitted online match ended");
+        online_clear_match_state();
+        online_hub_set_status((status && status[0]) ? status : "Match setup ended.");
+        online_hub_open();
+        return;
+    }
     g_online_active_match.result = result;
     if (send_report && !g_online_active_match.result_reported) {
         g_online_active_match.result_reported = 1;
@@ -7620,7 +7715,9 @@ static void online_handle_server_match_disconnect(const char* reason) {
     const char* status = (reason && reason[0])
         ? reason
         : "Online server disconnected; match ended.";
-    int show_result = g_online_active_match.active && g_online_connect.established;
+    int show_result = g_online_active_match.active &&
+                      g_online_connect.established &&
+                      g_online_active_match.server_committed;
 
     LOG_WARN("online.match: matchmaking connection lost during match id=%d established=%d (%s)",
              g_online_active_match.active ? g_online_active_match.match_id
@@ -7628,20 +7725,14 @@ static void online_handle_server_match_disconnect(const char* reason) {
              g_online_connect.established,
              status);
 
-    if (show_result) {
-        g_online_active_match.result = ONLINE_MATCH_RESULT_LOSS;
-        g_online_active_match.result_reported = 1;
-        if (ggpo_net_active()) stop_ggpo_net("online server disconnected");
-        online_result_prepare(ONLINE_MATCH_RESULT_LOSS, status);
-        online_open_result_screen();
-        online_pending_match_reset();
-        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
-        online_connect_reset();
-    } else {
-        if (ggpo_net_active()) stop_ggpo_net("online server disconnected before P2P connect");
-        online_clear_match_state();
-        g_online_pending_connect_fail_status = 2;
+    if (ggpo_net_active()) {
+        stop_ggpo_net(show_result
+            ? "online server disconnected during committed match"
+            : "online server disconnected before gameplay commit");
     }
+    online_clear_match_state();
+    g_online_pending_connect_fail_status = 2;
+    online_hub_set_status(status);
     online_hub_open();
 }
 
@@ -7649,22 +7740,25 @@ static void online_handle_server_match_disconnect(const char* reason) {
  * server match and clear retry state so the next frame cannot resurrect P2P. */
 static void online_cancel_match_from_console(void) {
     if (g_online_active_match.active) {
-        g_online_active_match.result = ONLINE_MATCH_RESULT_LOSS;
-        if (!g_online_active_match.result_reported) {
-            g_online_active_match.result_reported = 1;
-            online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+        if (!g_online_active_match.server_committed) {
+            online_server_send_match_abort("local match cancelled before server commit");
+            if (ggpo_net_active()) stop_ggpo_net("console cancelled uncommitted online match");
+            online_clear_match_state();
+            online_hub_set_status("Match setup cancelled.");
+            online_hub_open();
+            return;
         }
-        if (ggpo_net_active()) stop_ggpo_net("console cancelled online match");
-        online_result_prepare(ONLINE_MATCH_RESULT_LOSS, "P2P stopped; reported loss.");
-        online_open_result_screen();
-        online_pending_match_reset();
-        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
-        online_connect_reset();
-        online_hub_open();
+        /* A committed console cancellation is a forfeit. Keep the active match
+         * identity alive for the asynchronous server result and choose exactly
+         * one sibling state: the result screen. Opening Hub immediately after
+         * Result recreated the old result/hub state loop. */
+        online_finish_active_match(ONLINE_MATCH_RESULT_LOSS,
+                                   "P2P stopped; reported loss.",
+                                   1);
         return;
     }
     if (g_online_pending_match.active) {
-        online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+        online_server_send_match_abort("match cancelled before gameplay");
         if (ggpo_net_active()) stop_ggpo_net("console cancelled pending online match");
         online_clear_match_state();
         g_online_pending_connect_fail_status = 3;
@@ -7907,6 +8001,7 @@ static void online_apply_p2p_peer(const char* line) {
     char host[ONLINE_HUB_TEXT_MAX];
     char public_host[ONLINE_HUB_TEXT_MAX];
     char lan_host[ONLINE_HUB_TEXT_MAX];
+    char peer_route[32];
     char err[256];
     int match_id = 0;
     int port = 0;
@@ -7918,7 +8013,9 @@ static void online_apply_p2p_peer(const char* line) {
     host[0] = '\0';
     public_host[0] = '\0';
     lan_host[0] = '\0';
+    peer_route[0] = '\0';
     online_json_get_string(line, "peer_host", host, sizeof(host));
+    online_json_get_string(line, "peer_route", peer_route, sizeof(peer_route));
     online_json_get_string(line, "peer_public_host", public_host, sizeof(public_host));
     online_json_get_int(line, "peer_public_port", &public_port);
     online_json_get_string(line, "peer_lan_host", lan_host, sizeof(lan_host));
@@ -7936,6 +8033,9 @@ static void online_apply_p2p_peer(const char* line) {
     if (g_online_connect.match_id == match_id) {
         safe_copy(g_online_connect.peer_host, sizeof(g_online_connect.peer_host), host);
         g_online_connect.peer_port = port;
+        safe_copy(g_online_connect.peer_route,
+                  sizeof(g_online_connect.peer_route),
+                  peer_route[0] ? peer_route : "preferred");
         if (public_host[0] && public_port > 0 && public_port <= 65535) {
             safe_copy(g_online_connect.public_host, sizeof(g_online_connect.public_host), public_host);
             g_online_connect.public_port = public_port;
@@ -7947,6 +8047,12 @@ static void online_apply_p2p_peer(const char* line) {
         applies = 1;
     }
     if (!applies) return;
+
+    LOG_INFO("online.p2p: server selected route=%s peer=%s:%d match=%d",
+             peer_route[0] ? peer_route : "preferred",
+             host,
+             port,
+             match_id);
 
     if (ggpo_net_active()) {
         err[0] = '\0';
@@ -7962,17 +8068,11 @@ static void online_apply_p2p_peer(const char* line) {
                       match_id,
                       err[0] ? err : "unknown error");
         }
-        /* ICE-style: also register the peer's PUBLIC (NAT) endpoint and its LAN
-         * endpoint as hole-punch candidates. The server sends peer_host as its best
-         * single guess, but for cross-network play the reachable one is the public
-         * endpoint; probing all of them and adopting whichever replies is what
-         * makes hotspot/VPN/different-network connections work. */
-        if (public_host[0] && public_port > 0 && public_port <= 65535) {
-            (void)ggpo_net_add_peer_candidate(public_host, (uint16_t)public_port, err, sizeof(err));
-        }
-        if (lan_host[0] && lan_port > 0 && lan_port <= 65535) {
-            (void)ggpo_net_add_peer_candidate(lan_host, (uint16_t)lan_port, err, sizeof(err));
-        }
+        /* Do not race the server-selected path against every advertised address.
+         * Two clients on one PC were independently pinning loopback/LAN/public
+         * sources, leaving each side's strict endpoint gate pointed elsewhere.
+         * Each attempt therefore uses exactly one symmetric route generation:
+         * loopback, LAN, or public as selected by the rendezvous server. */
     }
 }
 
@@ -7981,7 +8081,8 @@ static void online_pump_p2p_probe(void) {
     /* Keep probing until the session connects. This keeps NAT mappings warm and
      * lets the server resend a changed observed endpoint during hole punching. */
     if (g_online_connect.attempts <= 0 || g_online_connect.established) return;
-    if (!ggpo_net_active() || ggpo_net_connected()) return;
+    if (!ggpo_net_active()) return;
+    if (ggpo_net_link_ready()) return;
     if (g_online_connect.match_id <= 0 || !g_online_connect.p2p_token[0] || !g_online_cfg.username[0]) return;
     if (g_online_server_state != ONLINE_SERVER_CONNECTED || g_online_server_slot < 0) return;
     if (g_online_connect.probe_cooldown > 0) {
@@ -8074,6 +8175,7 @@ static void online_connect_start_attempt(int first) {
          * attempt. Rebuild and republish it only after this attempt connects. */
         g_online_pending_match.prematch_prepared = 0;
         g_online_pending_match.prematch_released = 0;
+        g_online_pending_match.prematch_start_prepared = 0;
         err[0] = '\0';
         if (g_online_connect.peer_host[0] && g_online_connect.peer_port > 0 &&
             !ggpo_net_set_peer(g_online_connect.peer_host,
@@ -8085,32 +8187,6 @@ static void online_connect_start_attempt(int first) {
                      g_online_connect.peer_host,
                      g_online_connect.peer_port,
                      err[0] ? err : "unknown error");
-        }
-        if (g_online_connect.public_host[0] && g_online_connect.public_port > 0) {
-            err[0] = '\0';
-            if (!ggpo_net_add_peer_candidate(g_online_connect.public_host,
-                                             (uint16_t)g_online_connect.public_port,
-                                             err,
-                                             sizeof(err))) {
-                LOG_WARN("online.p2p: attempt %d could not apply public candidate %s:%d (%s)",
-                         g_online_connect.attempts,
-                         g_online_connect.public_host,
-                         g_online_connect.public_port,
-                         err[0] ? err : "unknown error");
-            }
-        }
-        if (g_online_connect.lan_host[0] && g_online_connect.lan_port > 0) {
-            err[0] = '\0';
-            if (!ggpo_net_add_peer_candidate(g_online_connect.lan_host,
-                                             (uint16_t)g_online_connect.lan_port,
-                                             err,
-                                             sizeof(err))) {
-                LOG_WARN("online.p2p: attempt %d could not apply LAN candidate %s:%d (%s)",
-                         g_online_connect.attempts,
-                         g_online_connect.lan_host,
-                         g_online_connect.lan_port,
-                         err[0] ? err : "unknown error");
-            }
         }
         LOG_INFO("online.p2p: connect attempt %d/%d local_udp=%u%s",
                  g_online_connect.attempts,
@@ -8213,6 +8289,7 @@ static void online_server_handle_line(const char* line) {
         g_online_auth_pending = 0;
         g_online_server_deadline_ms = 0;
         g_online_authed = 1;
+        online_server_heartbeat_arm((uint32_t)GetTickCount());
         safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), text);
         if (online_json_get_int(line, "elo", &value)) g_online_public_elo = value;
         if (!online_server_send_map_manifest()) {
@@ -8271,6 +8348,20 @@ static void online_server_handle_line(const char* line) {
                                                     g_online_cfg.username);
             online_clear_password_memory();
             LOG_WARN("online.credentials: discarded a remembered login rejected by the server");
+        }
+    } else if (_stricmp(type, "pong") == 0) {
+        int pong_seq = 0;
+        if (!online_json_get_int(line, "seq", &pong_seq) || pong_seq <= 0) {
+            LOG_WARN("online.server: rejected malformed heartbeat response");
+            online_server_disconnect("Server sent an invalid heartbeat response.");
+            return;
+        }
+        if (pong_seq == g_online_server_heartbeat_seq) {
+            g_online_server_heartbeat_acked_seq = pong_seq;
+        } else {
+            LOG_WARN("online.server: ignored stale heartbeat response seq=%d expected=%d",
+                     pong_seq,
+                     g_online_server_heartbeat_seq);
         }
     } else if (_stricmp(type, "error") == 0) {
         if (g_online_server_info_pending && g_online_auth_pending) {
@@ -8373,6 +8464,17 @@ static void online_server_handle_line(const char* line) {
         online_server_begin_pending_match(line);
         online_sent_challenge_remove(g_online_pending_match.opponent, 0);
         online_challenge_toast_clear(0, g_online_pending_match.opponent);
+    } else if (_stricmp(type, "match_started") == 0) {
+        if (!online_server_message_matches_current_match(line, type)) return;
+        if (!g_online_pending_match.active ||
+            !online_json_get_int(line, "committed", &value) || !value) {
+            LOG_WARN("online.server: ignored uncommitted or out-of-phase match_started");
+            return;
+        }
+        g_online_pending_match.server_committed = 1;
+        online_hub_set_status("Both players ready. Starting match...");
+        LOG_INFO("online.match: server committed gameplay start match=%d",
+                 g_online_pending_match.match_id);
     } else if (_stricmp(type, "match_report_ack") == 0) {
         if (!online_server_message_matches_current_match(line, type)) return;
         if (g_online_result.active) {
@@ -8387,6 +8489,23 @@ static void online_server_handle_line(const char* line) {
         int got_elo_before = 0;
         int elo_before_value = 0;
         if (!online_server_message_matches_current_match(line, type)) return;
+        if (!g_online_active_match.active || !g_online_active_match.server_committed) {
+            /* TCP preserves the server's write order, but one recv pump can
+             * contain both the two-READY commit and an immediate committed
+             * forfeit/disconnect result. The launch pump has not had a chance
+             * to promote pending metadata yet. Resolve that exact committed
+             * match directly without flashing or entering a now-deleted GAME. */
+            if (g_online_pending_match.active &&
+                g_online_pending_match.server_committed) {
+                LOG_INFO("online.match: resolving server result at start barrier match=%d",
+                         g_online_pending_match.match_id);
+                online_active_match_capture_from_pending();
+                g_online_pending_match.active = 0;
+            } else {
+                LOG_WARN("online.server: rejected match_result before committed gameplay");
+                return;
+            }
+        }
         if (ggpo_net_active()) stop_ggpo_net("online server result");
         text[0] = '\0';
         online_json_get_string(line, "result", text, sizeof(text));
@@ -8429,11 +8548,15 @@ static void online_server_handle_line(const char* line) {
         online_pending_match_reset();
         memset(&g_online_active_match, 0, sizeof(g_online_active_match));
         online_connect_reset();
-    } else if (_stricmp(type, "match_end") == 0) {
+    } else if (_stricmp(type, "match_abort") == 0 ||
+               _stricmp(type, "match_end") == 0) {
         if (!online_server_message_matches_current_match(line, type)) return;
         if (ggpo_net_active()) stop_ggpo_net("online server");
         online_clear_match_state();
-        online_hub_set_status("Online match ended.");
+        text[0] = '\0';
+        online_json_get_string(line, "reason", text, sizeof(text));
+        online_hub_set_status(text[0] ? text : "Online match setup ended.");
+        online_hub_open();
     }
     if (is_online_hub_state_active() || is_online_result_state_active()) {
         online_hub_rebuild_rows();
@@ -8451,6 +8574,19 @@ static void online_server_update(void) {
         if (ggpo_net_active()) {
             prematch_err[0] = '\0';
             if (!ggpo_net_service(prematch_err, sizeof(prematch_err))) {
+                /* prepare_prematch_start restores frame zero and deliberately
+                 * closes ggpo_net's retry window. Even if the READY write then
+                 * failed (so server_start_reported is still false), reusing this
+                 * socket state on a fresh attempt would advertise stale
+                 * readiness and deadlock the start barrier. Once either local
+                 * preparation or READY happened, cancel the setup atomically. */
+                if (g_online_pending_match.prematch_start_prepared ||
+                    g_online_pending_match.server_start_reported) {
+                    online_abort_prematch_setup(
+                        prematch_err[0] ? prematch_err
+                                        : "transport failed at gameplay start barrier");
+                    goto after_pending_transport;
+                }
                 LOG_WARN("online.prematch: transport attempt %d failed before gameplay (%s)",
                          g_online_connect.attempts,
                          prematch_err[0] ? prematch_err : "unknown error");
@@ -8458,6 +8594,9 @@ static void online_server_update(void) {
                 g_online_connect.connected_once = 0;
                 g_online_pending_match.prematch_prepared = 0;
                 g_online_pending_match.prematch_released = 0;
+                g_online_pending_match.prematch_start_prepared = 0;
+                g_online_pending_match.server_start_reported = 0;
+                g_online_pending_match.server_committed = 0;
                 /* The failed transport has already been serviced; let the
                  * bounded retry machine open its next fresh socket now. */
                 g_online_connect.attempt_started_ms =
@@ -8466,6 +8605,7 @@ static void online_server_update(void) {
         }
         online_connect_retry_tick();
     }
+after_pending_transport:
     now = (uint32_t)GetTickCount();
     if (g_online_server_state == ONLINE_SERVER_CONNECTING) {
         int r = net_check_connect(g_online_server_slot);
@@ -8555,6 +8695,7 @@ static void online_server_update(void) {
             return;
         }
     }
+    online_server_heartbeat_tick(now);
 }
 
 static void online_sent_challenge_prune(void) {
@@ -9305,11 +9446,7 @@ static void online_activate_selected(void) {
     if (g_online_selected_row < 0 || g_online_selected_row >= g_online_row_count) return;
     row = &g_online_rows[g_online_selected_row];
     if (row->kind == ONLINE_ROW_BACK) {
-        if (p_state_switch) {
-            void* target = g_online_return_state ? g_online_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
-            if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
-            p_state_switch(target);
-        }
+        online_hub_close_to_return_state();
         return;
     }
     if (row->kind == ONLINE_ROW_ACTION) {
@@ -10012,14 +10149,23 @@ static void online_hub_render_matchmaking_panel(const OnlineLayout* L, int match
                  g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
         online_hub_text(card_x + 26.0f * s, card_y + 106.0f * s,
                         0.88f * s, 0.74f, 0.82f, 0.94f, line);
-        if (g_online_pending_match.launch_countdown_frames > 0) {
-            snprintf(line, sizeof(line), "Starting in %d", seconds);
-        } else if (!ggpo_net_active() || !ggpo_net_connected()) {
+        if (!ggpo_net_active() || !ggpo_net_connected()) {
             snprintf(line, sizeof(line), "Connecting to opponent...");
+        } else if (!ggpo_net_link_ready()) {
+            snprintf(line, sizeof(line), "Confirming connection...");
         } else if (!g_online_pending_match.prematch_prepared) {
             snprintf(line, sizeof(line), "Preparing match...");
-        } else {
+        } else if (!ggpo_net_prematch_ready()) {
             snprintf(line, sizeof(line), "Synchronizing players...");
+        } else if (g_online_pending_match.launch_countdown_frames > 0) {
+            snprintf(line, sizeof(line), "Starting in %d", seconds);
+        } else if (g_online_pending_match.server_start_reported &&
+                   !g_online_pending_match.server_committed) {
+            snprintf(line, sizeof(line), "Waiting for opponent setup...");
+        } else if (!g_online_pending_match.server_committed) {
+            snprintf(line, sizeof(line), "Finalizing match setup...");
+        } else {
+            snprintf(line, sizeof(line), "Starting match...");
         }
         online_hub_text(card_x + 26.0f * s, card_y + 144.0f * s,
                         1.00f * s, 1.00f, 0.86f, 0.44f, line);
@@ -10425,15 +10571,34 @@ static void online_hub_render_ui(void) {
     online_hub_draw_context_menu();
 }
 
+/* The hub and result screen are transient framework states, not destinations
+ * that may own one another. In particular, Result -> Hub used to let the
+ * hub's enter callback replace its already-sanitized return target with
+ * p_state_last()==Result. Back from the hub would then reopen an inactive
+ * result state and bounce between the two screens forever. */
+static void* online_hub_sanitize_return_state(void* state) {
+    if (!state ||
+        state == (void*)&g_online_hub_state ||
+        state == (void*)&g_online_result_state ||
+        state == (void*)&g_console_state) {
+        return (void*)(uintptr_t)ADDR_MAIN_STATE;
+    }
+    return state;
+}
+
+static void online_hub_close_to_return_state(void) {
+    if (!p_state_switch) return;
+    g_online_return_state = online_hub_sanitize_return_state(g_online_return_state);
+    p_state_switch(g_online_return_state);
+}
+
 static void online_hub_open(void) {
     void* cur;
     if (!p_state_switch) return;
     online_hub_load();
     cur = p_state_current ? p_state_current() : NULL;
     if (cur == (void*)&g_console_state) cur = g_console_return_state;
-    if (!cur || cur == (void*)&g_online_hub_state || cur == (void*)&g_online_result_state) {
-        cur = (void*)(uintptr_t)ADDR_MAIN_STATE;
-    }
+    cur = online_hub_sanitize_return_state(cur);
     if (is_online_hub_state_active()) {
         g_online_return_state = cur;
         return;
@@ -10456,7 +10621,11 @@ static void __cdecl online_hub_enter(void) {
     if (!g_online_pending_match.active) {
         if (g_online_active_match.active && !g_online_active_match.result_reported) {
             g_online_active_match.result_reported = 1;
-            online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+            if (g_online_active_match.server_committed) {
+                online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+            } else {
+                online_server_send_match_abort("left match before server commit");
+            }
             abandoned = 1;
         }
         if (ggpo_net_active()) stop_ggpo_net("left match to hub");
@@ -10464,10 +10633,16 @@ static void __cdecl online_hub_enter(void) {
     }
 
     online_hub_load();
-    if (!last || last == (void*)&g_online_hub_state || last == (void*)&g_console_state) {
-        last = (void*)(uintptr_t)ADDR_MAIN_STATE;
+    if (!last ||
+        last == (void*)&g_online_hub_state ||
+        last == (void*)&g_online_result_state ||
+        last == (void*)&g_console_state) {
+        /* online_hub_open()/the pre-swap handoff already captured the real
+         * owner. Preserve it instead of making a transient last state the
+         * next Back destination. */
+        last = g_online_return_state;
     }
-    g_online_return_state = last;
+    g_online_return_state = online_hub_sanitize_return_state(last);
     online_clear_capture_state();
     online_hub_apply_net_settings();
     if (g_online_pending_connect_fail_status) {
@@ -10950,11 +11125,13 @@ static void online_challenge_toast_tick(void) {
 static void __cdecl online_result_enter(void) {
     online_clear_capture_state();
     if (!g_online_result.active) {
-        memset(&g_online_result, 0, sizeof(g_online_result));
-        g_online_result.active = 1;
-        g_online_result.result = ONLINE_MATCH_RESULT_NONE;
-        g_online_result.toast_lifetime = ONLINE_RESULT_TOAST_FRAMES;
-        safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match ended.");
+        /* A result state without prepared match data is necessarily a stale
+         * state-link/return target. Never fabricate a generic GAME OVER page;
+         * recover to the hub, whose return target is sanitized to main. */
+        LOG_WARN("ONLINE RESULT: rejected inactive/stale state entry");
+        g_online_tab = ONLINE_TAB_PLAY;
+        online_hub_open();
+        return;
     }
     g_online_result.selected = 0;
     LOG_INFO("ONLINE RESULT: enter");
@@ -10978,6 +11155,15 @@ static void __cdecl online_result_render(void) {
     float text_bottom;
     float text_span;
     char line[256];
+    if (!g_online_result.active) {
+        /* online_result_enter() has already scheduled the fail-safe hub switch.
+         * Keep the single transitional frame blank instead of flashing a false
+         * GAME OVER result. */
+        mods_restore_render_state();
+        online_hub_render_background();
+        mods_restore_render_state();
+        return;
+    }
     mods_restore_render_state();
     online_hub_render_background();
     mods_restore_render_state();
@@ -11157,10 +11343,7 @@ void hooks_online_on_pre_swap(void) {
     }
     if (g_online_open_pending) {
         g_online_open_pending = 0;
-        g_online_return_state = g_online_pending_return_state;
-        if (!g_online_return_state || g_online_return_state == (void*)&g_online_hub_state) {
-            g_online_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
-        }
+        g_online_return_state = online_hub_sanitize_return_state(g_online_pending_return_state);
         (void)console_capture_background_now();
         if (p_state_switch && !is_online_hub_state_active()) {
             p_state_switch((void*)&g_online_hub_state);
@@ -11333,11 +11516,7 @@ int hooks_online_hub_keydown(int sym, int scancode, int mod) {
     online_hub_rebuild_rows();
     switch (sym) {
         case SDLK_ESCAPE:
-            if (p_state_switch) {
-                void* target = g_online_return_state ? g_online_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
-                if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
-                p_state_switch(target);
-            }
+            online_hub_close_to_return_state();
             return 1;
         case SDLK_TAB:
         case 'e': case 'E':
@@ -11566,11 +11745,7 @@ int hooks_online_hub_control_action(int action) {
         case 4: online_adjust_selected(1); return 1;
         case 5: online_activate_selected(); return 1;
         case 6:
-            if (p_state_switch) {
-                void* target = g_online_return_state ? g_online_return_state : (void*)(uintptr_t)ADDR_MAIN_STATE;
-                if (target == (void*)&g_online_hub_state) target = (void*)(uintptr_t)ADDR_MAIN_STATE;
-                p_state_switch(target);
-            }
+            online_hub_close_to_return_state();
             return 1;
         default:
             return 0;
@@ -13596,9 +13771,12 @@ static void online_abort_connect_timeout(void) {
             p = nl + 1;
         }
     }
-    if ((g_online_active_match.active && !g_online_active_match.result_reported) ||
-        g_online_pending_match.active) {
-        if (g_online_active_match.active) g_online_active_match.result_reported = 1;
+    if (g_online_pending_match.active) {
+        online_server_send_match_abort("P2P connection timed out before gameplay");
+    } else if (g_online_active_match.active &&
+               !g_online_active_match.result_reported &&
+               g_online_active_match.server_committed) {
+        g_online_active_match.result_reported = 1;
         online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
     }
     if (ggpo_net_active()) stop_ggpo_net("connect timeout");
@@ -13624,7 +13802,9 @@ static void online_abort_prematch_setup(const char* reason) {
         }
     }
     if (g_online_pending_match.active) {
-        online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+        online_server_send_match_abort((reason && reason[0])
+            ? reason
+            : "prematch setup failed");
     }
     if (ggpo_net_active()) stop_ggpo_net("prematch setup failed");
     online_clear_match_state();
@@ -13713,7 +13893,8 @@ static void online_log_desync_snapshot_if_changed(void) {
 static void online_match_pump_launch(void) {
     char err[256];
     if (!g_online_pending_match.active) return;
-    if (g_online_pending_match.setup_started_ms != 0u &&
+    if (!g_online_pending_match.server_committed &&
+        g_online_pending_match.setup_started_ms != 0u &&
         (DWORD)(GetTickCount() - g_online_pending_match.setup_started_ms) >=
             ONLINE_PREMATCH_SETUP_TIMEOUT_MS) {
         online_abort_prematch_setup("prematch synchronization timed out");
@@ -13731,7 +13912,7 @@ static void online_match_pump_launch(void) {
     /* The countdown keeps running while the bounded fresh-socket retry machine
      * connects. If it reaches zero first, remain on the match card instead of
      * entering GAME and displaying a frozen frame. */
-    if (!ggpo_net_active() || !ggpo_net_connected()) return;
+    if (!ggpo_net_active() || !ggpo_net_link_ready()) return;
 
     /* A server-managed rollback match must never begin on different game or
      * framework binaries. The transport exchanges these fingerprints in its
@@ -13770,19 +13951,31 @@ static void online_match_pump_launch(void) {
         return;
     }
 
-    err[0] = '\0';
-    if (!ggpo_net_prepare_prematch_start(err, sizeof(err))) {
-        online_abort_prematch_setup(err[0] ? err : "could not restore synchronized start state");
-        return;
-    }
     if (!p_state_switch) {
         online_abort_prematch_setup("state switch is unavailable");
         return;
     }
+    if (!g_online_pending_match.prematch_start_prepared) {
+        err[0] = '\0';
+        if (!ggpo_net_prepare_prematch_start(err, sizeof(err))) {
+            online_abort_prematch_setup(err[0] ? err : "could not restore synchronized start state");
+            return;
+        }
+        g_online_pending_match.prematch_start_prepared = 1;
+    }
 
-    /* The switch is the final operation: GAME enter sees an already-started,
-     * synchronized native match, and the very next visible tick has both neutral
-     * frame-0 inputs ready. */
+    /* READY is reported only after the synchronized state is locally restorable
+     * and the native GAME switch exists. Stay behind the hub barrier until the
+     * server has received READY from both clients and commits the match. */
+    if (!g_online_pending_match.server_start_reported) {
+        online_server_send_match_started();
+        online_hub_set_status("Waiting for opponent to finish setup...");
+        return;
+    }
+    if (!g_online_pending_match.server_committed) return;
+
+    /* The authoritative server commit is the final barrier. GAME enter sees an
+     * already-started synchronized match, and neither client can enter alone. */
     p_state_switch((void*)(uintptr_t)ADDR_GAME_STATE);
     online_active_match_begin_from_pending();
     g_online_pending_match.active = 0;
@@ -15246,6 +15439,13 @@ static void* __cdecl hooked_state_switch(void* target) {
         ? p_state_switch_trampoline
         : (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
     void* cur = p_state_current ? p_state_current() : NULL;
+    if (target == (void*)&g_online_result_state && !g_online_result.active) {
+        /* Defense in depth for stale native links: only prepared result data
+         * may enter the result state. Back from the hub should continue to its
+         * real owner (normally main), never resurrect GAME OVER. */
+        LOG_WARN("ONLINE RESULT: redirected stale state switch");
+        target = online_hub_sanitize_return_state(g_online_return_state);
+    }
     int leaving_game = (cur == (void*)(uintptr_t)ADDR_GAME_STATE ||
                         cur == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED);
     int entering_main = (target == (void*)(uintptr_t)ADDR_MAIN_STATE ||

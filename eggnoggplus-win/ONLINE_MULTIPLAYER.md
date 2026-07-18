@@ -231,12 +231,14 @@ The built-in online hub is back in the framework and can be opened from the main
 - Play: account login/register with a compact opt-in `Remember me` checkbox backed by Windows Credential Manager, Casual Queue, Competitive Queue, queue leave, and server-driven match launch.
 - Friends: username entry for adding friends, incoming friend requests, incoming 5-minute challenges, friend list, accept/decline actions, and friend challenges.
 - Settings: server address as a single `host:port` field, the local P2P UDP port (`Auto` by default), and challenge notifications.
-- Game Over: after an online match ends, both clients report win/loss to the server, receive the confirmed result and Elo update, then can requeue or return to the hub.
+- Online result: after a completed online match, both clients report win/loss to the server. Only two reports naming the same winner produce a confirmed result and Elo update; a lone or conflicting report becomes a no-contest. Players can then requeue or return to the hub. Prematch/connect failures skip this screen and return directly to the hub.
 
 The default control server is `eggnogg.loafiieee.com:47778`, persisted in `mods\online_hub.cfg`. The prototype server lives in `online_server/server.js` and handles login/registration, public Elo, hidden server-side MMR, casual queue, competitive MMR-range queue, friends, friend requests, 5-minute challenges, shared-map selection, and P2P match setup.
 
 The current control channel is bounded newline-delimited JSON over nonblocking raw TCP.
 TCP connect and login response each have independent 10-second wall-clock deadlines.
+After authentication, a 30-second JSON ping/pong heartbeat keeps the server's
+120-second receive-idle timeout from disconnecting a quiet hub or long match.
 Incoming lines are capped at 8,191 bytes and parsed as complete flat JSON objects; nested
 values, duplicate/escaped-alias keys, malformed UTF-8/escapes, integer overflow, embedded
 NUL, and truncated destination values are rejected. Protocol/framing failure disconnects
@@ -246,7 +248,7 @@ attacker.
 
 After TCP connects, the client requests and validates the server's flat `server_info`
 advertisement before it sends the login/register request. Control protocol 2, match
-protocol 2, P2P protocol 16, and packet-auth capability are all required. `auth_ok` repeats
+protocol 3, P2P protocol 16, and packet-auth capability are all required. `auth_ok` repeats
 the same fields and `match_found` repeats the match/P2P versions, so a stale or mixed
 deployment fails at the handshake (and again at match setup as defense in depth) instead
 of consuming a queue match that cannot start.
@@ -255,15 +257,21 @@ Gameplay remains direct P2P through `ggpo_net`. The server chooses the map from
 the intersection of both complete client manifests (capped at 96 KiB), sends
 each client the stable key and that client's local selector, and randomly assigns
 host/join only for player slot and authoritative initial-state duties. Both peers
-publish fresh public/LAN candidates and symmetrically send authenticated HELLOs
-to every candidate; swapping host/join cannot improve NAT traversal. Every
+publish a fresh observed endpoint on every attempt. The server selects one
+symmetric route generation (loopback for two clients on one machine, LAN when
+appropriate, otherwise public), and each client sends authenticated HELLOs only
+to the selected peer endpoint for that attempt. This prevents the peers from
+pinning different simultaneously advertised paths; swapping host/join cannot
+improve NAT traversal. Every
 nonempty server `map_key` must resolve to that exact installed map, and different
 game/framework fingerprints abort server-managed prematch before native setup.
 Connection attempts, native match initialization, state transfer, and neutral
 frame-zero input exchange run behind the match-found countdown. The client stays
-in the hub if that work outlasts the timer and enters gameplay only when the
-synchronized first frame can advance. Setup has a bounded timeout and never
-exposes a frozen GAME frame. Cosmetic profile/asset packets are compile-disabled
+in the hub if that work outlasts the timer. Once frame zero is locally restorable,
+it reports READY and still waits until the server has received READY from both
+clients and broadcasts the gameplay-start commit. Pre-commit failure is an
+explicit no-contest setup abort with no win/loss screen or Elo change. Setup has
+a bounded timeout and never exposes a frozen GAME frame. Cosmetic profile/asset packets are compile-disabled
 in `ggpo_net`; online match setup does not send cosmetics.
 
 GGPO UDP v16 authenticates every peer datagram. The server supplies both peers one
@@ -374,7 +382,12 @@ the live native global scale, black shadow pass, animated red/yellow color pass,
 
 The current Game Over state shows the outcome, opponent, map, server confirmation/rating
 text, and responsive Requeue and Hub buttons. Requeue remains in a waiting state until the
-server confirms the result. The Friends tab supports add/remove, requests, presence,
+server confirms the result. It exists for the asynchronous server-confirmation/requeue
+step rather than replacing vanilla local-play results. Result and hub are transient sibling
+states: Hub/Back always resolves to a stable native owner, and an inactive result state is
+rejected instead of recreating a generic Game Over page. A commit and immediate server
+forfeit result received in one TCP batch resolves directly from the start barrier without
+entering a dead GAME state. The Friends tab supports add/remove, requests, presence,
 direct challenges, accept/decline, and five-minute expiry.
 
 During an established match, the pause, options, console, and Mods overlays keep rollback

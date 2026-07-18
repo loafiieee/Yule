@@ -134,6 +134,12 @@ int main(int argc, char** argv) {
     int expect_rejection = 0;
     int tamper_outgoing = 0;
     int replay_outgoing = 0;
+    int restart_after_connect = 0;
+    int watch_peer_restart = 0;
+    int restart_after_state_sync = 0;
+    int restarted = 0;
+    int recovery_ready_not_before_tick = 0;
+    uint16_t restart_port = 0;
     const char* match_token = TEST_MATCH_TOKEN;
 
     if (argc == 2 && strcmp(argv[1], "nokey") == 0) {
@@ -152,17 +158,34 @@ int main(int argc, char** argv) {
     if (argc < 4 || argc > 7 || (strcmp(argv[1], "host") != 0 &&
                       strcmp(argv[1], "join") != 0 &&
                       strcmp(argv[1], "joinfail") != 0)) {
-        fprintf(stderr, "usage: prematch_net_test host|join|joinfail local_port remote_port [token] [normal|reject] [tamper|replay]\n");
+        fprintf(stderr, "usage: prematch_net_test host|join|joinfail local_port remote_port [token] [normal|reject|restart|watchrestart|restartlate|watchrestartlate] [tamper|replay|restart_port]\n");
         return 2;
     }
     is_host = strcmp(argv[1], "host") == 0;
     role = is_host ? "host" : "join";
     g_fail_load_once = strcmp(argv[1], "joinfail") == 0;
     if (argc >= 5) match_token = argv[4];
-    if (argc >= 6) expect_rejection = strcmp(argv[5], "reject") == 0;
+    if (argc >= 6) {
+        expect_rejection = strcmp(argv[5], "reject") == 0;
+        restart_after_connect = strcmp(argv[5], "restart") == 0;
+        watch_peer_restart = strcmp(argv[5], "watchrestart") == 0;
+        restart_after_state_sync =
+            strcmp(argv[5], "restartlate") == 0 ||
+            strcmp(argv[5], "watchrestartlate") == 0;
+        if (strcmp(argv[5], "restartlate") == 0) restart_after_connect = 1;
+        if (strcmp(argv[5], "watchrestartlate") == 0) watch_peer_restart = 1;
+    }
     if (argc >= 7) {
         tamper_outgoing = strcmp(argv[6], "tamper") == 0;
         replay_outgoing = strcmp(argv[6], "replay") == 0;
+        if (restart_after_connect || watch_peer_restart) {
+            unsigned long restart_value = strtoul(argv[6], NULL, 10);
+            if (restart_value == 0ul || restart_value > 65535ul) {
+                fprintf(stderr, "invalid restart test port\n");
+                return 2;
+            }
+            restart_port = (uint16_t)restart_value;
+        }
     }
     {
         unsigned long local_value = strtoul(argv[2], NULL, 10);
@@ -242,6 +265,38 @@ int main(int argc, char** argv) {
             return fail(role, "service advanced gameplay", NULL);
         }
         if (connected_tick < 0 && ggpo_net_connected()) connected_tick = tick;
+        if ((restart_after_connect || watch_peer_restart) && !restarted &&
+            connected_tick >= 0 &&
+            ((!restart_after_state_sync && tick - connected_tick >= 12) ||
+             (restart_after_state_sync && released &&
+              ggpo_net_state_synced() && ggpo_net_remote_state_synced()))) {
+            /* Model the matchmaking retry race seen in production: one peer has
+             * already pinned this confirmed session while the other rotates its
+             * socket.  Rebind the same endpoint with a fresh authenticated
+             * session; the surviving peer must recover before frame 0. */
+            err[0] = '\0';
+            if (restart_after_connect) {
+                ggpo_net_stop_for_retry();
+                local_port = restart_port;
+                if (!ggpo_net_set_match_token(match_token, err, sizeof(err)) ||
+                    !(is_host ? ggpo_net_start_host(local_port, err, sizeof(err))
+                              : ggpo_net_start_join_deferred(local_port, err, sizeof(err))) ||
+                    !ggpo_net_set_prematch_hold(1, err, sizeof(err)) ||
+                    !ggpo_net_set_peer("127.0.0.1", remote_port, err, sizeof(err))) {
+                    return fail(role, "prematch socket restart", err);
+                }
+            } else if (!ggpo_net_set_peer("127.0.0.1", restart_port,
+                                          err, sizeof(err))) {
+                return fail(role, "prematch peer endpoint update", err);
+            }
+            restarted = 1;
+            recovery_ready_not_before_tick = tick + 20;
+            if (restart_after_connect) {
+                connected_tick = -1;
+                released = 0;
+            }
+            continue;
+        }
         if (connected_tick >= 0 && !released) {
             int delay = is_host ? 40 : 4;
             if (tick - connected_tick >= delay) {
@@ -254,7 +309,9 @@ int main(int argc, char** argv) {
                 released = 1;
             }
         }
-        if (released && ggpo_net_prematch_ready()) {
+        if (released &&
+            tick >= recovery_ready_not_before_tick &&
+            ggpo_net_prematch_ready()) {
             ready_tick = tick;
             break;
         }
@@ -284,11 +341,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("%s PASS connected=%d ready=%d state_epoch=%u frame=%u rejected=%u\n",
+    printf("%s PASS connected=%d ready=%d state_epoch=%u frame=%u rejected=%u restarted=%d\n",
            role, connected_tick, ready_tick,
            (unsigned int)ggpo_net_state_epoch(),
            (unsigned int)ggpo_net_frame_count(),
-           (unsigned int)ggpo_net_auth_rejected_packets());
+           (unsigned int)ggpo_net_auth_rejected_packets(),
+           restarted);
     ggpo_net_stop_for_retry();
     return 0;
 }

@@ -87,6 +87,17 @@ client explicitly requests `server_info` and waits to validate the exact require
 before sending its login/register request. It revalidates the repeated fields in
 `auth_ok`, and match setup independently checks the repeated match/P2P versions.
 
+Match protocol 3 also uses the control connection as the final two-client start
+barrier. A client queues `match_started` only after its authenticated P2P state is
+fully synchronized and frame zero has been restored; it marks READY as sent only
+when the entire JSON line is accepted by `net_send`. The server commits after both
+current match members report READY, and the client enters GAME only after receiving
+the exact-match `committed:1` response. Pre-commit cancellation uses `match_abort`,
+never a fabricated loss report. Every start, abort, and result message carries a
+strict positive current `match_id`; stale IDs are rejected without mutating either
+match. If P2P fails after frame-zero preparation/READY, setup is aborted rather than
+retrying a socket with stale readiness state.
+
 ## Connect and authentication deadlines
 
 The main-thread lifecycle has two independent wrap-safe wall-clock deadlines:
@@ -98,6 +109,15 @@ The main-thread lifecycle has two independent wrap-safe wall-clock deadlines:
 DNS resolution still happens inside `net_connect`, so the connect deadline cannot bound a
 blocking system resolver call. Once a socket exists, no update-count or frame-rate
 assumption affects either deadline.
+
+The Node server also has a 120-second receive-idle socket timeout. After successful
+authentication, the client atomically queues a flat `ping` with an integer sequence every
+30 seconds from the ordinary control pump, including during gameplay and audited menus.
+The server echoes `pong`; the client validates its positive integer sequence and records
+only the latest matching acknowledgement. Heartbeat state and deadlines reset on every
+connect/disconnect. A queue-backpressured ping is not marked sent and is retried on the
+next pump. This prevents a quiet hub or legitimate match longer than two minutes from
+becoming a server-side disconnect/forfeit; it is not a gameplay latency measurement.
 
 Authentication source JSON and escape buffers are erased immediately after atomic send
 acceptance. The password owner remains live only while a response is pending. Connect

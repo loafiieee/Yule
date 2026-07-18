@@ -24,7 +24,6 @@
         "name": "External green animation",
         "native_glyph": "x",
         "sprite_sheet": "tiles.png",
-        "asset_sha256": "bc7203e68fdf244e563bf859e7ffc879359b4917c57cb1cc81455fc55ecfcf94",
         "cell_w": 16,
         "cell_h": 16,
         "padding": 0,

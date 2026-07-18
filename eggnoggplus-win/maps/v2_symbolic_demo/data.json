@@ -27,7 +27,7 @@
         "cell_w": 16,
         "cell_h": 16,
         "padding": 0,
-        "sprite_index": 4,
+        "sprite_index": 2,
         "frame_count": 3,
         "frame_ticks": 8,
         "animation": "ping_pong",

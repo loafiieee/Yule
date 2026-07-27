@@ -1,31 +1,37 @@
 ; eggnogg-map/v2
-; $ = external animated atlas tile
+; the whole map inherits tiles.png: cells 0..127 are the native-layout prefix
+; and appended cells 128.. are available to explicit custom tiles
+; $ = explicit animated tile inheriting that map-level atlas/grid
 ; % = transformed built-in tile
 ; & = intentionally unresolved sprite, so the native x fallback must draw
+; @ = ordinary, unlisted vanilla terrain reskinned automatically by the map atlas
+; > = solid spring pad over its native floor underlay, using appended cell 128
+;     (map.lua flashes cell 129)
+; } = pass-through fan (map.lua accelerates and reverses in mirrored rooms)
 
 [center]
-"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
-"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
-"                                 "
-"       $$$$$     %%%%%           "
-"                                 "
-"       &&&&&     $$$$$           "
-"                                 "
-"    @@@@@@@@@@@@@@@@@@@@@@@@@    "
 "                                 "
 "                                 "
-"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"                                 "
+"   }}} $$$$$     %%%%%  Z  f     "
+"                           q     "
+"       &&&&&     $$$$$  `  u     "
+"                        e  x     "
+"    @@@@@@@@@@>@@@@@mm@@@@@@@    "
+"                                 "
+"                             >>  "
+"@@>>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 
 [outer]
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 "                                 "
-"  $  %  &       $  %  &          "
+"  $  %  &  }}}  $  %  &          "
 "                                 "
 "     $$$$$%%%&&&                 "
 "                                 "
-"    @@@@@@@@@@@@@@@@@@@@@@@@@    "
+"    @@@@@>>>>@@@@@@@@@@@@@@@@    "
 "                                 "
 "                                 "
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"

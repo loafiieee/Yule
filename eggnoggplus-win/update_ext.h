@@ -5,7 +5,7 @@
 
 /* This is the version of the injected framework, not the base game.  Release
  * manifests use dot-separated numeric versions (for example 1.12.3). */
-#define FRAMEWORK_VERSION "1.0"
+#define FRAMEWORK_VERSION "1.2"
 
 #define UPDATE_MAX_FILES 32
 #define UPDATE_MAX_PATH  240
@@ -27,6 +27,13 @@ typedef struct UpdateFileSpec {
     int overwrite;
 } UpdateFileSpec;
 
+typedef enum UpdateHelperResult {
+    UPDATE_HELPER_BLOCKED = 0,
+    UPDATE_HELPER_READY = 1,
+    UPDATE_HELPER_UPDATED = 2,
+    UPDATE_HELPER_ROLLED_BACK = 3
+} UpdateHelperResult;
+
 /* Starts a non-blocking channel check.  Safe to call more than once. */
 void update_ext_boot(void);
 
@@ -37,8 +44,9 @@ void update_ext_begin_check(void);
 
 /* Optional orderly shutdown hook.  Call this from normal application code,
  * never while the Windows loader lock is held (for example, not from DllMain).
- * A process exit is also safe: the on-disk transaction journal is recovered on
- * the next boot if the process exits during a swap. */
+ * A process exit is also safe: verified staging remains journaled for the
+ * one-shot updater helper, which waits for this game process to exit before
+ * applying or recovering it and relaunching the game. */
 void update_ext_shutdown(void);
 
 UpdateStatus update_ext_status(void);
@@ -57,6 +65,10 @@ void update_ext_begin_apply(void);
  * update a caller subsystem's live in-memory state. */
 int update_ext_config_set(const char* key, const char* value);
 
+/* Reads one config value under the same serialization as config writes.
+ * Returns 1 when the key exists and fits in out, otherwise 0. */
+int update_ext_config_get(const char* key, char* out, size_t cap);
+
 int update_ext_notice_active(void);
 void update_ext_dismiss_notice(void);
 
@@ -68,3 +80,14 @@ int update_json_get_string(const char* json, const char* key,
                            char* out, size_t cap);
 int update_json_scan_files(const char* json, UpdateFileSpec* files,
                            size_t file_cap, size_t* out_count);
+
+/* One-shot updater helper entry point. It applies a pristine staged V3
+ * transaction or recovers any interrupted V1/V2/V3 transaction under the
+ * installation mutex. The module containing this function must live in the
+ * installation root. It performs no network access and never launches a
+ * process. */
+UpdateHelperResult update_ext_helper_service(char* status, size_t status_cap);
+
+#ifdef UPDATE_EXT_HELPER_TEST
+int update_ext_helper_set_root_for_test(const char* root);
+#endif

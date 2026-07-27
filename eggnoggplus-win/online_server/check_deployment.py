@@ -9,9 +9,9 @@ import socket
 import sys
 
 
-REQUIRED_CONTROL_PROTOCOL = 2
+REQUIRED_CONTROL_PROTOCOL = 3
 REQUIRED_MATCH_PROTOCOL = 3
-REQUIRED_P2P_PROTOCOL = 16
+REQUIRED_P2P_PROTOCOL = 17
 MAX_REPLY_BYTES = 8192
 UDP_PROBE_SEQUENCE = 0x45504750
 
@@ -92,11 +92,13 @@ def main() -> int:
     require_exact_int(info, "match_protocol", REQUIRED_MATCH_PROTOCOL)
     require_exact_int(info, "p2p_protocol", REQUIRED_P2P_PROTOCOL)
     require_exact_int(info, "cap_p2p_auth", 1)
+    require_exact_int(info, "cap_social_controls", 1)
+    require_exact_int(info, "cap_private_rematch", 1)
     check_udp(args.host, args.port, args.timeout)
     print(
         f"OK {args.host}:{args.port}: control v{REQUIRED_CONTROL_PROTOCOL}, "
         f"match v{REQUIRED_MATCH_PROTOCOL}, P2P v{REQUIRED_P2P_PROTOCOL}, "
-        "packet authentication and UDP discovery available"
+        "packet authentication, social controls, private rematches, and UDP discovery available"
     )
     return 0
 

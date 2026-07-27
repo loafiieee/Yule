@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "map_script.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,6 +32,11 @@ typedef struct CustomMapContentView {
     int format_version;
     int source_room_count;
     int content_tile_count;
+    /* Empty/zero when tileset.sprite_sheet is not declared. External defaults
+     * use their qualified map sheet key and expose the validated grid count. */
+    char default_sheet_key[128];
+    int default_sheet_sprite_count;
+    int native_layout;
 } CustomMapContentView;
 
 /* Opens a generation-stable metadata view without retaining registry pointers.
@@ -37,6 +44,19 @@ typedef struct CustomMapContentView {
  * selector is invalid. A view is intended for one immediate map-generation
  * pass; view_cell returns -1 if a reload made it stale. */
 int custom_maps_content_view_open(int selector, CustomMapContentView* out_view);
+
+/* Copies metadata from the exact custom-map registry generation pinned by
+ * mapgen_init. It never polls the filesystem. Use this after live content
+ * binding when native-layout setup must match the installed room definitions.
+ * Returns 1 custom, 0 vanilla, -1 when no matching custom map is pinned. */
+int custom_maps_pinned_content_view(int selector,
+                                    CustomMapContentView* out_view);
+
+/* Reads the script identity from the exact registry generation pinned by
+ * mapgen_init. Returns 1 for a pinned custom selector (with zero meaning that
+ * the package has no map.lua), 0 for vanilla, and -1 when no matching custom
+ * map is pinned. This never polls or rebuilds the registry. */
+int custom_maps_pinned_script_id(int selector, uint64_t* out_script_id);
 
 /* Returns 1 for a symbolic content cell, 0 for an ordinary native cell, and
  * -1 for invalid coordinates or a stale/invalid view. Source room indices use
@@ -86,17 +106,43 @@ typedef struct CustomMapValidationSummary {
     int source_room_count;
     int content_tile_count;
     int content_cell_count;
+    char default_sheet_key[128];
+    int default_sheet_sprite_count;
+    int native_layout;
+    /* Conservative per-active-room audit of K, sword, and mine reset spawners.
+     * The supported executable has 15 allocatable thing slots after slot zero;
+     * two are reserved for players, so rooms containing unsafe K markers may
+     * never exceed 13 combined spawners. */
+    int max_native_room_spawns;
+    int native_room_spawn_limit;
+    int native_k_marker_count;
+    int has_script;
+    size_t script_size;
+    uint64_t script_id;
+    char script_full_path[260];
+    char script_sha256[65];
     int error_count;
     int warning_count;
 } CustomMapValidationSummary;
 
-/* Parser-only validation entry point used by tooling/tests. It never commits
- * content or touches engine memory. folder_path is the package directory. */
+/* Package validation entry point used by tooling/tests. It never commits
+ * content or touches engine memory. folder_path is the package directory and
+ * its optional direct map.lua is discovered and sandbox-validated for v2. */
 int custom_maps_validate_package_text(const char* folder_id,
                                       const char* folder_path,
                                       const char* json_text,
                                       const char* map_text,
                                       CustomMapValidationSummary* out_summary);
+
+/* Called only after the selected map's content bridge has finished binding.
+ * Vanilla maps and custom maps without map.lua deactivate any prior script.
+ * This does not rescan the filesystem; it uses the registry generation pinned
+ * by custom_maps_handle_mapgen_init for the live native room definitions. */
+int custom_maps_activate_script_for_selector(int selector,
+                                             const MapScriptHost* host,
+                                             char* err,
+                                             size_t err_cap);
+void custom_maps_deactivate_script(void);
 
 #ifdef __cplusplus
 }

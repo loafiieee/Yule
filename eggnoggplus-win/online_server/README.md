@@ -18,10 +18,38 @@ Main protocol is newline-delimited JSON over TCP. The server handles:
 - casual queue with loose matching
 - competitive queue with MMR range matching
 - friend requests and friend list snapshots
-- 5-minute friend challenges
+- persistent private block lists and per-friend challenge-notification mutes
+- server-derived friend presence for queues, match setup, and active gameplay
+- 5-minute friend challenges with an authoritative compatible-map picker
 - shared-map selection from each client's submitted map manifest
 - symmetric P2P candidate publication/hole-punch discovery; no relay fallback
-- one random 256-bit `p2p_auth_token` per match for GGPO UDP v16 packet MACs
+- one random 256-bit `p2p_auth_token` per match for GGPO UDP v17 packet MACs
+
+## Optional Discord LFG bridge
+
+The server can mirror genuinely waiting casual/competitive players to one configured
+Discord channel. It creates one embed per player, retires that exact post on leave, match,
+disconnect, queue change, or clean shutdown, and gives Discord only the public username
+and queue. Two link buttons enter the existing validated challenge or public-queue flow;
+there is no direct match/token link.
+
+The integration uses outbound Discord REST only and needs no npm dependency, Gateway
+connection, intents, command handler, or inbound public bot port. Its HTTPS link handoff
+runs on a separate loopback listener behind the deployment's TLS reverse proxy.
+
+```ini
+DISCORD_LFG_ENABLED=1
+DISCORD_LFG_BOT_TOKEN=secret
+DISCORD_LFG_CHANNEL_ID=123456789012345678
+DISCORD_LFG_PUBLIC_BASE_URL=https://play.example.com/yule
+LFG_REDIRECT_HOST=127.0.0.1
+LFG_REDIRECT_PORT=47880
+```
+
+Keep the token in a mode-`0600` service environment file. The public base must be HTTPS
+with the exact `/yule` path; proxy `/yule/` to the loopback redirect port. See
+`../DISCORD_LFG_BOT.md` for permissions, proxy configuration, privacy rules, failure
+behavior, and live acceptance.
 
 Default bind is `0.0.0.0:47778` for TCP and UDP. For public internet play, the
 host must allow inbound TCP `47778` and inbound UDP `47778`; set `UDP_PORT` or
@@ -42,11 +70,12 @@ and send HELLOs symmetrically.
 ## Deployment compatibility check
 
 The server sends an unauthenticated, flat `server_info` welcome on every TCP
-connection and answers an explicit `{"type":"server_info"}` request. Match
-protocol 3 advertises:
+connection and answers an explicit `{"type":"server_info"}` request. Control
+protocol 3 adds the counted friend-challenge map-intersection stream and
+server-revalidated selected map. Match protocol 3 advertises:
 
 ```json
-{"type":"server_info","control_protocol":2,"match_protocol":3,"p2p_protocol":16,"cap_p2p_auth":1}
+{"type":"server_info","control_protocol":3,"match_protocol":3,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1}
 ```
 
 The same scalar version/capability fields are repeated in `auth_ok`, and each
@@ -59,6 +88,56 @@ its login/register message until every required capability matches. It validates
 repeated `auth_ok` and `match_found` fields as well, so an old or partially restarted
 deployment is rejected before queueing and again before peer setup.
 
+`cap_social_controls:1` is required by the current client. A block removes the mutual
+friendship, both pending request directions, and challenges in either direction. Either
+player's block makes new requests/challenges unavailable and prevents the pair from being
+selected in casual or competitive matchmaking. The blocker's snapshot contains only the
+blocked username—never that account's Elo or online state—and the other user receives no
+explicit block reason. Unblocking does not restore friendship.
+
+Mute is a private per-friend notification preference. Muted challenges remain in the
+Friends inbox and can still be accepted, but carry `muted:1` so the receiving client does
+not create a pop-up toast. Both lists are normalized and persisted in `users.json`.
+
+`cap_private_rematch:1` is also required by the current client. After a committed
+confirmed result, the server retains a 45-second exact-match offer only while both players
+remain connected, idle, and mutually unblocked. `rematch_request` is a vote, not an
+immediate match: the first player receives `rematch_waiting`, the opponent receives
+`rematch_offer`, and only the second explicit vote produces `rematch_starting` plus a fresh
+`match_found`. The normal matcher revalidates the exact previous map. A rematch is private
+and unranked even when the prior game was competitive; it never rejoins a public queue or
+changes Elo. `REMATCH_TTL_MS` may override the default for testing/deployment and is clamped
+to 100 ms through five minutes.
+
+Queueing, blocking, disconnecting, declining, expiry, or entering another match closes the
+offer for both participants. Terminal-result replay recomputes remaining time and never
+reopens a closed offer. Every rematch message carries the prior positive `match_id`; a
+fresh rematch receives new match, rendezvous, packet-auth, role, and seed data.
+
+Friend `presence` is derived only from authenticated server state: `offline`, `online`,
+`queue_casual`, `queue_competitive`, `match_setup`, or `in_match`. Clients cannot publish
+an arbitrary presence string. Friends receive refreshed snapshots at every queue and match
+lifecycle boundary. A busy friend cannot be challenged, and blocked-user entries continue
+to omit all presence.
+
+P2P v17 is a wire-breaking client requirement, even though the control server only
+advertises the number and relays match metadata. Its authenticated INPUT packet adds a
+monotonic cumulative input ACK, a 512-bit selective input ACK, selective resend within 64
+input slots, a generation-scoped cumulative checksum-comparison ACK, and the repeated
+correction phase/snapshot/resume tuple used by the bilateral replay/release barrier.
+Checksums send the live edge first and then retry from the oldest unacknowledged frame;
+history retirement requires comparison proof from both peers. The fixed packet is 1,292
+bytes and is compile-time limited to at most 1,400 bytes. A v16 client must therefore be
+rejected instead of being matched with a v17 client.
+
+Correction coordination and canonical x87/MXCSR tick controls are client runtime features;
+the server neither performs rollback nor validates game-state blobs. The standalone
+canonical rollback envelope in the client is foundation-only. Production still needs its
+native typed capture/reconstruction/transaction adapter and remaining checksum-field audit.
+
+The checked-out server source advertises v17, but the live public service still advertises
+v16. Its coordinated replacement, restart, and TCP+UDP deployment preflight are pending.
+
 Match protocol 3 adds a server-authoritative gameplay-start barrier. After the
 authenticated P2P link, authoritative state, and neutral frame zero are fully
 ready, each client sends `match_started`. The server broadcasts
@@ -69,12 +148,19 @@ for both players without a winner, result screen, or Elo change. After commit,
 an abort/disconnect is a forfeit. Normal completion is settled only when both
 clients report the same winner; a conflicting pair or an unconfirmed single
 report times out as a no-contest and cannot change Elo.
+Deliberately leaving committed gameplay uses the forfeit path, so the connected
+opponent is awarded the win without needing a second normal result report. A
+late P2P-disconnect report that races that terminal result replays the client's
+exact most-recent terminal message; it is idempotent and does not produce an
+`invalid or stale match result` error.
 `MATCH_REPORT_TIMEOUT_MS` controls that confirmation window and defaults to
 10 seconds; the legacy `MATCH_SINGLE_REPORT_GRACE_MS` environment name remains
 an override alias for deployment compatibility, but no longer awards a lone
 report.
-Every lifecycle message requires the exact positive current `match_id`, so a
-delayed message from an older match cannot cancel or finish a newer one.
+Every active lifecycle message requires the exact positive current `match_id`.
+Only a connected participant's single most-recent terminal result may be
+replayed, and a new match clears that replay record, so a delayed message from
+an older match cannot cancel or finish a newer one.
 
 The server closes a control socket after 120 seconds without client traffic.
 Authenticated clients send a small JSON `ping` every 30 seconds and accept the
@@ -88,6 +174,8 @@ arguments), or name another host and port:
 python check_deployment.py
 python check_deployment.py 127.0.0.1 47778
 python ..\tests\online_server_match_protocol_test.py
+python ..\tests\discord_lfg_server_static_test.py
+npm test
 ```
 
 The probe validates both the TCP protocol/capability response and the UDP
@@ -119,6 +207,6 @@ peer session.
 
 The TCP control socket is currently raw newline-delimited JSON. It has no TLS or
 server certificate validation, so passwords and match tokens remain exposed to
-an on-path attacker even though v16 rejects off-path UDP spoofing. Put the
+an on-path attacker even though v17 rejects off-path UDP spoofing. Put the
 service behind a future authenticated TLS control endpoint before treating it
 as production-secure.

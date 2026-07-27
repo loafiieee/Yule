@@ -25,7 +25,7 @@ static void check_invalid(const char* json) {
 static void test_valid_object_and_getters(void) {
     static const char json[] =
         "{\"type\":\"auth_ok\",\"username\":\"player_1\",\"elo\":1000,"
-        "\"control_protocol\":2,\"match_protocol\":2,\"p2p_protocol\":16,"
+        "\"control_protocol\":2,\"match_protocol\":2,\"p2p_protocol\":17,"
         "\"cap_p2p_auth\":1,"
         "\"ok\":true,\"disabled\":false,\"none\":null}";
     char text[32];
@@ -46,7 +46,7 @@ static void test_valid_object_and_getters(void) {
     CHECK(value == 2);
     CHECK(online_control_json_get_int(json, "p2p_protocol", &value) ==
           ONLINE_CONTROL_JSON_OK);
-    CHECK(value == 16);
+    CHECK(value == 17);
     CHECK(online_control_json_get_int(json, "cap_p2p_auth", &value) ==
           ONLINE_CONTROL_JSON_OK);
     CHECK(value == 1);

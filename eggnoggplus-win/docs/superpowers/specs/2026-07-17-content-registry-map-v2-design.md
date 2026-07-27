@@ -1,8 +1,8 @@
 # Declarative Content Registry and Custom Map V2
 
 **Date:** 2026-07-17  
-**Status:** Registry, parser, atlas, native per-cell binding, and native draw integration implemented; in-game visual QA remains manual  
-**Primary code:** `content_registry.c/.h`, `content_tiles.c/.h`, `content_bridge.c/.h`, `custom_maps.c/.h`, `lua_manager.c/.h`, `hooks.c`
+**Status:** Registry, parser, inherited map-level sheets, full native-layout map reskinning, symbolic overrides, collision/legacy forces, atlas, native per-cell binding/draw, and the separate bounded map-script follow-on are implemented; in-game visual/physics QA remains manual
+**Primary code:** `content_registry.c/.h`, `content_tiles.c/.h`, `content_bridge.c/.h`, `custom_maps.c/.h`, `map_script.c/.h`, `lua_manager.c/.h`, `hooks.c`
 
 ## Purpose
 
@@ -10,27 +10,43 @@ This subsystem gives mods and map packages a common, deterministic way to name a
 validate custom tile definitions. Custom-map V2 adds per-map symbolic tilesets while
 remaining compatible with the V1 fixed-room format.
 
-The safety rule is fundamental: a custom tile always declares a validated vanilla
-`native_glyph`. The engine receives that glyph for collision and update behavior. A
-custom visual may replace the vanilla sprite only when the visual bridge can resolve it;
-otherwise gameplay continues with the native fallback.
+The safety rule is fundamental: every custom tile resolves to a validated, single-cell
+vanilla behavior glyph. Authors may select that glyph directly with `native_glyph` or
+use the `solid`, `pass_through`, and `hazard` presets. The engine receives the resolved
+glyph for collision/update behavior. A custom visual may replace the vanilla sprite only
+when the visual bridge can resolve it; otherwise gameplay continues with the native
+fallback.
 
-Arbitrary native callbacks, custom collision code, and new weapon behavior are not part
-of this slice.
+Deterministic additive/set velocity fields remain a backwards-compatible part of this
+declarative slice. V2 map-local scripting was implemented afterward as a separate,
+bounded layer described in `2026-07-18-map-local-lua-design.md`; raw native callbacks,
+self-propelled entity logic, and new weapon behavior are still not exposed.
 
 ## Implemented architecture
 
-The implementation has five layers:
+The declarative implementation has five layers:
 
 1. `content_registry` owns normalized, immutable tile definitions and atomic owner
    replacement.
 2. `mod.content` exposes owner-scoped registry transactions to Lua mods.
 3. Custom-map V2 parses map-local symbols and assets into `map.<id>` owner transactions.
 4. `content_tiles` stores compact per-cell bindings and computes deterministic render
-   records without owning or altering the native tilemap.
+   records and force interactions without owning or altering the native tilemap.
 5. `content_bridge` maps source-room metadata onto the completed native map and submits
    resolved custom visuals from the native tile draw action, with vanilla fallback on
    every failure.
+
+The hook layer also owns the narrower whole-map presentation bridge. For a validated
+`native_layout` sheet it temporarily replaces the native `_tiles` sprite-record base
+only around synchronous mode-2 tile drawing, then restores it. Unlisted glyphs retain
+their original action/collision/update code while resolving the same cell offset from
+the map atlas.
+
+The follow-on `map_script` layer consumes exact-cell or binding-union contacts and
+optional sprite overrides without giving Lua native pointers. It distinguishes player,
+dead-body, sword, and the verified K-spawned point-hazard profiles; its contact kind,
+scope, lifecycle, and behavior state are embedded in rollback rather than added to the
+declarative registry schema.
 
 Registry definitions deliberately store a symbolic sprite-sheet key instead of a
 process-local atlas sprite id. The atlas bridge rebuilds a key-to-range cache whenever
@@ -84,15 +100,23 @@ editor saves no longer retain every historical registry until process exit.
 Every definition contains:
 
 - normalized owner, local id, qualified key, and display name;
-- one safe `native_glyph` for engine behavior;
+- a collision preset plus its resolved safe `native_glyph` for engine behavior;
+- optional deterministic per-axis force values, mode, and absolute speed clamps;
 - symbolic `sprite_sheet`, first `sprite_index`, animation parameters, and layer;
 - transform (`offset`, `scale`, angle), RGBA tint, and visual flags; and
 - SHA-256 identities for the asset and canonical definition.
 
 Supported animation modes are `loop`, `ping_pong`, and `once`. Animation is selected from
 a deterministic tick. `random_phase` derives a stable phase from the cell rather than a
-runtime RNG draw. `mirror_with_room` affects visual horizontal flip only; it does not
-alter the native behavior glyph.
+runtime RNG draw. `mirror_with_room` affects visual horizontal flip and reverses authored
+`force_x` on the mirrored-right copy; it does not alter the native behavior glyph.
+`native_visual: underlay` is a draw-only flag: the generated native action renders
+first. If that action returns zero, the hook reproduces `map_draw`'s exact generic
+tile-info/frame/flip fallback while the selected native-layout sheet and action turtle
+state are still live, then reports handled so the outer renderer cannot draw a second
+vanilla-sheet copy. Its complete turtle state is restored before the custom sprite
+renders over it. The default `replace` behavior continues to suppress the native draw
+after a custom sprite succeeds.
 
 Validation is fail-closed:
 
@@ -104,10 +128,17 @@ Validation is fail-closed:
 - scales: finite, non-zero values in `-64..64`
 - angle: finite value in `-360,000..360,000`
 - tint: exactly four finite channels in `0..1`
-- flags: only `mirror_with_room` and `random_phase`
+- flags: only `mirror_with_room`, `random_phase`, and the draw-only
+  `native_visual: underlay`
+- collision: `native`, `solid`, `pass_through`, or `hazard`
+- force mode: `add` or `set`; authored components are finite `-64..64`
+- optional absolute per-axis speed clamps: finite `0..64` (`0` means no clamp)
 
-The safe glyph whitelist contains only one-cell native behaviors. Blank/no-op glyphs,
-waterfall/back-fill generators, and other multi-cell glyphs are rejected.
+The safe glyph whitelist contains only bounded one-cell native behaviors.
+Blank/no-op glyphs, waterfall/back-fill generators, and other multi-cell glyphs are
+rejected. `K` is also rejected: although its marker is one cell, room reset performs an
+unchecked allocation from the fixed shared native thing pool. It cannot become an
+explicit custom behavior until map validation enforces a strict per-room spawn budget.
 
 The definition SHA-256 includes normalized identity, behavior, sheet key, asset digest,
 animation, transform, tint, layer, and flags. Registry fingerprinting hashes definitions
@@ -147,22 +178,92 @@ rules, room overrides, ambience, and appearance fields. It adds:
 
 ```jsonc
 "tileset": {
+  "sprite_sheet": "terrain.png",
+  "cell_w": 16,
+  "cell_h": 16,
+  "padding": 0,
   "tiles": [{
-    "id": "moss",
+    "id": "wind",
     "symbol": "$",
-    "native_glyph": "x",
-    "sprite_sheet": "terrain.png",
+    "collision": "pass_through",
+    "force_mode": "add",
+    "force_x": 0.125,
+    "max_speed_x": 4,
     // Optional integrity pin. Normal map packages can omit this.
-    "asset_sha256": "<64 lowercase or uppercase hex characters>",
     "sprite_index": 0
   }]
 }
 ```
 
-`symbol` is exactly one printable non-vanilla ASCII byte and must be unique within the
-package. During room parsing, the loader replaces the symbol with `native_glyph` and
-stores a compact alias beside the source cell. V1 packages continue through their prior
-path and cannot declare `tileset`.
+`sprite_sheet`, optional `asset_sha256`, `cell_w`, `cell_h`, and `padding` at
+the `tileset` level are inherited by tile definitions. A tile may name another
+sheet/grid as an explicit exception. A tile needs its own `sprite_sheet` only
+when the map default is absent.
+
+`native_layout: true` turns an external default into the complete map skin. Its
+declared grid must contain at least 128 sprites; those first 128 row-major cells
+form the native `data/tiles.png` prefix. Extra cells are intentionally allowed
+for explicit custom tiles, and image size, cell size, padding, and grid shape are
+otherwise unrestricted within the normal external-sheet bounds. It may be used
+with an empty/absent `tiles` array; the default sheet is still registered, packed,
+hashed into package identity, and exposed by the generation-pinned content view.
+A built-in default, fewer than 128 cells, missing file, or non-boolean flag
+rejects the package. Without this flag, the map-level sheet is only an authoring
+default for listed symbolic tiles.
+
+`symbol` is exactly one printable ASCII byte (`0x20..0x7e`) and must be unique within the
+package. This deliberately includes space and every vanilla glyph. Map-local alias
+lookup runs before vanilla parsing, so an override of `G`, `L`, `T`, `~`, or another
+normally expanding/back-filling source symbol collapses that occurrence to the chosen
+single-cell behavior instead of running its original expansion. The source symbol's
+footprint is irrelevant; only the effective `native_glyph` must be safe and single-cell.
+During room parsing, the loader emits the effective behavior glyph and stores a compact
+alias beside the source cell. V1 packages continue through their prior path and cannot
+declare `tileset`.
+
+### Declarative collision and force behavior
+
+`collision` defaults to `native`:
+
+- `native` emits `native_glyph`. For a safe single-cell builtin-symbol override, an
+  omitted `native_glyph` defaults to the source symbol. Space, multi-cell, no-op, and
+  back-filling source symbols require an explicit safe `native_glyph`.
+- `solid` emits vanilla `@` auto-terrain behavior.
+- `pass_through` emits vanilla `x` open/decorative behavior.
+- `hazard` emits vanilla `X` spike-hazard behavior.
+
+For a preset, `native_glyph` should be omitted; if supplied, it must exactly equal the
+preset glyph. These presets use the engine's existing tile property/action tables, so
+players and native things receive native solid/hazard behavior without framework
+collision code.
+
+`force_x` and `force_y` opt their respective axes into a deterministic velocity field.
+`force_mode: "add"` (default) adds the component once per simulation tick;
+`force_mode: "set"` replaces only explicitly authored axes without destroying the
+other component. `max_speed_x` and
+`max_speed_y` optionally clamp absolute velocity after the force. Values participate in
+definition SHA-256, registry fingerprints, raw package identity, hot reload, rollback
+replay, and online map identity.
+
+These legacy declarative values are raw native velocity units and are therefore
+unsuitable for a spring shared by unlike object kinds: players/dead bodies use gravity
+`0.15`, while swords and the K-spawned point hazard use `0.075`. The separate `map.lua`
+layer can select living players, swords, and hazards; choose calibrated targets (`-4.0`
+and `-2.8`, respectively, for an approximately 53-pixel rise); and install an eight-tick
+rollback-owned `min_vy` limit. The demo deliberately excludes dead bodies so repeated
+spring entry cannot prevent native grounded respawn. The limit remains active after
+shallow contact ends and catches a living player's delayed native kick impulse. The JSON
+example is consequently a gentle additive horizontal field rather than a misleading
+universal vertical launch.
+
+Runtime lookup matches native `ROUND(coord / tile_size)` semantics and rejects negative,
+non-finite, or out-of-map coordinates before integer conversion. Players sample `(x,y)`
+for pass-through overlap plus the half-tile foot boundary used after native solid
+collision restores their center outside the cell. Static disassembly verifies type-2
+swords use center-point map collision, so they receive the center sample only. Other
+native records in the fixed 16-slot thing pool are skipped until their bounds are proven.
+Duplicate hits on one exact cell apply once. The same post-native-tick path runs offline,
+local/loopback, GGPO live play, and rollback replay.
 
 Within `tileset` and each tile object, unknown keys are errors. Duplicate JSON object
 keys, embedded NUL escapes, fractional or out-of-range integers, duplicate symbols/ids,
@@ -192,9 +293,16 @@ and triggers hot reload. Built-in sheets cannot declare `asset_sha256`.
 External-sheet geometry is declared on the tile reference. `cell_w` and `cell_h`
 default to 16 and are limited to `1..512`; `padding` defaults to 0 and is limited to
 `0..64`. These fields are forbidden for `builtin:*` sheets. A valid grid may contain at
-most 65,535 sprites, and `sprite_index + frame_count` must remain within that grid.
+most 8,192 sprites, and `sprite_index + frame_count` must remain within that grid.
 Sheet keys incorporate the asset digest and geometry, so the same file packed with
 different cell geometry cannot alias one atlas range.
+
+The native engine has one fixed 8,192-record sprite store and its allocator's
+failure is not safely handled by the original sheet packer. Before calling that
+packer, the bridge decodes the PNG, verifies the whole declared grid, removes
+inter-cell padding into a tight temporary image, and rejects any sheet that does
+not fit the remaining global capacity. The original loader's fifth integer is a
+sprite-count limit rather than gutter padding, so it is never used as padding.
 
 `custom_maps_content_sheet_for_key` repeats the non-reparse, PNG-header, and SHA-256
 checks against the runtime digest captured during the scan before exposing a resolved
@@ -245,6 +353,9 @@ Implemented now:
 
 - V1/V2 parsing and validation;
 - symbolic-cell substitution to native behavior;
+- whole-map override precedence for every printable source symbol;
+- native collision presets and deterministic per-axis force fields for players and
+  verified type-2 swords across live and replay ticks;
 - owner transactions and atomic multi-map hot reload;
 - deterministic definition and registry hashes;
 - compact cell metadata and generation-aware re-resolution in `content_tiles`;
@@ -255,7 +366,8 @@ Implemented now:
 - symbolic map-sheet resolution to the current atlas base/count range;
 - exact generated-map cell binding for center, left, and mirrored-right rooms; and
 - custom sprite submission from `tile_action_ex`, including deterministic animation,
-  relative transform/tint composition, state restoration, and native fallback.
+  relative transform/tint composition, optional native underlay, state restoration,
+  and a no-double-draw native fallback.
 
 The remaining boundary is manual runtime verification against the supported game
 executable: visually inspect a V2 package using built-in and external sheets on center,
@@ -263,7 +375,8 @@ left, and mirrored-right rooms, then force a missing/changed sheet to confirm th
 glyph remains visible. No automated test can execute the fixed-address native engine in
 the unit-test process.
 
-Only V2 map symbolic cells are currently bound into a live tilemap. Mod-owned
+Only V2 map-local bound cells (new symbols and vanilla-symbol overrides) are currently
+bound into a live tilemap. Mod-owned
 `mod.content` definitions share the same validated registry/resolver, but a general
 runtime placement/editing API is future work.
 
@@ -280,6 +393,9 @@ runtime placement/editing API is future work.
   superseded, never-applied generations are reclaimed immediately.
 - A failed resolve, turtle transform, or batch submission restores the full turtle state
   and returns control to `tile_action_ex`/`map_draw` fallback.
+- A missing/stale whole-map sheet skips the native base swap; the original `_tiles`
+  pointer remains installed. A successful native-layout draw restores that pointer
+  immediately after the native action.
 - Invalid or changed map assets reject reload or fail visual resolution without changing
   native collision behavior.
 
@@ -288,23 +404,43 @@ runtime placement/editing API is future work.
 Automated coverage is in:
 
 - `tests/content_registry_test.c`: key/glyph validation, owner replacement/removal,
-  transaction and batch atomicity, stable fingerprints, numeric bounds, SHA-256, and
-  explicit transparent tint;
+  transaction and batch atomicity, collision preset resolution, force validation,
+  behavior-sensitive fingerprints, numeric bounds, SHA-256, and transparent tint;
 - `tests/content_tiles_test.c`: cell binding, native-mode filtering, animation sequence,
-  mirroring, transforms, generation refresh, and owner removal fallback; and
+  transforms, finite coordinate guards, engine-matching nonnegative truncate/floor cell
+  lookup and exact boundary coverage, mirrored
+  force direction, add/set/clamp semantics, generation refresh, and owner fallback; and
+- `tests/content_force_hooks_static_test.py`: all three native tick owners, post-update
+  ordering, player center/foot contact, sword center-only declarative contact,
+  bounded 16-slot filtering, and verified K-hazard admission to map sensors without
+  silently broadening the legacy declarative force-field policy; and
+- `tests/map_tileset_hooks_static_test.py`: generation-pinned map metadata, draw-time
+  atlas resolution, explicit-definition precedence, native base replacement, and
+  synchronous restore; and
+- `tests/lua_content_native_visual_static_test.py`: strict mod-registry
+  `native_visual` parsing, flag mapping, and normalized query output; and
 - `tests/content_bridge_test.c`: exact center/left/right generated-room mapping,
   fail-closed partial binding, native-batch layer semantics, deterministic frame
   resolution, relative transform/tint composition, byte-exact 96-byte turtle restore,
   and resolver/transform/batch fallback; and
 - `tests/custom_maps_v2_test.c`: V1 compatibility, required/overlong stable V2 ids,
   symbolic cells, duplicate/unknown key failures, embedded NUL and huge-number
-  rejection, external asset hash checks, grid geometry, sprite-range bounds, and
-  validation of the checked-in `maps/v2_symbolic_demo` runtime fixture.
+  rejection, inherited defaults/per-tile exceptions, zero-definition native layouts,
+  native-prefix minimum/flexible grid types, external asset hash checks, grid geometry,
+  sprite-range bounds, and validation of the checked-in
+  `maps/v2_symbolic_demo` runtime fixture.
 
 `tests/run_v2_map_test.ps1` is the non-developer entry point for that suite. The
 runtime fixture deliberately covers a map-owned external atlas tile, a transformed
-built-in tile in the second native layer bank, deterministic animation, mirrored-room
-rendering, and a deliberately unresolvable sprite that must use its native fallback.
+built-in tile in the second native layer bank, unlisted native `@` terrain reskinned by
+the complete per-map atlas, solid custom cells,
+scripted spring/mirrored-fan behavior, temporary per-cell sprites with
+rollback-owned post-crop render offsets, deterministic animation, fixed-point
+full-width/shallow spring and full-cell fan sensors, living-player/sword/hazard
+equal-height spring calibration, dead-body exclusion for native respawn, and
+lifecycle-safe temporary velocity limits that survive contact exit,
+mine-style native terrain underlay, mirrored-room rendering, and a deliberately
+unresolvable sprite that must use its native fallback.
 `MAP_FORMAT.md` defines the exact PLAY/map-selector pass, expected log lines, safe tint
 hot reload, and invalid-layer last-known-good test.
 
@@ -314,7 +450,7 @@ clients comparing the same registry fingerprint.
 
 ## Remaining out of scope
 
-- Custom collision/update callbacks or executable map scripts.
+- Raw native collision/update callbacks and moving/self-propelled custom entities.
 - More weapon types and generalized custom entities.
 - General live placement/editing of mod-owned tile definitions outside V2 map packages.
 - Variable room dimensions or arbitrary room topology.

@@ -76,7 +76,7 @@ scale are validated before drawing. Valid large display scales are not artificia
 capped. If validation fails, the built-in path draws nothing. It must
 not restore the fake rectangle cursor or silently fall back to a different default.
 
-If online background capture is unavailable, the hub/result renderer may ask native
+If online background capture is unavailable, the hub renderer may ask native
 `main_draw` for a background. The shared helper temporarily sets the native mouse timeout
 to zero only around that fallback call and restores it afterward, preventing the fallback
 from drawing a cursor underneath the final framework cursor.
@@ -84,7 +84,7 @@ from drawing a cursor underneath the final framework cursor.
 ## Built-in online ordering
 
 Online drawing is centralized in `hooks_online_cursor_on_pre_swap`. Its predicate covers
-the online hub/result states and the portion of an active result/challenge overlay under
+the online hub state and the portion of an active result/challenge overlay under
 the mouse. Native menus and Lua custom states already drew a cursor earlier in the frame;
 outside a late overlay that cursor remains visible, so drawing it again would only darken
 the native shadow/antialiased edge. When the mouse overlaps a late panel, the final pass
@@ -147,7 +147,7 @@ be resolved; that fallback is a mod-authoring API behavior, not a built-in onlin
 - native `_misc + 0xc4` evidence from the checked Ghidra export;
 - removal of the old scale, white tint, manual offset, and direct online sprite plot;
 - shared native behavior for online, automatic custom-state, and no-option Lua cursors;
-- one online call covering hub/result states and mouse-over result/challenge overlays;
+- one online call covering the hub state and mouse-over result/challenge overlays;
 - native-background mouse suppression and last-rendered-overlay latches; and
 - final ordering after all other framework pre-swap renderers.
 
@@ -158,7 +158,7 @@ cursor in the same build:
 - verify the black shadow and red-to-yellow pulse continue over time;
 - verify the hotspot under slow movement and clicking at all window/DPI combinations;
 - leave the mouse idle and confirm framework screens retain an always-visible cursor;
-- inspect login, Settings, Friends, queue/match cards, Game Over, and challenge/result
+- inspect login, Settings, Friends, queue/match cards, and challenge/result
   toasts for one topmost cursor with no stale frame;
 - test a `data/misc.png` replacement pack; and
 - test Lua custom states with automatic, no-option explicit, disabled, and configured

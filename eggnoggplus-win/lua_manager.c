@@ -21,13 +21,16 @@
 #include "texture_ext.h"
 #include "custom_maps.h"
 #include "content_registry.h"
+#include "map_script.h"
 #include "ggpo_net.h"
 #include "cursor_ext.h"
+#include "bytebeat_ext.h"
 
 static lua_State *L = NULL;
 
 typedef struct SDL_RWops SDL_RWops;
 extern SDL_RWops* SDL_RWFromFile(const char* file, const char* mode);
+extern SDL_RWops* SDL_RWFromConstMem(const void* mem, int size);
 extern const char* SDL_GetError(void);
 
 void luna_force_crash_report(unsigned int exit_code);
@@ -71,7 +74,7 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_ATLAS_GET               0x4013E0u
 #define ADDR_ATLAS_UPLOAD            0x401480u
 #define ADDR_ATLAS_EXIT              0x402560u
-#define ADDR_ATLAS_LOAD_SPRITESHEET  0x4023A0u
+#define ADDR_ATLAS_ADD_SPRITESHEET_FROM_RGBA 0x402330u
 #define ADDR_SPRITES_RESET           0x405D70u
 #define ADDR_LOAD_GFX                0x42FB00u
 #define ADDR_FREETYPE_ATLAS          0x45B4E0u
@@ -99,6 +102,9 @@ void luna_force_crash_report(unsigned int exit_code);
 #define AUDIO_MIX_MAX_VOLUME         128
 #define AUDIO_DEFAULT_CHANNELS       32
 #define AUDIO_CHANNELS_PER_MOD       8
+#define AUDIO_BYTEBEAT_CACHE_MAX     16
+#define AUDIO_BYTEBEAT_PCM_MAX_BYTES (4u * 1024u * 1024u)
+#define AUDIO_GENERATED_VOICE_MAX    32
 
 // Globals used by click/state-transition logic.
 #define ADDR_BTN_RESET_COUNTER     0x50E3A8u
@@ -141,13 +147,16 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_GAME_ACTIVE_ROOM      0x541E08u
 #define ADDR_LEADER                0x541E0Cu
 #define ADDR_CROWD_SOUND_LAST_TICK 0x541E40u
-/* Five more sfx debounce timers packed into the checksummed transient region.
- * All are wall-clock (_mad_ticks) stamps, so they diverge between peers and
- * shift when sound is toggled -> false "changed=transient" desyncs. Verified
- * via ghidra _last_.* symbols. _B stops at 12 bytes, BEFORE 0x541F04
- * (_danger_count, which IS gameplay and must stay in the checksum). */
-#define ADDR_SOUND_DEDUP_TIMERS_A  0x541E10u  /* _last_.15333 (sword-block), _last_.14917 (creepy) */
-#define ADDR_SOUND_DEDUP_TIMERS_B  0x541EF8u  /* _last_.15487 (sword_ching), _last_.15039, _last_.14573 (do_cheer) */
+/* Sound/crowd debounce stamps packed into the checksummed transient region.
+ * These are presentation-only _mad_ticks values, so retain neither them nor
+ * the presentation state they rate-limit in rollback checksums. 0x541EFC is
+ * deliberately absent: _mine_anim compares that stamp before changing the
+ * mine tile and camera shake, so it is authoritative simulation state. The
+ * final masked stamp ends before 0x541F04 (_danger_count, also gameplay). */
+#define ADDR_SOUND_DEDUP_TIMERS_A       0x541E10u  /* sword-block, creepy */
+#define ADDR_SOUND_DEDUP_SWORD_CHING    0x541EF8u
+#define ADDR_MINE_ANIM_LAST_TICK        0x541EFCu
+#define ADDR_CROWD_CHEER_LAST_TICK      0x541F00u
 #define ADDR_WATERFALL_FX          0x541E44u
 #define ADDR_CHANT_STEP            0x541F60u
 #define ADDR_CHANT_TIMER           0x541F64u
@@ -246,7 +255,7 @@ typedef int   (__cdecl *fn_sprite_count_t)(void);
 typedef int   (__cdecl *fn_atlas_get_t)(int);
 typedef int   (__cdecl *fn_atlas_upload_t)(int, int, int);
 typedef void  (__cdecl *fn_atlas_exit_t)(void);
-typedef int   (__cdecl *fn_atlas_load_spritesheet_t)(int, int*, int, int, int, uint32_t, char*);
+typedef int   (__cdecl *fn_atlas_add_spritesheet_from_rgba_t)(int, int, int, int, uint32_t, int*);
 typedef void  (__cdecl *fn_sprites_reset_t)(void);
 typedef int   (__cdecl *fn_load_gfx_t)(void);
 typedef unsigned char* (__cdecl *fn_stbi_load_t)(const char*, int*, int*, int*, int);
@@ -314,7 +323,8 @@ static fn_sprite_count_t      p_sprite_count      = (fn_sprite_count_t)(uintptr_
 static fn_atlas_get_t         p_atlas_get         = (fn_atlas_get_t)(uintptr_t)ADDR_ATLAS_GET;
 static fn_atlas_upload_t      p_atlas_upload      = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
 static fn_atlas_exit_t        p_atlas_exit        = (fn_atlas_exit_t)(uintptr_t)ADDR_ATLAS_EXIT;
-static fn_atlas_load_spritesheet_t p_atlas_load_spritesheet = (fn_atlas_load_spritesheet_t)(uintptr_t)ADDR_ATLAS_LOAD_SPRITESHEET;
+static fn_atlas_add_spritesheet_from_rgba_t p_atlas_add_spritesheet_from_rgba =
+    (fn_atlas_add_spritesheet_from_rgba_t)(uintptr_t)ADDR_ATLAS_ADD_SPRITESHEET_FROM_RGBA;
 static fn_sprites_reset_t     p_sprites_reset     = (fn_sprites_reset_t)(uintptr_t)ADDR_SPRITES_RESET;
 static fn_load_gfx_t          p_load_gfx          = (fn_load_gfx_t)(uintptr_t)ADDR_LOAD_GFX;
 static fn_stbi_load_t         p_stbi_load         = (fn_stbi_load_t)(uintptr_t)ADDR_STBI_LOAD;
@@ -413,6 +423,90 @@ static uint8_t* p_thing_info = (uint8_t*)(uintptr_t)ADDR_THING_INFO;
 static uint8_t* p_room_info_state = (uint8_t*)(uintptr_t)ADDR_ROOM_INFO;
 static uint8_t* p_particle_state = (uint8_t*)(uintptr_t)ADDR_PARTICLE_STATE;
 
+#ifdef EGGNOGGPLUS_SERIALIZER_TESTING
+int lua_manager_test_bind_native_state(void* base, size_t size,
+                                       char* err, size_t err_cap) {
+    const uintptr_t fixture_base = UINT32_C(0x00440000);
+    const size_t fixture_size = (size_t)(UINT32_C(0x0055c000) -
+                                         UINT32_C(0x00440000));
+    uint8_t* bytes = (uint8_t*)base;
+
+    if (!bytes || size < fixture_size) {
+        if (err && err_cap > 0) {
+            snprintf(err, err_cap, "%s", "native serializer fixture is too small");
+        }
+        return 0;
+    }
+
+#define BIND_NATIVE(pointer, address) \
+    (pointer) = (__typeof__(pointer))(void*)(bytes + \
+        ((uintptr_t)(address) - fixture_base))
+    BIND_NATIVE(p_map_selector, ADDR_MAP_SELECTOR);
+    BIND_NATIVE(p_map_mode, ADDR_MAP_MODE);
+    BIND_NATIVE(p_round_end_any, ADDR_ROUND_END_ANY);
+    BIND_NATIVE(p_score_target, ADDR_SCORE_TARGET);
+    BIND_NATIVE(p_armed_respawn_limit, ADDR_ARMED_RESPAWN_LIMIT);
+    BIND_NATIVE(p_score_p0, ADDR_SCORE_P0);
+    BIND_NATIVE(p_score_p1, ADDR_SCORE_P1);
+    BIND_NATIVE(p_game_active_room, ADDR_GAME_ACTIVE_ROOM);
+    BIND_NATIVE(p_game_leader, ADDR_LEADER);
+    BIND_NATIVE(p_crowd_sound_last_tick, ADDR_CROWD_SOUND_LAST_TICK);
+    BIND_NATIVE(p_waterfall_fx, ADDR_WATERFALL_FX);
+    BIND_NATIVE(p_chant_step, ADDR_CHANT_STEP);
+    BIND_NATIVE(p_chant_timer, ADDR_CHANT_TIMER);
+    BIND_NATIVE(p_crowd_timer, ADDR_CROWD_TIMER);
+    BIND_NATIVE(p_native_thing_count, ADDR_THING_COUNT);
+    BIND_NATIVE(p_things_allocated, ADDR_THINGS_ALLOCATED);
+    BIND_NATIVE(p_waterfall_count, ADDR_WATERFALL_COUNT);
+    BIND_NATIVE(p_game_started, ADDR_GAME_STARTED);
+    BIND_NATIVE(p_lerp_time, ADDR_LERP_TIME);
+    BIND_NATIVE(p_end_countdown, ADDR_END_COUNTDOWN);
+    BIND_NATIVE(p_start_countdown, ADDR_START_COUNTDOWN);
+    BIND_NATIVE(p_game_level, ADDR_GAME_LEVEL);
+    BIND_NATIVE(p_controller, ADDR_CONTROLLER);
+    BIND_NATIVE(p_loser, ADDR_LOSER);
+    BIND_NATIVE(p_score_shudder, ADDR_SCORE_SHUDDER);
+    BIND_NATIVE(p_seed, ADDR_SEED);
+    BIND_NATIVE(p_room_w, ADDR_ROOM_W);
+    BIND_NATIVE(p_tilemap_data_ptr, ADDR_TILEMAP_DATA_PTR);
+    BIND_NATIVE(p_tilemap_w, ADDR_TILEMAP_W);
+    BIND_NATIVE(p_tilemap_h, ADDR_TILEMAP_H);
+    BIND_NATIVE(p_tile_w_native, ADDR_TILE_W);
+    BIND_NATIVE(p_tile_h_native, ADDR_TILE_H);
+    BIND_NATIVE(p_tilemap_pixels_w, ADDR_TILEMAP_PIXELS_W);
+    BIND_NATIVE(p_tilemap_pixels_h, ADDR_TILEMAP_PIXELS_H);
+    BIND_NATIVE(p_roomdef_count, ADDR_ROOMDEF_COUNT);
+    BIND_NATIVE(p_room_pixel_w, ADDR_ROOM_PIXEL_W);
+    BIND_NATIVE(p_mrand_seed, ADDR_MRAND_SEED);
+    BIND_NATIVE(p_native_game_ticks, ADDR_GAME_TICKS);
+    BIND_NATIVE(p_camera_x, ADDR_CAMERA_X);
+    BIND_NATIVE(p_camera_y, ADDR_CAMERA_Y);
+    BIND_NATIVE(p_camera_shake, ADDR_CAMERA_SHAKE);
+    BIND_NATIVE(p_camera_shake_decay, ADDR_CAMERA_SHAKE_DECAY);
+    BIND_NATIVE(p_game_w, ADDR_GAME_W);
+    BIND_NATIVE(p_game_h, ADDR_GAME_H);
+    BIND_NATIVE(p_map_h, ADDR_MAP_H);
+    BIND_NATIVE(p_map_w, ADDR_MAP_W);
+    BIND_NATIVE(p_game_old_active_room, ADDR_GAME_OLD_ACTIVE_ROOM);
+    BIND_NATIVE(p_resumed, ADDR_RESUMED);
+    BIND_NATIVE(p_freeze, ADDR_FREEZE);
+    BIND_NATIVE(p_player_mode0, ADDR_PLAYER_MODE0);
+    BIND_NATIVE(p_player_mode1, ADDR_PLAYER_MODE1);
+    BIND_NATIVE(p_transient_game_state, ADDR_TRANSIENT_GAME_STATE);
+    BIND_NATIVE(p_player_slots, ADDR_PLAYER_ARRAY);
+    BIND_NATIVE(p_thing_latest, ADDR_THING_LATEST);
+    BIND_NATIVE(p_game_do_lerp_colours, ADDR_GAME_DO_LERP_COLOURS);
+    BIND_NATIVE(p_things, ADDR_THINGS);
+    BIND_NATIVE(p_thing_info, ADDR_THING_INFO);
+    BIND_NATIVE(p_room_info_state, ADDR_ROOM_INFO);
+    BIND_NATIVE(p_particle_state, ADDR_PARTICLE_STATE);
+#undef BIND_NATIVE
+
+    if (err && err_cap > 0) err[0] = '\0';
+    return 1;
+}
+#endif
+
 typedef struct UiHitBox {
     float x;
     float y;
@@ -461,6 +555,12 @@ typedef struct LuaRefList {
 typedef struct AudioChunkCacheEntry {
     char path[MAX_PATH];
     Mix_Chunk* chunk;
+    char* generator_key;
+    int16_t* generated_pcm;
+    uint32_t generated_frames;
+    uint32_t generated_rate;
+    uint32_t decoded_bytes;
+    int generated;
 } AudioChunkCacheEntry;
 
 typedef struct FontRegistration {
@@ -651,6 +751,8 @@ struct LoadedMod {
     AudioChunkCacheEntry* audio_chunks;
     int audio_chunk_count;
     int audio_chunk_cap;
+    int audio_generated_count;
+    uint32_t audio_generated_pcm_bytes;
 
     FontRegistration* font_regs;
     int font_reg_count;
@@ -813,6 +915,26 @@ static int g_audio_winmm_ready = 0;
 static int g_audio_winmm_warned = 0;
 static LoadedMod* g_audio_fallback_music_owner = NULL;
 static char g_audio_backend_error[256] = "";
+typedef struct AudioGeneratedVoice {
+    LoadedMod* owner;
+    const int16_t* pcm;
+    uint32_t frame_count;
+    uint32_t sample_rate;
+    uint32_t frame_index;
+    uint64_t phase;
+    uint64_t output_frames;
+    uint64_t serial;
+    int loops_remaining;
+    int ticks;
+    int volume_q15;
+    int active;
+} AudioGeneratedVoice;
+static CRITICAL_SECTION g_audio_generated_lock;
+static volatile LONG g_audio_generated_lock_state = 0;
+static volatile LONG g_audio_generated_active = 0;
+static uint64_t g_audio_generated_serial = 0u;
+static AudioGeneratedVoice
+    g_audio_generated_voices[AUDIO_GENERATED_VOICE_MAX];
 static unsigned long long g_game_tick_count = 0;
 
 
@@ -3007,6 +3129,8 @@ static LoadedMod* mods_add(void) {
     m->audio_chunks = NULL;
     m->audio_chunk_count = 0;
     m->audio_chunk_cap = 0;
+    m->audio_generated_count = 0;
+    m->audio_generated_pcm_bytes = 0u;
     m->font_regs = NULL;
     m->font_reg_count = 0;
     m->font_reg_cap = 0;
@@ -3189,6 +3313,15 @@ static unsigned int mod_diag_estimate_memory_bytes(const LoadedMod* mod) {
             if (mod->ui_string_pool[i]) bytes += (unsigned long long)(strlen(mod->ui_string_pool[i]) + 1);
         }
     }
+    if (mod->audio_chunks) {
+        for (int i = 0; i < mod->audio_chunk_count; i++) {
+            if (mod->audio_chunks[i].generator_key) {
+                bytes += (unsigned long long)
+                    (strlen(mod->audio_chunks[i].generator_key) + 1u);
+            }
+        }
+    }
+    bytes += (unsigned long long)mod->audio_generated_pcm_bytes;
 
     if (bytes > (unsigned long long)UINT_MAX) return UINT_MAX;
     return (unsigned int)bytes;
@@ -3927,10 +4060,133 @@ static void lua_push_asset_sheet_info(lua_State* Ls, const ModAssetSheet* s) {
     lua_pushinteger(Ls, (lua_Integer)s->flags); lua_setfield(Ls, -2, "flags");
 }
 
+#define MOD_ASSET_NATIVE_SPRITE_CAPACITY 0x2000
+#define MOD_ASSET_NATIVE_MAX_IMAGE_DIM 4096
+
+/* The engine's atlas_add_sprite_sheet path stores sprites in one fixed
+ * 8192-record array and does not check sprite_alloc() before dereferencing it.
+ * It also has no gutter argument: atlas_load_spritesheet's similarly placed
+ * integer is a maximum sprite count. Decode here so capacity is checked first
+ * and authored padding can be removed into a tightly packed temporary sheet. */
+static int mod_assets_native_load_spritesheet(int atlas_ptr,
+                                              const char* full_path,
+                                              int cell_w,
+                                              int cell_h,
+                                              int padding,
+                                              uint32_t flags,
+                                              int expected_count) {
+    unsigned char* source = NULL;
+    unsigned char* packed = NULL;
+    unsigned char* pixels;
+    int source_w = 0;
+    int source_h = 0;
+    int components = 0;
+    int columns;
+    int rows;
+    int sprite_count;
+    int packed_w;
+    int packed_h;
+    int before;
+    int rgba[3];
+    int loaded;
+
+    if (!atlas_ptr || !full_path || !full_path[0] || cell_w <= 0 ||
+        cell_h <= 0 || padding < 0 || expected_count < 0) {
+        return -2;
+    }
+    source = p_stbi_load(full_path, &source_w, &source_h, &components, 4);
+    if (!source || source_w <= 0 || source_h <= 0 ||
+        source_w > MOD_ASSET_NATIVE_MAX_IMAGE_DIM ||
+        source_h > MOD_ASSET_NATIVE_MAX_IMAGE_DIM ||
+        source_w < cell_w || source_h < cell_h ||
+        ((source_w + padding) % (cell_w + padding)) != 0 ||
+        ((source_h + padding) % (cell_h + padding)) != 0) {
+        LOG_WARN("assets: PNG does not form a bounded whole %dx%d grid with padding %d: %s",
+                 cell_w, cell_h, padding, full_path);
+        if (source) p_stbi_image_free(source);
+        return -3;
+    }
+    columns = (source_w + padding) / (cell_w + padding);
+    rows = (source_h + padding) / (cell_h + padding);
+    if (columns <= 0 || rows <= 0 || columns > INT_MAX / rows) {
+        p_stbi_image_free(source);
+        return -3;
+    }
+    sprite_count = columns * rows;
+    if (expected_count > 0 && sprite_count != expected_count) {
+        LOG_WARN("assets: validated sprite count changed before packing (expected=%d actual=%d): %s",
+                 expected_count, sprite_count, full_path);
+        p_stbi_image_free(source);
+        return -4;
+    }
+    before = p_sprite_count();
+    if (before < 0 || before > MOD_ASSET_NATIVE_SPRITE_CAPACITY ||
+        sprite_count > MOD_ASSET_NATIVE_SPRITE_CAPACITY - before) {
+        LOG_WARN("assets: refusing %d sprites because the native 8192-record atlas has only %d slots left: %s",
+                 sprite_count,
+                 before >= 0 && before <= MOD_ASSET_NATIVE_SPRITE_CAPACITY
+                     ? MOD_ASSET_NATIVE_SPRITE_CAPACITY - before : 0,
+                 full_path);
+        p_stbi_image_free(source);
+        return -5;
+    }
+
+    pixels = source;
+    packed_w = source_w;
+    packed_h = source_h;
+    if (padding > 0) {
+        size_t packed_bytes;
+        int row;
+        int column;
+        packed_w = columns * cell_w;
+        packed_h = rows * cell_h;
+        if (packed_w <= 0 || packed_h <= 0 ||
+            (size_t)packed_w > SIZE_MAX / (size_t)packed_h / 4u) {
+            p_stbi_image_free(source);
+            return -6;
+        }
+        packed_bytes = (size_t)packed_w * (size_t)packed_h * 4u;
+        packed = (unsigned char*)malloc(packed_bytes);
+        if (!packed) {
+            p_stbi_image_free(source);
+            return -6;
+        }
+        for (row = 0; row < rows; row++) {
+            int pixel_y;
+            for (pixel_y = 0; pixel_y < cell_h; pixel_y++) {
+                for (column = 0; column < columns; column++) {
+                    const size_t source_offset =
+                        ((size_t)(row * (cell_h + padding) + pixel_y) *
+                             (size_t)source_w +
+                         (size_t)(column * (cell_w + padding))) * 4u;
+                    const size_t packed_offset =
+                        ((size_t)(row * cell_h + pixel_y) * (size_t)packed_w +
+                         (size_t)(column * cell_w)) * 4u;
+                    memcpy(packed + packed_offset, source + source_offset,
+                           (size_t)cell_w * 4u);
+                }
+            }
+        }
+        pixels = packed;
+    }
+
+    rgba[0] = packed_w;
+    rgba[1] = packed_h;
+    rgba[2] = (int)(intptr_t)pixels;
+    loaded = p_atlas_add_spritesheet_from_rgba(atlas_ptr, cell_w, cell_h, 0,
+                                                flags, rgba);
+    free(packed);
+    p_stbi_image_free(source);
+    return loaded;
+}
+
 static int mod_assets_native_load_ready(void) {
-    if (!p_atlas_load_spritesheet || !p_sprite_count) return 0;
-    if (IsBadCodePtr((FARPROC)(void*)p_atlas_load_spritesheet) ||
-        IsBadCodePtr((FARPROC)(void*)p_sprite_count)) {
+    if (!p_atlas_add_spritesheet_from_rgba || !p_sprite_count ||
+        !p_stbi_load || !p_stbi_image_free) return 0;
+    if (IsBadCodePtr((FARPROC)(void*)p_atlas_add_spritesheet_from_rgba) ||
+        IsBadCodePtr((FARPROC)(void*)p_sprite_count) ||
+        IsBadCodePtr((FARPROC)(void*)p_stbi_load) ||
+        IsBadCodePtr((FARPROC)(void*)p_stbi_image_free)) {
         return 0;
     }
     return 1;
@@ -3977,13 +4233,13 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
             }
 
             before = p_sprite_count();
-            loaded = p_atlas_load_spritesheet(atlas_ptr,
-                                              NULL,
-                                              sheet->cell_w,
-                                              sheet->cell_h,
-                                              sheet->padding,
-                                              sheet->flags,
-                                              sheet->fullpath);
+            loaded = mod_assets_native_load_spritesheet(atlas_ptr,
+                                                        sheet->fullpath,
+                                                        sheet->cell_w,
+                                                        sheet->cell_h,
+                                                        sheet->padding,
+                                                        sheet->flags,
+                                                        0);
             after = p_sprite_count();
             if (loaded >= 0 && after > before) {
                 sheet->base_id = before;
@@ -4017,13 +4273,13 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
             continue;
         }
         before = p_sprite_count();
-        loaded = p_atlas_load_spritesheet(atlas_ptr,
-                                          NULL,
-                                          sheet.cell_w,
-                                          sheet.cell_h,
-                                          sheet.padding,
-                                          sheet.atlas_flags,
-                                          sheet.full_path);
+        loaded = mod_assets_native_load_spritesheet(atlas_ptr,
+                                                    sheet.full_path,
+                                                    sheet.cell_w,
+                                                    sheet.cell_h,
+                                                    sheet.padding,
+                                                    sheet.atlas_flags,
+                                                    sheet.sprite_count);
         after = p_sprite_count();
         packed_count = after - before;
         if (loaded < 0 || packed_count <= 0 || packed_count != sheet.sprite_count) {
@@ -4373,9 +4629,10 @@ static int lua_content_known_tile_key(const char* key) {
     static const char* const keys[] = {
         "id", "name", "native_glyph", "sheet", "sprite_sheet",
         "sprite_index", "frame_count", "frame_ticks", "animation",
-        "layer", "mirror_with_room", "random_phase", "offset_x",
+        "layer", "mirror_with_room", "random_phase", "native_visual", "offset_x",
         "offset_y", "scale", "scale_x", "scale_y", "angle",
-        "angle_degrees", "tint", "asset_sha256"
+        "angle_degrees", "tint", "asset_sha256", "collision",
+        "force_mode", "force_x", "force_y", "max_speed_x", "max_speed_y"
     };
     size_t i;
     if (!key) return 0;
@@ -4594,6 +4851,9 @@ static int lua_content_tx_register_tile(lua_State* Ls) {
     char glyph[2];
     char sheet_arg[CONTENT_SHEET_KEY_MAX];
     char animation[24];
+    char collision[24];
+    char force_mode[24];
+    char native_visual[24];
     char expected_sha[CONTENT_SHA256_HEX_SIZE];
     char qualified_sheet[CONTENT_SHEET_KEY_MAX];
     char actual_sha[CONTENT_SHA256_HEX_SIZE];
@@ -4643,11 +4903,17 @@ static int lua_content_tx_register_tile(lua_State* Ls) {
 
     if (!lua_content_read_string(Ls, 2, "id", 1, id, sizeof(id), err, sizeof(err)) ||
         !lua_content_read_string(Ls, 2, "name", 0, name, sizeof(name), err, sizeof(err)) ||
-        !lua_content_read_string(Ls, 2, "native_glyph", 1, glyph, sizeof(glyph), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "native_glyph", 0, glyph, sizeof(glyph), err, sizeof(err)) ||
         !lua_content_read_string(Ls, 2, has_sheet ? "sheet" : "sprite_sheet", 1,
                                  sheet_arg, sizeof(sheet_arg), err, sizeof(err)) ||
         !lua_content_read_string(Ls, 2, "animation", 0,
                                  animation, sizeof(animation), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "collision", 0,
+                                 collision, sizeof(collision), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "force_mode", 0,
+                                 force_mode, sizeof(force_mode), err, sizeof(err)) ||
+        !lua_content_read_string(Ls, 2, "native_visual", 0,
+                                 native_visual, sizeof(native_visual), err, sizeof(err)) ||
         !lua_content_read_string(Ls, 2, "asset_sha256", 0,
                                  expected_sha, sizeof(expected_sha), err, sizeof(err))) {
         return lua_content_fail(Ls, err);
@@ -4655,6 +4921,38 @@ static int lua_content_tx_register_tile(lua_State* Ls) {
     input.id = id;
     input.name = name[0] ? name : NULL;
     input.native_glyph = glyph[0];
+    if (!collision[0] || strcmp(collision, "native") == 0) {
+        input.collision_mode = CONTENT_COLLISION_NATIVE;
+    } else if (strcmp(collision, "solid") == 0) {
+        input.collision_mode = CONTENT_COLLISION_SOLID;
+    } else if (strcmp(collision, "pass_through") == 0 ||
+               strcmp(collision, "passthrough") == 0) {
+        input.collision_mode = CONTENT_COLLISION_PASS_THROUGH;
+    } else if (strcmp(collision, "hazard") == 0) {
+        input.collision_mode = CONTENT_COLLISION_HAZARD;
+    } else {
+        return lua_content_fail(Ls,
+            "tile.collision must be native, solid, pass_through, or hazard");
+    }
+    if (input.collision_mode == CONTENT_COLLISION_NATIVE && !glyph[0]) {
+        return lua_content_fail(Ls, "tile.native_glyph is required for native collision");
+    }
+    if (!force_mode[0] || strcmp(force_mode, "add") == 0) {
+        input.force_mode = CONTENT_FORCE_ADD;
+    } else if (strcmp(force_mode, "set") == 0) {
+        input.force_mode = CONTENT_FORCE_SET;
+    } else {
+        return lua_content_fail(Ls, "tile.force_mode must be add or set");
+    }
+    lua_getfield(Ls, 2, "force_x");
+    if (!lua_isnil(Ls, -1)) input.force_axes |= CONTENT_FORCE_AXIS_X;
+    lua_pop(Ls, 1);
+    lua_getfield(Ls, 2, "force_y");
+    if (!lua_isnil(Ls, -1)) input.force_axes |= CONTENT_FORCE_AXIS_Y;
+    lua_pop(Ls, 1);
+    if (force_mode[0] && input.force_axes == 0) {
+        return lua_content_fail(Ls, "tile.force_mode requires force_x and/or force_y");
+    }
 
     if (_strnicmp(sheet_arg, "builtin:", 8) == 0) {
         snprintf(qualified_sheet, sizeof(qualified_sheet), "%s", sheet_arg);
@@ -4715,6 +5013,13 @@ static int lua_content_tx_register_tile(lua_State* Ls) {
     }
     if (mirror) input.flags |= CONTENT_TILE_MIRROR_WITH_ROOM;
     if (random_phase) input.flags |= CONTENT_TILE_RANDOM_PHASE;
+    if (!native_visual[0] || strcmp(native_visual, "replace") == 0) {
+        /* Replacement is the registry default and therefore needs no flag. */
+    } else if (strcmp(native_visual, "underlay") == 0) {
+        input.flags |= CONTENT_TILE_NATIVE_VISUAL_UNDERLAY;
+    } else {
+        return lua_content_fail(Ls, "tile.native_visual must be replace or underlay");
+    }
 
     if (!lua_content_get_float(Ls, 2, "offset_x", 0.0f, &input.offset_x,
                                err, sizeof(err)) ||
@@ -4728,6 +5033,14 @@ static int lua_content_tx_register_tile(lua_State* Ls) {
                                err, sizeof(err)) ||
         !lua_content_get_float(Ls, 2, has_angle ? "angle" : "angle_degrees",
                                0.0f, &input.angle_degrees, err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "force_x", 0.0f, &input.force_x,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "force_y", 0.0f, &input.force_y,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "max_speed_x", 0.0f, &input.max_speed_x,
+                               err, sizeof(err)) ||
+        !lua_content_get_float(Ls, 2, "max_speed_y", 0.0f, &input.max_speed_y,
+                               err, sizeof(err)) ||
         !lua_content_get_tint(Ls, 2, input.tint, err, sizeof(err))) {
         return lua_content_fail(Ls, err);
     }
@@ -4821,9 +5134,17 @@ static void lua_content_push_tile(lua_State* Ls, const ContentTileDef* tile) {
     static const char hex_digits[] = "0123456789abcdef";
     char asset_sha256[CONTENT_SHA256_HEX_SIZE];
     const char* animation = "loop";
+    const char* collision = "native";
+    const char* force_mode = tile->force_mode == CONTENT_FORCE_SET ? "set" : "add";
+    const char* native_visual =
+        (tile->flags & CONTENT_TILE_NATIVE_VISUAL_UNDERLAY) != 0
+            ? "underlay" : "replace";
     int i;
     if (tile->animation_mode == CONTENT_ANIMATION_PING_PONG) animation = "ping_pong";
     else if (tile->animation_mode == CONTENT_ANIMATION_ONCE) animation = "once";
+    if (tile->collision_mode == CONTENT_COLLISION_SOLID) collision = "solid";
+    else if (tile->collision_mode == CONTENT_COLLISION_PASS_THROUGH) collision = "pass_through";
+    else if (tile->collision_mode == CONTENT_COLLISION_HAZARD) collision = "hazard";
     for (i = 0; i < CONTENT_SHA256_SIZE; i++) {
         asset_sha256[i * 2] = hex_digits[tile->asset_sha256[i] >> 4];
         asset_sha256[i * 2 + 1] = hex_digits[tile->asset_sha256[i] & 15];
@@ -4846,10 +5167,22 @@ static void lua_content_push_tile(lua_State* Ls, const ContentTileDef* tile) {
     lua_pushstring(Ls, animation); lua_setfield(Ls, -2, "animation");
     lua_pushinteger(Ls, tile->layer); lua_setfield(Ls, -2, "layer");
     lua_pushinteger(Ls, (lua_Integer)tile->flags); lua_setfield(Ls, -2, "flags");
+    lua_pushstring(Ls, collision); lua_setfield(Ls, -2, "collision");
+    lua_pushstring(Ls, force_mode); lua_setfield(Ls, -2, "force_mode");
+    lua_pushinteger(Ls, (lua_Integer)tile->force_axes); lua_setfield(Ls, -2, "force_axes");
+    if ((tile->force_axes & CONTENT_FORCE_AXIS_X) != 0) {
+        lua_pushnumber(Ls, tile->force_x); lua_setfield(Ls, -2, "force_x");
+        lua_pushnumber(Ls, tile->max_speed_x); lua_setfield(Ls, -2, "max_speed_x");
+    }
+    if ((tile->force_axes & CONTENT_FORCE_AXIS_Y) != 0) {
+        lua_pushnumber(Ls, tile->force_y); lua_setfield(Ls, -2, "force_y");
+        lua_pushnumber(Ls, tile->max_speed_y); lua_setfield(Ls, -2, "max_speed_y");
+    }
     lua_pushboolean(Ls, (tile->flags & CONTENT_TILE_MIRROR_WITH_ROOM) != 0);
     lua_setfield(Ls, -2, "mirror_with_room");
     lua_pushboolean(Ls, (tile->flags & CONTENT_TILE_RANDOM_PHASE) != 0);
     lua_setfield(Ls, -2, "random_phase");
+    lua_pushstring(Ls, native_visual); lua_setfield(Ls, -2, "native_visual");
     lua_pushnumber(Ls, tile->offset_x); lua_setfield(Ls, -2, "offset_x");
     lua_pushnumber(Ls, tile->offset_y); lua_setfield(Ls, -2, "offset_y");
     lua_pushnumber(Ls, tile->scale_x); lua_setfield(Ls, -2, "scale_x");
@@ -5229,6 +5562,7 @@ static Mix_Chunk* mod_audio_get_or_load_chunk(LoadedMod* mod, const char* full_p
         memset(e, 0, sizeof(*e));
         strncpy(e->path, full_path, sizeof(e->path) - 1);
         e->chunk = chunk;
+        e->generated = 0;
     }
     return chunk;
 }
@@ -5358,11 +5692,178 @@ static int audio_play_builtin_sfx(LoadedMod* mod, lua_State* Ls, const char* id,
     return 0;
 }
 
+static int audio_generated_lock_ensure(void) {
+    LONG state = InterlockedCompareExchange(
+        &g_audio_generated_lock_state, 0, 0);
+    if (state == 2) return 1;
+    if (state == 0 &&
+        InterlockedCompareExchange(
+            &g_audio_generated_lock_state, 1, 0) == 0) {
+        InitializeCriticalSection(&g_audio_generated_lock);
+        memset(g_audio_generated_voices, 0,
+               sizeof(g_audio_generated_voices));
+        InterlockedExchange(&g_audio_generated_lock_state, 2);
+        return 1;
+    }
+    /*
+     * Initialization is requested from the main/Lua thread before a voice is
+     * published. A concurrent caller can retry instead of waiting in a
+     * real-time audio path.
+     */
+    return InterlockedCompareExchange(
+        &g_audio_generated_lock_state, 0, 0) == 2;
+}
+
+static void audio_generated_voice_stop(AudioGeneratedVoice* voice) {
+    if (!voice || !voice->active) return;
+    voice->active = 0;
+    voice->owner = NULL;
+    voice->pcm = NULL;
+    if (InterlockedDecrement(&g_audio_generated_active) < 0) {
+        InterlockedExchange(&g_audio_generated_active, 0);
+    }
+}
+
+static int audio_generated_stop_owner(LoadedMod* owner) {
+    int stopped = 0;
+    if (InterlockedCompareExchange(
+            &g_audio_generated_lock_state, 0, 0) != 2) {
+        return 0;
+    }
+    EnterCriticalSection(&g_audio_generated_lock);
+    for (int i = 0; i < AUDIO_GENERATED_VOICE_MAX; i++) {
+        AudioGeneratedVoice* voice = &g_audio_generated_voices[i];
+        if (voice->active && (!owner || voice->owner == owner)) {
+            audio_generated_voice_stop(voice);
+            stopped++;
+        }
+    }
+    LeaveCriticalSection(&g_audio_generated_lock);
+    return stopped;
+}
+
+static int audio_generated_play(LoadedMod* owner,
+                                const AudioChunkCacheEntry* entry,
+                                int loops, int ticks, float volume) {
+    int selected = -1;
+    uint64_t oldest = UINT64_MAX;
+    int owned = 0;
+    if (!owner || !entry || !entry->generated_pcm ||
+        entry->generated_frames == 0u || entry->generated_rate == 0u ||
+        !audio_generated_lock_ensure()) {
+        return -1;
+    }
+    EnterCriticalSection(&g_audio_generated_lock);
+    for (int i = 0; i < AUDIO_GENERATED_VOICE_MAX; i++) {
+        AudioGeneratedVoice* voice = &g_audio_generated_voices[i];
+        if (voice->active && voice->owner == owner) owned++;
+        if (!voice->active && selected < 0) selected = i;
+    }
+    if (owned >= AUDIO_CHANNELS_PER_MOD || selected < 0) {
+        for (int i = 0; i < AUDIO_GENERATED_VOICE_MAX; i++) {
+            AudioGeneratedVoice* voice = &g_audio_generated_voices[i];
+            if (voice->active &&
+                (owned < AUDIO_CHANNELS_PER_MOD ||
+                 voice->owner == owner) &&
+                voice->serial < oldest) {
+                oldest = voice->serial;
+                selected = i;
+            }
+        }
+    }
+    if (selected >= 0) {
+        AudioGeneratedVoice* voice = &g_audio_generated_voices[selected];
+        audio_generated_voice_stop(voice);
+        memset(voice, 0, sizeof(*voice));
+        voice->owner = owner;
+        voice->pcm = entry->generated_pcm;
+        voice->frame_count = entry->generated_frames;
+        voice->sample_rate = entry->generated_rate;
+        voice->loops_remaining = loops;
+        voice->ticks = ticks;
+        voice->volume_q15 =
+            (int)(audio_clampf(volume, 0.0f, 1.0f) * 32768.0f + 0.5f);
+        voice->serial = ++g_audio_generated_serial;
+        voice->active = 1;
+        InterlockedIncrement(&g_audio_generated_active);
+    }
+    LeaveCriticalSection(&g_audio_generated_lock);
+    return selected;
+}
+
+int lua_manager_audio_generated_active(void) {
+    return InterlockedCompareExchange(
+        &g_audio_generated_active, 0, 0) > 0;
+}
+
+void lua_manager_audio_mix_generated(int16_t* samples, int frame_count,
+                                     int output_rate) {
+    if (!samples || frame_count <= 0 || output_rate <= 0 ||
+        !lua_manager_audio_generated_active() ||
+        InterlockedCompareExchange(
+            &g_audio_generated_lock_state, 0, 0) != 2 ||
+        !TryEnterCriticalSection(&g_audio_generated_lock)) {
+        return;
+    }
+    for (int frame = 0; frame < frame_count; frame++) {
+        int added = 0;
+        for (int i = 0; i < AUDIO_GENERATED_VOICE_MAX; i++) {
+            AudioGeneratedVoice* voice = &g_audio_generated_voices[i];
+            int sample;
+            if (!voice->active || !voice->pcm ||
+                voice->frame_index >= voice->frame_count) {
+                continue;
+            }
+            sample = ((int)voice->pcm[voice->frame_index] *
+                      voice->volume_q15) / 32768;
+            added += sample;
+
+            voice->output_frames++;
+            if (voice->ticks >= 0 &&
+                voice->output_frames * UINT64_C(1000) >=
+                    (uint64_t)(unsigned)voice->ticks *
+                    (uint64_t)(unsigned)output_rate) {
+                audio_generated_voice_stop(voice);
+                continue;
+            }
+
+            voice->phase += voice->sample_rate;
+            while (voice->active &&
+                   voice->phase >= (uint64_t)(unsigned)output_rate) {
+                voice->phase -= (uint64_t)(unsigned)output_rate;
+                voice->frame_index++;
+                if (voice->frame_index >= voice->frame_count) {
+                    if (voice->loops_remaining < 0) {
+                        voice->frame_index = 0u;
+                    } else if (voice->loops_remaining > 0) {
+                        voice->loops_remaining--;
+                        voice->frame_index = 0u;
+                    } else {
+                        audio_generated_voice_stop(voice);
+                    }
+                }
+            }
+        }
+        if (added != 0) {
+            int left = (int)samples[frame * 2] + added;
+            int right = (int)samples[frame * 2 + 1] + added;
+            if (left < -32768) left = -32768;
+            if (left > 32767) left = 32767;
+            if (right < -32768) right = -32768;
+            if (right > 32767) right = 32767;
+            samples[frame * 2] = (int16_t)left;
+            samples[frame * 2 + 1] = (int16_t)right;
+        }
+    }
+    LeaveCriticalSection(&g_audio_generated_lock);
+}
+
 static void mod_audio_clear(LoadedMod* mod) {
     if (!mod) return;
 
     audio_release_music_for_owner(mod);
     audio_fallback_stop_music_for_owner(mod);
+    (void)audio_generated_stop_owner(mod);
 
     if (g_audio_mixer_ready && p_mix_halt_channel &&
         mod->audio_channel_base >= 0 && mod->audio_channel_count > 0) {
@@ -5378,12 +5879,18 @@ static void mod_audio_clear(LoadedMod* mod) {
             if (mod->audio_chunks[i].chunk && p_mix_free_chunk) {
                 p_mix_free_chunk(mod->audio_chunks[i].chunk);
             }
+            free(mod->audio_chunks[i].generated_pcm);
+            mod->audio_chunks[i].generated_pcm = NULL;
+            free(mod->audio_chunks[i].generator_key);
+            mod->audio_chunks[i].generator_key = NULL;
         }
         free(mod->audio_chunks);
         mod->audio_chunks = NULL;
     }
     mod->audio_chunk_count = 0;
     mod->audio_chunk_cap = 0;
+    mod->audio_generated_count = 0;
+    mod->audio_generated_pcm_bytes = 0u;
     mod->audio_channel_base = -1;
     mod->audio_channel_count = 0;
     mod->audio_next_channel = 0;
@@ -5392,6 +5899,7 @@ static void mod_audio_clear(LoadedMod* mod) {
 static void audio_runtime_shutdown(void) {
     audio_release_music_for_owner(NULL);
     audio_fallback_stop_music_for_owner(NULL);
+    (void)audio_generated_stop_owner(NULL);
 
     if (g_audio_mixer_ready && p_mix_close_audio) {
         p_mix_close_audio();
@@ -6119,7 +6627,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define TILEMAP_MAX_BYTES           (4u * 1024u * 1024u)
 
 #define FULL_STATE_BLOB_MAGIC       0x30474745u /* "EGG0" */
-#define FULL_STATE_BLOB_VERSION     4u
+#define FULL_STATE_BLOB_VERSION     9u
 
 typedef struct FullStateBlobHeader {
     uint32_t magic;
@@ -6184,11 +6692,29 @@ typedef struct FullStateBlobHeader {
     float camera_shake_decay;
     float game_w;
     float game_h;
+    MapScriptSnapshot map_script_state;
     uint8_t transient_game_state[TRANSIENT_GAME_STATE_SIZE];
     uint8_t thing_info_state[THING_INFO_STATE_SIZE];
     uint8_t room_info_state[ROOM_INFO_STATE_SIZE];
     uint8_t particle_state[PARTICLE_STATE_SIZE];
 } FullStateBlobHeader;
+
+/* The offline peer-trace analyzer recognizes this exact 32-bit EGG0/v9
+ * canonical layout. Keep the scalar and major-component boundaries explicit:
+ * any change must bump FULL_STATE_BLOB_VERSION and teach the analyzer the new
+ * schema instead of silently relabeling offsets from an old trace. */
+_Static_assert(sizeof(FullStateBlobHeader) == 0x25688u,
+               "EGG0/v9 header size changed without a schema version bump");
+_Static_assert(offsetof(FullStateBlobHeader, map_script_state) == 252u,
+               "EGG0/v9 map-script boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, transient_game_state) == 29700u,
+               "EGG0/v9 transient boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, thing_info_state) == 30852u,
+               "EGG0/v9 thing-info boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, room_info_state) == 31044u,
+               "EGG0/v9 room-info boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, particle_state) == 48520u,
+               "EGG0/v9 particle boundary changed");
 
 enum {
     FULL_STATE_LEADER_NONE = 0,
@@ -6263,6 +6789,7 @@ const char* lua_manager_game_state_offset_name(size_t offset) {
     FULL_STATE_FIELD_RANGE(camera_shake_decay);
     FULL_STATE_FIELD_RANGE(game_w);
     FULL_STATE_FIELD_RANGE(game_h);
+    FULL_STATE_FIELD_RANGE(map_script_state);
     FULL_STATE_FIELD_RANGE(transient_game_state);
     FULL_STATE_FIELD_RANGE(thing_info_state);
     FULL_STATE_FIELD_RANGE(room_info_state);
@@ -6284,6 +6811,19 @@ static int ptr_readable(const void* p, SIZE_T len) {
 
 static int ptr_writable(void* p, SIZE_T len) {
     return (p && len > 0 && !IsBadWritePtr(p, len)) ? 1 : 0;
+}
+
+/* Native adjust_layout normally keeps the logical gameplay width near the
+ * 288/320 design sizes. Allow ample headroom for unusual displays while
+ * rejecting corrupt sub-pixel, infinite, and absurd values before they can
+ * enter respawn/camera simulation or a rollback commit. */
+#define GAME_SIM_EXTENT_MIN 1.0f
+#define GAME_SIM_EXTENT_MAX 4096.0f
+
+static int game_sim_extent_valid(float extent) {
+    return isfinite(extent) &&
+           extent >= GAME_SIM_EXTENT_MIN &&
+           extent <= GAME_SIM_EXTENT_MAX;
 }
 
 static uintptr_t game_get_player_ptr(int player_index) {
@@ -6441,6 +6981,26 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
         full_state_set_err(err, err_cap, "tilemap state unavailable");
         return 0;
     }
+    if (!ptr_readable((const void*)p_mrand_seed, sizeof(uint32_t)) ||
+        !ptr_readable((const void*)p_camera_x, sizeof(float)) ||
+        !ptr_readable((const void*)p_camera_y, sizeof(float)) ||
+        !ptr_readable((const void*)p_camera_shake, sizeof(float)) ||
+        !ptr_readable((const void*)p_camera_shake_decay, sizeof(float)) ||
+        !ptr_readable((const void*)p_game_w, sizeof(float)) ||
+        !ptr_readable((const void*)p_game_h, sizeof(float)) ||
+        !ptr_readable((const void*)p_resumed, sizeof(int))) {
+        full_state_set_err(err, err_cap,
+                           "authoritative simulation state unavailable");
+        return 0;
+    }
+    if (!isfinite(*p_camera_x) || !isfinite(*p_camera_y) ||
+        !isfinite(*p_camera_shake) || !isfinite(*p_camera_shake_decay) ||
+        !game_sim_extent_valid(*p_game_w) ||
+        !game_sim_extent_valid(*p_game_h)) {
+        full_state_set_err(err, err_cap,
+                           "live simulation geometry or camera state out of range");
+        return 0;
+    }
     if (total_size == 0) {
         full_state_set_err(err, err_cap, "state blob size unavailable");
         return 0;
@@ -6461,6 +7021,9 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
     hdr->tilemap_h = tilemap_h;
     hdr->tilemap_bytes = (uint32_t)tilemap_bytes;
     hdr->framework_tick_count = (uint64_t)g_game_tick_count;
+    if (!map_script_snapshot_save(&hdr->map_script_state, err, err_cap)) {
+        return 0;
+    }
 
     if (ptr_readable((const void*)p_map_selector, sizeof(int))) {
         hdr->map_selector = *p_map_selector;
@@ -6645,17 +7208,32 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
     return 1;
 }
 
-static int full_state_apply_blob(const void* src, size_t src_len, char* err, size_t err_cap) {
+typedef struct FullStateApplyValidation {
+    const FullStateBlobHeader* hdr;
+    int current_thing_count;
+    int current_tilemap_w;
+    int current_tilemap_h;
+    size_t current_tilemap_bytes;
+    void* tilemap_ptr;
+    uintptr_t p0;
+    uintptr_t p1;
+} FullStateApplyValidation;
+
+static int full_state_validate_apply_blob(const void* src, size_t src_len,
+                                          FullStateApplyValidation* out_validation,
+                                          char* err, size_t err_cap) {
+    FullStateApplyValidation validation;
     const FullStateBlobHeader* hdr = (const FullStateBlobHeader*)src;
-    int current_thing_count = game_get_thing_count();
-    int current_tilemap_w = 0;
-    int current_tilemap_h = 0;
-    size_t current_tilemap_bytes = game_get_tilemap_bytes(&current_tilemap_w, &current_tilemap_h);
-    void* tilemap_ptr = game_get_tilemap_data_ptr();
-    uintptr_t p0 = game_get_player_ptr(0);
-    uintptr_t p1 = game_get_player_ptr(1);
     size_t expected_size;
-    const uint8_t* payload;
+
+    memset(&validation, 0, sizeof(validation));
+    validation.hdr = hdr;
+    validation.current_thing_count = game_get_thing_count();
+    validation.current_tilemap_bytes = game_get_tilemap_bytes(
+        &validation.current_tilemap_w, &validation.current_tilemap_h);
+    validation.tilemap_ptr = game_get_tilemap_data_ptr();
+    validation.p0 = game_get_player_ptr(0);
+    validation.p1 = game_get_player_ptr(1);
 
     if (!src || src_len < sizeof(FullStateBlobHeader)) {
         full_state_set_err(err, err_cap, "state blob too small");
@@ -6681,21 +7259,47 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
         full_state_set_err(err, err_cap, "state blob tilemap too large");
         return 0;
     }
+    if (!isfinite(hdr->camera_x) || !isfinite(hdr->camera_y) ||
+        !isfinite(hdr->camera_shake) ||
+        !isfinite(hdr->camera_shake_decay) ||
+        !game_sim_extent_valid(hdr->game_w) ||
+        !game_sim_extent_valid(hdr->game_h)) {
+        full_state_set_err(err, err_cap,
+                           "state blob simulation geometry or camera state out of range");
+        return 0;
+    }
+    if (!ptr_writable((void*)p_mrand_seed, sizeof(uint32_t)) ||
+        !ptr_writable((void*)p_camera_x, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_y, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_shake, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_shake_decay, sizeof(float)) ||
+        !ptr_writable((void*)p_game_w, sizeof(float)) ||
+        !ptr_writable((void*)p_game_h, sizeof(float)) ||
+        !ptr_writable((void*)p_resumed, sizeof(int))) {
+        full_state_set_err(err, err_cap,
+                           "authoritative simulation state unavailable");
+        return 0;
+    }
 
     expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
     if (src_len != expected_size) {
         full_state_set_err(err, err_cap, "state blob size mismatch");
         return 0;
     }
-    if (!p0 || !p1) {
+    if (!validation.p0 || !validation.p1 ||
+        !ptr_writable((void*)validation.p0, PLAYER_SIZE) ||
+        !ptr_writable((void*)validation.p1, PLAYER_SIZE)) {
         full_state_set_err(err, err_cap, "player state unavailable");
         return 0;
     }
-    if (current_thing_count != (int)hdr->thing_count) {
+    if (validation.current_thing_count != (int)hdr->thing_count) {
         full_state_set_err(err, err_cap, "thing count mismatch");
         return 0;
     }
-    if (current_thing_count > 0 && (!p_things || !ptr_writable((void*)p_things, (SIZE_T)((size_t)current_thing_count * THING_SIZE)))) {
+    if (validation.current_thing_count > 0 &&
+        (!p_things ||
+         !ptr_writable((void*)p_things,
+                       (SIZE_T)((size_t)validation.current_thing_count * THING_SIZE)))) {
         full_state_set_err(err, err_cap, "thing state unavailable");
         return 0;
     }
@@ -6711,12 +7315,50 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
         full_state_set_err(err, err_cap, "particle state unavailable");
         return 0;
     }
-    if (current_tilemap_w != hdr->tilemap_w || current_tilemap_h != hdr->tilemap_h || current_tilemap_bytes != (size_t)hdr->tilemap_bytes) {
+    if (validation.current_tilemap_w != hdr->tilemap_w ||
+        validation.current_tilemap_h != hdr->tilemap_h ||
+        validation.current_tilemap_bytes != (size_t)hdr->tilemap_bytes) {
         full_state_set_err(err, err_cap, "tilemap layout mismatch");
         return 0;
     }
-    if (hdr->tilemap_bytes > 0 && (!tilemap_ptr || !ptr_writable(tilemap_ptr, (SIZE_T)hdr->tilemap_bytes))) {
+    if (hdr->tilemap_bytes > 0 &&
+        (!validation.tilemap_ptr ||
+         !ptr_writable(validation.tilemap_ptr, (SIZE_T)hdr->tilemap_bytes))) {
         full_state_set_err(err, err_cap, "tilemap state unavailable");
+        return 0;
+    }
+    if (!map_script_snapshot_validate(&hdr->map_script_state,
+                                      map_script_active_id(), err, err_cap)) {
+        return 0;
+    }
+
+    if (out_validation) *out_validation = validation;
+    return 1;
+}
+
+static int full_state_apply_blob(const void* src, size_t src_len, char* err, size_t err_cap) {
+    FullStateApplyValidation validation;
+    const FullStateBlobHeader* hdr;
+    int current_thing_count;
+    void* tilemap_ptr;
+    uintptr_t p0;
+    uintptr_t p1;
+    const uint8_t* payload;
+
+    if (!full_state_validate_apply_blob(src, src_len, &validation, err, err_cap)) {
+        return 0;
+    }
+    hdr = validation.hdr;
+    current_thing_count = validation.current_thing_count;
+    tilemap_ptr = validation.tilemap_ptr;
+    p0 = validation.p0;
+    p1 = validation.p1;
+
+    /* Validation above is the fallible phase. Snapshot load only commits its
+     * already-validated fixed POD state and must not execute map Lua. Do it
+     * before the native memcpy phase so a rejected script snapshot can never
+     * leave half of the game state restored. */
+    if (!map_script_snapshot_load(&hdr->map_script_state, err, err_cap)) {
         return 0;
     }
 
@@ -6900,12 +7542,14 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
         uintptr_t leader_ptr = 0;
         if (hdr->leader_mode == FULL_STATE_LEADER_P0) leader_ptr = p0;
         else if (hdr->leader_mode == FULL_STATE_LEADER_P1) leader_ptr = p1;
+        else if (hdr->leader_mode == FULL_STATE_LEADER_RAW) leader_ptr = hdr->leader_raw;
         *p_game_leader = leader_ptr;
     }
     if (ptr_writable((void*)p_loser, sizeof(uintptr_t))) {
         uintptr_t loser_ptr = 0;
         if (hdr->loser_mode == FULL_STATE_LEADER_P0) loser_ptr = p0;
         else if (hdr->loser_mode == FULL_STATE_LEADER_P1) loser_ptr = p1;
+        else if (hdr->loser_mode == FULL_STATE_LEADER_RAW) loser_ptr = hdr->loser_raw;
         *p_loser = loser_ptr;
     }
     memcpy((void*)p_thing_info, hdr->thing_info_state, THING_INFO_STATE_SIZE);
@@ -6973,6 +7617,10 @@ static int full_state_validate_blob_header(const void* src, size_t src_len, cons
     expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
     if (src_len != expected_size) {
         full_state_set_err(err, err_cap, "state blob size mismatch");
+        return 0;
+    }
+    if (!map_script_snapshot_validate(&hdr->map_script_state,
+                                      map_script_active_id(), err, err_cap)) {
         return 0;
     }
 
@@ -7059,15 +7707,17 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     hdr->lerp_time = 0;
     hdr->score_shudder0 = 0;
     hdr->score_shudder1 = 0;
-    hdr->resumed = 0;
     full_state_zero_transient_range(hdr, ADDR_LEADER, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_WATERFALL_FX, sizeof(uintptr_t));
     full_state_zero_transient_range(hdr, ADDR_CROWD_SOUND_LAST_TICK, sizeof(uint32_t));
-    /* The other five sfx debounce timers (wall-clock, non-synced) - excluding
-     * them from the checksum stops sound-timing/toggle "changed=transient"
-     * false desyncs. Stops before _danger_count (0x541F04), which is gameplay. */
+    /* Presentation-only debounce stamps. Keep ADDR_MINE_ANIM_LAST_TICK between
+     * the final two ranges: equality there suppresses the complete mine
+     * activation, including tile mutation and authoritative camera shake. */
     full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_TIMERS_A, 8u);
-    full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_TIMERS_B, 12u);
+    full_state_zero_transient_range(hdr, ADDR_SOUND_DEDUP_SWORD_CHING,
+                                    sizeof(uint32_t));
+    full_state_zero_transient_range(hdr, ADDR_CROWD_CHEER_LAST_TICK,
+                                    sizeof(uint32_t));
     full_state_zero_transient_range(hdr, ADDR_CHANT_STEP, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CHANT_TIMER, sizeof(int));
     full_state_zero_transient_range(hdr, ADDR_CROWD_TIMER, sizeof(int));
@@ -7080,32 +7730,23 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
     full_state_zero_transient_range(hdr, ADDR_LOSER, sizeof(uintptr_t));
     if (zero_render_colours) {
         full_state_zero_player_render_colours(hdr);
-        hdr->rng_seed = 0;
         /*
-         * EXPERIMENT (2026-06-27): do NOT canonicalize game_old_active_room out
-         * of the checksum. It was previously forced to active_room here because
-         * it is camera-derived at resets and used to drift between peers - but
-         * the camera is now sim-only (snapshot/restored per tick), so in healthy
-         * play old_active_room is deterministic and matches across peers. Hiding
-         * it from the checksum made the remaining rare desync UNCORRECTABLE: the
-         * room-flip test `if (old_active_room != active_room) reset_room()`
-         * (game_update@24375) reads the RAW value, so when old_active_room alone
-         * diverged, one peer ran reset_room (frnd@0x41EBCB) every frame, churning
-         * tilemap/things - yet the checksum (with this field zeroed) matched, so
-         * the netcode never corrected it. With this line removed, old_active_room
-         * is part of the checksum; the save (5680) / restore (5938) machinery is
-         * intact, so a divergence is now detected AND fixed by a full-state
-         * correction. (active_room itself is already checksummed and not
-         * canonicalized out, so this closes the other half of the flip compare.)
-         * If this regresses into a correction storm, restore the single line:
-         *     hdr->game_old_active_room = hdr->active_room;
+         * Gameplay RNG, camera X/Y, shake amplitude, and shake decay are
+         * simulation inputs. Native game_update_camera writes randomized shake
+         * directly into camera X/Y; amplitude/decay decide whether it consumes
+         * zero or two RNG draws, and the next player update reads prior-tick
+         * camera X in the loser-respawn branch. Shake draws therefore use the
+         * gameplay RNG and all of these fields remain
+         * checksummed. The net loop restores its clean post-tick simulation
+         * snapshot before every pre-state capture. Native _game_w is also a
+         * simulation input: player_update_logic compares a losing player's
+         * camera-relative distance against _game_w * 0.5 before respawning it,
+         * and game_update_camera uses the same width for horizontal clamping.
+         * _game_h is kept at the same deterministic boundary because native
+         * game_update uses it for vertical camera clamps and camera-relative
+         * ambient sampling. _resumed likewise clears
+         * both buffered attack counters after a resume.
          */
-        hdr->camera_x = 0.0f;
-        hdr->camera_y = 0.0f;
-        hdr->camera_shake = 0.0f;
-        hdr->camera_shake_decay = 0.0f;
-        hdr->game_w = 0.0f;
-        hdr->game_h = 0.0f;
         /*
          * Room colour-transition lerp values (see ADDR_COLOUR_LERP_BLOCK). The
          * lerp control fields (game_do_lerp_colours, lerp_time) were already
@@ -11060,6 +11701,480 @@ static int lua_audio_set_sfx_volume(lua_State* Ls) {
     return 1;
 }
 
+typedef struct AudioBytebeatRequest {
+    BytebeatProgram program;
+    BytebeatRenderOptions render;
+    BytebeatMode mode;
+    int loops;
+    int ticks;
+    float volume;
+    double duration;
+    unsigned long long operations;
+} AudioBytebeatRequest;
+
+static void audio_bytebeat_error(char* out, size_t out_cap,
+                                 const BytebeatDiagnostic* diagnostic) {
+    if (!out || out_cap == 0u) return;
+    if (!diagnostic || !diagnostic->message[0]) {
+        snprintf(out, out_cap, "bytebeat validation failed");
+        return;
+    }
+    snprintf(out, out_cap, "bytebeat error at byte %lu: %s",
+             (unsigned long)diagnostic->offset, diagnostic->message);
+}
+
+static int audio_bytebeat_parse_request(lua_State* Ls, const char* expression,
+                                        int opts_index,
+                                        AudioBytebeatRequest* request,
+                                        char* err, size_t err_cap) {
+    const char* mode_name = "bytebeat";
+    BytebeatDiagnostic diagnostic;
+    double exact_samples;
+    double fade_samples;
+    float sample_rate_value;
+    float duration_value;
+    float fade_ms_value;
+    float gain_value;
+    if (!request || !expression) {
+        snprintf(err, err_cap, "missing bytebeat request");
+        return 0;
+    }
+    memset(request, 0, sizeof(*request));
+    request->mode = BYTEBEAT_MODE_U8;
+    request->loops = 0;
+    request->ticks = -1;
+    request->volume = 1.0f;
+
+    if (!lua_isnoneornil(Ls, opts_index) && !lua_istable(Ls, opts_index)) {
+        snprintf(err, err_cap, "bytebeat options must be a table");
+        return 0;
+    }
+    if (lua_istable(Ls, opts_index)) {
+        lua_getfield(Ls, opts_index, "mode");
+        if (!lua_isnil(Ls, -1)) {
+            if (!lua_isstring(Ls, -1)) {
+                lua_pop(Ls, 1);
+                snprintf(err, err_cap, "bytebeat mode must be a string");
+                return 0;
+            }
+            mode_name = lua_tostring(Ls, -1);
+        }
+        if (_stricmp(mode_name, "bytebeat") == 0 ||
+            _stricmp(mode_name, "u8") == 0) {
+            request->mode = BYTEBEAT_MODE_U8;
+        } else if (_stricmp(mode_name, "floatbeat") == 0 ||
+                   _stricmp(mode_name, "float") == 0) {
+            request->mode = BYTEBEAT_MODE_FLOAT;
+        } else {
+            lua_pop(Ls, 1);
+            snprintf(err, err_cap,
+                     "bytebeat mode must be 'bytebeat' or 'floatbeat'");
+            return 0;
+        }
+        lua_pop(Ls, 1);
+    }
+
+    sample_rate_value = audio_opts_get_float(Ls, opts_index,
+                                             "sample_rate", 8000.0f);
+    duration_value = audio_opts_get_float(Ls, opts_index, "duration", 8.0f);
+    fade_ms_value = audio_opts_get_float(Ls, opts_index, "fade_ms", 8.0f);
+    gain_value = audio_opts_get_float(Ls, opts_index, "gain", 1.0f);
+    if (!isfinite(sample_rate_value) ||
+        sample_rate_value < 4000.0f || sample_rate_value > 48000.0f) {
+        snprintf(err, err_cap, "sample_rate must be between 4000 and 48000");
+        return 0;
+    }
+    if (!isfinite(duration_value) ||
+        duration_value < 0.01f || duration_value > 30.0f) {
+        snprintf(err, err_cap, "duration must be between 0.01 and 30 seconds");
+        return 0;
+    }
+    if (!isfinite(fade_ms_value) ||
+        fade_ms_value < 0.0f || fade_ms_value > 1000.0f) {
+        snprintf(err, err_cap, "fade_ms must be between 0 and 1000");
+        return 0;
+    }
+    if (!isfinite(gain_value) || gain_value < 0.0f || gain_value > 4.0f) {
+        snprintf(err, err_cap, "gain must be between 0 and 4");
+        return 0;
+    }
+    request->render.sample_rate = (uint32_t)(sample_rate_value + 0.5f);
+    exact_samples = (double)duration_value *
+                    (double)request->render.sample_rate;
+    if (!isfinite(exact_samples) || exact_samples < 1.0 ||
+        exact_samples > (double)BYTEBEAT_MAX_SAMPLES) {
+        snprintf(err, err_cap,
+                 "duration/sample_rate exceeds the %u-sample render limit",
+                 (unsigned int)BYTEBEAT_MAX_SAMPLES);
+        return 0;
+    }
+    request->render.sample_count = (uint32_t)(exact_samples + 0.5);
+    fade_samples = ((double)fade_ms_value *
+                    (double)request->render.sample_rate) / 1000.0;
+    request->render.fade_samples = (uint32_t)(fade_samples + 0.5);
+    request->render.gain = (double)gain_value;
+    request->duration = (double)request->render.sample_count /
+                        (double)request->render.sample_rate;
+    request->loops = audio_opts_get_int(Ls, opts_index, "loops", 0);
+    request->ticks = audio_opts_get_int(Ls, opts_index, "ticks", -1);
+    request->volume = audio_opts_get_float(Ls, opts_index, "volume", 1.0f);
+    if (request->loops < -1 || request->loops > 1000) {
+        snprintf(err, err_cap, "loops must be between -1 and 1000");
+        return 0;
+    }
+    if (request->ticks < -1 || request->ticks > 600000) {
+        snprintf(err, err_cap, "ticks must be between -1 and 600000 ms");
+        return 0;
+    }
+    if (!isfinite(request->volume) ||
+        request->volume < 0.0f || request->volume > 1.0f) {
+        snprintf(err, err_cap, "volume must be between 0 and 1");
+        return 0;
+    }
+    if (!bytebeat_compile(expression, request->mode,
+                          &request->program, &diagnostic)) {
+        audio_bytebeat_error(err, err_cap, &diagnostic);
+        return 0;
+    }
+    request->operations =
+        (unsigned long long)request->program.node_count *
+        (unsigned long long)request->render.sample_count;
+    if (request->operations >
+        (unsigned long long)BYTEBEAT_MAX_RENDER_OPERATIONS) {
+        snprintf(err, err_cap,
+                 "bytebeat render needs %llu operations; limit is %u",
+                 request->operations,
+                 (unsigned int)BYTEBEAT_MAX_RENDER_OPERATIONS);
+        return 0;
+    }
+    if (request->render.fade_samples >
+        request->render.sample_count / 2u) {
+        snprintf(err, err_cap,
+                 "fade_ms exceeds half the rendered duration");
+        return 0;
+    }
+    return 1;
+}
+
+static char* audio_bytebeat_make_key(const char* expression,
+                                     const AudioBytebeatRequest* request) {
+    size_t expression_len;
+    size_t cap;
+    char* key;
+    uint64_t gain_bits = 0u;
+    int written;
+    if (!expression || !request) return NULL;
+    expression_len = strlen(expression);
+    cap = expression_len + 160u;
+    key = (char*)malloc(cap);
+    if (!key) return NULL;
+    memcpy(&gain_bits, &request->render.gain, sizeof(gain_bits));
+    written = snprintf(
+        key, cap, "%u|%u|%u|%u|%08lx%08lx|",
+        (unsigned int)request->mode,
+        (unsigned int)request->render.sample_rate,
+        (unsigned int)request->render.sample_count,
+        (unsigned int)request->render.fade_samples,
+        (unsigned long)(gain_bits >> 32),
+        (unsigned long)(gain_bits & 0xffffffffu));
+    if (written < 0 || (size_t)written + expression_len + 1u > cap) {
+        free(key);
+        return NULL;
+    }
+    memcpy(key + written, expression, expression_len + 1u);
+    return key;
+}
+
+static uint64_t audio_bytebeat_key_hash(const char* value) {
+    uint64_t hash = UINT64_C(1469598103934665603);
+    while (value && *value) {
+        hash ^= (uint64_t)(unsigned char)*value++;
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static AudioChunkCacheEntry* mod_audio_find_generated_chunk(
+    LoadedMod* mod, const char* key) {
+    if (!mod || !key) return NULL;
+    for (int i = 0; i < mod->audio_chunk_count; i++) {
+        AudioChunkCacheEntry* entry = &mod->audio_chunks[i];
+        if (entry->generated && entry->generator_key &&
+            strcmp(entry->generator_key, key) == 0) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static AudioChunkCacheEntry* mod_audio_generate_chunk(
+    LoadedMod* mod, const char* key,
+    const AudioBytebeatRequest* request,
+    char* err, size_t err_cap) {
+    uint32_t decoded_bytes;
+    int16_t* pcm;
+    BytebeatDiagnostic diagnostic;
+    char* stored_key;
+    uint64_t key_hash;
+    AudioChunkCacheEntry* entry;
+    if (!mod || !key || !request) {
+        snprintf(err, err_cap, "missing generated-audio context");
+        return NULL;
+    }
+    decoded_bytes = request->render.sample_count * 2u;
+    if (mod->audio_generated_count >= AUDIO_BYTEBEAT_CACHE_MAX) {
+        snprintf(err, err_cap,
+                 "generated-audio cache is full (%d); call clear_generated()",
+                 AUDIO_BYTEBEAT_CACHE_MAX);
+        return NULL;
+    }
+    if (decoded_bytes > AUDIO_BYTEBEAT_PCM_MAX_BYTES -
+                        mod->audio_generated_pcm_bytes) {
+        snprintf(err, err_cap,
+                 "generated audio exceeds the per-mod 4 MiB PCM cache");
+        return NULL;
+    }
+    pcm = (int16_t*)malloc((size_t)decoded_bytes);
+    if (!pcm) {
+        snprintf(err, err_cap, "out of memory rendering bytebeat");
+        return NULL;
+    }
+    if (!bytebeat_render_pcm16(
+            &request->program, &request->render, pcm,
+            request->render.sample_count, &diagnostic)) {
+        audio_bytebeat_error(err, err_cap, &diagnostic);
+        free(pcm);
+        return NULL;
+    }
+    if (!mod_audio_chunk_reserve(mod, mod->audio_chunk_count + 1)) {
+        free(pcm);
+        snprintf(err, err_cap, "out of memory caching bytebeat");
+        return NULL;
+    }
+    stored_key = (char*)malloc(strlen(key) + 1u);
+    if (!stored_key) {
+        free(pcm);
+        snprintf(err, err_cap, "out of memory caching bytebeat key");
+        return NULL;
+    }
+    memcpy(stored_key, key, strlen(key) + 1u);
+    key_hash = audio_bytebeat_key_hash(key);
+    entry = &mod->audio_chunks[mod->audio_chunk_count++];
+    memset(entry, 0, sizeof(*entry));
+    snprintf(entry->path, sizeof(entry->path),
+             "@bytebeat:%08lx%08lx",
+             (unsigned long)(key_hash >> 32),
+             (unsigned long)(key_hash & 0xffffffffu));
+    entry->generator_key = stored_key;
+    entry->generated_pcm = pcm;
+    entry->generated_frames = request->render.sample_count;
+    entry->generated_rate = request->render.sample_rate;
+    entry->decoded_bytes = decoded_bytes;
+    entry->generated = 1;
+    mod->audio_generated_count++;
+    mod->audio_generated_pcm_bytes += decoded_bytes;
+    return entry;
+}
+
+static void audio_bytebeat_push_info(lua_State* Ls,
+                                     const AudioBytebeatRequest* request,
+                                     int cached, int channel) {
+    lua_newtable(Ls);
+    lua_pushstring(Ls, request->mode == BYTEBEAT_MODE_FLOAT
+        ? "floatbeat" : "bytebeat");
+    lua_setfield(Ls, -2, "mode");
+    lua_pushinteger(Ls, (lua_Integer)request->render.sample_rate);
+    lua_setfield(Ls, -2, "sample_rate");
+    lua_pushinteger(Ls, (lua_Integer)request->render.sample_count);
+    lua_setfield(Ls, -2, "samples");
+    lua_pushnumber(Ls, (lua_Number)request->duration);
+    lua_setfield(Ls, -2, "duration");
+    lua_pushinteger(Ls, (lua_Integer)request->program.node_count);
+    lua_setfield(Ls, -2, "nodes");
+    lua_pushinteger(Ls, (lua_Integer)request->program.max_depth);
+    lua_setfield(Ls, -2, "depth");
+    lua_pushnumber(Ls, (lua_Number)request->operations);
+    lua_setfield(Ls, -2, "operations");
+    lua_pushinteger(Ls, (lua_Integer)(request->render.sample_count * 2u));
+    lua_setfield(Ls, -2, "pcm_bytes");
+    lua_pushstring(Ls, "native_pcm");
+    lua_setfield(Ls, -2, "backend");
+    /* Retained for API compatibility: this is the size of exporting the same
+     * render as a canonical WAV, not memory owned by the playback backend. */
+    lua_pushinteger(Ls, (lua_Integer)
+                    bytebeat_wav_size(request->render.sample_count));
+    lua_setfield(Ls, -2, "wav_bytes");
+    lua_pushboolean(Ls, cached ? 1 : 0);
+    lua_setfield(Ls, -2, "cached");
+    if (channel >= 0) {
+        lua_pushinteger(Ls, (lua_Integer)channel);
+        lua_setfield(Ls, -2, "channel");
+    }
+}
+
+static int lua_audio_bytebeat_info(lua_State* Ls) {
+    size_t expression_len = 0u;
+    const char* expression = luaL_checklstring(Ls, 1, &expression_len);
+    AudioBytebeatRequest request;
+    char err[256];
+    if (!expression || expression_len == 0u ||
+        expression_len != strlen(expression)) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "bytebeat expression must be nonempty text without NUL bytes");
+        return 2;
+    }
+    if (!audio_bytebeat_parse_request(Ls, expression, 2, &request,
+                                      err, sizeof(err))) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+    audio_bytebeat_push_info(Ls, &request, 0, -1);
+    return 1;
+}
+
+static int lua_audio_play_bytebeat(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    size_t expression_len = 0u;
+    const char* expression = luaL_checklstring(Ls, 1, &expression_len);
+    AudioBytebeatRequest request;
+    char err[256];
+    char* key;
+    AudioChunkCacheEntry* chunk;
+    int cached;
+    int channel;
+    float volume;
+    if (!mod) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no mod context");
+        return 2;
+    }
+    if (!expression || expression_len == 0u ||
+        expression_len != strlen(expression)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "bytebeat expression must be nonempty text without NUL bytes");
+        return 2;
+    }
+    if (!audio_bytebeat_parse_request(Ls, expression, 2, &request,
+                                      err, sizeof(err))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err);
+        return 2;
+    }
+    key = audio_bytebeat_make_key(expression, &request);
+    if (!key) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "out of memory building bytebeat cache key");
+        return 2;
+    }
+    chunk = mod_audio_find_generated_chunk(mod, key);
+    cached = chunk ? 1 : 0;
+    if (!chunk) {
+        chunk = mod_audio_generate_chunk(mod, key, &request,
+                                         err, sizeof(err));
+    }
+    free(key);
+    if (!chunk) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, err[0] ? err : "failed to generate bytebeat");
+        return 2;
+    }
+    volume = audio_clampf(mod->audio_sfx_volume * request.volume,
+                          0.0f, 1.0f);
+    channel = audio_generated_play(mod, chunk, request.loops,
+                                   request.ticks, volume);
+    if (channel < 0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "no available generated-audio voice");
+        return 2;
+    }
+    lua_pushboolean(Ls, 1);
+    audio_bytebeat_push_info(Ls, &request, cached, channel);
+    return 2;
+}
+
+static int lua_audio_stop_sfx(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int stopped = 0;
+    if (!mod) {
+        lua_pushinteger(Ls, 0);
+        return 1;
+    }
+    stopped += audio_generated_stop_owner(mod);
+    if (g_audio_mixer_ready && p_mix_halt_channel &&
+        mod->audio_channel_base >= 0 && mod->audio_channel_count > 0) {
+        for (int i = 0; i < mod->audio_channel_count; i++) {
+            int channel = mod->audio_channel_base + i;
+            if (!p_mix_playing || p_mix_playing(channel)) stopped++;
+            p_mix_halt_channel(channel);
+        }
+    }
+    lua_pushinteger(Ls, stopped);
+    return 1;
+}
+
+static int lua_audio_clear_generated(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    int removed = 0;
+    int write = 0;
+    if (!mod) {
+        lua_pushinteger(Ls, 0);
+        return 1;
+    }
+    (void)audio_generated_stop_owner(mod);
+    if (g_audio_mixer_ready && p_mix_halt_channel &&
+        mod->audio_channel_base >= 0 && mod->audio_channel_count > 0) {
+        for (int i = 0; i < mod->audio_channel_count; i++) {
+            p_mix_halt_channel(mod->audio_channel_base + i);
+        }
+    }
+    for (int read = 0; read < mod->audio_chunk_count; read++) {
+        AudioChunkCacheEntry* entry = &mod->audio_chunks[read];
+        if (entry->generated) {
+            if (entry->chunk && p_mix_free_chunk) p_mix_free_chunk(entry->chunk);
+            free(entry->generated_pcm);
+            entry->generated_pcm = NULL;
+            free(entry->generator_key);
+            memset(entry, 0, sizeof(*entry));
+            removed++;
+        } else {
+            if (write != read) mod->audio_chunks[write] = *entry;
+            write++;
+        }
+    }
+    mod->audio_chunk_count = write;
+    mod->audio_generated_count = 0;
+    mod->audio_generated_pcm_bytes = 0u;
+    lua_pushinteger(Ls, removed);
+    return 1;
+}
+
+static int lua_audio_status(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    lua_newtable(Ls);
+    lua_pushstring(Ls, g_audio_mixer_ready ? "sdl_mixer" :
+                         (g_audio_mixer_disabled ? "file_fallback" :
+                          "not_initialized"));
+    lua_setfield(Ls, -2, "backend");
+    lua_pushstring(Ls, "native_pcm");
+    lua_setfield(Ls, -2, "generated_backend");
+    lua_pushnumber(Ls, mod ? mod->audio_sfx_volume : 0.0);
+    lua_setfield(Ls, -2, "sfx_volume");
+    lua_pushnumber(Ls, mod ? mod->audio_music_volume : 0.0);
+    lua_setfield(Ls, -2, "music_volume");
+    lua_pushinteger(Ls, mod ? mod->audio_chunk_count : 0);
+    lua_setfield(Ls, -2, "cached_chunks");
+    lua_pushinteger(Ls, mod ? mod->audio_generated_count : 0);
+    lua_setfield(Ls, -2, "generated_chunks");
+    lua_pushinteger(Ls, mod ? (lua_Integer)mod->audio_generated_pcm_bytes : 0);
+    lua_setfield(Ls, -2, "generated_pcm_bytes");
+    lua_pushinteger(Ls, AUDIO_BYTEBEAT_CACHE_MAX);
+    lua_setfield(Ls, -2, "generated_chunk_limit");
+    lua_pushinteger(Ls, AUDIO_BYTEBEAT_PCM_MAX_BYTES);
+    lua_setfield(Ls, -2, "generated_pcm_limit");
+    return 1;
+}
+
 static void push_audio_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_play_sfx, 1);         lua_setfield(Ls, -2, "play_sfx");
@@ -11067,6 +12182,11 @@ static void push_audio_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_stop_music, 1);       lua_setfield(Ls, -2, "stop_music");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_set_music_volume, 1); lua_setfield(Ls, -2, "set_music_volume");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_set_sfx_volume, 1);   lua_setfield(Ls, -2, "set_sfx_volume");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_play_bytebeat, 1);     lua_setfield(Ls, -2, "play_bytebeat");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_bytebeat_info, 1);     lua_setfield(Ls, -2, "bytebeat_info");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_stop_sfx, 1);          lua_setfield(Ls, -2, "stop_sfx");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_clear_generated, 1);   lua_setfield(Ls, -2, "clear_generated");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_audio_status, 1);            lua_setfield(Ls, -2, "status");
 }
 
 // =============================
@@ -15192,6 +16312,55 @@ size_t lua_manager_game_state_size(void) {
     return full_state_blob_size_for_thing_count(GAME_THING_COUNT_MAX);
 }
 
+static uint32_t full_state_layout_mix_u32(uint32_t hash, uint32_t value) {
+    hash ^= value;
+    hash *= 16777619u;
+    return hash;
+}
+
+uint32_t lua_manager_game_state_layout_fingerprint(void) {
+    /* This is a structural compatibility identity, not an integrity proof. Keep
+     * the explicit schema tag separate from FULL_STATE_BLOB_VERSION so a future
+     * serializer can deliberately retain blob-reader compatibility while
+     * changing rollback field/layout semantics. */
+    static const uint32_t layout_schema_version = 6u;
+    static const uint32_t rollback_canonicalization_version = 6u;
+    int tilemap_w = 0;
+    int tilemap_h = 0;
+    size_t tilemap_bytes = game_get_tilemap_bytes(&tilemap_w, &tilemap_h);
+    size_t state_size;
+    uint32_t hash = 2166136261u;
+
+    if (tilemap_w <= 0 || tilemap_h <= 0 || tilemap_bytes == 0u) return 0u;
+    state_size = full_state_blob_size_for_counts(GAME_THING_COUNT_MAX, tilemap_bytes);
+    if (state_size == 0u || state_size > (size_t)UINT32_MAX) return 0u;
+
+    hash = full_state_layout_mix_u32(hash, 0x4C474745u); /* "EGGL" */
+    hash = full_state_layout_mix_u32(hash, layout_schema_version);
+    hash = full_state_layout_mix_u32(hash, FULL_STATE_BLOB_MAGIC);
+    hash = full_state_layout_mix_u32(hash, FULL_STATE_BLOB_VERSION);
+    hash = full_state_layout_mix_u32(hash, rollback_canonicalization_version);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)sizeof(FullStateBlobHeader));
+    hash = full_state_layout_mix_u32(hash, (uint32_t)sizeof(uintptr_t));
+    hash = full_state_layout_mix_u32(hash, 2u); /* serialized player slots */
+    hash = full_state_layout_mix_u32(hash, (uint32_t)PLAYER_SIZE);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)THING_SIZE);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)GAME_THING_COUNT_MAX);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)THING_INFO_STATE_SIZE);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)ROOM_INFO_STATE_SIZE);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)PARTICLE_STATE_SIZE);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)TRANSIENT_GAME_STATE_SIZE);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)MAP_SCRIPT_API_VERSION);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)MAP_SCRIPT_SNAPSHOT_VERSION);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)sizeof(MapScriptSnapshot));
+    hash = full_state_layout_mix_u32(hash, (uint32_t)sizeof(uint32_t)); /* tile cell */
+    hash = full_state_layout_mix_u32(hash, (uint32_t)tilemap_w);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)tilemap_h);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)tilemap_bytes);
+    hash = full_state_layout_mix_u32(hash, (uint32_t)state_size);
+    return hash ? hash : 1u;
+}
+
 int lua_manager_game_state_save(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap) {
     size_t required = lua_manager_game_state_size();
     if (required == 0) {
@@ -15243,32 +16412,11 @@ static void full_state_sanitize_live_rollback_fields(void) {
         p_score_shudder[0] = 0;
         p_score_shudder[1] = 0;
     }
-    if (ptr_writable((void*)p_resumed, sizeof(int))) {
-        *p_resumed = 0;
-    }
 }
 
 int lua_manager_game_state_load_rollback(const void* src, size_t src_len, char* err, size_t err_cap) {
     unsigned long long framework_tick_count = g_game_tick_count;
-    float local_game_w = 0.0f;
-    float local_game_h = 0.0f;
-    int preserve_game_w = ptr_readable((const void*)p_game_w, sizeof(float));
-    int preserve_game_h = ptr_readable((const void*)p_game_h, sizeof(float));
-    if (preserve_game_w) local_game_w = *p_game_w;
-    if (preserve_game_h) local_game_h = *p_game_h;
-
     int ok = full_state_apply_blob(src, src_len, err, err_cap);
-
-    /* game_w/game_h are derived from each peer's local window and drawable.
-     * They remain in the full blob for ordinary save/load compatibility, but
-     * applying a remote/rollback snapshot must never replace local render
-     * geometry (or an old snapshot can also undo a local resize). */
-    if (preserve_game_w && ptr_writable((void*)p_game_w, sizeof(float))) {
-        *p_game_w = local_game_w;
-    }
-    if (preserve_game_h && ptr_writable((void*)p_game_h, sizeof(float))) {
-        *p_game_h = local_game_h;
-    }
 
     if (ok) {
         full_state_sanitize_live_rollback_fields();
@@ -15311,6 +16459,85 @@ int lua_manager_game_state_canonicalize_rollback(void* blob, size_t blob_len, ch
     return full_state_canonicalize_rollback_blob(blob, blob_len, err, err_cap);
 }
 
+static int full_state_validate_rollback_blob_internal(
+    const void* blob, size_t blob_len, int require_transport_canonical,
+    uint32_t* out_crc, LuaGameStateRollbackSummary* out_summary,
+    char* err, size_t err_cap) {
+    uint8_t* scratch = NULL;
+    uint32_t crc;
+    uint32_t real_seed = 0u;
+
+    if (!out_crc) {
+        full_state_set_err(err, err_cap, "checksum output pointer unavailable");
+        return 0;
+    }
+    if (!full_state_validate_apply_blob(blob, blob_len, NULL, err, err_cap)) {
+        return 0;
+    }
+    if (blob_len >= sizeof(FullStateBlobHeader)) {
+        real_seed = ((const FullStateBlobHeader*)blob)->rng_seed;
+    }
+
+    scratch = (uint8_t*)malloc(blob_len);
+    if (!scratch) {
+        full_state_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
+    memcpy(scratch, blob, blob_len);
+    if (require_transport_canonical) {
+        if (!full_state_canonicalize_rollback_blob(
+                scratch, blob_len, err, err_cap)) {
+            free(scratch);
+            return 0;
+        }
+        if (memcmp(scratch, blob, blob_len) != 0) {
+            free(scratch);
+            full_state_set_err(err, err_cap,
+                               "rollback transport blob is not canonical");
+            return 0;
+        }
+    }
+    if (!full_state_canonicalize_rollback_checksum_blob(
+            scratch, blob_len, err, err_cap)) {
+        free(scratch);
+        return 0;
+    }
+
+    crc = full_state_crc32(scratch, blob_len);
+    if (out_summary &&
+        !full_state_rollback_summary_from_canonical_blob(
+            scratch, blob_len, out_summary, err, err_cap)) {
+        free(scratch);
+        return 0;
+    }
+    if (out_summary) out_summary->rng_seed = real_seed;
+    free(scratch);
+    *out_crc = crc;
+    return 1;
+}
+
+int lua_manager_game_state_validate_rollback_blob(const void* blob, size_t blob_len,
+                                                  uint32_t* out_crc,
+                                                  char* err, size_t err_cap) {
+    return full_state_validate_rollback_blob_internal(
+        blob, blob_len, 0, out_crc, NULL, err, err_cap);
+}
+
+int lua_manager_game_state_validate_rollback_transport_blob(
+    const void* blob, size_t blob_len, uint32_t* out_crc,
+    char* err, size_t err_cap) {
+    return full_state_validate_rollback_blob_internal(
+        blob, blob_len, 1, out_crc, NULL, err, err_cap);
+}
+
+int lua_manager_game_state_analyze_canonical_rollback_blob(
+    const void* blob, size_t blob_len, uint32_t* out_crc,
+    LuaGameStateRollbackSummary* out_summary,
+    char* err, size_t err_cap) {
+    return full_state_validate_rollback_blob_internal(
+        blob, blob_len, 0, out_crc, out_summary, err, err_cap);
+}
+
 int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_t err_cap) {
     size_t blob_len = lua_manager_game_state_size();
     uint8_t* blob = NULL;
@@ -15348,6 +16575,7 @@ int lua_manager_game_state_rollback_checksum(uint32_t* out_crc, char* err, size_
 int lua_manager_game_state_rollback_summary(LuaGameStateRollbackSummary* out_summary, char* err, size_t err_cap) {
     size_t blob_len = lua_manager_game_state_size();
     uint8_t* blob = NULL;
+    uint32_t checksum = 0u;
     int ok = 0;
 
     if (!out_summary) {
@@ -15369,29 +16597,8 @@ int lua_manager_game_state_rollback_summary(LuaGameStateRollbackSummary* out_sum
         return 0;
     }
 
-    /*
-     * Diagnostic: capture the REAL gameplay rng seed before canonicalization
-     * zeroes it. The summary's rng_seed field is transmitted to the peer and
-     * logged in the desync detail (printed as rng=...), but it is NOT part of
-     * any checksum or desync trigger, so stuffing the live seed here is purely
-     * observational. It lets us see directly whether _mrand_seed has drifted
-     * between the two machines at a desync frame (seeds differ => RNG drift;
-     * seeds equal => a non-RNG thing field is non-deterministic).
-     */
-    {
-        uint32_t real_seed = 0;
-        if (blob_len >= sizeof(FullStateBlobHeader)) {
-            real_seed = ((const FullStateBlobHeader*)blob)->rng_seed;
-        }
-        if (!full_state_canonicalize_rollback_checksum_blob(blob, blob_len, err, err_cap)) {
-            free(blob);
-            return 0;
-        }
-        ok = full_state_rollback_summary_from_canonical_blob(blob, blob_len, out_summary, err, err_cap);
-        if (ok) {
-            out_summary->rng_seed = real_seed;
-        }
-    }
+    ok = lua_manager_game_state_analyze_canonical_rollback_blob(
+        blob, blob_len, &checksum, out_summary, err, err_cap);
     free(blob);
     return ok;
 }
@@ -15409,24 +16616,173 @@ int lua_manager_game_set_rng_seed(uint32_t seed) {
     return 1;
 }
 
-/* Camera scroll (camera_x/y). The active room is derived from camera_x
- * (_game_active_room = ROUND(camera_x / room_pixel_w)), so the netcode keeps the
- * camera sim-only (snapshot after tick, restore before next) for the same reason
- * as the seed: out-of-tick camera updates (render/round-reset) otherwise make the
- * room flip/reset at a different frame per peer -> reset_room + tile setup desync. */
+/* Camera scroll (camera_x/y). Native loser-respawn logic reads camera_x before
+ * game_update_camera, and room-effect sampling reads the updated camera later in
+ * the same tick. Keep it rollback-owned for the same reason as the RNG seed. */
 int lua_manager_game_camera(float* out_x, float* out_y) {
+    float x;
+    float y;
     if (!ptr_readable((const void*)p_camera_x, sizeof(float)) ||
         !ptr_readable((const void*)p_camera_y, sizeof(float))) return 0;
-    if (out_x) *out_x = *p_camera_x;
-    if (out_y) *out_y = *p_camera_y;
+    x = *p_camera_x;
+    y = *p_camera_y;
+    if (!isfinite(x) || !isfinite(y)) return 0;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
     return 1;
 }
 
 int lua_manager_game_set_camera(float x, float y) {
-    if (!ptr_writable((void*)p_camera_x, sizeof(float)) ||
+    if (!isfinite(x) || !isfinite(y) ||
+        !ptr_writable((void*)p_camera_x, sizeof(float)) ||
         !ptr_writable((void*)p_camera_y, sizeof(float))) return 0;
     *p_camera_x = x;
     *p_camera_y = y;
+    return 1;
+}
+
+int lua_manager_game_camera_shake(float* out_shake, float* out_decay) {
+    float shake;
+    float decay;
+    if (!out_shake || !out_decay ||
+        !ptr_readable((const void*)p_camera_shake, sizeof(float)) ||
+        !ptr_readable((const void*)p_camera_shake_decay, sizeof(float))) {
+        return 0;
+    }
+    shake = *p_camera_shake;
+    decay = *p_camera_shake_decay;
+    if (!isfinite(shake) || !isfinite(decay)) return 0;
+    *out_shake = shake;
+    *out_decay = decay;
+    return 1;
+}
+
+static int game_palette_state_valid(const LuaGamePaletteState* state) {
+    int i;
+    if (!state || (state->pending != 0 && state->pending != 1) ||
+        state->lerp_time < 0 || state->lerp_time > 30) {
+        return 0;
+    }
+    for (i = 0; i < LUA_GAME_PALETTE_FLOATS; i++) {
+        if (!isfinite(state->colours[i])) return 0;
+    }
+    return 1;
+}
+
+int lua_manager_game_palette_capture(LuaGamePaletteState* out_state) {
+    const float* colours;
+    if (!out_state ||
+        COLOUR_LERP_BLOCK_BYTES !=
+            LUA_GAME_PALETTE_FLOATS * sizeof(float) ||
+        !ptr_readable((const void*)p_game_do_lerp_colours, sizeof(int)) ||
+        !ptr_readable((const void*)p_lerp_time, sizeof(int)) ||
+        !p_transient_game_state) {
+        return 0;
+    }
+    colours = (const float*)(const void*)(
+        p_transient_game_state +
+        (ADDR_COLOUR_LERP_BLOCK - ADDR_TRANSIENT_GAME_STATE));
+    if (!ptr_readable(colours, COLOUR_LERP_BLOCK_BYTES)) return 0;
+    out_state->pending = *p_game_do_lerp_colours;
+    out_state->lerp_time = *p_lerp_time;
+    memcpy(out_state->colours, colours, COLOUR_LERP_BLOCK_BYTES);
+    return game_palette_state_valid(out_state);
+}
+
+int lua_manager_game_palette_restore(const LuaGamePaletteState* state) {
+    float* colours;
+    if (!game_palette_state_valid(state) ||
+        COLOUR_LERP_BLOCK_BYTES !=
+            LUA_GAME_PALETTE_FLOATS * sizeof(float) ||
+        !ptr_writable((void*)p_game_do_lerp_colours, sizeof(int)) ||
+        !ptr_writable((void*)p_lerp_time, sizeof(int)) ||
+        !p_transient_game_state) {
+        return 0;
+    }
+    colours = (float*)(void*)(
+        p_transient_game_state +
+        (ADDR_COLOUR_LERP_BLOCK - ADDR_TRANSIENT_GAME_STATE));
+    if (!ptr_writable(colours, COLOUR_LERP_BLOCK_BYTES)) return 0;
+    /* Validate every value and destination before the first write so a failed
+     * restore cannot leave a half-old/half-new presentation palette. */
+    memcpy(colours, state->colours, COLOUR_LERP_BLOCK_BYTES);
+    *p_game_do_lerp_colours = state->pending;
+    *p_lerp_time = state->lerp_time;
+    return 1;
+}
+
+int lua_manager_game_width(float* out_width) {
+    float width;
+    if (!out_width || !ptr_readable((const void*)p_game_w, sizeof(float))) return 0;
+    width = *p_game_w;
+    if (!game_sim_extent_valid(width)) return 0;
+    *out_width = width;
+    return 1;
+}
+
+int lua_manager_game_set_width(float width) {
+    if (!game_sim_extent_valid(width) ||
+        !ptr_writable((void*)p_game_w, sizeof(float))) return 0;
+    *p_game_w = width;
+    return 1;
+}
+
+int lua_manager_game_height(float* out_height) {
+    float height;
+    if (!out_height ||
+        !ptr_readable((const void*)p_game_h, sizeof(float))) return 0;
+    height = *p_game_h;
+    if (!game_sim_extent_valid(height)) return 0;
+    *out_height = height;
+    return 1;
+}
+
+int lua_manager_game_set_height(float height) {
+    if (!game_sim_extent_valid(height) ||
+        !ptr_writable((void*)p_game_h, sizeof(float))) return 0;
+    *p_game_h = height;
+    return 1;
+}
+
+int lua_manager_game_set_geometry(float game_w, float game_h) {
+    if (!game_sim_extent_valid(game_w) ||
+        !game_sim_extent_valid(game_h) ||
+        !ptr_writable((void*)p_game_w, sizeof(float)) ||
+        !ptr_writable((void*)p_game_h, sizeof(float))) return 0;
+    *p_game_w = game_w;
+    *p_game_h = game_h;
+    return 1;
+}
+
+int lua_manager_game_set_sim_state(uint32_t seed,
+                                   float camera_x,
+                                   float camera_y,
+                                   float camera_shake,
+                                   float camera_shake_decay,
+                                   float game_w,
+                                   float game_h) {
+    /* Validate every value and destination before the first write. This keeps a
+     * failed geometry restore from partially committing RNG or camera. */
+    if (!isfinite(camera_x) || !isfinite(camera_y) ||
+        !isfinite(camera_shake) || !isfinite(camera_shake_decay) ||
+        !game_sim_extent_valid(game_w) ||
+        !game_sim_extent_valid(game_h) ||
+        !ptr_writable((void*)p_mrand_seed, sizeof(uint32_t)) ||
+        !ptr_writable((void*)p_camera_x, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_y, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_shake, sizeof(float)) ||
+        !ptr_writable((void*)p_camera_shake_decay, sizeof(float)) ||
+        !ptr_writable((void*)p_game_w, sizeof(float)) ||
+        !ptr_writable((void*)p_game_h, sizeof(float))) {
+        return 0;
+    }
+    *p_mrand_seed = seed;
+    *p_camera_x = camera_x;
+    *p_camera_y = camera_y;
+    *p_camera_shake = camera_shake;
+    *p_camera_shake_decay = camera_shake_decay;
+    *p_game_w = game_w;
+    *p_game_h = game_h;
     return 1;
 }
 
@@ -15586,6 +16942,8 @@ int lua_manager_get_mod_diagnostics(int mod_index, LuaModDiagnostics* out_diag) 
     out_diag->bind_entries = m->bind_count;
     out_diag->storage_entries = m->storage_count;
     out_diag->audio_chunks = m->audio_chunk_count;
+    out_diag->audio_generated_chunks = m->audio_generated_count;
+    out_diag->audio_generated_pcm_bytes = m->audio_generated_pcm_bytes;
     out_diag->font_registrations = m->font_reg_count;
     out_diag->texture_registrations = m->texture_reg_count;
     out_diag->approx_memory_bytes = mod_diag_estimate_memory_bytes(m);

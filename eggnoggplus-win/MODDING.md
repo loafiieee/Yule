@@ -487,6 +487,9 @@ mod.ui.draw_sprite(sprite, 400, 240, { scale = 1.0 })
 - `mod.assets.load_spritesheet(id, rel_path [,opts]) -> sheet | nil, err`
   - Registers a PNG relative to the mod folder and rebuilds the live atlas so it can be drawn immediately.
   - Options: `cell_w`, `cell_h`, `padding`, `flags`, `force`.
+  - Declared inter-cell padding is removed before native packing. A rebuild
+    refuses a sheet when it would exceed the engine's fixed 8,192-sprite global
+    capacity instead of allowing the native allocator to wrap or crash.
   - Returns `{ id, path, full_path, base_id, count, cell_w, cell_h, padding, flags }`.
   - If the engine graphics atlas is not ready yet, the sheet is registered and the call returns `nil, err`; call again on a later frame or use `mod.assets.info(id)`.
 - `mod.assets.begin_batch() -> true | nil, err`
@@ -868,9 +871,11 @@ These functions provide fast binary state save/load for rollback netcode. Unlike
 
 ## Audio API (`mod.audio`)
 
-`mod.audio` supports two SFX paths:
+`mod.audio` supports three SFX paths:
 - **asset path**: plays a file from your mod folder via `SDL2_mixer` (e.g. `.wav`, `.ogg`, `.mp3` if your mixer build supports it).
 - **built-in id**: triggers Eggnogg's native synth SFX (`pip`, `noise`, `thump`, etc.).
+- **generated PCM**: renders bounded bytebeat/floatbeat once and mixes it through
+  Eggnogg's already-open audio device without requiring `SDL2_mixer`.
 
 ```lua
 -- file-based SFX (relative to mod folder)
@@ -885,6 +890,14 @@ mod.audio.play_music("assets/loop.ogg", { loops = -1 })
 mod.audio.set_music_volume(0.6)
 mod.audio.set_sfx_volume(0.8)
 mod.audio.stop_music()
+
+-- bounded procedural audio
+mod.audio.play_bytebeat("t*(t>>5|t>>8)", {
+  mode = "bytebeat", sample_rate = 8000, duration = 8,
+})
+mod.audio.play_bytebeat("sin(2*pi*220*time)*0.25", {
+  mode = "floatbeat", sample_rate = 22050, duration = 4,
+})
 ```
 
 `play_sfx(path_or_id [,opts]) -> true | false, err`
@@ -921,6 +934,31 @@ mod.audio.stop_music()
 
 `set_sfx_volume(v) -> true`
 - Sets this mod's SFX volume scalar (`0..1`) used by `play_sfx`.
+
+`play_bytebeat(expression [,opts]) -> true, info | false, err`
+- Compiles and plays bounded JS-256-style bytebeat or floatbeat on this mod's native
+  generated-audio voices. It never evaluates JavaScript/Lua, opens another audio
+  device, or writes a temporary file.
+- `opts`: `mode`, `sample_rate`, `duration`, `fade_ms`, `gain`, `volume`, `loops`,
+  and `ticks`.
+- Exact expression/render options reuse an owned decoded cache entry.
+
+`bytebeat_info(expression [,opts]) -> info | nil, err`
+- Runs the same parser and resource validation without initializing audio or rendering.
+- Syntax diagnostics include a zero-based byte offset.
+
+`stop_sfx() -> stopped_channels`
+- Stops this mod's owned SFX channels.
+
+`clear_generated() -> removed_chunks`
+- Stops this mod's SFX channels and frees its generated chunks, preserving file caches.
+
+`status() -> table`
+- Reports the current backend, volumes, cached/generated counts, generated PCM bytes, and
+  limits.
+
+See `BYTEBEAT.md` for the full expression grammar, floatbeat rules, options, examples,
+diagnostics, resource ceilings, cache ownership, and verification procedure.
 
 ## Animation helpers (`mod.anim`)
 
@@ -1041,12 +1079,13 @@ local ok
 ok, err = tx:register_tile({
   id = "moss_floor",
   name = "Moss Floor",
-  native_glyph = "x",
+  collision = "solid",
   sheet = "terrain",
   sprite_index = 0,
   frame_count = 4,
   frame_ticks = 6,
   animation = "loop",
+  native_visual = "underlay",
   mirror_with_room = true,
   random_phase = true,
   offset_x = 0,
@@ -1079,9 +1118,9 @@ all loaded mods and map packages, so it must not be used as a package-only
 version identifier.
 
 `find_tile` returns a detached Lua table (never a live registry pointer) with
-the normalized `key`, `owner`, `id`, display `name`, behavior/sheet/frame fields,
+the normalized `key`, `owner`, `id`, display `name`, collision/force/sheet/frame fields,
 both string `animation` and numeric `animation_mode`, transform/tint fields,
-flags plus their boolean forms, and the `asset_sha256` and
+flags plus their boolean forms, normalized `native_visual`, and the `asset_sha256` and
 `definition_sha256` digests.
 
 Content-compatible mod ids are at most 47 characters and use letters, numbers,
@@ -1098,10 +1137,32 @@ capped at 65,535 tiles.
 
 Tile definition fields:
 
-- required: `id`, `native_glyph`, `sheet` (or `sprite_sheet`)
+- required: `id`, `sheet` (or `sprite_sheet`); `native_glyph` is additionally
+  required when `collision` is omitted or `native`
 - optional: `name`, `sprite_index`, `frame_count`, `frame_ticks`, `animation`,
   `layer`, `mirror_with_room`, `random_phase`, `offset_x`, `offset_y`, `scale`,
-  `scale_x`, `scale_y`, `angle`/`angle_degrees`, `tint`, `asset_sha256`
+  `scale_x`, `scale_y`, `angle`/`angle_degrees`, `tint`, `asset_sha256`,
+  `collision`, `native_glyph`, `force_mode`, `force_x`, `force_y`,
+  `max_speed_x`, `max_speed_y`, `native_visual`
+
+`collision` is `native` (default), `solid`, `pass_through`, or `hazard`. The
+three presets resolve to the verified vanilla `@`, `x`, and `X` behaviors;
+omit `native_glyph` for a preset. If it is supplied, it must match the preset.
+Native `K` is deliberately rejected as a custom behavior glyph until the map
+loader owns a safe per-room thing-pool spawn budget; it may still be a source
+symbol when the definition selects a safe preset instead.
+`force_x`/`force_y` opt their axes into deterministic per-tick velocity changes
+in `-64..64`. `force_mode` is `add` (default) or `set`; set mode changes only
+authored axes. Matching `max_speed_x`/`max_speed_y` values in `0..64` clamp
+absolute velocity after the force. `mirror_with_room` also reverses `force_x`
+for cells bound into a mirrored-right room.
+
+`native_visual` is `replace` (default) or `underlay`. `underlay` first draws the
+cell's already resolved native terrain—including its generic `map_draw` sprite
+fallback when the action itself returns no draw—and then the custom sprite,
+matching the visual composition used by vanilla surface props such as mines
+without taking their spawn/trigger behavior. It affects drawing only; collision
+still comes from `collision`/`native_glyph`.
 
 `animation` is `loop`, `ping_pong`/`pingpong`, or `once`. `tint` is exactly four
 RGBA numbers in `0..1`. Unknown keys, fractional integer fields, NaN/infinity,
@@ -1144,11 +1205,152 @@ native fallback. The custom transform is relative to the engine's current tile
 transform, tint multiplies the current map/native tint, and the complete turtle
 state is restored after drawing.
 
+V2 map packages also have a real map-level sheet. Put `sprite_sheet`,
+`asset_sha256` (optional), `cell_w`, `cell_h`, and `padding` directly under
+`tileset`; entries in `tileset.tiles` inherit them and name another sheet only
+for an exception. Setting `native_layout: true` on an external sheet with a
+128-cell native prefix reskins ordinary unlisted map glyphs as well. The sheet
+may append any number of custom cells, and its declared cell size, padding, and
+grid shape are not fixed. The engine still runs each glyph's native
+collision/update action; only its synchronous tile-atlas draw base changes.
+Explicit definitions take precedence. See `MAP_FORMAT.md` for the schema
+and checked-in example.
+
 Only V2 map cells currently obtain live bindings. Mod-owned definitions can be
 registered and queried, but general runtime tile placement/editing remains a
-future API. There is no API for arbitrary native tile callbacks. Fixed-address
-integration still requires a manual in-game visual pass for mirrored rooms,
-external sheets, atlas rebuilds, and forced missing-asset fallback.
+future API. Mod-owned definitions do not receive raw native callbacks. V2 map
+packages use the separate bounded `map.lua` API below. Fixed-address integration
+still requires a manual in-game visual pass for mirrored rooms, external sheets,
+atlas rebuilds, and forced missing-asset fallback.
+
+## Map-local behavior (`map.lua`)
+
+An `eggnogg-map/v2` package may put one optional `map.lua` beside its
+`data.json` and `data.map`. This is intentionally separate from ordinary mods:
+it has its own deterministic sandbox, no `mod.*` API, no filesystem/network/OS
+access, and a fixed state surface that is embedded in rollback snapshots.
+
+Keep JSON simple: declare the sprite and native collision fallback there, then
+register only behavior unique to the map:
+
+```lua
+map.sensor(">", {
+  tile_box = { left = 0, top = 0, right = 1, bottom = 0.375 },
+  object_box = { left = -0.375, top = 0, right = 0.375, bottom = 0.375 },
+  objects = { "alive_player", "sword", "hazard" },
+  contact_scope = "binding",
+})
+
+function spring_launch_vy(object)
+  if object.kind == "player" then
+    return -4.0
+  end
+  return -2.8
+end
+
+map.on_enter(">", function(object, tile)
+  local target_vy = spring_launch_vy(object)
+  object.vy = target_vy
+  object:set_velocity_limits({ min_vy = target_vy }, 8)
+  tile:set_sprite(129, 16, { offset_y = 8 })
+  map.state.spring_hits = (map.state.spring_hits or 0) + 1
+end)
+
+map.on_contact("}", function(object, tile)
+  object:add_velocity(tile.mirrored and -0.25 or 0.25, 0)
+end)
+```
+
+Available registration functions are `map.sensor(tile_ref, options)`,
+`map.on_enter(tile_ref, callback)`,
+`map.on_contact(tile_ref, callback)`, `map.on_leave(tile_ref, callback)`, and
+`map.on_tick(callback)`. A tile reference is its one-byte source symbol or
+canonical `map.<map-id>:<tile-id>` key.
+
+One optional sensor may be registered per tile binding while the file loads.
+`tile_box = {left,top,right,bottom}` uses tile-local coordinates (`0..1` is the
+cell), `object_box` is `center`, native-radius `body`, `feet`, or a bounded
+custom relative box. `objects` accepts legacy `player` (living and dead player
+bodies), the narrower `alive_player`/`dead_body`, `sword`, and opt-in `hazard`;
+the last profile is the verified native type-3 point hazard spawned by `K`.
+`contact_scope` is `cell` by default or `binding` to union adjoining cells of
+the same definition without seam re-entry/multiplied callbacks, and
+`mirror_with_room` optionally mirrors the region. Authored edges are fixed at
+1/256-tile precision, edge touching counts, and the runtime evaluates the
+complete bounded neighborhood in stable map order from one immutable physics
+sample. See `MAP_FORMAT.md` for exact ranges and defaults.
+
+Contact callbacks receive:
+
+- `object`: writable finite `x`, `y`, `vx`, `vy`, plus
+  `set_velocity(vx,vy)`, `add_velocity(dx,dy)`, and
+  `set_velocity_limits(limits,duration_ticks)` plus
+  `clear_velocity_limits()`; read-only `kind`, `id`, and
+  verified native `contact_radius`. Kinds are `player`, `dead_body`, `sword`,
+  and `hazard`; their radii are respectively 6, 6, 4, and 0 pixels. A limits
+  table contains one or more of `min_vx`, `max_vx`, `min_vy`, and `max_vy` in
+  `-64..64`, with valid min/max pairs, for 1 through 1,000,000 ticks. It replaces
+  the object's previous temporary limit; clearing an absent limit is a no-op.
+  Limits are id/lifecycle/kind-safe rollback state, with only the native
+  live-player/state-8-dead-body transition retaining one lifecycle's record;
+- `tile`: read-only `x`, `y`, `key`, `symbol`, and `mirrored`, plus
+  `set_sprite(index,duration_ticks [,options])` and `reset_sprite()`.
+
+`set_sprite` options are a strict plain table with optional finite `offset_x`
+and `offset_y` destination-pixel deltas in `-4096..4096`, fixed to 1/256-pixel
+precision. They are added to the JSON transform after atlas cropping and expire
+or reset atomically with the sprite. This can draw an extended active frame
+above its 16x16 cell without moving the native underlay, collision cell, sensor,
+or a spawned entity. Omitted offsets reset to zero rather than inheriting a
+previous override.
+
+Persistent data must use `map.state`, whose 64 bounded entries accept only nil,
+boolean, finite number, or short string values. `map.random(...)` is the only
+gameplay RNG and is snapshotted; `map.tick()` returns the deterministic script
+clock. Ordinary mutable globals/captured state, `math.random`, bytecode, dynamic
+loading, debug/FFI/JIT/coroutine APIs, unbounded execution, and the numeric `^`
+operator are rejected. `^` would route through non-bit-stable libm power code;
+use explicit multiplication for bounded powers. Carets in strings/comments are
+unaffected.
+
+Bindings without a sensor use the legacy verified player center plus half-tile
+foot probes and native type-2 sword center point. Sensor bindings instead use
+their declared tile/object boxes with player/dead-body radius 6, sword radius 4,
+or the opt-in type-3 hazard's native point radius 0. These are physics-contact
+profiles, not the separate sprite-derived combat hurtboxes. Other native thing
+types remain skipped. Reusable thing slots carry rollback-snapshotted lifecycle
+generations and explicit snapshotted kinds, so a stale leave from a sword or
+hazard cannot alter a newly allocated occupant of that slot.
+
+Raw velocity units are not interchangeable between supported kinds. Players and
+dead bodies use native gravity `0.15`, while swords and the K-spawned hazard use
+`0.075`. This example deliberately selects only living players: repeatedly
+relaunching a corpse can prevent the native grounded respawn gate from completing.
+Its `-4.0` living-player and `-2.8` sword/hazard targets reach roughly the same
+53-pixel height. The eight-tick `{ min_vy = target_vy }` limit is applied after
+native physics/callbacks and persists after the shallow contact ends, so a delayed
+unarmed kick cannot add upward speed on the following tick. It does not cap falling
+velocity because only the upward minimum is supplied.
+
+The native `K` glyph is a room-reset spawn marker, not a moving tile. It creates
+a separate type-3 point-mass hazard with gravity, damped map collision, a fixed
+vanilla sprite, and a fixed player-damage radius. A map sensor may opt into its
+verified `hazard` profile and change that spawned object's velocity; visual
+changes to the marker do not affect it. Its native handler also does not check a failed thing-pool
+allocation, so arbitrary `K` counts are unsafe. Programmable physics blocks
+therefore require the future deterministic custom-entity API and a validated
+spawn budget, not a tile render offset.
+
+The loader auto-discovers a direct non-reparse `map.lua` up to 256 KiB, hashes
+and validates the exact retained bytes, and includes source plus canonical tile
+bindings in the package signature/server map key. That existing 32-bit key is a
+compatibility hint, not cryptographic integrity. A live map pins that generation;
+script edits apply on the next map generation rather than hot-swapping under
+rollback. Managed online prematch also requires the exact pinned script to be
+active and healthy before READY; a bind/start failure aborts setup visibly.
+See `MAP_FORMAT.md` and
+`docs/superpowers/specs/2026-07-18-map-local-lua-design.md` for the full limits,
+event order, failure behavior, and example acceptance map.
 
 ---
 

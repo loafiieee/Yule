@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -344,12 +345,15 @@ retry:
     memset(out, 0, sizeof(*out));
     snprintf(out->owner, sizeof(out->owner), "%s", active.definition.owner);
     snprintf(out->key, sizeof(out->key), "%s", active.definition.key);
+    out->cell_index = (uint32_t)cell_index;
     snprintf(out->sprite_sheet, sizeof(out->sprite_sheet), "%s",
              active.definition.sprite_sheet);
     out->sprite_index = active.definition.sprite_index + frame;
     out->layer = active.definition.layer;
     out->flip_x = cell.room_mirrored &&
         (active.definition.flags & CONTENT_TILE_MIRROR_WITH_ROOM) ? 1 : 0;
+    out->native_visual_underlay =
+        (active.definition.flags & CONTENT_TILE_NATIVE_VISUAL_UNDERLAY) != 0;
     out->offset_x = active.definition.offset_x;
     out->offset_y = active.definition.offset_y;
     out->scale_x = active.definition.scale_x;
@@ -357,6 +361,130 @@ retry:
     out->angle_degrees = active.definition.angle_degrees;
     memcpy(out->tint, active.definition.tint, sizeof(out->tint));
     return 1;
+}
+
+int content_tiles_native_visual_underlay_for_action(const void* tile,
+                                                     int mode,
+                                                     int x,
+                                                     int y) {
+    ContentTileRender render;
+    if (!content_tiles_render_for_action(tile, mode, x, y, 0u, &render)) {
+        return 0;
+    }
+    return render.native_visual_underlay ? 1 : 0;
+}
+
+int content_tiles_interaction_at_cell(int x,
+                                      int y,
+                                      ContentTileInteraction* out) {
+    size_t cell_index;
+    ContentMapCell cell;
+    ContentMapDefinition active;
+    uint64_t observed_generation;
+    if (!out || x < 0 || y < 0) return 0;
+
+retry:
+    AcquireSRWLockShared(&g_content_tiles_lock);
+    if (!g_content_tile_map.cells || x >= g_content_tile_map.width ||
+        y >= g_content_tile_map.height) {
+        ReleaseSRWLockShared(&g_content_tiles_lock);
+        return 0;
+    }
+    if (g_content_tile_map.registry_generation != content_registry_generation()) {
+        ReleaseSRWLockShared(&g_content_tiles_lock);
+        content_tiles_refresh_registry();
+        goto retry;
+    }
+    cell_index = (size_t)y * (size_t)g_content_tile_map.width + (size_t)x;
+    cell = g_content_tile_map.cells[cell_index];
+    if (cell.definition_plus_one == 0 ||
+        (size_t)(cell.definition_plus_one - 1u) >= g_content_tile_map.definition_count) {
+        ReleaseSRWLockShared(&g_content_tiles_lock);
+        return 0;
+    }
+    active = g_content_tile_map.definitions[cell.definition_plus_one - 1u];
+    observed_generation = g_content_tile_map.registry_generation;
+    ReleaseSRWLockShared(&g_content_tiles_lock);
+    if (observed_generation != content_registry_generation()) goto retry;
+    if (!active.valid) return 0;
+
+    memset(out, 0, sizeof(*out));
+    snprintf(out->key, sizeof(out->key), "%s", active.definition.key);
+    out->cell_index = (uint32_t)cell_index;
+    out->x = x;
+    out->y = y;
+    out->room_mirrored = cell.room_mirrored ? 1 : 0;
+    out->collision_mode = active.definition.collision_mode;
+    out->force_mode = active.definition.force_mode;
+    out->force_axes = active.definition.force_axes;
+    out->force_x = active.definition.force_x;
+    out->force_y = active.definition.force_y;
+    if (cell.room_mirrored &&
+        (active.definition.flags & CONTENT_TILE_MIRROR_WITH_ROOM) != 0) {
+        out->force_x = -out->force_x;
+    }
+    out->max_speed_x = active.definition.max_speed_x;
+    out->max_speed_y = active.definition.max_speed_y;
+    return 1;
+}
+
+int content_tiles_interaction_at_world(float world_x,
+                                       float world_y,
+                                       int tile_width,
+                                       int tile_height,
+                                       ContentTileInteraction* out) {
+    double grid_x;
+    double grid_y;
+    if (!out || tile_width <= 0 || tile_height <= 0 ||
+        !(world_x >= 0.0f) || !(world_y >= 0.0f)) {
+        return 0;
+    }
+    /* Match map_coord_tile exactly.  The supported executable first rejects
+     * negative coordinates, then converts world / tile with x87 RC=truncate
+     * (the decompiler misleadingly prints that conversion as ROUND).  For the
+     * nonnegative domain this is floor, so cell (x,y) covers the same visual
+     * rectangle the map renderer uses: [x*w,(x+1)*w) by [y*h,(y+1)*h).
+     *
+     * Prove the quotients fit int before conversion. Ordered comparisons also
+     * reject NaN and infinity without a libm dependency. The coordinate form
+     * then performs the one authoritative map/bounds lookup under its lock, so
+     * there is no old-map bounds/new-map cell handoff during replacement. */
+    grid_x = (double)world_x / (double)tile_width;
+    grid_y = (double)world_y / (double)tile_height;
+    if (!(grid_x >= 0.0) || !(grid_y >= 0.0) ||
+        grid_x > (double)INT_MAX || grid_y > (double)INT_MAX) {
+        return 0;
+    }
+    return content_tiles_interaction_at_cell((int)grid_x, (int)grid_y, out);
+}
+
+static float clamp_abs(float value, float maximum) {
+    if (maximum <= 0.0f) return value;
+    if (value > maximum) return maximum;
+    if (value < -maximum) return -maximum;
+    return value;
+}
+
+void content_tiles_apply_interaction_velocity(const ContentTileInteraction* interaction,
+                                              float* velocity_x,
+                                              float* velocity_y) {
+    if (!interaction || !velocity_x || !velocity_y) return;
+    if ((interaction->force_axes & CONTENT_FORCE_AXIS_X) != 0) {
+        if (interaction->force_mode == CONTENT_FORCE_SET) {
+            *velocity_x = interaction->force_x;
+        } else {
+            *velocity_x += interaction->force_x;
+        }
+        *velocity_x = clamp_abs(*velocity_x, interaction->max_speed_x);
+    }
+    if ((interaction->force_axes & CONTENT_FORCE_AXIS_Y) != 0) {
+        if (interaction->force_mode == CONTENT_FORCE_SET) {
+            *velocity_y = interaction->force_y;
+        } else {
+            *velocity_y += interaction->force_y;
+        }
+        *velocity_y = clamp_abs(*velocity_y, interaction->max_speed_y);
+    }
 }
 
 int content_tiles_map_active(void) {

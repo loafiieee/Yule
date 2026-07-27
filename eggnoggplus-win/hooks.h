@@ -10,6 +10,10 @@ extern "C" {
 // Installs game-function detours (OPTIONS menu injection, etc.)
 void hooks_init(void);
 
+// Orderly runtime teardown from the normal SDL event thread. Never call from
+// DllMain; both subsystems deliberately avoid loader-lock waits.
+void hooks_runtime_shutdown(void);
+
 
 // Input/text capture hooks used by SDL event wrapper
 int hooks_text_capture_active(void);
@@ -79,6 +83,9 @@ int hooks_get_tick_input(int player_index, uint32_t* out_mask, int* out_ticks, i
 void hooks_set_raw_input_blocked(int player_index, int blocked);
 int hooks_get_raw_input_blocked(int player_index);
 void hooks_sync_mad_ticks_to_game_clock(void);
+#ifdef EGGNOGGPLUS_SERIALIZER_TESTING
+void hooks_test_bind_mad_ticks(volatile uint32_t* ticks);
+#endif
 
 // AI match flag: armed by the main-menu mode button, read by Lua bot mods,
 // cleared automatically when the main menu becomes current again.
@@ -107,6 +114,7 @@ int hooks_advance_game_tick(int arg0, int run_framework_tick);
 
 int hooks_player_colour_index(int player_index, int clothing);
 int hooks_set_player_colour_index(int player_index, int clothing, int colour_index);
+int hooks_player_colour_count(void);
 void hooks_set_player_body_hidden(int player_index, int hidden);
 int hooks_player_body_hidden(int player_index);
 void hooks_set_player_sword_idle_offset(int player_index, float x, float y);

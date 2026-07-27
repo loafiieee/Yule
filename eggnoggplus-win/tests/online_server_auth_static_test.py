@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "online_server" / "server.js").read_text(encoding="utf-8")
 
 assert "const MATCH_PROTOCOL_VERSION = 3;" in SOURCE
+assert "const P2P_PROTOCOL_VERSION = 17;" in SOURCE
 assert 'process.env.CLIENT_IDLE_TIMEOUT_MS || "120000"' in SOURCE
 assert "socket.setTimeout(CLIENT_IDLE_TIMEOUT_MS);" in SOURCE
 assert 'case "ping": send(client, { type: "pong", seq: msg.seq || 0 }); break;' in SOURCE
@@ -90,12 +91,21 @@ assert "finishMatch(match, winner" in aborted
 
 ended = function_body("function handleMatchEnd")
 assert "if (!match.committed)" in ended
+assert "replayTerminalMatch(client, msg)" in ended
 assert 'cancelMatch(match, "premature match result")' in ended
 assert "MATCH_REPORT_TIMEOUT_MS" in SOURCE
 assert 'cancelMatch(match, "conflicting match reports; no contest")' in ended
 assert 'cancelMatch(match, "match result was not confirmed; no contest")' in ended
 assert 'finishMatch(match, [...match.results.values()][0], "single report")' not in ended
 assert "if (agreed) finishMatch" in ended
+
+finish = function_body("function finishMatch")
+cancel = function_body("function cancelMatch")
+replay = function_body("function replayTerminalMatch")
+assert "c.last_match_terminal = terminal" in finish
+assert "c.last_match_terminal = terminal" in cancel
+assert "terminal.match_id !== matchId" in replay
+assert "send(client, terminal)" in replay
 
 destroy = function_body("function destroyClient")
 assert 'cancelMatch(match, "opponent disconnected before gameplay")' in destroy

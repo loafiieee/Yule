@@ -10,12 +10,29 @@ try {
     Push-Location $repo
 
     $mingwBin = 'C:\msys64\mingw32\bin'
-    if (Test-Path (Join-Path $mingwBin 'gcc.exe')) {
-        $env:PATH = "$mingwBin;$env:PATH"
+    $msysBin = 'C:\msys64\usr\bin'
+    $env:PATH = "$repo;$mingwBin;$msysBin;$env:PATH"
+
+    function Assert-RequiredRuntimeDlls([string[]]$Names) {
+        $searchDirectories = @($repo, $mingwBin, $msysBin)
+        foreach ($name in $Names) {
+            $available = $false
+            foreach ($directory in $searchDirectories) {
+                if (Test-Path -LiteralPath (Join-Path $directory $name) -PathType Leaf) {
+                    $available = $true
+                    break
+                }
+            }
+            if (-not $available) {
+                throw "Required test runtime DLL '$name' was not found in the repository or MSYS2 runtime directories. Refusing to launch test executables."
+            }
+        }
     }
+
     if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
         throw '32-bit MinGW GCC was not found. Install MSYS2 MinGW32 or add gcc.exe to PATH.'
     }
+    Assert-RequiredRuntimeDlls @('libgcc_s_dw2-1.dll', 'libwinpthread-1.dll')
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) {
         throw 'Python was not found. It is used only for the temporary loopback web server.'
@@ -35,9 +52,14 @@ try {
     $port = ([System.Net.IPEndPoint]$probe.LocalEndpoint).Port
     $probe.Stop()
 
-    $server = Start-Process -FilePath $python.Source `
-        -ArgumentList @('-m', 'http.server', "$port", '--bind', '127.0.0.1') `
-        -WorkingDirectory $repo -WindowStyle Hidden -PassThru
+    $server = Start-Job -ScriptBlock {
+        param($pythonPath, $listenPort, $workingDirectory)
+        Set-Location -LiteralPath $workingDirectory
+        & $pythonPath '-m' 'http.server' $listenPort '--bind' '127.0.0.1'
+        if ($LASTEXITCODE -ne 0) {
+            throw "Temporary loopback server exited with code $LASTEXITCODE."
+        }
+    } -ArgumentList $python.Source, $port, $repo
     $base = "http://127.0.0.1:$port/"
     $ready = $false
     for ($attempt = 0; $attempt -lt 50; $attempt++) {
@@ -49,6 +71,14 @@ try {
                 break
             }
         } catch {
+            if ($server.State -in @('Completed', 'Failed', 'Stopped', 'Disconnected')) {
+                $serverOutput = (Receive-Job -Job $server -Keep `
+                    -ErrorAction SilentlyContinue | Out-String).Trim()
+                if ($serverOutput) {
+                    throw "The temporary loopback update server exited early: $serverOutput"
+                }
+                throw "The temporary loopback update server exited early ($($server.State))."
+            }
             Start-Sleep -Milliseconds 100
         }
     }
@@ -64,8 +94,9 @@ try {
     }
     Write-Host 'PASS: updater tests completed in disposable build directories; the live SDL2.dll was not changed.' -ForegroundColor Green
 } finally {
-    if ($server -and -not $server.HasExited) {
-        Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+    if ($server) {
+        Stop-Job -Job $server -ErrorAction SilentlyContinue
+        Remove-Job -Job $server -Force -ErrorAction SilentlyContinue
     }
     $buildRoot = [System.IO.Path]::GetFullPath((Join-Path $repo 'build'))
     if (Test-Path -LiteralPath $buildRoot) {

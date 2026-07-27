@@ -215,6 +215,13 @@ typedef struct DrawState {
     int plot_layer;
     void* plot_sprite;
     int sprite_token;
+    int override_calls;
+    int override_result;
+    uint32_t override_cell_index;
+    int override_current_index;
+    int override_sprite_index;
+    float override_offset_x;
+    float override_offset_y;
 } DrawState;
 
 static void write_double(unsigned char* bytes, size_t offset, double value) {
@@ -302,6 +309,23 @@ static int draw_plot(void* user, void* sprite, int flip_x, int layer) {
     return draw_step(state);
 }
 
+static int draw_override(void* user,
+                         uint32_t cell_index,
+                         const char* tile_key,
+                         int current_sprite_index,
+                         ContentBridgeVisualOverride* out_override) {
+    DrawState* state = (DrawState*)user;
+    state->override_calls++;
+    state->override_cell_index = cell_index;
+    state->override_current_index = current_sprite_index;
+    CHECK(strcmp(tile_key, "demo:animated") == 0);
+    if (!state->override_result) return 0;
+    out_override->sprite_index = state->override_sprite_index;
+    out_override->offset_x = state->override_offset_x;
+    out_override->offset_y = state->override_offset_y;
+    return 1;
+}
+
 static void init_draw_state(DrawState* state) {
     int i;
     memset(state, 0, sizeof(*state));
@@ -328,6 +352,7 @@ static ContentBridgeDrawOps draw_ops(DrawState* state) {
     ops.turtle_set_scaley = draw_scaley;
     ops.turtle_set_rgba = draw_rgba;
     ops.sprite_batch_plot = draw_plot;
+    ops.visual_override = draw_override;
     return ops;
 }
 
@@ -344,6 +369,8 @@ static void test_draw_and_native_fallback(void) {
     ops = draw_ops(&state);
     memcpy(original, state.turtle, sizeof(original));
     CHECK(content_bridge_draw_action(tilemap, 2, 0, 0, 4, &ops));
+    CHECK(state.override_calls == 1 && state.override_cell_index == 0u);
+    CHECK(state.override_current_index == 42);
     CHECK(state.resolve_calls == 1 && state.resolved_index == 42);
     CHECK(state.sprite_get_calls == 1 && state.plot_calls == 1);
     CHECK(state.plot_sprite == &state.sprite_token);
@@ -358,6 +385,33 @@ static void test_draw_and_native_fallback(void) {
           fabsf(state.rgba[2] - 0.3f) < 0.00001f &&
           fabsf(state.rgba[3] - 0.4f) < 0.00001f);
     CHECK(memcmp(state.turtle, original, sizeof(original)) == 0);
+
+    init_draw_state(&state);
+    ops = draw_ops(&state);
+    state.override_result = 1;
+    state.override_sprite_index = 77;
+    state.override_offset_x = 3.0f;
+    state.override_offset_y = -7.0f;
+    CHECK(content_bridge_draw_action(tilemap, 2, 0, 0, 4, &ops));
+    CHECK(state.resolve_calls == 1 && state.resolved_index == 77);
+    CHECK(fabs(state.trans_x - 5.0) < 0.000001 &&
+          fabs(state.trans_y + 8.0) < 0.000001);
+
+    init_draw_state(&state);
+    ops = draw_ops(&state);
+    state.override_result = 1;
+    state.override_sprite_index = 77;
+    state.override_offset_y = NAN;
+    CHECK(!content_bridge_draw_action(tilemap, 2, 0, 0, 4, &ops));
+    CHECK(state.resolve_calls == 0 && state.plot_calls == 0);
+
+    init_draw_state(&state);
+    ops = draw_ops(&state);
+    state.override_result = 1;
+    state.override_sprite_index = 77;
+    state.override_offset_x = CONTENT_BRIDGE_VISUAL_OFFSET_LIMIT + 1.0f;
+    CHECK(!content_bridge_draw_action(tilemap, 2, 0, 0, 4, &ops));
+    CHECK(state.resolve_calls == 0 && state.plot_calls == 0);
 
     init_draw_state(&state);
     ops = draw_ops(&state);

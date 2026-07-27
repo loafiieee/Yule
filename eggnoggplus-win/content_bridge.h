@@ -13,6 +13,7 @@ extern "C" {
 #define CONTENT_BRIDGE_ROOM_HEIGHT 12
 #define CONTENT_BRIDGE_MAX_SOURCE_ROOMS 9
 #define CONTENT_BRIDGE_TURTLE_STATE_SIZE 96u
+#define CONTENT_BRIDGE_VISUAL_OFFSET_LIMIT 4096.0f
 
 typedef struct ContentBridgeBindSummary {
     int selector;
@@ -82,6 +83,18 @@ typedef int (*ContentBridgeSpriteBatchPlotFn)(void* user,
                                               void* sprite,
                                               int flip_x,
                                               int layer);
+typedef struct ContentBridgeVisualOverride {
+    int sprite_index;
+    float offset_x;                  /* additive render pixels */
+    float offset_y;
+} ContentBridgeVisualOverride;
+
+typedef int (*ContentBridgeVisualOverrideFn)(
+    void* user,
+    uint32_t cell_index,
+    const char* tile_key,
+    int current_sprite_index,
+    ContentBridgeVisualOverride* out_override);
 
 typedef struct ContentBridgeDrawOps {
     void* user;
@@ -95,6 +108,10 @@ typedef struct ContentBridgeDrawOps {
     ContentBridgeTurtleSetScalarFn turtle_set_scaley;
     ContentBridgeTurtleSetRgbaFn turtle_set_rgba;
     ContentBridgeSpriteBatchPlotFn sprite_batch_plot;
+    /* Optional deterministic per-cell visual override. Returning zero keeps
+     * the definition/animation-selected sprite and transform. Offsets are
+     * additive destination pixels and never move collision/native underlay. */
+    ContentBridgeVisualOverrideFn visual_override;
 } ContentBridgeDrawOps;
 
 /* Resolves and draws one custom tile from native tile_action_ex draw mode.

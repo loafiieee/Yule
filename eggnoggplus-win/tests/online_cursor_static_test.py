@@ -95,9 +95,10 @@ assert "cursor_ext.c" in BUILD
 # branch, Lua on_frame, nametags, console rendering, and updater notifications.
 assert SOURCE.count("online_hub_draw_cursor();") == 1
 assert "state_ptr == (void*)&g_online_hub_state" in cursor_pre_swap
-assert "state_ptr == (void*)&g_online_result_state" in cursor_pre_swap
-assert "online_cursor_over_active_overlay(state_ptr" in cursor_pre_swap
+assert "g_online_result_state" not in SOURCE
+assert "online_cursor_over_active_overlay(g_online_mouse_x" in cursor_pre_swap
 assert "g_online_result.active" in cursor_overlay
+assert "g_online_result.toast_visible" in cursor_overlay
 assert "g_online_result_toast_rendered_this_swap" in cursor_overlay
 assert "online_result_toast_metrics" in cursor_overlay
 assert "g_online_challenge_toast.active" in cursor_overlay

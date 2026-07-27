@@ -16,7 +16,8 @@ extern "C" {
 #define GGPO_NET_COSMETIC_ASSET_ID_BYTES 65
 #define GGPO_NET_COSMETIC_ASSET_MAX_BYTES 1048576
 #define GGPO_NET_MATCH_TOKEN_HEX_BYTES 64
-#define GGPO_NET_PROTOCOL_VERSION 16u
+#define GGPO_NET_PROTOCOL_VERSION 17u
+#define GGPO_NET_PALETTE_MAX_ENTRIES 256u
 
 typedef enum GgpoNetMode {
     GGPO_NET_MODE_NONE = 0,
@@ -77,6 +78,22 @@ uint32_t ggpo_net_remote_exe_id(void);
 uint32_t ggpo_net_remote_dll_id(void);
 int ggpo_net_build_mismatch(void);
 
+/* Fixed-size presentation-only player palette exchange. Configure the local
+ * assigned fighter before start_*; the tuple is authenticated, range-checked,
+ * repeated and exactly acknowledged during prematch, but never serialized into
+ * rollback state or included in gameplay checksums. */
+int ggpo_net_set_local_palette_preference(uint32_t skin_index,
+                                          uint32_t clothing_index,
+                                          uint32_t palette_count);
+void ggpo_net_clear_local_palette_preference(void);
+int ggpo_net_palette_ready(void);
+int ggpo_net_local_palette_preference(uint32_t* out_skin_index,
+                                      uint32_t* out_clothing_index,
+                                      uint32_t* out_palette_count);
+int ggpo_net_remote_palette_preference(uint32_t* out_skin_index,
+                                       uint32_t* out_clothing_index,
+                                       uint32_t* out_palette_count);
+
 /* Legacy cosmetic transport surface. The current online build compiles peer
  * cosmetics off: setters reject/clear payloads and getters remain empty. Keep
  * these declarations for source compatibility; do not treat them as an active
@@ -105,6 +122,13 @@ int ggpo_net_set_prematch_hold(int enabled, char* err, size_t err_cap);
 int ggpo_net_prematch_hold(void);
 int ggpo_net_peer_prematch_hold(void);
 uint32_t ggpo_net_state_epoch(void);
+/* Freeze rollback capacity/schema from the map that is currently installed.
+ * Server-managed callers must invoke this while both peers remain held, after
+ * map reset/content installation and before releasing the hold. */
+int ggpo_net_finalize_state_layout(char* err, size_t err_cap);
+int ggpo_net_state_layout_ready(void);
+int ggpo_net_state_layout_mismatch(void);
+uint32_t ggpo_net_state_layout_fingerprint(void);
 /* Service exactly one transport tick without sampling input or simulating a
  * frame. Intended for the online hub/countdown and setup transition. */
 int ggpo_net_service(char* err, size_t err_cap);
@@ -130,8 +154,12 @@ void ggpo_net_clear_match_token(void);
 uint32_t ggpo_net_auth_rejected_packets(void);
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap);
+/* Socket/auth-only prematch starts. They intentionally allocate no rollback
+ * storage until ggpo_net_finalize_state_layout() runs after map installation. */
+int ggpo_net_start_host_held(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap);
+int ggpo_net_start_join_deferred_held(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap);
 /* Register an additional hole-punch candidate endpoint (e.g. the peer's public
  * NAT address alongside its LAN address). Handshake HELLOs go to all candidates;
@@ -167,6 +195,11 @@ uint32_t ggpo_net_prediction_count(void);
 uint32_t ggpo_net_rollback_count(void);
 uint32_t ggpo_net_packets_sent(void);
 uint32_t ggpo_net_packets_received(void);
+/* Physical UDP send pressure. Would-block/ENOBUFS datagrams are retried by
+ * their owning transfer; hard errors are counted separately. */
+uint32_t ggpo_net_socket_would_block_count(void);
+uint32_t ggpo_net_socket_send_error_count(void);
+uint32_t ggpo_net_socket_send_deferred_count(void);
 /* Multi-line, human-readable P2P connection troubleshooter (see net.diag). */
 void ggpo_net_format_diag(char* out, size_t cap);
 uint32_t ggpo_net_late_input_count(void);
@@ -178,12 +211,110 @@ uint32_t ggpo_net_desync_frame(void);
 uint32_t ggpo_net_desync_local_checksum(void);
 uint32_t ggpo_net_desync_remote_checksum(void);
 uint32_t ggpo_net_peer_silence_ticks(void);
+/* Input-delivery horizons are distinct from remote_frame (peer simulation
+ * progress). Each accessor returns zero until at least frame 0 is contiguous. */
+int ggpo_net_remote_input_confirmed_frame(uint32_t* out_frame);
+int ggpo_net_peer_input_confirmed_frame(uint32_t* out_frame);
+int ggpo_net_checksum_confirmed_frame(uint32_t* out_frame);
 
 #ifdef GGPO_NET_TEST
+#define GGPO_NET_TEST_ACK_WORDS 16u
+#define GGPO_NET_TEST_PACKET_INPUTS 64u
+#define GGPO_NET_TEST_PACKET_CHECKSUMS 32u
+#define GGPO_NET_TEST_CORRECTION_OFFER 2u
+#define GGPO_NET_TEST_CORRECTION_RECEIVING 3u
+#define GGPO_NET_TEST_CORRECTION_COMMIT 5u
+#define GGPO_NET_TEST_CORRECTION_RELEASE 7u
+#define GGPO_NET_TEST_CORRECTION_RELEASE_ACK 8u
 /* Adversarial loopback hook: corrupt each signed peer datagram after its MAC is
  * computed. It is deliberately absent from production builds. */
 void ggpo_net_test_set_tamper_outgoing(int enabled);
 void ggpo_net_test_set_replay_outgoing(int enabled);
+void ggpo_net_test_set_suppress_checksum_payload(int enabled);
+void ggpo_net_test_force_state_chunk_would_block(uint32_t count);
+int ggpo_net_test_send_correction_chunk_once(void);
+void ggpo_net_test_get_correction_send_cursor(uint32_t* out_full_offset,
+                                               uint32_t* out_delta_next);
+uint32_t ggpo_net_test_correction_phase(void);
+uint32_t ggpo_net_test_correction_peer_phase(void);
+uint32_t ggpo_net_test_correction_snapshot_frame(void);
+uint32_t ggpo_net_test_correction_resume_frame(void);
+uint32_t ggpo_net_test_correction_transcript(void);
+/* Deterministic frame-ring probes. These bypass sockets/authentication and are
+ * available only to the native transport regression test. */
+void ggpo_net_test_reset_frame_rings(uint32_t local_frame);
+void ggpo_net_test_set_local_frame(uint32_t local_frame);
+int ggpo_net_test_rebase_active_frame(uint32_t start_frame,
+                                      char* err,
+                                      size_t err_cap);
+int ggpo_net_test_receive_remote_frame(uint32_t frame);
+int ggpo_net_test_receive_remote_input(uint32_t frame, uint32_t cmd);
+int ggpo_net_test_get_remote_input(uint32_t frame, uint32_t* out_cmd);
+uint32_t ggpo_net_test_predict_remote_input(uint32_t frame);
+int ggpo_net_test_latest_remote_input(uint32_t* out_frame, uint32_t* out_cmd);
+int ggpo_net_test_prediction_stall_needed(uint32_t frame, uint32_t* out_oldest_missing);
+int ggpo_net_test_store_history_marker(uint32_t frame, uint32_t marker);
+int ggpo_net_test_get_history_marker(uint32_t frame, uint32_t* out_marker);
+int ggpo_net_test_copy_history_state(uint32_t frame, void* dst, size_t dst_cap,
+                                     size_t* out_len,
+                                     uint32_t* out_post_checksum);
+int ggpo_net_test_store_local_input(uint32_t frame, uint32_t cmd);
+int ggpo_net_test_get_local_input(uint32_t frame, uint32_t* out_cmd);
+int ggpo_net_test_get_remote_ack(uint32_t* out_valid,
+                                 uint32_t* out_frame,
+                                 uint32_t out_bits[GGPO_NET_TEST_ACK_WORDS]);
+int ggpo_net_test_apply_peer_ack(uint32_t valid,
+                                 uint32_t frame,
+                                 const uint32_t bits[GGPO_NET_TEST_ACK_WORDS]);
+int ggpo_net_test_get_peer_ack(uint32_t* out_valid, uint32_t* out_frame);
+uint32_t ggpo_net_test_build_input_packet(uint32_t* out_frames,
+                                          uint32_t* out_cmds,
+                                          uint32_t capacity);
+uint32_t ggpo_net_test_build_checksum_packet(uint32_t* out_frames,
+                                             uint32_t* out_checksums,
+                                             uint32_t capacity);
+int ggpo_net_test_checksum_horizon(uint32_t* out_frame);
+void ggpo_net_test_set_remote_contiguous(uint32_t valid, uint32_t frame);
+void ggpo_net_test_set_peer_ack(uint32_t valid, uint32_t frame);
+void ggpo_net_test_set_rollback_pending(int pending);
+int ggpo_net_test_seed_history(uint32_t frame,
+                               uint32_t remote_cmd,
+                               int remote_predicted,
+                               uint32_t post_checksum);
+int ggpo_net_test_validate_checksum_envelope(uint32_t input_ack_valid,
+                                             uint32_t input_ack_base,
+                                             uint32_t confirmed_valid,
+                                             uint32_t confirmed_frame,
+                                             uint32_t packet_frame);
+void ggpo_net_test_set_checksum_epoch(uint32_t state_epoch,
+                                      uint32_t correction_id,
+                                      uint32_t start_frame);
+void ggpo_net_test_get_checksum_ack_next(uint32_t* out_remote_next,
+                                         uint32_t* out_peer_next);
+void ggpo_net_test_set_checksum_ack_next(uint32_t remote_next,
+                                         uint32_t peer_next);
+int ggpo_net_test_mark_checksum_published(uint32_t frame);
+int ggpo_net_test_apply_peer_checksum_ack(uint32_t state_epoch,
+                                          uint32_t correction_id,
+                                          uint32_t ack_next);
+int ggpo_net_test_validate_checksum_ack_envelope(uint32_t state_epoch,
+                                                 uint32_t correction_id,
+                                                 uint32_t ack_next);
+int ggpo_net_test_receive_remote_checksum(uint32_t frame, uint32_t checksum);
+void ggpo_net_test_process_deferred_checksums(void);
+int ggpo_net_test_checksum_history_retirable(uint32_t frame);
+int ggpo_net_test_checksum_retirement_gate(uint32_t frame,
+                                           uint32_t service_tick);
+int ggpo_net_test_service_input(char* err, size_t err_cap);
+/* Exercise the same preflight/apply/restore transaction used by completed host
+ * and correction state transfers without opening a socket. */
+int ggpo_net_test_apply_state_transaction(const void* candidate,
+                                          size_t candidate_len,
+                                          uint32_t expected_checksum,
+                                          uint32_t* out_checksum,
+                                          int* out_fatal_restore,
+                                          char* err,
+                                          size_t err_cap);
 #endif
 
 #ifdef __cplusplus

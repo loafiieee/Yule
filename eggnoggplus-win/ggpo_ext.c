@@ -67,6 +67,15 @@ size_t ggpo_ext_game_state_size(void) {
     return lua_manager_game_state_size();
 }
 
+uint32_t ggpo_ext_game_state_layout_fingerprint(void) {
+    return lua_manager_game_state_layout_fingerprint();
+}
+
+int ggpo_ext_save_game_state_raw(void* dst, size_t dst_len, size_t* out_len,
+                                 char* err, size_t err_cap) {
+    return lua_manager_game_state_save(dst, dst_len, out_len, err, err_cap);
+}
+
 int ggpo_ext_save_game_state(void* dst, size_t dst_len, size_t* out_len, uint32_t* out_checksum, char* err, size_t err_cap) {
     uint32_t checksum = 0;
     size_t saved_len = 0;
@@ -79,11 +88,36 @@ int ggpo_ext_save_game_state(void* dst, size_t dst_len, size_t* out_len, uint32_
     }
     if (out_len) *out_len = saved_len;
     if (out_checksum) {
-        if (!lua_manager_game_state_rollback_checksum(&checksum, err, err_cap)) {
+        if (!lua_manager_game_state_validate_rollback_blob(
+                dst, saved_len, &checksum, err, err_cap)) {
             return 0;
         }
         *out_checksum = checksum;
     }
+    return 1;
+}
+
+int ggpo_ext_validate_rollback_blob(const void* src, size_t src_len,
+                                    uint32_t* out_checksum,
+                                    char* err, size_t err_cap) {
+    return lua_manager_game_state_validate_rollback_blob(
+        src, src_len, out_checksum, err, err_cap);
+}
+
+int ggpo_ext_validate_rollback_transport_blob(const void* src, size_t src_len,
+                                              uint32_t* out_checksum,
+                                              char* err, size_t err_cap) {
+    return lua_manager_game_state_validate_rollback_transport_blob(
+        src, src_len, out_checksum, err, err_cap);
+}
+
+int ggpo_ext_load_game_state_raw(const void* src, size_t src_len,
+                                 char* err, size_t err_cap) {
+    ggpo_ext_clear_tick_inputs();
+    if (!lua_manager_game_state_load(src, src_len, err, err_cap)) {
+        return 0;
+    }
+    hooks_sync_mad_ticks_to_game_clock();
     return 1;
 }
 

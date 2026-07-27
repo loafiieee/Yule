@@ -2,7 +2,7 @@
 # Produces the uploadable channel tree + the distributable installer zip:
 #   dist/releases/latest.json
 #   dist/releases/<version>/{SDL2.dll, lua51.dll, libgcc_s_dw2-1.dll, SDL2_mixer.dll}
-#   dist/installer/{INSTALL.bat, install.ps1(artwork embedded)}
+#   dist/installer/{INSTALL.bat, UNINSTALL.bat, install.ps1(artwork embedded)}
 #   dist/EGGNOGG+_framework_installer.zip
 # Upload the contents of dist/releases/ to https://loafiieee.com/yule/releases/ .
 param(
@@ -25,13 +25,43 @@ if (-not $GameDir)  { $GameDir = $repoDir }
 if (-not $OutDir)   { $OutDir = Join-Path $repoDir 'dist' }
 if (-not $IconPath) { $IconPath = Join-Path $repoDir 'installer\assets\steam_icon.png' }
 
+if ($Version -notmatch '^[0-9]+(?:\.[0-9]+)*$') {
+    throw "invalid release version '$Version' (expected dot-separated decimal components)"
+}
+$versionHeader = Join-Path $repoDir 'update_ext.h'
+$versionHeaderText = Get-Content -LiteralPath $versionHeader -Raw
+$sourceVersionMatch = [regex]::Match(
+    $versionHeaderText,
+    '#define\s+FRAMEWORK_VERSION\s+"([^"]+)"'
+)
+if (-not $sourceVersionMatch.Success) {
+    throw "cannot read FRAMEWORK_VERSION from $versionHeader"
+}
+$sourceVersion = $sourceVersionMatch.Groups[1].Value
+if ($sourceVersion -cne $Version) {
+    throw @"
+Refusing to advertise release $Version because update_ext.h still declares
+FRAMEWORK_VERSION "$sourceVersion". Update the source version, close Eggnogg+,
+run bash compile.sh, and retry with that exact version.
+"@
+}
+
 # libwinpthread-1.dll is a transitive import of libgcc_s_dw2-1.dll - without it a
 # fresh vanilla install fails to boot with "libwinpthread-1.dll is missing".
 $ReleaseFiles = @('SDL2.dll', 'lua51.dll', 'libgcc_s_dw2-1.dll', 'libwinpthread-1.dll', 'SDL2_mixer.dll')
 
 # --- sanity: the SDL2.dll being shipped must be the framework proxy ---------
 $sdl = Join-Path $GameDir 'SDL2.dll'
-if (-not (Test-Path $sdl)) { throw "no SDL2.dll in $GameDir" }
+if (-not (Test-Path -LiteralPath $sdl -PathType Leaf)) { throw "no SDL2.dll in $GameDir" }
+$built = Join-Path $GameDir 'build\SDL2_test.dll'
+if (-not (Test-Path -LiteralPath $built -PathType Leaf)) {
+    throw @"
+Refusing to package without the verified build\SDL2_test.dll artifact.
+Close every Eggnogg+ process and run bash compile.sh, then confirm SDL2.dll and
+build\SDL2_test.dll have matching SHA-256 hashes before publishing. No installed
+file was changed.
+"@
+}
 $bytes = [IO.File]::ReadAllBytes($sdl)
 $marker = [Text.Encoding]::ASCII.GetBytes('modframework')
 $found = $false
@@ -41,10 +71,82 @@ for ($i = 0; $i -le $bytes.Length - $marker.Length -and -not $found; $i++) {
     if ($ok) { $found = $true }
 }
 if (-not $found) { throw "SDL2.dll in $GameDir does not look like the framework proxy (no marker)" }
-$built = Join-Path $GameDir 'build\SDL2_test.dll'
-if (Test-Path $built) {
-    if ((Get-FileHash $sdl).Hash -ne (Get-FileHash $built).Hash) {
-        Write-Warning 'deployed SDL2.dll differs from build\SDL2_test.dll - shipping the DEPLOYED one'
+$binaryText = [Text.Encoding]::ASCII.GetString($bytes)
+$binaryVersionMatch = [regex]::Match(
+    $binaryText,
+    'YULE_FRAMEWORK_VERSION=([0-9]+(?:\.[0-9]+)*)'
+)
+if (-not $binaryVersionMatch.Success) {
+    throw @"
+Refusing to package SDL2.dll because it has no compiled framework-version marker.
+Close Eggnogg+, run bash compile.sh, and retry. No release output was changed.
+"@
+}
+$binaryVersion = $binaryVersionMatch.Groups[1].Value
+if ($binaryVersion -cne $Version) {
+    throw @"
+Refusing to advertise release $Version because the deployed SDL2.dll was compiled
+as FRAMEWORK_VERSION "$binaryVersion". Close Eggnogg+, run bash compile.sh after
+updating update_ext.h, and retry. No release output was changed.
+"@
+}
+$deployedHash = (Get-FileHash -LiteralPath $sdl -Algorithm SHA256).Hash
+$verifiedHash = (Get-FileHash -LiteralPath $built -Algorithm SHA256).Hash
+if ($deployedHash -ne $verifiedHash) {
+    throw @"
+Refusing to package a stale deployed SDL2.dll: it differs from build\SDL2_test.dll.
+Deployed SHA-256: $deployedHash
+Verified SHA-256: $verifiedHash
+Close every Eggnogg+ process, run bash compile.sh so it can install the exact
+verified build artifact, confirm the two files have matching SHA-256 hashes,
+then run tools\build_release.ps1 again. No installed file was changed.
+"@
+}
+$updater = Join-Path $GameDir 'YuleUpdater.exe'
+$builtUpdater = Join-Path $GameDir 'build\YuleUpdater.exe'
+if (-not (Test-Path -LiteralPath $updater -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $builtUpdater -PathType Leaf)) {
+    throw @"
+Refusing to package without the verified one-shot updater and its build artifact.
+Run bash compile.sh, then retry. No installed file was changed.
+"@
+}
+$updaterHash = (Get-FileHash -LiteralPath $updater -Algorithm SHA256).Hash
+$builtUpdaterHash = (Get-FileHash -LiteralPath $builtUpdater -Algorithm SHA256).Hash
+if ($updaterHash -ne $builtUpdaterHash) {
+    throw @"
+Refusing to package a stale YuleUpdater.exe: it differs from build\YuleUpdater.exe.
+Run bash compile.sh, then retry. No installed file was changed.
+"@
+}
+$objdumpCommand = Get-Command objdump -ErrorAction SilentlyContinue
+$objdumpPath = if ($objdumpCommand) { $objdumpCommand.Source } else { '' }
+if (-not $objdumpPath) {
+    $standardObjdump = 'C:\msys64\mingw32\bin\objdump.exe'
+    if (Test-Path -LiteralPath $standardObjdump -PathType Leaf) {
+        $objdumpPath = $standardObjdump
+    } else {
+        throw "Cannot audit YuleUpdater.exe imports because objdump was not found."
+    }
+}
+$updaterImports = (& $objdumpPath -p $updater | Out-String)
+if ($LASTEXITCODE -ne 0) {
+    throw "Cannot audit YuleUpdater.exe imports (objdump exit $LASTEXITCODE)."
+}
+foreach ($replaceableImport in @(
+    'SDL2.dll',
+    'lua51.dll',
+    'libgcc_s_dw2-1.dll',
+    'libwinpthread-1.dll',
+    'SDL2_mixer.dll'
+)) {
+    if ($updaterImports -match
+        ('DLL Name:\s*' + [regex]::Escape($replaceableImport))) {
+        throw @"
+Refusing to package YuleUpdater.exe because it imports replaceable payload
+$replaceableImport. Rebuild the helper as a self-contained executable before
+publishing; otherwise it can lock its own .old backup during an update.
+"@
     }
 }
 
@@ -116,10 +218,13 @@ $instDir = Join-Path $OutDir 'installer'
 New-Item -ItemType Directory -Path $instDir -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $instDir 'install.ps1') -Value $tpl
 Copy-Item (Join-Path $repoDir 'installer\INSTALL.bat') (Join-Path $instDir 'INSTALL.bat') -Force
+Copy-Item (Join-Path $repoDir 'installer\UNINSTALL.bat') (Join-Path $instDir 'UNINSTALL.bat') -Force
+Copy-Item $updater (Join-Path $instDir 'YuleUpdater.exe') -Force
 
 $zipPath = Join-Path $OutDir 'EGGNOGG+_framework_installer.zip'
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $instDir '*') -DestinationPath $zipPath
 Write-Host "installer: $zipPath"
 Write-Host ''
-Write-Host "upload dist\releases\* so that $ChannelBase/latest.json resolves, then publish the zip."
+Write-Host "Publish releases\$Version first and verify every payload URL/hash."
+Write-Host "Publish releases\latest.json atomically LAST; then publish the installer zip."

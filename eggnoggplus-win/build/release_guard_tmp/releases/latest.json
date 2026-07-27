@@ -1,0 +1,38 @@
+{
+    "channel_version":  1,
+    "version":  "2.0",
+    "notes":  "guarded packaging test",
+    "base":  "https://loafiieee.com/yule/releases/2.0/",
+    "files":  [
+                  {
+                      "path":  "SDL2.dll",
+                      "sha256":  "1fb7c944ee26c9ac90eaa8fd59e9e4f1e89d4b58b05e5a34e9cde22a9686dd01",
+                      "size":  2970016,
+                      "overwrite":  true
+                  },
+                  {
+                      "path":  "lua51.dll",
+                      "sha256":  "03164622fb2a786b451aa6abad0aa671968b8f3341ed27d1e2e6cc5e99e8d3e5",
+                      "size":  629867,
+                      "overwrite":  true
+                  },
+                  {
+                      "path":  "libgcc_s_dw2-1.dll",
+                      "sha256":  "6cd29cfc819abdc3e72f575861b844791b61666996a7b56ff8850e34cf64deec",
+                      "size":  208111,
+                      "overwrite":  true
+                  },
+                  {
+                      "path":  "libwinpthread-1.dll",
+                      "sha256":  "429fd317271e3b796c1d34cd40aa3b9c86c19aa829ae63e165c66395fb457318",
+                      "size":  79099,
+                      "overwrite":  true
+                  },
+                  {
+                      "path":  "SDL2_mixer.dll",
+                      "sha256":  "7aa41f2bba7439d07681784bdf343767e875b7dd55f8d4d442aca2cc2ebd7d87",
+                      "size":  184320,
+                      "overwrite":  true
+                  }
+              ]
+}

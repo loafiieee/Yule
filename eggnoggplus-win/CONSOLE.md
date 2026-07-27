@@ -42,6 +42,12 @@
 - `ui.size`
 - `time.scale [value|auto]`
 - `framework.api`
+- `discord.app [application_id]`
+- `music.status`
+- `music.scan`
+- `music.rescan`
+- `music.play <index|random>`
+- `music.output_rate [hz]`
 - `log.level [debug|info|warn|error]`
 
 ### Mods
@@ -69,6 +75,23 @@
 ### Online hub
 - `online.hub`
 
+`discord.app` prints the current public Discord Application ID. Passing a 1-20 digit
+ID validates it, saves `discord_application_id` in `mods/modframework.cfg`, and applies
+it immediately; Discord reconnects in the background without restarting the game.
+
+The `music.*` commands operate on Eggnogg's built-in contiguous `data/tune*.txt`
+playlist. `music.scan` lists titles, `native-postfix`, `bounded-bytebeat`, and
+`dollchan-js` formats, files ignored because of a numbering gap, and unmarked
+general-JavaScript syntax. JavaScript tracks must declare `engine=dollchan`, a playback
+mode, and any non-default rate in their `yule:bytebeat` marker.
+`music.rescan` makes tracks added while the game is open discoverable, and
+`music.play 8` selects track 8 immediately. `music.play random` restores shuffled
+selection. `music.output_rate` shows the configured and active SDL mixer rates;
+`music.output_rate <8000..192000>` applies the rate immediately and persists
+`music_output_rate` in `mods/modframework.cfg`. A selected track may temporarily
+override it with `output_rate=` in its `yule:bytebeat` marker; this never changes
+the formula's separate `sample_rate`.
+
 ### Lua execution
 - `lua <code>` (alias: `eval <code>`)
 - `lua.mod <id> <code>` (alias: `eval.mod`)
@@ -87,7 +110,7 @@
 - `net.diag` (alias: `net.trouble`)
 - `ggpo.loopback [toggle|on|off|status]`
 - `ggpo.local [toggle|on|off|status]`
-- `ggpo.net key` (arm a one-shot v16 shared key from the clipboard and clear the clipboard)
+- `ggpo.net key` (arm a one-shot v17 shared key from the clipboard and clear the clipboard)
 - `ggpo.net key clear`
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
@@ -132,6 +155,14 @@
 - `input.override 1 0x4 -1 1`
 - `input.clear 1`
 - `online.hub`
+- `discord.app`
+- `discord.app 1531027934004117664`
+- `music.scan`
+- `music.rescan`
+- `music.play 2`
+- `music.play random`
+- `music.output_rate`
+- `music.output_rate 48000`
 - `ggpo.net delay 2`
 - `ggpo.net advantage 20`
 - `ggpo.net predict 24`
@@ -158,7 +189,7 @@
   - `mods.config.set my_mod welcome_text "hello world"`
 - `input.override` mask accepts decimal or hex (`0x...`).
 - `frames < 0` keeps an override active until cleared.
-- V16 direct host/join fails closed without a shared 64-hex key. Copy the same
+- V17 direct host/join fails closed without a shared 64-hex key. Copy the same
   key on both machines and run `ggpo.net key` before `host`/`join` (or F6/F7).
   The key is read from and then removed from the clipboard; it is never typed
   into console history, persisted, or logged, and one successful start consumes it.

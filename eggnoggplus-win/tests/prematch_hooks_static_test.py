@@ -65,13 +65,18 @@ ordered(
     "online_connect_retry_tick();",
 )
 
-prepare = function_body("static int online_prepare_pending_match_state(void)")
+prepare = function_body(
+    "static int online_prepare_pending_match_state(char* err, size_t err_cap)"
+)
 ordered(
     prepare,
     "*g_hook_map_selector = g_online_pending_match.selector;",
     "lua_manager_game_set_rng_seed(g_online_pending_match.seed)",
+    "custom_maps_deactivate_script();",
     "p_game_reset();",
     "online_ensure_native_game_started();",
+    "online_validate_pinned_map_script(g_online_pending_match.selector",
+    "ggpo_net_finalize_state_layout(err, err_cap)",
     "g_online_pending_match.prematch_prepared = 1;",
 )
 
@@ -85,7 +90,12 @@ ordered(
         "if (!ggpo_net_active() || !ggpo_net_link_ready()) return;",
     "if (ggpo_net_build_mismatch())",
     'online_abort_prematch_setup("opponent is using a different game or framework build")',
-    "online_prepare_pending_match_state()",
+    "online_prepare_pending_match_state(err, sizeof(err))",
+    'err[0] ? err : "could not initialize native match state"',
+    "if (ggpo_net_state_layout_mismatch())",
+    'online_abort_prematch_setup("opponent has an incompatible map/state layout")',
+    "if (!ggpo_net_state_layout_ready())",
+    'online_hub_set_status("Synchronizing map layout...")',
     "ggpo_net_set_prematch_hold(0, err, sizeof(err))",
     "!ggpo_net_prematch_ready()",
     "if (!p_state_switch)",

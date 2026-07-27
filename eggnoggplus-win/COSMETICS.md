@@ -894,6 +894,20 @@ There are two possible paths:
 
 Patch or wrap `game_player_colour` and `game_set_player_colour_index` so color IDs can resolve into a larger custom palette.
 
+This option is now implemented for the built-in expanded palette. The original 14 indices
+remain compatible and additional solid/animated entries resolve in the render hook. The
+darkest solid choice is a deliberately visible charcoal `(0.20, 0.22, 0.25, 1.0)`, not
+black; a static regression enforces minimum brightness for every expanded solid entry.
+
+Online matches now synchronize this built-in palette without enabling the arbitrary
+cosmetic profile/asset channel. The host captures its local P1 skin/clothing indices and
+the joiner captures its local P2 indices before each socket attempt. A fixed-size
+authenticated packet repeats both bounded IDs and an exact acknowledgement through the
+prematch barrier. After the authoritative frame-zero state is restored, each tuple is
+applied to its server-assigned fighter. The four native palette settings at `0x448320`
+remain outside rollback state and gameplay checksums; richer profiles and assets remain
+disabled online.
+
 Pros:
 
 - Keeps existing color buttons and draw behavior.

@@ -157,22 +157,17 @@ secret-exposure boundary.
 - queued output progresses through nonblocking polling; and
 - a connection to a bound-but-non-listening port never reports success.
 
-The focused strict build is:
+The focused strict native and static suites are built and launched only through
+the guarded runner, which prepares the MinGW runtime `PATH` and preflights its
+DLLs:
 
 ```powershell
-gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-  -D_WIN32_WINNT=0x0601 tests\net_ext_test.c net_ext.c `
-  -o build\net_ext_test.exe -lws2_32
-.\build\net_ext_test.exe
+powershell -ExecutionPolicy Bypass -File .\tests\run_core_native_tests.ps1
 ```
 
 The strict parser/lifecycle coverage is:
 
 ```powershell
-gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-  tests\online_control_test.c online_control.c `
-  -o build\online_control_test.exe
-.\build\online_control_test.exe
 python tests\online_control_hooks_static_test.py
 python tests\online_flow_integration_static_test.py
 ```

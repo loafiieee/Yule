@@ -1,7 +1,7 @@
 # EGGNOGG+ Framework (Yule) Install Script — Design
 
-**Date:** 2026-07-02 (rev 3 — stripped DLL-only channel, loafiieee.com/yule URL)
-**Status:** Approved direction; rev 3 incorporates stripped-release + URL feedback
+**Date:** 2026-07-02 (rev 4 — executable picker, tracked files, safe uninstall)
+**Status:** Implemented with an isolated install/uninstall lifecycle regression
 **Context:** First public release of the mod framework. The AI opponent mod ships later;
 this installer is mod-agnostic. The release channel hosts ONLY the framework DLLs —
 verified: the framework defaults/creates everything under `mods/` at runtime, so nothing
@@ -15,11 +15,14 @@ copy and relocates it out of fragile locations like Downloads, (2) makes it laun
 from the Windows search bar, (3) adds it to Steam as a non-Steam game with the owner's
 existing artwork, (4) turns off the framework log console by default, and (5) records a
 machine-readable manifest under `%LOCALAPPDATA%\Yule\` that all future update mechanisms
-use to find and service the install automatically.
+use to find and service the install automatically. It also provides a conservative
+uninstaller that restores the original SDL forwarder, removes only hash-matching
+installer-managed files, and leaves the game, mods, configuration, and modified files.
 
 ## Non-goals
 
-- No uninstaller in v1 (manifest records enough to build one later).
+- No deletion of the game directory, mods, configuration, saves, or files changed after
+  installation. Uninstall is framework removal, not game removal.
 - No in-game updater in v1 — but the hosted **release channel contract** is defined here
   so the C-side updater can adopt it unchanged later.
 - No hosting of the game itself — the channel carries framework files only; the
@@ -33,13 +36,15 @@ One tiny artifact:
 ```
 EGGNOGG+_framework_installer.zip     <- what users download
   INSTALL.bat        <- one-liner: powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+  UNINSTALL.bat      <- the same script with -Uninstall
   install.ps1        <- everything (Steam artwork embedded as base64)
 ```
 
 The installer needs an existing game copy: either it sits next to one (folder containing
 `eggnoggplus.exe`, or an `EGGNOGG+/` subfolder), or it finds one via the Yule manifest,
-or the user is prompted for the folder. No game found → friendly message telling the
-user to get EGGNOGG+ first, then exit.
+or the user is prompted to select `eggnoggplus.exe` in a filtered file dialog. `-GamePath`
+accepts that executable or a containing folder for automation/backward compatibility.
+No game found → friendly message telling the user to get EGGNOGG+ first, then exit.
 
 ## Hosted release channel (the long-term contract)
 
@@ -96,14 +101,17 @@ before opening the log file, else file-logging is silently dead on a bare instal
   mismatches, verify sha256 after download, retry once, else report.
 - **Publisher helper** (owner-side, `tools/build_release.ps1`): takes the 4 built files
   + a version string → emits the uploadable `releases/<version>/` tree + `latest.json`
-  with hashes/sizes.
+  with hashes/sizes. `build/SDL2_test.dll` must exist and its SHA-256 must exactly
+  match the deployed `SDL2.dll`; a missing artifact or mismatch aborts with
+  instructions to close the game and run `bash compile.sh`. The publisher never
+  replaces the installed DLL itself.
 
 ## Installer flow (interactive, Y/n per step, defaults = yes)
 
 0. **Re-exec from `%TEMP%`** so the script can move/delete the folder it shipped in.
-1. **Locate the game** (in order): folder next to the original script path (itself or an
+1. **Locate the game** (in order): explicit executable/folder, folder next to the original script path (itself or an
    `EGGNOGG+/` subfolder containing `eggnoggplus.exe`) → existing Yule manifest's
-   `install_dir` → prompt the user for a path. Nothing found → "get EGGNOGG+ first"
+   `install_dir` → filtered `eggnoggplus.exe` file picker. Nothing found → "get EGGNOGG+ first"
    message, exit. Game running → prompt to close it (DLL locks).
 2. **[Y/n] Move to the official spot:** `%LOCALAPPDATA%\EGGNOGG+` (skipped if it's
    already there). Same-volume `Move-Item`, else copy+verify+delete; unremovable source
@@ -114,13 +122,19 @@ before opening the log file, else file-logging is silently dead on a bare instal
      it to `SDL2_real.dll` first — that's the game's real SDL2 the proxy forwards to.
      If `SDL2_real.dll` is missing and `SDL2.dll` IS ours → broken half-install: abort
      this step with a clear message (game would not boot), leave everything untouched.
-   - Then the standard channel sync: fetch `latest.json`, hash-compare, download
-     mismatches, verify. Offline → step reports "skipped: offline" and the install
-     continues (adopted framework copies still work).
+   - Then the standard channel sync: fetch `latest.json`, reject unsafe paths or malformed
+     hash/size metadata, hash/size-compare, download mismatches, and verify. If a fresh
+     vanilla adoption cannot obtain the complete set, every newly added exact-hash file
+     is removed and the original `SDL2.dll` is restored; an offline first run cannot leave
+     an unbootable half-install.
 4. **[Y/n] Start Menu shortcut** → `%APPDATA%\Microsoft\Windows\Start Menu\Programs\EGGNOGG+.lnk`
    via `WScript.Shell` (target exe, workdir = game folder, icon = exe). This is what
    makes it appear in the Windows search bar.
-5. **[Y/n] Add to Steam** (auto-skip with a note if no Steam in registry):
+5. **[Y/n] Register safe `yule://` links** under the current user's
+   `Software\Classes\yule`. Registration happens only after a complete verified framework
+   adoption. It refuses to replace an unrecognized owner and records the exact quoted
+   `--yule-uri=%1` command for conservative uninstall.
+6. **[Y/n] Add to Steam** (auto-skip with a note if no Steam in registry):
    - If Steam is running: ask, close gracefully (`steam://exit`, wait, hard-kill only
      after timeout + second confirmation), relaunch after.
    - For **every** `userdata\<accountid>\config\`: back up `shortcuts.vdf` to
@@ -133,12 +147,22 @@ before opening the log file, else file-logging is silently dead on a bare instal
      `2231133229_logo.png`, and `2231133229.json` (logo position), renamed to the
      computed appid at install. Icon: exe's own icon unless the source VDF entry names
      one.
-6. **Log console off:** write/replace `show_log_console=0` in `mods\modframework.cfg`
+7. **Log console off:** write/replace `show_log_console=0` in `mods\modframework.cfg`
    (creating `mods/` if needed, preserving other lines). Additionally the **release
    build flips the code default** in `log.c` (`g_console_visible` 1 → 0) so a wiped cfg
    stays quiet; devs re-enable via cfg. (Same `log.c` change adds the missing
    `CreateDirectoryA("mods")` in `log_init`.)
-7. **Write the manifest**, print a summary + install path, pause for a keypress.
+8. **Write the manifest**, print a summary + install path, pause for a keypress.
+
+`UNINSTALL.bat` runs the same script with `-Uninstall`. It preflights that a framework
+proxy still has `SDL2_real.dll` before changing anything, optionally removes the exact
+recorded Start Menu and Steam entries, removes only manifest-tracked files whose current
+SHA-256 still equals the installed SHA-256, restores `SDL2_real.dll` to `SDL2.dll`, and
+removes both Yule manifests. A modified or untracked file is reported and preserved.
+The `yule://` tree is removed only when its complete minimal shape and command still match
+the installer receipt; a modified or externally owned handler is preserved.
+Legacy v1 manifests can still restore SDL and recorded shortcuts, but deliberately leave
+untracked dependency DLLs rather than guessing ownership.
 
 Failure policy: steps are independently skippable and failure-isolated — a Steam hiccup
 never aborts the file sync or manifest write; per-step status lands in the manifest.
@@ -154,17 +178,23 @@ know in advance:
 
 ```json
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "install_dir": "C:\\Users\\me\\AppData\\Local\\EGGNOGG+",
+  "game_executable": "C:\\Users\\me\\AppData\\Local\\EGGNOGG+\\eggnoggplus.exe",
   "framework_version": "1.0",
   "channel_url": "https://loafiieee.com/yule/releases/latest.json",
   "installed_at": "2026-07-02T09:41:00",
-  "installer_version": 1,
+  "installer_version": 2,
   "moved_by_installer": true,
   "adopted_vanilla": true,
   "start_menu_shortcut": "C:\\...\\Programs\\EGGNOGG+.lnk",
+  "deep_link_protocol": { "applied": true, "command": "\"C:\\...\\eggnoggplus.exe\" \"--yule-uri=%1\"" },
   "steam": { "applied": true, "appid": 3123456789, "accounts": ["1423819074"] },
-  "steps": { "move": "ok", "sync": "ok", "shortcut": "ok", "steam": "ok", "log_console": "ok" }
+  "managed_files": [
+    { "path": "SDL2.dll", "sha256": "...", "size": 1698950 },
+    { "path": "lua51.dll", "sha256": "...", "size": 400000 }
+  ],
+  "steps": { "move": "ok", "sync": "ok", "shortcut": "ok", "deep_links": "ok", "steam": "ok", "log_console": "ok" }
 }
 ```
 
@@ -173,7 +203,10 @@ know in advance:
   channel sync loop, bump `framework_version`. Missing manifest → ask the user for the
   folder, recreate it. `manifest_version` bumps only on breaking changes; fields are
   add-only otherwise.
-- The eventual in-game updater reads the same file and channel; nothing else changes.
+- `managed_files` is an ownership receipt, not a delete allowlist by name: uninstall
+  requires both a safe relative path and the exact recorded hash.
+- The in-game updater reads the same file and channel; unknown/additional fields remain
+  forward-compatible.
 
 ## Re-run behavior (idempotence)
 
@@ -212,3 +245,8 @@ only DLLs).
    `$ChannelUrl` at it, verify end-to-end; then the same against loafiieee.com/yule.
 8. Patch simulation: 5-line PS snippet reads the Yule manifest, runs the sync loop,
    bumps version — proves the contract.
+9. Automated lifecycle: a temporary fake game selected by its executable installs from a
+   loopback HTTP channel, adopts/restores vanilla SDL, records the v2 ownership receipt,
+   preserves a user-modified managed DLL and an unrelated user file on uninstall, removes
+   both manifests, rejects uninstall without `SDL2_real.dll`, and proves an offline fresh
+   adoption rolls back to a bootable vanilla copy.

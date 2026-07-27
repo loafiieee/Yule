@@ -5,6 +5,8 @@ const dgram = require("dgram");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { createDiscordLfgBotFromEnv } = require("./discord_lfg_bot");
+const { startRedirectServerFromEnv } = require("./lfg_redirect");
 
 const PORT = Number.parseInt(process.env.PORT || "47778", 10);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -18,12 +20,16 @@ const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
 const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
 const MAX_LINE_BYTES = 512 * 1024;
 const VANILLA_MAPS = 5;
-/* Match protocol 3 adds an explicit two-client gameplay commit. Before both
+const MAX_MANIFEST_MAPS = 4096;
+/* Control protocol 3 adds the authoritative friend-challenge map picker.
+ * Persistent social controls/presence and bilateral private rematches are
+ * additive required capabilities advertised separately from the version.
+ * Match protocol 3 adds an explicit two-client gameplay commit. Before both
  * clients send match_started, aborts, premature results, disconnects, and stale
  * cleanup cancel without a winner or rating change. */
-const CONTROL_PROTOCOL_VERSION = 2;
+const CONTROL_PROTOCOL_VERSION = 3;
 const MATCH_PROTOCOL_VERSION = 3;
-const P2P_PROTOCOL_VERSION = 16;
+const P2P_PROTOCOL_VERSION = 17;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 // Recently chosen map keys (most-recent last). Used to even out random map
 // selection so the pool cycles through every option before any repeats, instead
@@ -31,6 +37,10 @@ const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 const RECENT_MAP_KEYS = [];
 const RECENT_MAP_MAX = 64;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const REMATCH_TTL_CONFIG = Number.parseInt(process.env.REMATCH_TTL_MS || "45000", 10);
+const REMATCH_TTL_MS = Number.isFinite(REMATCH_TTL_CONFIG)
+  ? Math.max(100, Math.min(5 * 60 * 1000, REMATCH_TTL_CONFIG))
+  : 45000;
 /* A normal result is authoritative only when both still-connected peers report
  * the same winner.  Keep the old environment name as a deployment-compatible
  * fallback, but a lone report now expires to a no-contest instead of awarding
@@ -49,6 +59,19 @@ const COMPETITIVE_BASE_RANGE = Number.parseInt(process.env.COMPETITIVE_BASE_RANG
 const COMPETITIVE_RANGE_PER_SEC = Number.parseInt(process.env.COMPETITIVE_RANGE_PER_SEC || "8", 10);
 const COMPETITIVE_MAX_RANGE = Number.parseInt(process.env.COMPETITIVE_MAX_RANGE || "650", 10);
 const UDP_DIAG = process.env.UDP_DIAG === "1";
+const lfgBot = createDiscordLfgBotFromEnv(process.env, {
+  log: (line) => console.log(`[lfg] ${line}`),
+});
+const lfgRedirectServer = startRedirectServerFromEnv(process.env);
+if (lfgRedirectServer) {
+  lfgRedirectServer.on("listening", () => {
+    const address = lfgRedirectServer.address();
+    console.log(`[lfg] strict redirect listening on ${address.address}:${address.port}`);
+  });
+  lfgRedirectServer.on("error", (err) => {
+    console.error(`[lfg] redirect server error: ${err.message}`);
+  });
+}
 
 let nextMatchId = 1;
 let nextChallengeId = 1;
@@ -223,9 +246,36 @@ function ensureUserShape(username) {
   if (!rec) return null;
   if (Object.prototype.hasOwnProperty.call(rec, "elo")) delete rec.elo;
   if (Object.prototype.hasOwnProperty.call(rec, "mmr")) delete rec.mmr;
-  if (!Array.isArray(rec.friends)) rec.friends = [];
-  if (!Array.isArray(rec.friend_requests)) rec.friend_requests = [];
+  rec.friends = sanitizeUserList(rec.friends, username);
+  rec.friend_requests = sanitizeUserList(rec.friend_requests, username);
+  rec.blocked_users = sanitizeUserList(rec.blocked_users, username);
+  rec.muted_users = sanitizeUserList(rec.muted_users, username);
   return rec;
+}
+
+function sanitizeUserList(raw, self) {
+  const result = [];
+  const seen = new Set();
+  for (const value of Array.isArray(raw) ? raw : []) {
+    const username = normalizeUsername(value);
+    if (!validUsername(username) || username === self || seen.has(username)) continue;
+    if (!db.users[username]) continue;
+    seen.add(username);
+    result.push(username);
+  }
+  return result;
+}
+
+function userBlocks(username, target) {
+  const rec = ensureUserShape(username);
+  return Boolean(rec && rec.blocked_users.includes(target));
+}
+
+function usersBlockEachOther(a, b) {
+  const left = typeof a === "string" ? a : a && a.username;
+  const right = typeof b === "string" ? b : b && b.username;
+  if (!left || !right) return false;
+  return userBlocks(left, right) || userBlocks(right, left);
 }
 
 function defaultManifest() {
@@ -241,8 +291,9 @@ function sanitizeManifest(rawMaps) {
   const seen = new Set();
   const maps = Array.isArray(rawMaps) ? rawMaps : [];
   for (const item of maps) {
+    if (out.length >= MAX_MANIFEST_MAPS) break;
     if (!item || typeof item !== "object") continue;
-    const key = String(item.key || "").trim().toLowerCase();
+    const key = String(item.key || "").trim().toLowerCase().slice(0, 127);
     const selector = Number.parseInt(item.selector, 10);
     if (!key || !Number.isFinite(selector) || selector < 0 || selector > 4096) continue;
     if (seen.has(key)) continue;
@@ -263,7 +314,7 @@ function mapIndex(maps) {
   return idx;
 }
 
-function chooseSharedMap(a, b, options = {}) {
+function sharedMapChoices(a, b, options = {}) {
   const right = b.mapIndex || mapIndex(defaultManifest());
   const shared = [];
   const blocked = options.competitive ? COMPETITIVE_BLOCKED_MAP_KEYS : null;
@@ -278,6 +329,11 @@ function chooseSharedMap(a, b, options = {}) {
       bSelector: r.selector,
     });
   }
+  return shared;
+}
+
+function chooseSharedMap(a, b, options = {}) {
+  const shared = sharedMapChoices(a, b, options);
   if (!shared.length) return null;
 
   // Even-distribution pick: exclude the maps used in the last (poolSize - 1)
@@ -315,11 +371,25 @@ function sendServerInfo(client) {
     match_protocol: MATCH_PROTOCOL_VERSION,
     p2p_protocol: P2P_PROTOCOL_VERSION,
     cap_p2p_auth: 1,
+    cap_social_controls: 1,
+    cap_private_rematch: 1,
   });
 }
 
 function connectedClient(username) {
   return onlineByUser.get(username) || null;
+}
+
+function friendPresence(username) {
+  const client = connectedClient(username);
+  if (!client) return "offline";
+  if (client.match_id) {
+    const match = activeMatches.get(client.match_id);
+    if (match && !match.finished) return match.committed ? "in_match" : "match_setup";
+  }
+  if (client.queue === "competitive") return "queue_competitive";
+  if (client.queue === "casual") return "queue_casual";
+  return "online";
 }
 
 function sendFriendSnapshot(client) {
@@ -328,7 +398,9 @@ function sendFriendSnapshot(client) {
   if (!rec) return;
 
   send(client, { type: "friend_snapshot_begin" });
-  const incoming = [...rec.friend_requests].sort();
+  const incoming = rec.friend_requests
+    .filter((from) => !usersBlockEachOther(client.username, from))
+    .sort();
   for (const from of incoming) {
     send(client, {
       type: "friend_request",
@@ -338,7 +410,10 @@ function sendFriendSnapshot(client) {
   }
 
   const activeChallenges = [...challenges.values()]
-    .filter((c) => c.to === client.username && c.expires_at > now())
+    .filter((c) =>
+      c.to === client.username &&
+      c.expires_at > now() &&
+      !usersBlockEachOther(client.username, c.from))
     .sort((a, b) => a.created_at - b.created_at);
   for (const challenge of activeChallenges) {
     send(client, {
@@ -346,26 +421,46 @@ function sendFriendSnapshot(client) {
       id: challenge.id,
       from: challenge.from,
       elo: ensureUserShape(challenge.from) ? publicElo(challenge.from) : DEFAULT_ELO,
+      map_key: challenge.map_key,
+      map_label: challenge.map_label,
       expires_in: Math.max(0, Math.ceil((challenge.expires_at - now()) / 1000)),
+      muted: rec.muted_users.includes(challenge.from) ? 1 : 0,
     });
   }
 
-  const friends = [...rec.friends].sort();
+  const friends = rec.friends
+    .filter((friend) => !usersBlockEachOther(client.username, friend))
+    .sort();
   for (const friend of friends) {
     send(client, {
       type: "friend",
       username: friend,
       elo: ensureUserShape(friend) ? publicElo(friend) : DEFAULT_ELO,
       online: connectedClient(friend) ? 1 : 0,
+      presence: friendPresence(friend),
+      muted: rec.muted_users.includes(friend) ? 1 : 0,
     });
+  }
+  for (const blocked of [...rec.blocked_users].sort()) {
+    /* Deliberately omit rating and presence. A block list is visible only to
+     * its owner and must not become a presence side channel. */
+    send(client, { type: "blocked_user", username: blocked });
   }
   send(client, { type: "friend_snapshot_end" });
 }
 
 function refreshFriendsFor(username) {
-  const rec = ensureUserShape(username);
-  const targets = new Set([username]);
-  if (rec) for (const f of rec.friends) targets.add(f);
+  refreshFriendsForUsers([username]);
+}
+
+function refreshFriendsForUsers(usernames) {
+  const targets = new Set();
+  for (const username of usernames) {
+    if (!username) continue;
+    targets.add(username);
+    const rec = ensureUserShape(username);
+    if (rec) for (const friend of rec.friends) targets.add(friend);
+  }
   for (const target of targets) {
     const client = connectedClient(target);
     if (client) sendFriendSnapshot(client);
@@ -384,12 +479,108 @@ function broadcastQueueCounts() {
 }
 
 function removeFromQueues(client) {
+  const priorQueue = client.queue;
   for (const queue of [casualQueue, competitiveQueue]) {
     const idx = queue.indexOf(client);
     if (idx >= 0) queue.splice(idx, 1);
   }
   client.queue = "";
   client.queue_joined_at = 0;
+  if (priorQueue && client.username) lfgBot.queueLeft(client.username);
+}
+
+function rematchExpiresIn(rematch) {
+  return Math.max(0, Math.ceil((rematch.expires_at - now()) / 1000));
+}
+
+function clearTerminalRematch(username, matchId) {
+  const client = connectedClient(username);
+  if (!client || !client.last_match_terminal ||
+      client.last_match_terminal.match_id !== matchId) return;
+  client.last_match_terminal.rematch_available = 0;
+  client.last_match_terminal.rematch_expires_in = 0;
+}
+
+function removeRematch(rematch) {
+  if (!rematch || rematches.get(rematch.match_id) !== rematch) return false;
+  rematches.delete(rematch.match_id);
+  clearTerminalRematch(rematch.a, rematch.match_id);
+  clearTerminalRematch(rematch.b, rematch.match_id);
+  return true;
+}
+
+function notifyRematchClosed(rematch, username, otherType, reason) {
+  if (!removeRematch(rematch)) return;
+  const other = username === rematch.a ? rematch.b : rematch.a;
+  const actorClient = connectedClient(username);
+  const otherClient = connectedClient(other);
+  if (actorClient) {
+    send(actorClient, {
+      type: "rematch_closed",
+      match_id: rematch.match_id,
+      reason: reason || "rematch closed",
+    });
+  }
+  if (otherClient) {
+    send(otherClient, {
+      type: otherType || "rematch_unavailable",
+      match_id: rematch.match_id,
+      username,
+      reason: reason || "rematch unavailable",
+    });
+  }
+}
+
+function cancelRematchesForUser(username, reason = "rematch unavailable") {
+  if (!username) return;
+  for (const rematch of [...rematches.values()]) {
+    if (rematch.a !== username && rematch.b !== username) continue;
+    notifyRematchClosed(rematch, username, "rematch_unavailable", reason);
+  }
+}
+
+function cancelRematchesBetween(left, right, reason = "rematch unavailable") {
+  for (const rematch of [...rematches.values()]) {
+    if (!(
+      (rematch.a === left && rematch.b === right) ||
+      (rematch.a === right && rematch.b === left)
+    )) continue;
+    notifyRematchClosed(rematch, left, "rematch_unavailable", reason);
+  }
+}
+
+function createRematchForMatch(match) {
+  if (!match || !match.committed) return null;
+  const left = connectedClient(match.a);
+  const right = connectedClient(match.b);
+  if (!left || !right || usersBlockEachOther(match.a, match.b)) return null;
+  cancelRematchesForUser(match.a, "superseded by a newer result");
+  cancelRematchesForUser(match.b, "superseded by a newer result");
+  const rematch = {
+    match_id: match.id,
+    a: match.a,
+    b: match.b,
+    map_key: match.map.key,
+    map_label: match.map.label,
+    created_at: now(),
+    expires_at: now() + REMATCH_TTL_MS,
+    accepted_by: new Set(),
+  };
+  rematches.set(rematch.match_id, rematch);
+  return rematch;
+}
+
+function findClientRematch(client, msg) {
+  if (!client || !client.username) return null;
+  const matchId = msg && msg.match_id;
+  if (!Number.isInteger(matchId) || matchId <= 0) return null;
+  const rematch = rematches.get(matchId);
+  if (!rematch || (rematch.a !== client.username && rematch.b !== client.username)) return null;
+  if (rematch.expires_at <= now()) {
+    notifyRematchClosed(rematch, client.username, "rematch_expired", "rematch expired");
+    return null;
+  }
+  return rematch;
 }
 
 function competitiveRange(client) {
@@ -398,6 +589,7 @@ function competitiveRange(client) {
 }
 
 function canCompetitiveMatch(a, b) {
+  if (usersBlockEachOther(a, b)) return false;
   const ar = ensureRating(a.username);
   const br = ensureRating(b.username);
   if (!ar || !br) return false;
@@ -405,16 +597,25 @@ function canCompetitiveMatch(a, b) {
   return diff <= Math.min(competitiveRange(a), competitiveRange(b));
 }
 
-function makeMatch(a, b, source, queueName, challengeId = 0) {
-  const shared = chooseSharedMap(a, b, { competitive: queueName === "competitive" });
+function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") {
+  if (usersBlockEachOther(a, b)) return false;
+  const competitive = queueName === "competitive";
+  const forcedKey = String(forcedMapKey || "").trim().toLowerCase();
+  const shared = forcedKey
+    ? sharedMapChoices(a, b, { competitive }).find((map) => map.key === forcedKey) || null
+    : chooseSharedMap(a, b, { competitive });
   if (!shared) {
     sendError(a, "No shared map with opponent.");
     sendError(b, "No shared map with opponent.");
     return false;
   }
 
+  cancelRematchesForUser(a.username, "player entered another match");
+  cancelRematchesForUser(b.username, "player entered another match");
   removeFromQueues(a);
   removeFromQueues(b);
+  a.last_match_terminal = null;
+  b.last_match_terminal = null;
 
   const match = {
     id: nextMatchId++,
@@ -424,7 +625,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
     queue: queueName || "",
     challenge_id: challengeId,
     map: shared,
-    competitive: queueName === "competitive",
+    competitive,
     created_at: now(),
     results: new Map(),
     started_by: new Set(),
@@ -498,6 +699,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0) {
   });
 
   console.log(`[match#${match.id}] ${source}/${queueName || "challenge"} ${a.username} vs ${b.username} map=${shared.key} host=${hostClient.username} join=${joinClient.username} udp_punch=required`);
+  refreshFriendsForUsers([a.username, b.username]);
   broadcastQueueCounts();
   return true;
 }
@@ -677,10 +879,12 @@ function tryCasualMatchmaking() {
     changed = false;
     for (let i = 0; i < casualQueue.length && !changed; i += 1) {
       for (let j = i + 1; j < casualQueue.length; j += 1) {
-        if (!chooseSharedMap(casualQueue[i], casualQueue[j])) continue;
-        makeMatch(casualQueue[i], casualQueue[j], "queue", "casual");
-        changed = true;
-        break;
+        if (!sharedMapChoices(casualQueue[i], casualQueue[j]).length) continue;
+        if (usersBlockEachOther(casualQueue[i], casualQueue[j])) continue;
+        if (makeMatch(casualQueue[i], casualQueue[j], "queue", "casual")) {
+          changed = true;
+          break;
+        }
       }
     }
   }
@@ -693,7 +897,7 @@ function tryCompetitiveMatchmaking() {
     for (let i = 0; i < competitiveQueue.length && !changed; i += 1) {
       for (let j = i + 1; j < competitiveQueue.length; j += 1) {
         if (!canCompetitiveMatch(competitiveQueue[i], competitiveQueue[j])) continue;
-        if (!chooseSharedMap(competitiveQueue[i], competitiveQueue[j], { competitive: true })) continue;
+        if (!sharedMapChoices(competitiveQueue[i], competitiveQueue[j], { competitive: true }).length) continue;
         makeMatch(competitiveQueue[i], competitiveQueue[j], "queue", "competitive");
         changed = true;
         break;
@@ -722,6 +926,8 @@ function authOk(client, username) {
     match_protocol: MATCH_PROTOCOL_VERSION,
     p2p_protocol: P2P_PROTOCOL_VERSION,
     cap_p2p_auth: 1,
+    cap_social_controls: 1,
+    cap_private_rematch: 1,
   });
   sendFriendSnapshot(client);
   refreshFriendsFor(username);
@@ -740,6 +946,8 @@ function handleRegister(client, msg) {
     hash: hashPassword(password, salt),
     friends: [],
     friend_requests: [],
+    blocked_users: [],
+    muted_users: [],
     created_at: new Date().toISOString(),
   };
   setRating(username, DEFAULT_ELO, DEFAULT_MMR);
@@ -784,6 +992,7 @@ function handleJoinQueue(client, msg) {
   if (!client.username) return sendError(client, "not logged in");
   if (client.match_id && !activeMatches.has(client.match_id)) client.match_id = 0;
   if (client.match_id) return sendError(client, "already in a match");
+  cancelRematchesForUser(client.username, "player joined matchmaking");
   const queue = String(msg.queue || "casual").toLowerCase() === "competitive" ? "competitive" : "casual";
   removeFromQueues(client);
   client.queue = queue;
@@ -791,12 +1000,17 @@ function handleJoinQueue(client, msg) {
   if (queue === "competitive") competitiveQueue.push(client);
   else casualQueue.push(client);
   send(client, { type: "queue_joined", queue });
+  refreshFriendsFor(client.username);
   tryMatchmaking();
+  /* Avoid a create/delete burst when the normal matcher consumes this player
+   * immediately. The bot receives only the public account name and queue. */
+  if (client.queue === queue) lfgBot.queueJoined(client.username, queue);
 }
 
 function handleLeaveQueue(client) {
   removeFromQueues(client);
   send(client, { type: "queue_left" });
+  if (client.username) refreshFriendsFor(client.username);
   broadcastQueueCounts();
 }
 
@@ -808,6 +1022,7 @@ function handleFriendRequest(client, msg) {
   const targetRec = ensureUserShape(target);
   const mine = ensureUserShape(client.username);
   if (!targetRec || !mine) return sendError(client, "user not found");
+  if (usersBlockEachOther(client.username, target)) return sendError(client, "user is unavailable");
   if (mine.friends.includes(target)) return sendError(client, "already friends");
   if (!targetRec.friend_requests.includes(client.username)) targetRec.friend_requests.push(client.username);
   saveDB();
@@ -822,12 +1037,13 @@ function handleFriendAccept(client, msg) {
   const mine = ensureUserShape(client.username);
   const other = ensureUserShape(from);
   if (!mine || !other) return sendError(client, "user not found");
+  if (usersBlockEachOther(client.username, from)) return sendError(client, "user is unavailable");
+  if (!mine.friend_requests.includes(from)) return sendError(client, "friend request is no longer available");
   mine.friend_requests = mine.friend_requests.filter((u) => u !== from);
   if (!mine.friends.includes(from)) mine.friends.push(from);
   if (!other.friends.includes(client.username)) other.friends.push(client.username);
   saveDB();
-  refreshFriendsFor(client.username);
-  refreshFriendsFor(from);
+  refreshFriendsForUsers([client.username, from]);
 }
 
 function handleFriendDecline(client, msg) {
@@ -848,9 +1064,90 @@ function handleFriendRemove(client, msg) {
   if (!mine || !other) return;
   mine.friends = mine.friends.filter((u) => u !== target);
   other.friends = other.friends.filter((u) => u !== client.username);
+  mine.muted_users = mine.muted_users.filter((u) => u !== target);
+  other.muted_users = other.muted_users.filter((u) => u !== client.username);
   saveDB();
-  refreshFriendsFor(client.username);
-  refreshFriendsFor(target);
+  refreshFriendsForUsers([client.username, target]);
+}
+
+function expireChallengesBetween(left, right) {
+  for (const [id, challenge] of challenges) {
+    if (!(
+      (challenge.from === left && challenge.to === right) ||
+      (challenge.from === right && challenge.to === left)
+    )) continue;
+    challenges.delete(id);
+    const otherUsername = challenge.from === left ? right : challenge.from;
+    const otherClient = connectedClient(otherUsername);
+    if (otherClient) {
+      send(otherClient, {
+        type: "challenge_expired",
+        id,
+        username: challenge.from === otherUsername ? challenge.to : challenge.from,
+      });
+    }
+  }
+}
+
+function sendSocialSnapshots(left, right) {
+  const leftClient = connectedClient(left);
+  const rightClient = connectedClient(right);
+  if (leftClient) sendFriendSnapshot(leftClient);
+  if (rightClient) sendFriendSnapshot(rightClient);
+}
+
+function handleFriendMute(client, msg) {
+  if (!client.username) return sendError(client, "not logged in");
+  const target = normalizeUsername(msg.username);
+  const mine = ensureUserShape(client.username);
+  const other = ensureUserShape(target);
+  if (!mine || !other) return sendError(client, "user not found");
+  if (usersBlockEachOther(client.username, target)) return sendError(client, "user is unavailable");
+  if (!mine.friends.includes(target)) return sendError(client, "you can only mute friends");
+  const muted = msg.muted === true || Number(msg.muted) === 1;
+  mine.muted_users = mine.muted_users.filter((u) => u !== target);
+  if (muted) mine.muted_users.push(target);
+  saveDB();
+  send(client, {
+    type: "social_update",
+    action: muted ? "muted" : "unmuted",
+    username: target,
+  });
+  sendFriendSnapshot(client);
+}
+
+function handleFriendBlock(client, msg) {
+  if (!client.username) return sendError(client, "not logged in");
+  const target = normalizeUsername(msg.username);
+  if (!validUsername(target) || target === client.username) return sendError(client, "invalid username");
+  const mine = ensureUserShape(client.username);
+  const other = ensureUserShape(target);
+  if (!mine || !other) return sendError(client, "user not found");
+
+  mine.blocked_users = mine.blocked_users.filter((u) => u !== target);
+  mine.blocked_users.push(target);
+  mine.muted_users = mine.muted_users.filter((u) => u !== target);
+  mine.friends = mine.friends.filter((u) => u !== target);
+  other.friends = other.friends.filter((u) => u !== client.username);
+  other.muted_users = other.muted_users.filter((u) => u !== client.username);
+  mine.friend_requests = mine.friend_requests.filter((u) => u !== target);
+  other.friend_requests = other.friend_requests.filter((u) => u !== client.username);
+  expireChallengesBetween(client.username, target);
+  cancelRematchesBetween(client.username, target);
+  saveDB();
+  send(client, { type: "social_update", action: "blocked", username: target });
+  sendSocialSnapshots(client.username, target);
+}
+
+function handleFriendUnblock(client, msg) {
+  if (!client.username) return sendError(client, "not logged in");
+  const target = normalizeUsername(msg.username);
+  const mine = ensureUserShape(client.username);
+  if (!mine || !ensureUserShape(target)) return sendError(client, "user not found");
+  mine.blocked_users = mine.blocked_users.filter((u) => u !== target);
+  saveDB();
+  send(client, { type: "social_update", action: "unblocked", username: target });
+  sendFriendSnapshot(client);
 }
 
 function handleChallenge(client, msg) {
@@ -859,8 +1156,12 @@ function handleChallenge(client, msg) {
   const mine = ensureUserShape(client.username);
   const other = ensureUserShape(target);
   if (!mine || !other) return sendError(client, "user not found");
+  if (usersBlockEachOther(client.username, target)) return sendError(client, "user is unavailable");
   if (!mine.friends.includes(target)) return sendError(client, "you can only challenge friends");
-  if (!connectedClient(target)) return sendError(client, "friend is offline");
+  if (client.match_id) return sendError(client, "you are already in a match");
+  const targetClient = connectedClient(target);
+  if (!targetClient) return sendError(client, "friend is offline");
+  if (targetClient.match_id) return sendError(client, "friend is already in a match");
   const existing = [...challenges.values()].find((c) =>
     c.from === client.username && c.to === target && c.expires_at > now());
   if (existing) {
@@ -868,22 +1169,78 @@ function handleChallenge(client, msg) {
       type: "challenge_sent",
       username: target,
       id: existing.id,
+      map_key: existing.map_key,
+      map_label: existing.map_label,
       expires_in: Math.max(0, Math.ceil((existing.expires_at - now()) / 1000)),
     });
     return;
+  }
+  const selectedKey = String(msg.map_key || "").trim().toLowerCase();
+  const selectedMap = sharedMapChoices(client, targetClient)
+    .find((map) => map.key === selectedKey);
+  if (!selectedKey || !selectedMap) {
+    return sendError(client, "selected challenge map is no longer compatible");
   }
   const id = nextChallengeId++;
   const challenge = {
     id,
     from: client.username,
     to: target,
+    map_key: selectedMap.key,
+    map_label: selectedMap.label,
     created_at: now(),
     expires_at: now() + CHALLENGE_TTL_MS,
   };
   challenges.set(id, challenge);
-  send(client, { type: "challenge_sent", username: target, id, expires_in: 300 });
-  const targetClient = connectedClient(target);
+  send(client, {
+    type: "challenge_sent",
+    username: target,
+    id,
+    map_key: challenge.map_key,
+    map_label: challenge.map_label,
+    expires_in: 300,
+  });
   if (targetClient) sendFriendSnapshot(targetClient);
+}
+
+function handleChallengeMaps(client, msg) {
+  if (!client.username) return sendError(client, "not logged in");
+  const target = normalizeUsername(msg.username);
+  const requestId = Number.isInteger(msg.request_id) && msg.request_id > 0
+    ? Math.min(msg.request_id, 0x7fffffff)
+    : 0;
+  const mine = ensureUserShape(client.username);
+  const other = ensureUserShape(target);
+  if (!mine || !other) return sendError(client, "user not found");
+  if (usersBlockEachOther(client.username, target)) return sendError(client, "user is unavailable");
+  if (!mine.friends.includes(target)) return sendError(client, "you can only challenge friends");
+  if (client.match_id) return sendError(client, "you are already in a match");
+  const targetClient = connectedClient(target);
+  if (!targetClient) return sendError(client, "friend is offline");
+  if (targetClient.match_id) return sendError(client, "friend is already in a match");
+
+  const choices = sharedMapChoices(client, targetClient);
+  send(client, {
+    type: "challenge_maps_begin",
+    username: target,
+    request_id: requestId,
+    count: choices.length,
+  });
+  for (const map of choices) {
+    send(client, {
+      type: "challenge_map_choice",
+      username: target,
+      request_id: requestId,
+      key: map.key,
+      label: map.label,
+    });
+  }
+  send(client, {
+    type: "challenge_maps_end",
+    username: target,
+    request_id: requestId,
+    count: choices.length,
+  });
 }
 
 function findChallenge(client, msg) {
@@ -902,17 +1259,40 @@ function handleChallengeAccept(client, msg) {
   if (!challenge || challenge.to !== client.username || challenge.expires_at <= now()) {
     return sendError(client, "challenge expired");
   }
+  if (usersBlockEachOther(challenge.from, challenge.to)) {
+    challenges.delete(challenge.id);
+    sendFriendSnapshot(client);
+    return sendError(client, "challenge expired");
+  }
   const fromClient = connectedClient(challenge.from);
   if (!fromClient) {
     challenges.delete(challenge.id);
     sendFriendSnapshot(client);
     return sendError(client, "challenger is offline");
   }
+  if (client.match_id || fromClient.match_id) {
+    return sendError(client, "challenge players are already in a match");
+  }
+  const selectedMap = sharedMapChoices(fromClient, client)
+    .find((map) => map.key === challenge.map_key);
+  if (!selectedMap) {
+    challenges.delete(challenge.id);
+    sendFriendSnapshot(client);
+    sendFriendSnapshot(fromClient);
+    sendError(fromClient, "selected challenge map is no longer compatible");
+    return sendError(client, "selected challenge map is no longer compatible");
+  }
   challenges.delete(challenge.id);
-  send(fromClient, { type: "challenge_accepted", username: client.username, id: challenge.id });
+  send(fromClient, {
+    type: "challenge_accepted",
+    username: client.username,
+    id: challenge.id,
+    map_key: selectedMap.key,
+    map_label: selectedMap.label,
+  });
   sendFriendSnapshot(client);
   sendFriendSnapshot(fromClient);
-  makeMatch(fromClient, client, "challenge", "", challenge.id);
+  makeMatch(fromClient, client, "challenge", "", challenge.id, selectedMap.key);
 }
 
 function handleChallengeDecline(client, msg) {
@@ -975,13 +1355,14 @@ function finishMatch(match, winner, reason = "") {
   }
   const loser = winner === match.a ? match.b : match.a;
   const ratings = applyCompetitiveResult(match, winner);
+  const rematch = createRematchForMatch(match);
   for (const username of [match.a, match.b]) {
     const c = connectedClient(username);
     const elo = publicElo(username);
     const rating = ratings[username] || {};
     if (c && c.match_id === match.id) {
       c.match_id = 0;
-      send(c, {
+      const terminal = {
         type: "match_result",
         match_id: match.id,
         result: username === winner ? "win" : "loss",
@@ -992,10 +1373,21 @@ function finishMatch(match, winner, reason = "") {
         queue: match.queue || "",
         elo,
         elo_before: Number.isFinite(rating.elo_before) ? rating.elo_before : elo,
-      });
+        rematch_available: rematch ? 1 : 0,
+        rematch_expires_in: rematch ? rematchExpiresIn(rematch) : 0,
+        rematch_unranked: 1,
+      };
+      /* The peer-disconnect observer can race a committed forfeit: the server
+       * may have already awarded the observer a win when its queued local
+       * "P2P disconnected" report arrives. Retain one exact terminal response
+       * per connected participant so that retry is idempotent instead of
+       * surfacing a misleading "invalid or stale match result" error. */
+      c.last_match_terminal = terminal;
+      send(c, terminal);
     }
   }
   activeMatches.delete(match.id);
+  refreshFriendsForUsers([match.a, match.b]);
 }
 
 function cancelMatch(match, reason = "cancelled") {
@@ -1009,10 +1401,97 @@ function cancelMatch(match, reason = "cancelled") {
     const c = connectedClient(username);
     if (c && c.match_id === match.id) {
       c.match_id = 0;
-      send(c, { type: "match_abort", match_id: match.id, reason });
+      const terminal = { type: "match_abort", match_id: match.id, reason };
+      c.last_match_terminal = terminal;
+      send(c, terminal);
     }
   }
   activeMatches.delete(match.id);
+  refreshFriendsForUsers([match.a, match.b]);
+}
+
+function replayTerminalMatch(client, msg) {
+  let terminal = client && client.last_match_terminal;
+  const matchId = msg && msg.match_id;
+  if (!terminal || !Number.isInteger(matchId) || matchId <= 0 ||
+      terminal.match_id !== matchId) {
+    return false;
+  }
+  if (terminal.rematch_available) {
+    const rematch = rematches.get(matchId);
+    if (!rematch || rematch.expires_at <= now()) {
+      terminal.rematch_available = 0;
+      terminal.rematch_expires_in = 0;
+    } else {
+      terminal = {
+        ...terminal,
+        rematch_expires_in: rematchExpiresIn(rematch),
+      };
+    }
+  }
+  send(client, terminal);
+  return true;
+}
+
+function handleRematchRequest(client, msg) {
+  if (!client.username) return sendError(client, "not logged in");
+  const rematch = findClientRematch(client, msg);
+  if (!rematch) {
+    send(client, { type: "rematch_unavailable", match_id: msg && msg.match_id || 0 });
+    return;
+  }
+  const otherUsername = client.username === rematch.a ? rematch.b : rematch.a;
+  const otherClient = connectedClient(otherUsername);
+  if (!otherClient || client.match_id || otherClient.match_id ||
+      client.queue || otherClient.queue ||
+      usersBlockEachOther(client.username, otherUsername)) {
+    notifyRematchClosed(rematch, client.username, "rematch_unavailable", "rematch unavailable");
+    return;
+  }
+
+  rematch.accepted_by.add(client.username);
+  if (rematch.accepted_by.size < 2) {
+    send(client, {
+      type: "rematch_waiting",
+      match_id: rematch.match_id,
+      expires_in: rematchExpiresIn(rematch),
+    });
+    send(otherClient, {
+      type: "rematch_offer",
+      match_id: rematch.match_id,
+      from: client.username,
+      map_label: rematch.map_label,
+      expires_in: rematchExpiresIn(rematch),
+      unranked: 1,
+    });
+    return;
+  }
+
+  removeRematch(rematch);
+  send(client, { type: "rematch_starting", match_id: rematch.match_id });
+  send(otherClient, { type: "rematch_starting", match_id: rematch.match_id });
+  if (!makeMatch(client, otherClient, "rematch", "", 0, rematch.map_key)) {
+    send(client, {
+      type: "rematch_unavailable",
+      match_id: rematch.match_id,
+      reason: "the previous map is no longer compatible",
+    });
+    send(otherClient, {
+      type: "rematch_unavailable",
+      match_id: rematch.match_id,
+      reason: "the previous map is no longer compatible",
+    });
+  }
+}
+
+function handleRematchDecline(client, msg) {
+  if (!client.username) return sendError(client, "not logged in");
+  const rematch = findClientRematch(client, msg);
+  if (!rematch) {
+    send(client, { type: "rematch_closed", match_id: msg && msg.match_id || 0 });
+    return;
+  }
+  notifyRematchClosed(rematch, client.username, "rematch_declined", "rematch declined");
 }
 
 function matchForClientMessage(client, msg) {
@@ -1045,6 +1524,7 @@ function handleMatchStarted(client, msg) {
     }
   }
   console.log(`[match#${match.id}] gameplay committed`);
+  refreshFriendsForUsers([match.a, match.b]);
 }
 
 function handleMatchAbort(client, msg) {
@@ -1063,7 +1543,10 @@ function handleMatchAbort(client, msg) {
 
 function handleMatchEnd(client, msg) {
   const match = matchForClientMessage(client, msg);
-  if (!match) return sendError(client, "invalid or stale match result");
+  if (!match) {
+    if (replayTerminalMatch(client, msg)) return;
+    return sendError(client, "invalid or stale match result");
+  }
   if (!match.committed) {
     cancelMatch(match, "premature match result");
     return;
@@ -1105,12 +1588,18 @@ function dispatch(client, msg) {
     case "friend_accept": handleFriendAccept(client, msg); break;
     case "friend_decline": handleFriendDecline(client, msg); break;
     case "friend_remove": handleFriendRemove(client, msg); break;
+    case "friend_mute": handleFriendMute(client, msg); break;
+    case "friend_block": handleFriendBlock(client, msg); break;
+    case "friend_unblock": handleFriendUnblock(client, msg); break;
+    case "challenge_maps": handleChallengeMaps(client, msg); break;
     case "challenge": handleChallenge(client, msg); break;
     case "challenge_accept": handleChallengeAccept(client, msg); break;
     case "challenge_decline": handleChallengeDecline(client, msg); break;
     case "match_started": handleMatchStarted(client, msg); break;
     case "match_abort": handleMatchAbort(client, msg); break;
     case "match_end": handleMatchEnd(client, msg); break;
+    case "rematch_request": handleRematchRequest(client, msg); break;
+    case "rematch_decline": handleRematchDecline(client, msg); break;
     case "ping": send(client, { type: "pong", seq: msg.seq || 0 }); break;
     default: sendError(client, "unknown message type");
   }
@@ -1120,12 +1609,18 @@ function destroyClient(client) {
   if (!clients.has(client)) return;
   clients.delete(client);
   removeFromQueues(client);
+  if (client.username && onlineByUser.get(client.username) === client) {
+    /* Remove presence ownership before any challenge/friend snapshot. Otherwise
+     * one stale "online" snapshot can precede the final offline refresh. */
+    onlineByUser.delete(client.username);
+  }
   if (client.username) {
-    let challengeChanged = false;
+    cancelRematchesForUser(client.username, "opponent disconnected");
+  }
+  if (client.username) {
     for (const [id, challenge] of challenges) {
       if (challenge.from !== client.username && challenge.to !== client.username) continue;
       challenges.delete(id);
-      challengeChanged = true;
       const other = challenge.from === client.username ? challenge.to : challenge.from;
       const otherClient = connectedClient(other);
       if (otherClient) {
@@ -1137,14 +1632,6 @@ function destroyClient(client) {
         });
       }
     }
-    if (challengeChanged) {
-      for (const otherClient of clients) {
-        if (otherClient.username) sendFriendSnapshot(otherClient);
-      }
-    }
-  }
-  if (client.username && onlineByUser.get(client.username) === client) {
-    onlineByUser.delete(client.username);
     refreshFriendsFor(client.username);
   }
   if (client.match_id) {
@@ -1179,8 +1666,9 @@ const casualQueue = [];
 const competitiveQueue = [];
 const challenges = new Map();
 const activeMatches = new Map();
+const rematches = new Map();
 
-setInterval(() => {
+const matchSweepTimer = setInterval(() => {
   const cutoff = now();
   let expired = false;
   for (const [id, challenge] of challenges) {
@@ -1202,6 +1690,19 @@ setInterval(() => {
       cancelMatch(match, "stale match setup");
     }
   }
+  for (const rematch of [...rematches.values()]) {
+    if (rematch.expires_at > cutoff) continue;
+    if (!removeRematch(rematch)) continue;
+    for (const username of [rematch.a, rematch.b]) {
+      const client = connectedClient(username);
+      if (client) {
+        send(client, {
+          type: "rematch_expired",
+          match_id: rematch.match_id,
+        });
+      }
+    }
+  }
   tryMatchmaking();
 }, MATCH_SWEEP_INTERVAL_MS);
 
@@ -1218,6 +1719,7 @@ const server = net.createServer((socket) => {
     queue: "",
     queue_joined_at: 0,
     match_id: 0,
+    last_match_terminal: null,
   };
   clients.add(client);
   socket.setEncoding("utf8");
@@ -1292,3 +1794,39 @@ udpServer.on("error", (err) => {
 });
 
 udpServer.bind(UDP_PORT, UDP_HOST);
+
+let shuttingDown = false;
+
+function closeListener(listener) {
+  if (!listener) return Promise.resolve();
+  return new Promise((resolve) => {
+    try {
+      listener.close(() => resolve());
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
+async function orderlyShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; retiring queue posts and shutting down.`);
+  clearInterval(matchSweepTimer);
+  for (const client of [...clients]) destroyClient(client);
+
+  const cleanup = Promise.allSettled([
+    closeListener(server),
+    closeListener(udpServer),
+    closeListener(lfgRedirectServer),
+    lfgBot.close({ retire: true }),
+  ]);
+  await Promise.race([
+    cleanup,
+    new Promise((resolve) => setTimeout(resolve, 10000)),
+  ]);
+  process.exit(0);
+}
+
+process.once("SIGINT", () => { void orderlyShutdown("SIGINT"); });
+process.once("SIGTERM", () => { void orderlyShutdown("SIGTERM"); });

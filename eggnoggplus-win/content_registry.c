@@ -166,10 +166,14 @@ static int normalize_sprite_sheet_key(const char* key,
 }
 
 int content_registry_tile_native_glyph_allowed(char glyph) {
-    /* Only glyphs whose native plotter footprint is one cell. '?' and blank
-     * create no drawable cell; G/L/N/Y/T/s/t and '~' expand or back-fill. */
+    /* Only bounded glyphs whose native plotter footprint is one cell. '?' and
+     * blank create no drawable cell; G/L/N/Y/T/s/t and '~' expand/back-fill.
+     * K is one cell but remains excluded from the generic registry because
+     * registry owners can exist outside a fully audited map package. Direct
+     * map K markers are separately admitted only after package validation
+     * proves the strict per-room native reset-spawn budget. */
     static const char allowed[] =
-        "!#()*+-12:=@ACEFHIKOPQSWXZ^_`cefilmquvwx|";
+        "!#()*+-12:=@ACEFHIOPQSWXZ^_`cefilmquvwx|";
     return glyph != '\0' && strchr(allowed, glyph) != NULL;
 }
 
@@ -317,6 +321,34 @@ int content_registry_sha256_file(const char* path,
     return 1;
 }
 
+int content_registry_sha256_bytes(const void* data,
+                                  size_t len,
+                                  uint8_t out[CONTENT_SHA256_SIZE],
+                                  char out_hex[CONTENT_SHA256_HEX_SIZE],
+                                  char* err,
+                                  size_t err_cap) {
+    ContentSha256 sha;
+    uint8_t local_digest[CONTENT_SHA256_SIZE];
+    uint8_t* digest = out ? out : local_digest;
+    int ok = 1;
+    if (!data && len != 0u) {
+        set_err(err, err_cap, "SHA-256 input buffer is required");
+        return 0;
+    }
+    if (!sha256_begin(&sha)) {
+        set_err(err, err_cap, "failed to initialize SHA-256");
+        return 0;
+    }
+    if (len != 0u && !sha256_update(&sha, data, len)) ok = 0;
+    if (!sha256_finish(&sha, digest)) ok = 0;
+    if (!ok) {
+        set_err(err, err_cap, "failed while hashing input bytes");
+        return 0;
+    }
+    if (out_hex) sha256_to_hex(digest, out_hex);
+    return 1;
+}
+
 static uint32_t normalized_float_bits(float value) {
     uint32_t bits;
     if (value == 0.0f) value = 0.0f; /* canonicalize negative zero */
@@ -340,7 +372,7 @@ static int compute_builtin_asset_digest(const char* sheet,
 }
 
 static int compute_tile_digest(ContentTileDef* def) {
-    static const char domain[] = "eggnoggplus/content-tile/v1";
+    static const char domain[] = "eggnoggplus/content-tile/v2";
     ContentSha256 sha;
     int i;
     if (!def || !sha256_begin(&sha)) return 0;
@@ -355,6 +387,13 @@ static int compute_tile_digest(ContentTileDef* def) {
         !sha256_u32(&sha, (uint32_t)def->animation_mode) ||
         !sha256_u32(&sha, (uint32_t)def->layer) ||
         !sha256_u32(&sha, def->flags) ||
+        !sha256_u32(&sha, (uint32_t)def->collision_mode) ||
+        !sha256_u32(&sha, (uint32_t)def->force_mode) ||
+        !sha256_u32(&sha, def->force_axes) ||
+        !sha256_u32(&sha, normalized_float_bits(def->force_x)) ||
+        !sha256_u32(&sha, normalized_float_bits(def->force_y)) ||
+        !sha256_u32(&sha, normalized_float_bits(def->max_speed_x)) ||
+        !sha256_u32(&sha, normalized_float_bits(def->max_speed_y)) ||
         !sha256_u32(&sha, normalized_float_bits(def->offset_x)) ||
         !sha256_u32(&sha, normalized_float_bits(def->offset_y)) ||
         !sha256_u32(&sha, normalized_float_bits(def->scale_x)) ||
@@ -410,11 +449,75 @@ static int build_tile_def(const char* owner,
     } else {
         snprintf(out->name, sizeof(out->name), "%s", out->local_id);
     }
-    if (!content_registry_tile_native_glyph_allowed(input->native_glyph)) {
+    if (input->collision_mode < CONTENT_COLLISION_NATIVE ||
+        input->collision_mode > CONTENT_COLLISION_HAZARD) {
+        set_err(err, err_cap, "tile collision mode is invalid");
+        return 0;
+    }
+    out->collision_mode = input->collision_mode;
+    switch (out->collision_mode) {
+        case CONTENT_COLLISION_SOLID:
+            out->native_glyph = '@';
+            break;
+        case CONTENT_COLLISION_PASS_THROUGH:
+            out->native_glyph = 'x';
+            break;
+        case CONTENT_COLLISION_HAZARD:
+            out->native_glyph = 'X';
+            break;
+        case CONTENT_COLLISION_NATIVE:
+        default:
+            out->native_glyph = input->native_glyph;
+            break;
+    }
+    if (input->native_glyph != '\0' && input->native_glyph != out->native_glyph) {
+        set_err(err, err_cap,
+                "tile native_glyph conflicts with its collision preset; omit it or use the preset glyph");
+        return 0;
+    }
+    if (!content_registry_tile_native_glyph_allowed(out->native_glyph)) {
         set_err(err, err_cap, "tile native_glyph is not a safe single-cell vanilla glyph");
         return 0;
     }
-    out->native_glyph = input->native_glyph;
+    if (input->force_mode < CONTENT_FORCE_ADD ||
+        input->force_mode > CONTENT_FORCE_SET) {
+        set_err(err, err_cap, "tile force mode is invalid");
+        return 0;
+    }
+    if ((input->force_axes & ~CONTENT_FORCE_VALID_AXES) != 0) {
+        set_err(err, err_cap, "tile force axes contain unknown bits");
+        return 0;
+    }
+    if (input->force_axes == 0 && input->force_mode != CONTENT_FORCE_ADD) {
+        set_err(err, err_cap, "tile force mode requires at least one authored force axis");
+        return 0;
+    }
+    if (!finite_between(input->force_x, -64.0f, 64.0f) ||
+        !finite_between(input->force_y, -64.0f, 64.0f)) {
+        set_err(err, err_cap, "tile forces must be finite and in -64..64");
+        return 0;
+    }
+    if (!finite_between(input->max_speed_x, 0.0f, 64.0f) ||
+        !finite_between(input->max_speed_y, 0.0f, 64.0f)) {
+        set_err(err, err_cap, "tile force max speeds must be finite and in 0..64");
+        return 0;
+    }
+    if ((input->force_axes & CONTENT_FORCE_AXIS_X) == 0 &&
+        (input->force_x != 0.0f || input->max_speed_x != 0.0f)) {
+        set_err(err, err_cap, "tile force_x/max_speed_x require the X force axis");
+        return 0;
+    }
+    if ((input->force_axes & CONTENT_FORCE_AXIS_Y) == 0 &&
+        (input->force_y != 0.0f || input->max_speed_y != 0.0f)) {
+        set_err(err, err_cap, "tile force_y/max_speed_y require the Y force axis");
+        return 0;
+    }
+    out->force_mode = input->force_mode;
+    out->force_axes = input->force_axes;
+    out->force_x = input->force_x;
+    out->force_y = input->force_y;
+    out->max_speed_x = input->max_speed_x;
+    out->max_speed_y = input->max_speed_y;
     if (!normalize_sprite_sheet_key(input->sprite_sheet, out->sprite_sheet,
                                     err, err_cap)) return 0;
     if (input->sprite_index < 0 || input->sprite_index > 1000000) {

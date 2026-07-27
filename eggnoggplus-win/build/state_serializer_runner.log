@@ -1,0 +1,2387 @@
+Building credential lifecycle tests...
+Credential Manager live roundtrip skipped (set EGGNOGGPLUS_CREDENTIAL_TEST_LIVE=1 to enable).
+credential_ext tests passed
+Building nonblocking TCP transport tests...
+ALL OK
+Building online control parser/lifecycle tests...
+online_control tests passed
+Building window policy tests...
+window policy tests: OK
+Building native rollback serializer tests...
+dllmain.c: In function 'DllMain':
+dllmain.c:741:27: warning: cast between incompatible function types from 'FARPROC' {aka 'int (__attribute__((stdcall)) *)()'} to 'void (*)(SDL_Window *)' {aka 'void (*)(void *)'} [-Wcast-function-type]
+  741 |         real_SwapWindow = (SDL_GL_SwapWindow_t)GetProcAddress(real_sdl, "SDL_GL_SwapWindow");
+      |                           ^
+dllmain.c:732:65: warning: unused parameter 'lpvReserved' [-Wunused-parameter]
+  732 | BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+      |                                                          ~~~~~~~^~~~~~~~~~~
+stubs.c: In function 'init_stubs':
+stubs.c:543:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  543 |     p_SDL_AddEventWatch = GetProcAddress(real_sdl, "SDL_AddEventWatch");
+      |                         ^
+stubs.c:544:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  544 |     p_SDL_AddHintCallback = GetProcAddress(real_sdl, "SDL_AddHintCallback");
+      |                           ^
+stubs.c:545:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  545 |     p_SDL_AddTimer = GetProcAddress(real_sdl, "SDL_AddTimer");
+      |                    ^
+stubs.c:546:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  546 |     p_SDL_AllocFormat = GetProcAddress(real_sdl, "SDL_AllocFormat");
+      |                       ^
+stubs.c:547:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  547 |     p_SDL_AllocPalette = GetProcAddress(real_sdl, "SDL_AllocPalette");
+      |                        ^
+stubs.c:548:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  548 |     p_SDL_AllocRW = GetProcAddress(real_sdl, "SDL_AllocRW");
+      |                   ^
+stubs.c:549:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  549 |     p_SDL_AtomicAdd = GetProcAddress(real_sdl, "SDL_AtomicAdd");
+      |                     ^
+stubs.c:550:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  550 |     p_SDL_AtomicCAS = GetProcAddress(real_sdl, "SDL_AtomicCAS");
+      |                     ^
+stubs.c:551:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  551 |     p_SDL_AtomicCASPtr = GetProcAddress(real_sdl, "SDL_AtomicCASPtr");
+      |                        ^
+stubs.c:552:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  552 |     p_SDL_AtomicGet = GetProcAddress(real_sdl, "SDL_AtomicGet");
+      |                     ^
+stubs.c:553:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  553 |     p_SDL_AtomicGetPtr = GetProcAddress(real_sdl, "SDL_AtomicGetPtr");
+      |                        ^
+stubs.c:554:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  554 |     p_SDL_AtomicLock = GetProcAddress(real_sdl, "SDL_AtomicLock");
+      |                      ^
+stubs.c:555:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  555 |     p_SDL_AtomicSet = GetProcAddress(real_sdl, "SDL_AtomicSet");
+      |                     ^
+stubs.c:556:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  556 |     p_SDL_AtomicSetPtr = GetProcAddress(real_sdl, "SDL_AtomicSetPtr");
+      |                        ^
+stubs.c:557:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  557 |     p_SDL_AtomicTryLock = GetProcAddress(real_sdl, "SDL_AtomicTryLock");
+      |                         ^
+stubs.c:558:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  558 |     p_SDL_AtomicUnlock = GetProcAddress(real_sdl, "SDL_AtomicUnlock");
+      |                        ^
+stubs.c:559:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  559 |     p_SDL_AudioInit = GetProcAddress(real_sdl, "SDL_AudioInit");
+      |                     ^
+stubs.c:560:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  560 |     p_SDL_AudioQuit = GetProcAddress(real_sdl, "SDL_AudioQuit");
+      |                     ^
+stubs.c:561:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  561 |     p_SDL_BuildAudioCVT = GetProcAddress(real_sdl, "SDL_BuildAudioCVT");
+      |                         ^
+stubs.c:562:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  562 |     p_SDL_CalculateGammaRamp = GetProcAddress(real_sdl, "SDL_CalculateGammaRamp");
+      |                              ^
+stubs.c:563:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  563 |     p_SDL_ClearError = GetProcAddress(real_sdl, "SDL_ClearError");
+      |                      ^
+stubs.c:564:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  564 |     p_SDL_ClearHints = GetProcAddress(real_sdl, "SDL_ClearHints");
+      |                      ^
+stubs.c:565:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  565 |     p_SDL_CloseAudio = GetProcAddress(real_sdl, "SDL_CloseAudio");
+      |                      ^
+stubs.c:566:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  566 |     p_SDL_CloseAudioDevice = GetProcAddress(real_sdl, "SDL_CloseAudioDevice");
+      |                            ^
+stubs.c:567:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  567 |     p_SDL_CondBroadcast = GetProcAddress(real_sdl, "SDL_CondBroadcast");
+      |                         ^
+stubs.c:568:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  568 |     p_SDL_CondSignal = GetProcAddress(real_sdl, "SDL_CondSignal");
+      |                      ^
+stubs.c:569:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  569 |     p_SDL_CondWait = GetProcAddress(real_sdl, "SDL_CondWait");
+      |                    ^
+stubs.c:570:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  570 |     p_SDL_CondWaitTimeout = GetProcAddress(real_sdl, "SDL_CondWaitTimeout");
+      |                           ^
+stubs.c:571:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  571 |     p_SDL_ConvertAudio = GetProcAddress(real_sdl, "SDL_ConvertAudio");
+      |                        ^
+stubs.c:572:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  572 |     p_SDL_ConvertPixels = GetProcAddress(real_sdl, "SDL_ConvertPixels");
+      |                         ^
+stubs.c:573:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  573 |     p_SDL_ConvertSurface = GetProcAddress(real_sdl, "SDL_ConvertSurface");
+      |                          ^
+stubs.c:574:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  574 |     p_SDL_ConvertSurfaceFormat = GetProcAddress(real_sdl, "SDL_ConvertSurfaceFormat");
+      |                                ^
+stubs.c:575:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  575 |     p_SDL_CreateColorCursor = GetProcAddress(real_sdl, "SDL_CreateColorCursor");
+      |                             ^
+stubs.c:576:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  576 |     p_SDL_CreateCond = GetProcAddress(real_sdl, "SDL_CreateCond");
+      |                      ^
+stubs.c:577:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  577 |     p_SDL_CreateCursor = GetProcAddress(real_sdl, "SDL_CreateCursor");
+      |                        ^
+stubs.c:578:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  578 |     p_SDL_CreateMutex = GetProcAddress(real_sdl, "SDL_CreateMutex");
+      |                       ^
+stubs.c:579:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  579 |     p_SDL_CreateRGBSurface = GetProcAddress(real_sdl, "SDL_CreateRGBSurface");
+      |                            ^
+stubs.c:580:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  580 |     p_SDL_CreateRGBSurfaceFrom = GetProcAddress(real_sdl, "SDL_CreateRGBSurfaceFrom");
+      |                                ^
+stubs.c:581:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  581 |     p_SDL_CreateRenderer = GetProcAddress(real_sdl, "SDL_CreateRenderer");
+      |                          ^
+stubs.c:582:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  582 |     p_SDL_CreateSemaphore = GetProcAddress(real_sdl, "SDL_CreateSemaphore");
+      |                           ^
+stubs.c:583:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  583 |     p_SDL_CreateShapedWindow = GetProcAddress(real_sdl, "SDL_CreateShapedWindow");
+      |                              ^
+stubs.c:584:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  584 |     p_SDL_CreateSoftwareRenderer = GetProcAddress(real_sdl, "SDL_CreateSoftwareRenderer");
+      |                                  ^
+stubs.c:585:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  585 |     p_SDL_CreateSystemCursor = GetProcAddress(real_sdl, "SDL_CreateSystemCursor");
+      |                              ^
+stubs.c:586:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  586 |     p_SDL_CreateTexture = GetProcAddress(real_sdl, "SDL_CreateTexture");
+      |                         ^
+stubs.c:587:36: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  587 |     p_SDL_CreateTextureFromSurface = GetProcAddress(real_sdl, "SDL_CreateTextureFromSurface");
+      |                                    ^
+stubs.c:588:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  588 |     p_SDL_CreateThread = GetProcAddress(real_sdl, "SDL_CreateThread");
+      |                        ^
+stubs.c:589:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  589 |     p_SDL_CreateWindow = GetProcAddress(real_sdl, "SDL_CreateWindow");
+      |                        ^
+stubs.c:590:35: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  590 |     p_SDL_CreateWindowAndRenderer = GetProcAddress(real_sdl, "SDL_CreateWindowAndRenderer");
+      |                                   ^
+stubs.c:591:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  591 |     p_SDL_CreateWindowFrom = GetProcAddress(real_sdl, "SDL_CreateWindowFrom");
+      |                            ^
+stubs.c:592:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  592 |     p_SDL_DXGIGetOutputInfo = GetProcAddress(real_sdl, "SDL_DXGIGetOutputInfo");
+      |                             ^
+stubs.c:593:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  593 |     p_SDL_DYNAPI_entry = GetProcAddress(real_sdl, "SDL_DYNAPI_entry");
+      |                        ^
+stubs.c:594:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  594 |     p_SDL_DelEventWatch = GetProcAddress(real_sdl, "SDL_DelEventWatch");
+      |                         ^
+stubs.c:595:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  595 |     p_SDL_DelHintCallback = GetProcAddress(real_sdl, "SDL_DelHintCallback");
+      |                           ^
+stubs.c:596:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  596 |     p_SDL_Delay = GetProcAddress(real_sdl, "SDL_Delay");
+      |                 ^
+stubs.c:597:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  597 |     p_SDL_DestroyCond = GetProcAddress(real_sdl, "SDL_DestroyCond");
+      |                       ^
+stubs.c:598:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  598 |     p_SDL_DestroyMutex = GetProcAddress(real_sdl, "SDL_DestroyMutex");
+      |                        ^
+stubs.c:599:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  599 |     p_SDL_DestroyRenderer = GetProcAddress(real_sdl, "SDL_DestroyRenderer");
+      |                           ^
+stubs.c:600:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  600 |     p_SDL_DestroySemaphore = GetProcAddress(real_sdl, "SDL_DestroySemaphore");
+      |                            ^
+stubs.c:601:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  601 |     p_SDL_DestroyTexture = GetProcAddress(real_sdl, "SDL_DestroyTexture");
+      |                          ^
+stubs.c:602:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  602 |     p_SDL_DestroyWindow = GetProcAddress(real_sdl, "SDL_DestroyWindow");
+      |                         ^
+stubs.c:603:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  603 |     p_SDL_DetachThread = GetProcAddress(real_sdl, "SDL_DetachThread");
+      |                        ^
+stubs.c:604:36: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  604 |     p_SDL_Direct3D9GetAdapterIndex = GetProcAddress(real_sdl, "SDL_Direct3D9GetAdapterIndex");
+      |                                    ^
+stubs.c:605:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  605 |     p_SDL_DisableScreenSaver = GetProcAddress(real_sdl, "SDL_DisableScreenSaver");
+      |                              ^
+stubs.c:606:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  606 |     p_SDL_EnableScreenSaver = GetProcAddress(real_sdl, "SDL_EnableScreenSaver");
+      |                             ^
+stubs.c:607:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  607 |     p_SDL_EnclosePoints = GetProcAddress(real_sdl, "SDL_EnclosePoints");
+      |                         ^
+stubs.c:608:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  608 |     p_SDL_Error = GetProcAddress(real_sdl, "SDL_Error");
+      |                 ^
+stubs.c:609:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  609 |     p_SDL_EventState = GetProcAddress(real_sdl, "SDL_EventState");
+      |                      ^
+stubs.c:610:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  610 |     p_SDL_FillRect = GetProcAddress(real_sdl, "SDL_FillRect");
+      |                    ^
+stubs.c:611:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  611 |     p_SDL_FillRects = GetProcAddress(real_sdl, "SDL_FillRects");
+      |                     ^
+stubs.c:612:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  612 |     p_SDL_FilterEvents = GetProcAddress(real_sdl, "SDL_FilterEvents");
+      |                        ^
+stubs.c:613:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  613 |     p_SDL_FlushEvent = GetProcAddress(real_sdl, "SDL_FlushEvent");
+      |                      ^
+stubs.c:614:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  614 |     p_SDL_FlushEvents = GetProcAddress(real_sdl, "SDL_FlushEvents");
+      |                       ^
+stubs.c:615:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  615 |     p_SDL_FreeCursor = GetProcAddress(real_sdl, "SDL_FreeCursor");
+      |                      ^
+stubs.c:616:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  616 |     p_SDL_FreeFormat = GetProcAddress(real_sdl, "SDL_FreeFormat");
+      |                      ^
+stubs.c:617:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  617 |     p_SDL_FreePalette = GetProcAddress(real_sdl, "SDL_FreePalette");
+      |                       ^
+stubs.c:618:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  618 |     p_SDL_FreeRW = GetProcAddress(real_sdl, "SDL_FreeRW");
+      |                  ^
+stubs.c:619:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  619 |     p_SDL_FreeSurface = GetProcAddress(real_sdl, "SDL_FreeSurface");
+      |                       ^
+stubs.c:620:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  620 |     p_SDL_FreeWAV = GetProcAddress(real_sdl, "SDL_FreeWAV");
+      |                   ^
+stubs.c:621:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  621 |     p_SDL_GL_BindTexture = GetProcAddress(real_sdl, "SDL_GL_BindTexture");
+      |                          ^
+stubs.c:622:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  622 |     p_SDL_GL_CreateContext = GetProcAddress(real_sdl, "SDL_GL_CreateContext");
+      |                            ^
+stubs.c:623:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  623 |     p_SDL_GL_DeleteContext = GetProcAddress(real_sdl, "SDL_GL_DeleteContext");
+      |                            ^
+stubs.c:624:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  624 |     p_SDL_GL_ExtensionSupported = GetProcAddress(real_sdl, "SDL_GL_ExtensionSupported");
+      |                                 ^
+stubs.c:625:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  625 |     p_SDL_GL_GetAttribute = GetProcAddress(real_sdl, "SDL_GL_GetAttribute");
+      |                           ^
+stubs.c:626:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  626 |     p_SDL_GL_GetCurrentContext = GetProcAddress(real_sdl, "SDL_GL_GetCurrentContext");
+      |                                ^
+stubs.c:627:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  627 |     p_SDL_GL_GetCurrentWindow = GetProcAddress(real_sdl, "SDL_GL_GetCurrentWindow");
+      |                               ^
+stubs.c:628:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  628 |     p_SDL_GL_GetDrawableSize = GetProcAddress(real_sdl, "SDL_GL_GetDrawableSize");
+      |                              ^
+stubs.c:629:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  629 |     p_SDL_GL_GetProcAddress = GetProcAddress(real_sdl, "SDL_GL_GetProcAddress");
+      |                             ^
+stubs.c:630:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  630 |     p_SDL_GL_GetSwapInterval = GetProcAddress(real_sdl, "SDL_GL_GetSwapInterval");
+      |                              ^
+stubs.c:631:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  631 |     p_SDL_GL_LoadLibrary = GetProcAddress(real_sdl, "SDL_GL_LoadLibrary");
+      |                          ^
+stubs.c:632:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  632 |     p_SDL_GL_MakeCurrent = GetProcAddress(real_sdl, "SDL_GL_MakeCurrent");
+      |                          ^
+stubs.c:633:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  633 |     p_SDL_GL_ResetAttributes = GetProcAddress(real_sdl, "SDL_GL_ResetAttributes");
+      |                              ^
+stubs.c:634:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  634 |     p_SDL_GL_SetAttribute = GetProcAddress(real_sdl, "SDL_GL_SetAttribute");
+      |                           ^
+stubs.c:635:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  635 |     p_SDL_GL_SetSwapInterval = GetProcAddress(real_sdl, "SDL_GL_SetSwapInterval");
+      |                              ^
+stubs.c:636:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  636 |     p_SDL_GL_UnbindTexture = GetProcAddress(real_sdl, "SDL_GL_UnbindTexture");
+      |                            ^
+stubs.c:637:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  637 |     p_SDL_GL_UnloadLibrary = GetProcAddress(real_sdl, "SDL_GL_UnloadLibrary");
+      |                            ^
+stubs.c:638:36: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  638 |     p_SDL_GameControllerAddMapping = GetProcAddress(real_sdl, "SDL_GameControllerAddMapping");
+      |                                    ^
+stubs.c:639:43: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  639 |     p_SDL_GameControllerAddMappingsFromRW = GetProcAddress(real_sdl, "SDL_GameControllerAddMappingsFromRW");
+      |                                           ^
+stubs.c:640:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  640 |     p_SDL_GameControllerClose = GetProcAddress(real_sdl, "SDL_GameControllerClose");
+      |                               ^
+stubs.c:641:36: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  641 |     p_SDL_GameControllerEventState = GetProcAddress(real_sdl, "SDL_GameControllerEventState");
+      |                                    ^
+stubs.c:642:37: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  642 |     p_SDL_GameControllerGetAttached = GetProcAddress(real_sdl, "SDL_GameControllerGetAttached");
+      |                                     ^
+stubs.c:643:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  643 |     p_SDL_GameControllerGetAxis = GetProcAddress(real_sdl, "SDL_GameControllerGetAxis");
+      |                                 ^
+stubs.c:644:43: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  644 |     p_SDL_GameControllerGetAxisFromString = GetProcAddress(real_sdl, "SDL_GameControllerGetAxisFromString");
+      |                                           ^
+stubs.c:645:40: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  645 |     p_SDL_GameControllerGetBindForAxis = GetProcAddress(real_sdl, "SDL_GameControllerGetBindForAxis");
+      |                                        ^
+stubs.c:646:42: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  646 |     p_SDL_GameControllerGetBindForButton = GetProcAddress(real_sdl, "SDL_GameControllerGetBindForButton");
+      |                                          ^
+stubs.c:647:35: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  647 |     p_SDL_GameControllerGetButton = GetProcAddress(real_sdl, "SDL_GameControllerGetButton");
+      |                                   ^
+stubs.c:648:45: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  648 |     p_SDL_GameControllerGetButtonFromString = GetProcAddress(real_sdl, "SDL_GameControllerGetButtonFromString");
+      |                                             ^
+stubs.c:649:37: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  649 |     p_SDL_GameControllerGetJoystick = GetProcAddress(real_sdl, "SDL_GameControllerGetJoystick");
+      |                                     ^
+stubs.c:650:42: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  650 |     p_SDL_GameControllerGetStringForAxis = GetProcAddress(real_sdl, "SDL_GameControllerGetStringForAxis");
+      |                                          ^
+stubs.c:651:44: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  651 |     p_SDL_GameControllerGetStringForButton = GetProcAddress(real_sdl, "SDL_GameControllerGetStringForButton");
+      |                                            ^
+stubs.c:652:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  652 |     p_SDL_GameControllerMapping = GetProcAddress(real_sdl, "SDL_GameControllerMapping");
+      |                                 ^
+stubs.c:653:40: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  653 |     p_SDL_GameControllerMappingForGUID = GetProcAddress(real_sdl, "SDL_GameControllerMappingForGUID");
+      |                                        ^
+stubs.c:654:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  654 |     p_SDL_GameControllerName = GetProcAddress(real_sdl, "SDL_GameControllerName");
+      |                              ^
+stubs.c:655:38: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  655 |     p_SDL_GameControllerNameForIndex = GetProcAddress(real_sdl, "SDL_GameControllerNameForIndex");
+      |                                      ^
+stubs.c:656:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  656 |     p_SDL_GameControllerOpen = GetProcAddress(real_sdl, "SDL_GameControllerOpen");
+      |                              ^
+stubs.c:657:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  657 |     p_SDL_GameControllerUpdate = GetProcAddress(real_sdl, "SDL_GameControllerUpdate");
+      |                                ^
+stubs.c:658:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  658 |     p_SDL_GetAssertionHandler = GetProcAddress(real_sdl, "SDL_GetAssertionHandler");
+      |                               ^
+stubs.c:659:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  659 |     p_SDL_GetAssertionReport = GetProcAddress(real_sdl, "SDL_GetAssertionReport");
+      |                              ^
+stubs.c:660:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  660 |     p_SDL_GetAudioDeviceName = GetProcAddress(real_sdl, "SDL_GetAudioDeviceName");
+      |                              ^
+stubs.c:661:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  661 |     p_SDL_GetAudioDeviceStatus = GetProcAddress(real_sdl, "SDL_GetAudioDeviceStatus");
+      |                                ^
+stubs.c:662:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  662 |     p_SDL_GetAudioDriver = GetProcAddress(real_sdl, "SDL_GetAudioDriver");
+      |                          ^
+stubs.c:663:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  663 |     p_SDL_GetAudioStatus = GetProcAddress(real_sdl, "SDL_GetAudioStatus");
+      |                          ^
+stubs.c:664:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  664 |     p_SDL_GetBasePath = GetProcAddress(real_sdl, "SDL_GetBasePath");
+      |                       ^
+stubs.c:665:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  665 |     p_SDL_GetCPUCacheLineSize = GetProcAddress(real_sdl, "SDL_GetCPUCacheLineSize");
+      |                               ^
+stubs.c:666:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  666 |     p_SDL_GetCPUCount = GetProcAddress(real_sdl, "SDL_GetCPUCount");
+      |                       ^
+stubs.c:667:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  667 |     p_SDL_GetClipRect = GetProcAddress(real_sdl, "SDL_GetClipRect");
+      |                       ^
+stubs.c:668:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  668 |     p_SDL_GetClipboardText = GetProcAddress(real_sdl, "SDL_GetClipboardText");
+      |                            ^
+stubs.c:669:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  669 |     p_SDL_GetClosestDisplayMode = GetProcAddress(real_sdl, "SDL_GetClosestDisplayMode");
+      |                                 ^
+stubs.c:670:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  670 |     p_SDL_GetColorKey = GetProcAddress(real_sdl, "SDL_GetColorKey");
+      |                       ^
+stubs.c:671:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  671 |     p_SDL_GetCurrentAudioDriver = GetProcAddress(real_sdl, "SDL_GetCurrentAudioDriver");
+      |                                 ^
+stubs.c:672:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  672 |     p_SDL_GetCurrentDisplayMode = GetProcAddress(real_sdl, "SDL_GetCurrentDisplayMode");
+      |                                 ^
+stubs.c:673:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  673 |     p_SDL_GetCurrentVideoDriver = GetProcAddress(real_sdl, "SDL_GetCurrentVideoDriver");
+      |                                 ^
+stubs.c:674:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  674 |     p_SDL_GetCursor = GetProcAddress(real_sdl, "SDL_GetCursor");
+      |                     ^
+stubs.c:675:38: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  675 |     p_SDL_GetDefaultAssertionHandler = GetProcAddress(real_sdl, "SDL_GetDefaultAssertionHandler");
+      |                                      ^
+stubs.c:676:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  676 |     p_SDL_GetDefaultCursor = GetProcAddress(real_sdl, "SDL_GetDefaultCursor");
+      |                            ^
+stubs.c:677:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  677 |     p_SDL_GetDesktopDisplayMode = GetProcAddress(real_sdl, "SDL_GetDesktopDisplayMode");
+      |                                 ^
+stubs.c:678:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  678 |     p_SDL_GetDisplayBounds = GetProcAddress(real_sdl, "SDL_GetDisplayBounds");
+      |                            ^
+stubs.c:679:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  679 |     p_SDL_GetDisplayMode = GetProcAddress(real_sdl, "SDL_GetDisplayMode");
+      |                          ^
+stubs.c:680:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  680 |     p_SDL_GetDisplayName = GetProcAddress(real_sdl, "SDL_GetDisplayName");
+      |                          ^
+stubs.c:681:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  681 |     p_SDL_GetError = GetProcAddress(real_sdl, "SDL_GetError");
+      |                    ^
+stubs.c:682:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  682 |     p_SDL_GetEventFilter = GetProcAddress(real_sdl, "SDL_GetEventFilter");
+      |                          ^
+stubs.c:683:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  683 |     p_SDL_GetHint = GetProcAddress(real_sdl, "SDL_GetHint");
+      |                   ^
+stubs.c:684:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  684 |     p_SDL_GetKeyFromName = GetProcAddress(real_sdl, "SDL_GetKeyFromName");
+      |                          ^
+stubs.c:685:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  685 |     p_SDL_GetKeyFromScancode = GetProcAddress(real_sdl, "SDL_GetKeyFromScancode");
+      |                              ^
+stubs.c:686:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  686 |     p_SDL_GetKeyName = GetProcAddress(real_sdl, "SDL_GetKeyName");
+      |                      ^
+stubs.c:687:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  687 |     p_SDL_GetKeyboardFocus = GetProcAddress(real_sdl, "SDL_GetKeyboardFocus");
+      |                            ^
+stubs.c:688:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  688 |     p_SDL_GetKeyboardState = GetProcAddress(real_sdl, "SDL_GetKeyboardState");
+      |                            ^
+stubs.c:689:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  689 |     p_SDL_GetModState = GetProcAddress(real_sdl, "SDL_GetModState");
+      |                       ^
+stubs.c:690:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  690 |     p_SDL_GetMouseFocus = GetProcAddress(real_sdl, "SDL_GetMouseFocus");
+      |                         ^
+stubs.c:691:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  691 |     p_SDL_GetMouseState = GetProcAddress(real_sdl, "SDL_GetMouseState");
+      |                         ^
+stubs.c:692:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  692 |     p_SDL_GetNumAudioDevices = GetProcAddress(real_sdl, "SDL_GetNumAudioDevices");
+      |                              ^
+stubs.c:693:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  693 |     p_SDL_GetNumAudioDrivers = GetProcAddress(real_sdl, "SDL_GetNumAudioDrivers");
+      |                              ^
+stubs.c:694:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  694 |     p_SDL_GetNumDisplayModes = GetProcAddress(real_sdl, "SDL_GetNumDisplayModes");
+      |                              ^
+stubs.c:695:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  695 |     p_SDL_GetNumRenderDrivers = GetProcAddress(real_sdl, "SDL_GetNumRenderDrivers");
+      |                               ^
+stubs.c:696:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  696 |     p_SDL_GetNumTouchDevices = GetProcAddress(real_sdl, "SDL_GetNumTouchDevices");
+      |                              ^
+stubs.c:697:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  697 |     p_SDL_GetNumTouchFingers = GetProcAddress(real_sdl, "SDL_GetNumTouchFingers");
+      |                              ^
+stubs.c:698:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  698 |     p_SDL_GetNumVideoDisplays = GetProcAddress(real_sdl, "SDL_GetNumVideoDisplays");
+      |                               ^
+stubs.c:699:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  699 |     p_SDL_GetNumVideoDrivers = GetProcAddress(real_sdl, "SDL_GetNumVideoDrivers");
+      |                              ^
+stubs.c:700:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  700 |     p_SDL_GetPerformanceCounter = GetProcAddress(real_sdl, "SDL_GetPerformanceCounter");
+      |                                 ^
+stubs.c:701:35: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  701 |     p_SDL_GetPerformanceFrequency = GetProcAddress(real_sdl, "SDL_GetPerformanceFrequency");
+      |                                   ^
+stubs.c:702:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  702 |     p_SDL_GetPixelFormatName = GetProcAddress(real_sdl, "SDL_GetPixelFormatName");
+      |                              ^
+stubs.c:703:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  703 |     p_SDL_GetPlatform = GetProcAddress(real_sdl, "SDL_GetPlatform");
+      |                       ^
+stubs.c:704:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  704 |     p_SDL_GetPowerInfo = GetProcAddress(real_sdl, "SDL_GetPowerInfo");
+      |                        ^
+stubs.c:705:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  705 |     p_SDL_GetPrefPath = GetProcAddress(real_sdl, "SDL_GetPrefPath");
+      |                       ^
+stubs.c:706:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  706 |     p_SDL_GetRGB = GetProcAddress(real_sdl, "SDL_GetRGB");
+      |                  ^
+stubs.c:707:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  707 |     p_SDL_GetRGBA = GetProcAddress(real_sdl, "SDL_GetRGBA");
+      |                   ^
+stubs.c:708:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  708 |     p_SDL_GetRelativeMouseMode = GetProcAddress(real_sdl, "SDL_GetRelativeMouseMode");
+      |                                ^
+stubs.c:709:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  709 |     p_SDL_GetRelativeMouseState = GetProcAddress(real_sdl, "SDL_GetRelativeMouseState");
+      |                                 ^
+stubs.c:710:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  710 |     p_SDL_GetRenderDrawBlendMode = GetProcAddress(real_sdl, "SDL_GetRenderDrawBlendMode");
+      |                                  ^
+stubs.c:711:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  711 |     p_SDL_GetRenderDrawColor = GetProcAddress(real_sdl, "SDL_GetRenderDrawColor");
+      |                              ^
+stubs.c:712:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  712 |     p_SDL_GetRenderDriverInfo = GetProcAddress(real_sdl, "SDL_GetRenderDriverInfo");
+      |                               ^
+stubs.c:713:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  713 |     p_SDL_GetRenderTarget = GetProcAddress(real_sdl, "SDL_GetRenderTarget");
+      |                           ^
+stubs.c:714:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  714 |     p_SDL_GetRenderer = GetProcAddress(real_sdl, "SDL_GetRenderer");
+      |                       ^
+stubs.c:715:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  715 |     p_SDL_GetRendererInfo = GetProcAddress(real_sdl, "SDL_GetRendererInfo");
+      |                           ^
+stubs.c:716:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  716 |     p_SDL_GetRendererOutputSize = GetProcAddress(real_sdl, "SDL_GetRendererOutputSize");
+      |                                 ^
+stubs.c:717:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  717 |     p_SDL_GetRevision = GetProcAddress(real_sdl, "SDL_GetRevision");
+      |                       ^
+stubs.c:718:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  718 |     p_SDL_GetRevisionNumber = GetProcAddress(real_sdl, "SDL_GetRevisionNumber");
+      |                             ^
+stubs.c:719:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  719 |     p_SDL_GetScancodeFromKey = GetProcAddress(real_sdl, "SDL_GetScancodeFromKey");
+      |                              ^
+stubs.c:720:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  720 |     p_SDL_GetScancodeFromName = GetProcAddress(real_sdl, "SDL_GetScancodeFromName");
+      |                               ^
+stubs.c:721:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  721 |     p_SDL_GetScancodeName = GetProcAddress(real_sdl, "SDL_GetScancodeName");
+      |                           ^
+stubs.c:722:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  722 |     p_SDL_GetShapedWindowMode = GetProcAddress(real_sdl, "SDL_GetShapedWindowMode");
+      |                               ^
+stubs.c:723:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  723 |     p_SDL_GetSurfaceAlphaMod = GetProcAddress(real_sdl, "SDL_GetSurfaceAlphaMod");
+      |                              ^
+stubs.c:724:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  724 |     p_SDL_GetSurfaceBlendMode = GetProcAddress(real_sdl, "SDL_GetSurfaceBlendMode");
+      |                               ^
+stubs.c:725:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  725 |     p_SDL_GetSurfaceColorMod = GetProcAddress(real_sdl, "SDL_GetSurfaceColorMod");
+      |                              ^
+stubs.c:726:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  726 |     p_SDL_GetSystemRAM = GetProcAddress(real_sdl, "SDL_GetSystemRAM");
+      |                        ^
+stubs.c:727:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  727 |     p_SDL_GetTextureAlphaMod = GetProcAddress(real_sdl, "SDL_GetTextureAlphaMod");
+      |                              ^
+stubs.c:728:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  728 |     p_SDL_GetTextureBlendMode = GetProcAddress(real_sdl, "SDL_GetTextureBlendMode");
+      |                               ^
+stubs.c:729:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  729 |     p_SDL_GetTextureColorMod = GetProcAddress(real_sdl, "SDL_GetTextureColorMod");
+      |                              ^
+stubs.c:730:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  730 |     p_SDL_GetThreadID = GetProcAddress(real_sdl, "SDL_GetThreadID");
+      |                       ^
+stubs.c:731:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  731 |     p_SDL_GetThreadName = GetProcAddress(real_sdl, "SDL_GetThreadName");
+      |                         ^
+stubs.c:732:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  732 |     p_SDL_GetTicks = GetProcAddress(real_sdl, "SDL_GetTicks");
+      |                    ^
+stubs.c:733:35: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+  733 |     p_SDL_GetPerformanceCounter = (void*)luna_SDL_GetPerformanceCounter;
+      |                                   ^
+stubs.c:734:37: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+  734 |     p_SDL_GetPerformanceFrequency = (void*)luna_SDL_GetPerformanceFrequency;
+      |                                     ^
+stubs.c:735:22: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+  735 |     p_SDL_GetTicks = (void*)luna_SDL_GetTicks;
+      |                      ^
+stubs.c:736:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  736 |     p_SDL_GetTouchDevice = GetProcAddress(real_sdl, "SDL_GetTouchDevice");
+      |                          ^
+stubs.c:737:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  737 |     p_SDL_GetTouchFinger = GetProcAddress(real_sdl, "SDL_GetTouchFinger");
+      |                          ^
+stubs.c:738:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  738 |     p_SDL_GetVersion = GetProcAddress(real_sdl, "SDL_GetVersion");
+      |                      ^
+stubs.c:739:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  739 |     p_SDL_GetVideoDriver = GetProcAddress(real_sdl, "SDL_GetVideoDriver");
+      |                          ^
+stubs.c:740:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  740 |     p_SDL_GetWindowBrightness = GetProcAddress(real_sdl, "SDL_GetWindowBrightness");
+      |                               ^
+stubs.c:741:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  741 |     p_SDL_GetWindowData = GetProcAddress(real_sdl, "SDL_GetWindowData");
+      |                         ^
+stubs.c:742:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  742 |     p_SDL_GetWindowDisplayIndex = GetProcAddress(real_sdl, "SDL_GetWindowDisplayIndex");
+      |                                 ^
+stubs.c:743:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  743 |     p_SDL_GetWindowDisplayMode = GetProcAddress(real_sdl, "SDL_GetWindowDisplayMode");
+      |                                ^
+stubs.c:744:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  744 |     p_SDL_GetWindowFlags = GetProcAddress(real_sdl, "SDL_GetWindowFlags");
+      |                          ^
+stubs.c:745:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  745 |     p_SDL_GetWindowFromID = GetProcAddress(real_sdl, "SDL_GetWindowFromID");
+      |                           ^
+stubs.c:746:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  746 |     p_SDL_GetWindowGammaRamp = GetProcAddress(real_sdl, "SDL_GetWindowGammaRamp");
+      |                              ^
+stubs.c:747:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  747 |     p_SDL_GetWindowGrab = GetProcAddress(real_sdl, "SDL_GetWindowGrab");
+      |                         ^
+stubs.c:748:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  748 |     p_SDL_GetWindowID = GetProcAddress(real_sdl, "SDL_GetWindowID");
+      |                       ^
+stubs.c:749:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  749 |     p_SDL_GetWindowMaximumSize = GetProcAddress(real_sdl, "SDL_GetWindowMaximumSize");
+      |                                ^
+stubs.c:750:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  750 |     p_SDL_GetWindowMinimumSize = GetProcAddress(real_sdl, "SDL_GetWindowMinimumSize");
+      |                                ^
+stubs.c:751:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  751 |     p_SDL_GetWindowPixelFormat = GetProcAddress(real_sdl, "SDL_GetWindowPixelFormat");
+      |                                ^
+stubs.c:752:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  752 |     p_SDL_GetWindowPosition = GetProcAddress(real_sdl, "SDL_GetWindowPosition");
+      |                             ^
+stubs.c:753:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  753 |     p_SDL_GetWindowSize = GetProcAddress(real_sdl, "SDL_GetWindowSize");
+      |                         ^
+stubs.c:754:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  754 |     p_SDL_GetWindowSurface = GetProcAddress(real_sdl, "SDL_GetWindowSurface");
+      |                            ^
+stubs.c:755:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  755 |     p_SDL_GetWindowTitle = GetProcAddress(real_sdl, "SDL_GetWindowTitle");
+      |                          ^
+stubs.c:756:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  756 |     p_SDL_GetWindowWMInfo = GetProcAddress(real_sdl, "SDL_GetWindowWMInfo");
+      |                           ^
+stubs.c:757:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  757 |     p_SDL_HapticClose = GetProcAddress(real_sdl, "SDL_HapticClose");
+      |                       ^
+stubs.c:758:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  758 |     p_SDL_HapticDestroyEffect = GetProcAddress(real_sdl, "SDL_HapticDestroyEffect");
+      |                               ^
+stubs.c:759:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  759 |     p_SDL_HapticEffectSupported = GetProcAddress(real_sdl, "SDL_HapticEffectSupported");
+      |                                 ^
+stubs.c:760:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  760 |     p_SDL_HapticGetEffectStatus = GetProcAddress(real_sdl, "SDL_HapticGetEffectStatus");
+      |                                 ^
+stubs.c:761:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  761 |     p_SDL_HapticIndex = GetProcAddress(real_sdl, "SDL_HapticIndex");
+      |                       ^
+stubs.c:762:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  762 |     p_SDL_HapticName = GetProcAddress(real_sdl, "SDL_HapticName");
+      |                      ^
+stubs.c:763:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  763 |     p_SDL_HapticNewEffect = GetProcAddress(real_sdl, "SDL_HapticNewEffect");
+      |                           ^
+stubs.c:764:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  764 |     p_SDL_HapticNumAxes = GetProcAddress(real_sdl, "SDL_HapticNumAxes");
+      |                         ^
+stubs.c:765:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  765 |     p_SDL_HapticNumEffects = GetProcAddress(real_sdl, "SDL_HapticNumEffects");
+      |                            ^
+stubs.c:766:35: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  766 |     p_SDL_HapticNumEffectsPlaying = GetProcAddress(real_sdl, "SDL_HapticNumEffectsPlaying");
+      |                                   ^
+stubs.c:767:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  767 |     p_SDL_HapticOpen = GetProcAddress(real_sdl, "SDL_HapticOpen");
+      |                      ^
+stubs.c:768:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  768 |     p_SDL_HapticOpenFromJoystick = GetProcAddress(real_sdl, "SDL_HapticOpenFromJoystick");
+      |                                  ^
+stubs.c:769:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  769 |     p_SDL_HapticOpenFromMouse = GetProcAddress(real_sdl, "SDL_HapticOpenFromMouse");
+      |                               ^
+stubs.c:770:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  770 |     p_SDL_HapticOpened = GetProcAddress(real_sdl, "SDL_HapticOpened");
+      |                        ^
+stubs.c:771:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  771 |     p_SDL_HapticPause = GetProcAddress(real_sdl, "SDL_HapticPause");
+      |                       ^
+stubs.c:772:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  772 |     p_SDL_HapticQuery = GetProcAddress(real_sdl, "SDL_HapticQuery");
+      |                       ^
+stubs.c:773:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  773 |     p_SDL_HapticRumbleInit = GetProcAddress(real_sdl, "SDL_HapticRumbleInit");
+      |                            ^
+stubs.c:774:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  774 |     p_SDL_HapticRumblePlay = GetProcAddress(real_sdl, "SDL_HapticRumblePlay");
+      |                            ^
+stubs.c:775:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  775 |     p_SDL_HapticRumbleStop = GetProcAddress(real_sdl, "SDL_HapticRumbleStop");
+      |                            ^
+stubs.c:776:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  776 |     p_SDL_HapticRumbleSupported = GetProcAddress(real_sdl, "SDL_HapticRumbleSupported");
+      |                                 ^
+stubs.c:777:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  777 |     p_SDL_HapticRunEffect = GetProcAddress(real_sdl, "SDL_HapticRunEffect");
+      |                           ^
+stubs.c:778:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  778 |     p_SDL_HapticSetAutocenter = GetProcAddress(real_sdl, "SDL_HapticSetAutocenter");
+      |                               ^
+stubs.c:779:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  779 |     p_SDL_HapticSetGain = GetProcAddress(real_sdl, "SDL_HapticSetGain");
+      |                         ^
+stubs.c:780:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  780 |     p_SDL_HapticStopAll = GetProcAddress(real_sdl, "SDL_HapticStopAll");
+      |                         ^
+stubs.c:781:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  781 |     p_SDL_HapticStopEffect = GetProcAddress(real_sdl, "SDL_HapticStopEffect");
+      |                            ^
+stubs.c:782:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  782 |     p_SDL_HapticUnpause = GetProcAddress(real_sdl, "SDL_HapticUnpause");
+      |                         ^
+stubs.c:783:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  783 |     p_SDL_HapticUpdateEffect = GetProcAddress(real_sdl, "SDL_HapticUpdateEffect");
+      |                              ^
+stubs.c:784:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  784 |     p_SDL_Has3DNow = GetProcAddress(real_sdl, "SDL_Has3DNow");
+      |                    ^
+stubs.c:785:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  785 |     p_SDL_HasAVX = GetProcAddress(real_sdl, "SDL_HasAVX");
+      |                  ^
+stubs.c:786:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  786 |     p_SDL_HasAltiVec = GetProcAddress(real_sdl, "SDL_HasAltiVec");
+      |                      ^
+stubs.c:787:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  787 |     p_SDL_HasClipboardText = GetProcAddress(real_sdl, "SDL_HasClipboardText");
+      |                            ^
+stubs.c:788:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  788 |     p_SDL_HasEvent = GetProcAddress(real_sdl, "SDL_HasEvent");
+      |                    ^
+stubs.c:789:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  789 |     p_SDL_HasEvents = GetProcAddress(real_sdl, "SDL_HasEvents");
+      |                     ^
+stubs.c:790:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  790 |     p_SDL_HasIntersection = GetProcAddress(real_sdl, "SDL_HasIntersection");
+      |                           ^
+stubs.c:791:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  791 |     p_SDL_HasMMX = GetProcAddress(real_sdl, "SDL_HasMMX");
+      |                  ^
+stubs.c:792:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  792 |     p_SDL_HasRDTSC = GetProcAddress(real_sdl, "SDL_HasRDTSC");
+      |                    ^
+stubs.c:793:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  793 |     p_SDL_HasSSE = GetProcAddress(real_sdl, "SDL_HasSSE");
+      |                  ^
+stubs.c:794:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  794 |     p_SDL_HasSSE2 = GetProcAddress(real_sdl, "SDL_HasSSE2");
+      |                   ^
+stubs.c:795:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  795 |     p_SDL_HasSSE3 = GetProcAddress(real_sdl, "SDL_HasSSE3");
+      |                   ^
+stubs.c:796:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  796 |     p_SDL_HasSSE41 = GetProcAddress(real_sdl, "SDL_HasSSE41");
+      |                    ^
+stubs.c:797:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  797 |     p_SDL_HasSSE42 = GetProcAddress(real_sdl, "SDL_HasSSE42");
+      |                    ^
+stubs.c:798:36: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  798 |     p_SDL_HasScreenKeyboardSupport = GetProcAddress(real_sdl, "SDL_HasScreenKeyboardSupport");
+      |                                    ^
+stubs.c:799:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  799 |     p_SDL_HideWindow = GetProcAddress(real_sdl, "SDL_HideWindow");
+      |                      ^
+stubs.c:800:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  800 |     p_SDL_Init = GetProcAddress(real_sdl, "SDL_Init");
+      |                ^
+stubs.c:801:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  801 |     p_SDL_InitSubSystem = GetProcAddress(real_sdl, "SDL_InitSubSystem");
+      |                         ^
+stubs.c:802:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  802 |     p_SDL_IntersectRect = GetProcAddress(real_sdl, "SDL_IntersectRect");
+      |                         ^
+stubs.c:803:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  803 |     p_SDL_IntersectRectAndLine = GetProcAddress(real_sdl, "SDL_IntersectRectAndLine");
+      |                                ^
+stubs.c:804:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  804 |     p_SDL_IsGameController = GetProcAddress(real_sdl, "SDL_IsGameController");
+      |                            ^
+stubs.c:805:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  805 |     p_SDL_IsScreenKeyboardShown = GetProcAddress(real_sdl, "SDL_IsScreenKeyboardShown");
+      |                                 ^
+stubs.c:806:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  806 |     p_SDL_IsScreenSaverEnabled = GetProcAddress(real_sdl, "SDL_IsScreenSaverEnabled");
+      |                                ^
+stubs.c:807:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  807 |     p_SDL_IsShapedWindow = GetProcAddress(real_sdl, "SDL_IsShapedWindow");
+      |                          ^
+stubs.c:808:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  808 |     p_SDL_IsTextInputActive = GetProcAddress(real_sdl, "SDL_IsTextInputActive");
+      |                             ^
+stubs.c:809:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  809 |     p_SDL_JoystickClose = GetProcAddress(real_sdl, "SDL_JoystickClose");
+      |                         ^
+stubs.c:810:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  810 |     p_SDL_JoystickEventState = GetProcAddress(real_sdl, "SDL_JoystickEventState");
+      |                              ^
+stubs.c:811:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  811 |     p_SDL_JoystickGetAttached = GetProcAddress(real_sdl, "SDL_JoystickGetAttached");
+      |                               ^
+stubs.c:812:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  812 |     p_SDL_JoystickGetAxis = GetProcAddress(real_sdl, "SDL_JoystickGetAxis");
+      |                           ^
+stubs.c:813:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  813 |     p_SDL_JoystickGetBall = GetProcAddress(real_sdl, "SDL_JoystickGetBall");
+      |                           ^
+stubs.c:814:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  814 |     p_SDL_JoystickGetButton = GetProcAddress(real_sdl, "SDL_JoystickGetButton");
+      |                             ^
+stubs.c:815:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  815 |     p_SDL_JoystickGetDeviceGUID = GetProcAddress(real_sdl, "SDL_JoystickGetDeviceGUID");
+      |                                 ^
+stubs.c:816:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  816 |     p_SDL_JoystickGetGUID = GetProcAddress(real_sdl, "SDL_JoystickGetGUID");
+      |                           ^
+stubs.c:817:37: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  817 |     p_SDL_JoystickGetGUIDFromString = GetProcAddress(real_sdl, "SDL_JoystickGetGUIDFromString");
+      |                                     ^
+stubs.c:818:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  818 |     p_SDL_JoystickGetGUIDString = GetProcAddress(real_sdl, "SDL_JoystickGetGUIDString");
+      |                                 ^
+stubs.c:819:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  819 |     p_SDL_JoystickGetHat = GetProcAddress(real_sdl, "SDL_JoystickGetHat");
+      |                          ^
+stubs.c:820:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  820 |     p_SDL_JoystickInstanceID = GetProcAddress(real_sdl, "SDL_JoystickInstanceID");
+      |                              ^
+stubs.c:821:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  821 |     p_SDL_JoystickIsHaptic = GetProcAddress(real_sdl, "SDL_JoystickIsHaptic");
+      |                            ^
+stubs.c:822:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  822 |     p_SDL_JoystickName = GetProcAddress(real_sdl, "SDL_JoystickName");
+      |                        ^
+stubs.c:823:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  823 |     p_SDL_JoystickNameForIndex = GetProcAddress(real_sdl, "SDL_JoystickNameForIndex");
+      |                                ^
+stubs.c:824:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  824 |     p_SDL_JoystickNumAxes = GetProcAddress(real_sdl, "SDL_JoystickNumAxes");
+      |                           ^
+stubs.c:825:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  825 |     p_SDL_JoystickNumBalls = GetProcAddress(real_sdl, "SDL_JoystickNumBalls");
+      |                            ^
+stubs.c:826:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  826 |     p_SDL_JoystickNumButtons = GetProcAddress(real_sdl, "SDL_JoystickNumButtons");
+      |                              ^
+stubs.c:827:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  827 |     p_SDL_JoystickNumHats = GetProcAddress(real_sdl, "SDL_JoystickNumHats");
+      |                           ^
+stubs.c:828:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  828 |     p_SDL_JoystickOpen = GetProcAddress(real_sdl, "SDL_JoystickOpen");
+      |                        ^
+stubs.c:829:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  829 |     p_SDL_JoystickUpdate = GetProcAddress(real_sdl, "SDL_JoystickUpdate");
+      |                          ^
+stubs.c:830:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  830 |     p_SDL_LoadBMP_RW = GetProcAddress(real_sdl, "SDL_LoadBMP_RW");
+      |                      ^
+stubs.c:831:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  831 |     p_SDL_LoadDollarTemplates = GetProcAddress(real_sdl, "SDL_LoadDollarTemplates");
+      |                               ^
+stubs.c:832:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  832 |     p_SDL_LoadFunction = GetProcAddress(real_sdl, "SDL_LoadFunction");
+      |                        ^
+stubs.c:833:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  833 |     p_SDL_LoadObject = GetProcAddress(real_sdl, "SDL_LoadObject");
+      |                      ^
+stubs.c:834:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  834 |     p_SDL_LoadWAV_RW = GetProcAddress(real_sdl, "SDL_LoadWAV_RW");
+      |                      ^
+stubs.c:835:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  835 |     p_SDL_LockAudio = GetProcAddress(real_sdl, "SDL_LockAudio");
+      |                     ^
+stubs.c:836:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  836 |     p_SDL_LockAudioDevice = GetProcAddress(real_sdl, "SDL_LockAudioDevice");
+      |                           ^
+stubs.c:837:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  837 |     p_SDL_LockMutex = GetProcAddress(real_sdl, "SDL_LockMutex");
+      |                     ^
+stubs.c:838:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  838 |     p_SDL_LockSurface = GetProcAddress(real_sdl, "SDL_LockSurface");
+      |                       ^
+stubs.c:839:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  839 |     p_SDL_LockTexture = GetProcAddress(real_sdl, "SDL_LockTexture");
+      |                       ^
+stubs.c:840:15: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  840 |     p_SDL_Log = GetProcAddress(real_sdl, "SDL_Log");
+      |               ^
+stubs.c:841:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  841 |     p_SDL_LogCritical = GetProcAddress(real_sdl, "SDL_LogCritical");
+      |                       ^
+stubs.c:842:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  842 |     p_SDL_LogDebug = GetProcAddress(real_sdl, "SDL_LogDebug");
+      |                    ^
+stubs.c:843:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  843 |     p_SDL_LogError = GetProcAddress(real_sdl, "SDL_LogError");
+      |                    ^
+stubs.c:844:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  844 |     p_SDL_LogGetOutputFunction = GetProcAddress(real_sdl, "SDL_LogGetOutputFunction");
+      |                                ^
+stubs.c:845:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  845 |     p_SDL_LogGetPriority = GetProcAddress(real_sdl, "SDL_LogGetPriority");
+      |                          ^
+stubs.c:846:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  846 |     p_SDL_LogInfo = GetProcAddress(real_sdl, "SDL_LogInfo");
+      |                   ^
+stubs.c:847:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  847 |     p_SDL_LogMessage = GetProcAddress(real_sdl, "SDL_LogMessage");
+      |                      ^
+stubs.c:848:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  848 |     p_SDL_LogMessageV = GetProcAddress(real_sdl, "SDL_LogMessageV");
+      |                       ^
+stubs.c:849:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  849 |     p_SDL_LogResetPriorities = GetProcAddress(real_sdl, "SDL_LogResetPriorities");
+      |                              ^
+stubs.c:850:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  850 |     p_SDL_LogSetAllPriority = GetProcAddress(real_sdl, "SDL_LogSetAllPriority");
+      |                             ^
+stubs.c:851:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  851 |     p_SDL_LogSetOutputFunction = GetProcAddress(real_sdl, "SDL_LogSetOutputFunction");
+      |                                ^
+stubs.c:852:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  852 |     p_SDL_LogSetPriority = GetProcAddress(real_sdl, "SDL_LogSetPriority");
+      |                          ^
+stubs.c:853:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  853 |     p_SDL_LogVerbose = GetProcAddress(real_sdl, "SDL_LogVerbose");
+      |                      ^
+stubs.c:854:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  854 |     p_SDL_LogWarn = GetProcAddress(real_sdl, "SDL_LogWarn");
+      |                   ^
+stubs.c:855:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  855 |     p_SDL_LowerBlit = GetProcAddress(real_sdl, "SDL_LowerBlit");
+      |                     ^
+stubs.c:856:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  856 |     p_SDL_LowerBlitScaled = GetProcAddress(real_sdl, "SDL_LowerBlitScaled");
+      |                           ^
+stubs.c:857:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  857 |     p_SDL_MapRGB = GetProcAddress(real_sdl, "SDL_MapRGB");
+      |                  ^
+stubs.c:858:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  858 |     p_SDL_MapRGBA = GetProcAddress(real_sdl, "SDL_MapRGBA");
+      |                   ^
+stubs.c:859:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  859 |     p_SDL_MasksToPixelFormatEnum = GetProcAddress(real_sdl, "SDL_MasksToPixelFormatEnum");
+      |                                  ^
+stubs.c:860:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  860 |     p_SDL_MaximizeWindow = GetProcAddress(real_sdl, "SDL_MaximizeWindow");
+      |                          ^
+stubs.c:861:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  861 |     p_SDL_MinimizeWindow = GetProcAddress(real_sdl, "SDL_MinimizeWindow");
+      |                          ^
+stubs.c:862:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  862 |     p_SDL_MixAudio = GetProcAddress(real_sdl, "SDL_MixAudio");
+      |                    ^
+stubs.c:863:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  863 |     p_SDL_MixAudioFormat = GetProcAddress(real_sdl, "SDL_MixAudioFormat");
+      |                          ^
+stubs.c:864:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  864 |     p_SDL_MouseIsHaptic = GetProcAddress(real_sdl, "SDL_MouseIsHaptic");
+      |                         ^
+stubs.c:865:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  865 |     p_SDL_NumHaptics = GetProcAddress(real_sdl, "SDL_NumHaptics");
+      |                      ^
+stubs.c:866:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  866 |     p_SDL_NumJoysticks = GetProcAddress(real_sdl, "SDL_NumJoysticks");
+      |                        ^
+stubs.c:867:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  867 |     p_SDL_OpenAudio = GetProcAddress(real_sdl, "SDL_OpenAudio");
+      |                     ^
+stubs.c:868:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  868 |     p_SDL_OpenAudioDevice = GetProcAddress(real_sdl, "SDL_OpenAudioDevice");
+      |                           ^
+stubs.c:869:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  869 |     p_SDL_PauseAudio = GetProcAddress(real_sdl, "SDL_PauseAudio");
+      |                      ^
+stubs.c:870:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  870 |     p_SDL_PauseAudioDevice = GetProcAddress(real_sdl, "SDL_PauseAudioDevice");
+      |                            ^
+stubs.c:871:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  871 |     p_SDL_PeepEvents = GetProcAddress(real_sdl, "SDL_PeepEvents");
+      |                      ^
+stubs.c:872:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  872 |     p_SDL_PixelFormatEnumToMasks = GetProcAddress(real_sdl, "SDL_PixelFormatEnumToMasks");
+      |                                  ^
+stubs.c:873:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  873 |     p_SDL_PumpEvents = GetProcAddress(real_sdl, "SDL_PumpEvents");
+      |                      ^
+stubs.c:874:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  874 |     p_SDL_PushEvent = GetProcAddress(real_sdl, "SDL_PushEvent");
+      |                     ^
+stubs.c:875:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  875 |     p_SDL_QueryTexture = GetProcAddress(real_sdl, "SDL_QueryTexture");
+      |                        ^
+stubs.c:876:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  876 |     p_SDL_Quit = GetProcAddress(real_sdl, "SDL_Quit");
+      |                ^
+stubs.c:877:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  877 |     p_SDL_QuitSubSystem = GetProcAddress(real_sdl, "SDL_QuitSubSystem");
+      |                         ^
+stubs.c:878:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  878 |     p_SDL_RWFromConstMem = GetProcAddress(real_sdl, "SDL_RWFromConstMem");
+      |                          ^
+stubs.c:879:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  879 |     p_SDL_RWFromFP = GetProcAddress(real_sdl, "SDL_RWFromFP");
+      |                    ^
+stubs.c:880:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  880 |     p_SDL_RWFromFile = GetProcAddress(real_sdl, "SDL_RWFromFile");
+      |                      ^
+stubs.c:881:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  881 |     p_SDL_RWFromMem = GetProcAddress(real_sdl, "SDL_RWFromMem");
+      |                     ^
+stubs.c:882:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  882 |     p_SDL_RaiseWindow = GetProcAddress(real_sdl, "SDL_RaiseWindow");
+      |                       ^
+stubs.c:883:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  883 |     p_SDL_ReadBE16 = GetProcAddress(real_sdl, "SDL_ReadBE16");
+      |                    ^
+stubs.c:884:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  884 |     p_SDL_ReadBE32 = GetProcAddress(real_sdl, "SDL_ReadBE32");
+      |                    ^
+stubs.c:885:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  885 |     p_SDL_ReadBE64 = GetProcAddress(real_sdl, "SDL_ReadBE64");
+      |                    ^
+stubs.c:886:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  886 |     p_SDL_ReadLE16 = GetProcAddress(real_sdl, "SDL_ReadLE16");
+      |                    ^
+stubs.c:887:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  887 |     p_SDL_ReadLE32 = GetProcAddress(real_sdl, "SDL_ReadLE32");
+      |                    ^
+stubs.c:888:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  888 |     p_SDL_ReadLE64 = GetProcAddress(real_sdl, "SDL_ReadLE64");
+      |                    ^
+stubs.c:889:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  889 |     p_SDL_ReadU8 = GetProcAddress(real_sdl, "SDL_ReadU8");
+      |                  ^
+stubs.c:890:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  890 |     p_SDL_RecordGesture = GetProcAddress(real_sdl, "SDL_RecordGesture");
+      |                         ^
+stubs.c:891:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  891 |     p_SDL_RegisterApp = GetProcAddress(real_sdl, "SDL_RegisterApp");
+      |                       ^
+stubs.c:892:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  892 |     p_SDL_RegisterEvents = GetProcAddress(real_sdl, "SDL_RegisterEvents");
+      |                          ^
+stubs.c:893:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  893 |     p_SDL_RemoveTimer = GetProcAddress(real_sdl, "SDL_RemoveTimer");
+      |                       ^
+stubs.c:894:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  894 |     p_SDL_RenderClear = GetProcAddress(real_sdl, "SDL_RenderClear");
+      |                       ^
+stubs.c:895:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  895 |     p_SDL_RenderCopy = GetProcAddress(real_sdl, "SDL_RenderCopy");
+      |                      ^
+stubs.c:896:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  896 |     p_SDL_RenderCopyEx = GetProcAddress(real_sdl, "SDL_RenderCopyEx");
+      |                        ^
+stubs.c:897:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  897 |     p_SDL_RenderDrawLine = GetProcAddress(real_sdl, "SDL_RenderDrawLine");
+      |                          ^
+stubs.c:898:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  898 |     p_SDL_RenderDrawLines = GetProcAddress(real_sdl, "SDL_RenderDrawLines");
+      |                           ^
+stubs.c:899:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  899 |     p_SDL_RenderDrawPoint = GetProcAddress(real_sdl, "SDL_RenderDrawPoint");
+      |                           ^
+stubs.c:900:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  900 |     p_SDL_RenderDrawPoints = GetProcAddress(real_sdl, "SDL_RenderDrawPoints");
+      |                            ^
+stubs.c:901:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  901 |     p_SDL_RenderDrawRect = GetProcAddress(real_sdl, "SDL_RenderDrawRect");
+      |                          ^
+stubs.c:902:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  902 |     p_SDL_RenderDrawRects = GetProcAddress(real_sdl, "SDL_RenderDrawRects");
+      |                           ^
+stubs.c:903:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  903 |     p_SDL_RenderFillRect = GetProcAddress(real_sdl, "SDL_RenderFillRect");
+      |                          ^
+stubs.c:904:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  904 |     p_SDL_RenderFillRects = GetProcAddress(real_sdl, "SDL_RenderFillRects");
+      |                           ^
+stubs.c:905:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  905 |     p_SDL_RenderGetClipRect = GetProcAddress(real_sdl, "SDL_RenderGetClipRect");
+      |                             ^
+stubs.c:906:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  906 |     p_SDL_RenderGetD3D9Device = GetProcAddress(real_sdl, "SDL_RenderGetD3D9Device");
+      |                               ^
+stubs.c:907:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  907 |     p_SDL_RenderGetLogicalSize = GetProcAddress(real_sdl, "SDL_RenderGetLogicalSize");
+      |                                ^
+stubs.c:908:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  908 |     p_SDL_RenderGetScale = GetProcAddress(real_sdl, "SDL_RenderGetScale");
+      |                          ^
+stubs.c:909:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  909 |     p_SDL_RenderGetViewport = GetProcAddress(real_sdl, "SDL_RenderGetViewport");
+      |                             ^
+stubs.c:910:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  910 |     p_SDL_RenderPresent = GetProcAddress(real_sdl, "SDL_RenderPresent");
+      |                         ^
+stubs.c:911:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  911 |     p_SDL_RenderReadPixels = GetProcAddress(real_sdl, "SDL_RenderReadPixels");
+      |                            ^
+stubs.c:912:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  912 |     p_SDL_RenderSetClipRect = GetProcAddress(real_sdl, "SDL_RenderSetClipRect");
+      |                             ^
+stubs.c:913:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  913 |     p_SDL_RenderSetLogicalSize = GetProcAddress(real_sdl, "SDL_RenderSetLogicalSize");
+      |                                ^
+stubs.c:914:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  914 |     p_SDL_RenderSetScale = GetProcAddress(real_sdl, "SDL_RenderSetScale");
+      |                          ^
+stubs.c:915:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  915 |     p_SDL_RenderSetViewport = GetProcAddress(real_sdl, "SDL_RenderSetViewport");
+      |                             ^
+stubs.c:916:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  916 |     p_SDL_RenderTargetSupported = GetProcAddress(real_sdl, "SDL_RenderTargetSupported");
+      |                                 ^
+stubs.c:917:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  917 |     p_SDL_ReportAssertion = GetProcAddress(real_sdl, "SDL_ReportAssertion");
+      |                           ^
+stubs.c:918:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  918 |     p_SDL_ResetAssertionReport = GetProcAddress(real_sdl, "SDL_ResetAssertionReport");
+      |                                ^
+stubs.c:919:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  919 |     p_SDL_RestoreWindow = GetProcAddress(real_sdl, "SDL_RestoreWindow");
+      |                         ^
+stubs.c:920:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  920 |     p_SDL_SaveAllDollarTemplates = GetProcAddress(real_sdl, "SDL_SaveAllDollarTemplates");
+      |                                  ^
+stubs.c:921:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  921 |     p_SDL_SaveBMP_RW = GetProcAddress(real_sdl, "SDL_SaveBMP_RW");
+      |                      ^
+stubs.c:922:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  922 |     p_SDL_SaveDollarTemplate = GetProcAddress(real_sdl, "SDL_SaveDollarTemplate");
+      |                              ^
+stubs.c:923:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  923 |     p_SDL_SemPost = GetProcAddress(real_sdl, "SDL_SemPost");
+      |                   ^
+stubs.c:924:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  924 |     p_SDL_SemTryWait = GetProcAddress(real_sdl, "SDL_SemTryWait");
+      |                      ^
+stubs.c:925:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  925 |     p_SDL_SemValue = GetProcAddress(real_sdl, "SDL_SemValue");
+      |                    ^
+stubs.c:926:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  926 |     p_SDL_SemWait = GetProcAddress(real_sdl, "SDL_SemWait");
+      |                   ^
+stubs.c:927:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  927 |     p_SDL_SemWaitTimeout = GetProcAddress(real_sdl, "SDL_SemWaitTimeout");
+      |                          ^
+stubs.c:928:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  928 |     p_SDL_SetAssertionHandler = GetProcAddress(real_sdl, "SDL_SetAssertionHandler");
+      |                               ^
+stubs.c:929:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  929 |     p_SDL_SetClipRect = GetProcAddress(real_sdl, "SDL_SetClipRect");
+      |                       ^
+stubs.c:930:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  930 |     p_SDL_SetClipboardText = GetProcAddress(real_sdl, "SDL_SetClipboardText");
+      |                            ^
+stubs.c:931:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  931 |     p_SDL_SetColorKey = GetProcAddress(real_sdl, "SDL_SetColorKey");
+      |                       ^
+stubs.c:932:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  932 |     p_SDL_SetCursor = GetProcAddress(real_sdl, "SDL_SetCursor");
+      |                     ^
+stubs.c:933:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  933 |     p_SDL_SetError = GetProcAddress(real_sdl, "SDL_SetError");
+      |                    ^
+stubs.c:934:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  934 |     p_SDL_SetEventFilter = GetProcAddress(real_sdl, "SDL_SetEventFilter");
+      |                          ^
+stubs.c:935:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  935 |     p_SDL_SetHint = GetProcAddress(real_sdl, "SDL_SetHint");
+      |                   ^
+stubs.c:936:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  936 |     p_SDL_SetHintWithPriority = GetProcAddress(real_sdl, "SDL_SetHintWithPriority");
+      |                               ^
+stubs.c:937:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  937 |     p_SDL_SetMainReady = GetProcAddress(real_sdl, "SDL_SetMainReady");
+      |                        ^
+stubs.c:938:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  938 |     p_SDL_SetModState = GetProcAddress(real_sdl, "SDL_SetModState");
+      |                       ^
+stubs.c:939:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  939 |     p_SDL_SetPaletteColors = GetProcAddress(real_sdl, "SDL_SetPaletteColors");
+      |                            ^
+stubs.c:940:33: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  940 |     p_SDL_SetPixelFormatPalette = GetProcAddress(real_sdl, "SDL_SetPixelFormatPalette");
+      |                                 ^
+stubs.c:941:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  941 |     p_SDL_SetRelativeMouseMode = GetProcAddress(real_sdl, "SDL_SetRelativeMouseMode");
+      |                                ^
+stubs.c:942:34: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  942 |     p_SDL_SetRenderDrawBlendMode = GetProcAddress(real_sdl, "SDL_SetRenderDrawBlendMode");
+      |                                  ^
+stubs.c:943:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  943 |     p_SDL_SetRenderDrawColor = GetProcAddress(real_sdl, "SDL_SetRenderDrawColor");
+      |                              ^
+stubs.c:944:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  944 |     p_SDL_SetRenderTarget = GetProcAddress(real_sdl, "SDL_SetRenderTarget");
+      |                           ^
+stubs.c:945:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  945 |     p_SDL_SetSurfaceAlphaMod = GetProcAddress(real_sdl, "SDL_SetSurfaceAlphaMod");
+      |                              ^
+stubs.c:946:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  946 |     p_SDL_SetSurfaceBlendMode = GetProcAddress(real_sdl, "SDL_SetSurfaceBlendMode");
+      |                               ^
+stubs.c:947:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  947 |     p_SDL_SetSurfaceColorMod = GetProcAddress(real_sdl, "SDL_SetSurfaceColorMod");
+      |                              ^
+stubs.c:948:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  948 |     p_SDL_SetSurfacePalette = GetProcAddress(real_sdl, "SDL_SetSurfacePalette");
+      |                             ^
+stubs.c:949:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  949 |     p_SDL_SetSurfaceRLE = GetProcAddress(real_sdl, "SDL_SetSurfaceRLE");
+      |                         ^
+stubs.c:950:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  950 |     p_SDL_SetTextInputRect = GetProcAddress(real_sdl, "SDL_SetTextInputRect");
+      |                            ^
+stubs.c:951:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  951 |     p_SDL_SetTextureAlphaMod = GetProcAddress(real_sdl, "SDL_SetTextureAlphaMod");
+      |                              ^
+stubs.c:952:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  952 |     p_SDL_SetTextureBlendMode = GetProcAddress(real_sdl, "SDL_SetTextureBlendMode");
+      |                               ^
+stubs.c:953:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  953 |     p_SDL_SetTextureColorMod = GetProcAddress(real_sdl, "SDL_SetTextureColorMod");
+      |                              ^
+stubs.c:954:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  954 |     p_SDL_SetThreadPriority = GetProcAddress(real_sdl, "SDL_SetThreadPriority");
+      |                             ^
+stubs.c:955:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  955 |     p_SDL_SetWindowBordered = GetProcAddress(real_sdl, "SDL_SetWindowBordered");
+      |                             ^
+stubs.c:956:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  956 |     p_SDL_SetWindowBrightness = GetProcAddress(real_sdl, "SDL_SetWindowBrightness");
+      |                               ^
+stubs.c:957:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  957 |     p_SDL_SetWindowData = GetProcAddress(real_sdl, "SDL_SetWindowData");
+      |                         ^
+stubs.c:958:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  958 |     p_SDL_SetWindowDisplayMode = GetProcAddress(real_sdl, "SDL_SetWindowDisplayMode");
+      |                                ^
+stubs.c:959:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  959 |     p_SDL_SetWindowFullscreen = GetProcAddress(real_sdl, "SDL_SetWindowFullscreen");
+      |                               ^
+stubs.c:960:30: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  960 |     p_SDL_SetWindowGammaRamp = GetProcAddress(real_sdl, "SDL_SetWindowGammaRamp");
+      |                              ^
+stubs.c:961:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  961 |     p_SDL_SetWindowGrab = GetProcAddress(real_sdl, "SDL_SetWindowGrab");
+      |                         ^
+stubs.c:962:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  962 |     p_SDL_SetWindowIcon = GetProcAddress(real_sdl, "SDL_SetWindowIcon");
+      |                         ^
+stubs.c:963:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  963 |     p_SDL_SetWindowMaximumSize = GetProcAddress(real_sdl, "SDL_SetWindowMaximumSize");
+      |                                ^
+stubs.c:964:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  964 |     p_SDL_SetWindowMinimumSize = GetProcAddress(real_sdl, "SDL_SetWindowMinimumSize");
+      |                                ^
+stubs.c:965:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  965 |     p_SDL_SetWindowPosition = GetProcAddress(real_sdl, "SDL_SetWindowPosition");
+      |                             ^
+stubs.c:966:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  966 |     p_SDL_SetWindowShape = GetProcAddress(real_sdl, "SDL_SetWindowShape");
+      |                          ^
+stubs.c:967:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  967 |     p_SDL_SetWindowSize = GetProcAddress(real_sdl, "SDL_SetWindowSize");
+      |                         ^
+stubs.c:968:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  968 |     p_SDL_SetWindowTitle = GetProcAddress(real_sdl, "SDL_SetWindowTitle");
+      |                          ^
+stubs.c:969:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  969 |     p_SDL_ShowCursor = GetProcAddress(real_sdl, "SDL_ShowCursor");
+      |                      ^
+stubs.c:970:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  970 |     p_SDL_ShowMessageBox = GetProcAddress(real_sdl, "SDL_ShowMessageBox");
+      |                          ^
+stubs.c:971:32: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  971 |     p_SDL_ShowSimpleMessageBox = GetProcAddress(real_sdl, "SDL_ShowSimpleMessageBox");
+      |                                ^
+stubs.c:972:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  972 |     p_SDL_ShowWindow = GetProcAddress(real_sdl, "SDL_ShowWindow");
+      |                      ^
+stubs.c:973:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  973 |     p_SDL_SoftStretch = GetProcAddress(real_sdl, "SDL_SoftStretch");
+      |                       ^
+stubs.c:974:26: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  974 |     p_SDL_StartTextInput = GetProcAddress(real_sdl, "SDL_StartTextInput");
+      |                          ^
+stubs.c:975:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  975 |     p_SDL_StopTextInput = GetProcAddress(real_sdl, "SDL_StopTextInput");
+      |                         ^
+stubs.c:976:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  976 |     p_SDL_TLSCreate = GetProcAddress(real_sdl, "SDL_TLSCreate");
+      |                     ^
+stubs.c:977:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  977 |     p_SDL_TLSGet = GetProcAddress(real_sdl, "SDL_TLSGet");
+      |                  ^
+stubs.c:978:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  978 |     p_SDL_TLSSet = GetProcAddress(real_sdl, "SDL_TLSSet");
+      |                  ^
+stubs.c:979:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  979 |     p_SDL_ThreadID = GetProcAddress(real_sdl, "SDL_ThreadID");
+      |                    ^
+stubs.c:980:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  980 |     p_SDL_TryLockMutex = GetProcAddress(real_sdl, "SDL_TryLockMutex");
+      |                        ^
+stubs.c:981:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  981 |     p_SDL_UnionRect = GetProcAddress(real_sdl, "SDL_UnionRect");
+      |                     ^
+stubs.c:982:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  982 |     p_SDL_UnloadObject = GetProcAddress(real_sdl, "SDL_UnloadObject");
+      |                        ^
+stubs.c:983:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  983 |     p_SDL_UnlockAudio = GetProcAddress(real_sdl, "SDL_UnlockAudio");
+      |                       ^
+stubs.c:984:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  984 |     p_SDL_UnlockAudioDevice = GetProcAddress(real_sdl, "SDL_UnlockAudioDevice");
+      |                             ^
+stubs.c:985:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  985 |     p_SDL_UnlockMutex = GetProcAddress(real_sdl, "SDL_UnlockMutex");
+      |                       ^
+stubs.c:986:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  986 |     p_SDL_UnlockSurface = GetProcAddress(real_sdl, "SDL_UnlockSurface");
+      |                         ^
+stubs.c:987:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  987 |     p_SDL_UnlockTexture = GetProcAddress(real_sdl, "SDL_UnlockTexture");
+      |                         ^
+stubs.c:988:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  988 |     p_SDL_UnregisterApp = GetProcAddress(real_sdl, "SDL_UnregisterApp");
+      |                         ^
+stubs.c:989:25: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  989 |     p_SDL_UpdateTexture = GetProcAddress(real_sdl, "SDL_UpdateTexture");
+      |                         ^
+stubs.c:990:31: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  990 |     p_SDL_UpdateWindowSurface = GetProcAddress(real_sdl, "SDL_UpdateWindowSurface");
+      |                               ^
+stubs.c:991:36: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  991 |     p_SDL_UpdateWindowSurfaceRects = GetProcAddress(real_sdl, "SDL_UpdateWindowSurfaceRects");
+      |                                    ^
+stubs.c:992:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  992 |     p_SDL_UpdateYUVTexture = GetProcAddress(real_sdl, "SDL_UpdateYUVTexture");
+      |                            ^
+stubs.c:993:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  993 |     p_SDL_UpperBlit = GetProcAddress(real_sdl, "SDL_UpperBlit");
+      |                     ^
+stubs.c:994:27: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  994 |     p_SDL_UpperBlitScaled = GetProcAddress(real_sdl, "SDL_UpperBlitScaled");
+      |                           ^
+stubs.c:995:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  995 |     p_SDL_VideoInit = GetProcAddress(real_sdl, "SDL_VideoInit");
+      |                     ^
+stubs.c:996:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  996 |     p_SDL_VideoQuit = GetProcAddress(real_sdl, "SDL_VideoQuit");
+      |                     ^
+stubs.c:997:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  997 |     p_SDL_WaitEvent = GetProcAddress(real_sdl, "SDL_WaitEvent");
+      |                     ^
+stubs.c:998:28: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  998 |     p_SDL_WaitEventTimeout = GetProcAddress(real_sdl, "SDL_WaitEventTimeout");
+      |                            ^
+stubs.c:999:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+  999 |     p_SDL_WaitThread = GetProcAddress(real_sdl, "SDL_WaitThread");
+      |                      ^
+stubs.c:1000:29: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1000 |     p_SDL_WarpMouseInWindow = GetProcAddress(real_sdl, "SDL_WarpMouseInWindow");
+      |                             ^
+stubs.c:1001:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1001 |     p_SDL_WasInit = GetProcAddress(real_sdl, "SDL_WasInit");
+      |                   ^
+stubs.c:1002:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1002 |     p_SDL_WriteBE16 = GetProcAddress(real_sdl, "SDL_WriteBE16");
+      |                     ^
+stubs.c:1003:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1003 |     p_SDL_WriteBE32 = GetProcAddress(real_sdl, "SDL_WriteBE32");
+      |                     ^
+stubs.c:1004:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1004 |     p_SDL_WriteBE64 = GetProcAddress(real_sdl, "SDL_WriteBE64");
+      |                     ^
+stubs.c:1005:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1005 |     p_SDL_WriteLE16 = GetProcAddress(real_sdl, "SDL_WriteLE16");
+      |                     ^
+stubs.c:1006:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1006 |     p_SDL_WriteLE32 = GetProcAddress(real_sdl, "SDL_WriteLE32");
+      |                     ^
+stubs.c:1007:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1007 |     p_SDL_WriteLE64 = GetProcAddress(real_sdl, "SDL_WriteLE64");
+      |                     ^
+stubs.c:1008:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1008 |     p_SDL_WriteU8 = GetProcAddress(real_sdl, "SDL_WriteU8");
+      |                   ^
+stubs.c:1009:15: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1009 |     p_SDL_abs = GetProcAddress(real_sdl, "SDL_abs");
+      |               ^
+stubs.c:1010:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1010 |     p_SDL_acos = GetProcAddress(real_sdl, "SDL_acos");
+      |                ^
+stubs.c:1011:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1011 |     p_SDL_asin = GetProcAddress(real_sdl, "SDL_asin");
+      |                ^
+stubs.c:1012:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1012 |     p_SDL_atan = GetProcAddress(real_sdl, "SDL_atan");
+      |                ^
+stubs.c:1013:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1013 |     p_SDL_atan2 = GetProcAddress(real_sdl, "SDL_atan2");
+      |                 ^
+stubs.c:1014:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1014 |     p_SDL_atof = GetProcAddress(real_sdl, "SDL_atof");
+      |                ^
+stubs.c:1015:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1015 |     p_SDL_atoi = GetProcAddress(real_sdl, "SDL_atoi");
+      |                ^
+stubs.c:1016:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1016 |     p_SDL_calloc = GetProcAddress(real_sdl, "SDL_calloc");
+      |                  ^
+stubs.c:1017:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1017 |     p_SDL_ceil = GetProcAddress(real_sdl, "SDL_ceil");
+      |                ^
+stubs.c:1018:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1018 |     p_SDL_copysign = GetProcAddress(real_sdl, "SDL_copysign");
+      |                    ^
+stubs.c:1019:15: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1019 |     p_SDL_cos = GetProcAddress(real_sdl, "SDL_cos");
+      |               ^
+stubs.c:1020:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1020 |     p_SDL_cosf = GetProcAddress(real_sdl, "SDL_cosf");
+      |                ^
+stubs.c:1021:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1021 |     p_SDL_fabs = GetProcAddress(real_sdl, "SDL_fabs");
+      |                ^
+stubs.c:1022:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1022 |     p_SDL_floor = GetProcAddress(real_sdl, "SDL_floor");
+      |                 ^
+stubs.c:1023:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1023 |     p_SDL_free = GetProcAddress(real_sdl, "SDL_free");
+      |                ^
+stubs.c:1024:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1024 |     p_SDL_getenv = GetProcAddress(real_sdl, "SDL_getenv");
+      |                  ^
+stubs.c:1025:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1025 |     p_SDL_iconv = GetProcAddress(real_sdl, "SDL_iconv");
+      |                 ^
+stubs.c:1026:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1026 |     p_SDL_iconv_close = GetProcAddress(real_sdl, "SDL_iconv_close");
+      |                       ^
+stubs.c:1027:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1027 |     p_SDL_iconv_open = GetProcAddress(real_sdl, "SDL_iconv_open");
+      |                      ^
+stubs.c:1028:24: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1028 |     p_SDL_iconv_string = GetProcAddress(real_sdl, "SDL_iconv_string");
+      |                        ^
+stubs.c:1029:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1029 |     p_SDL_isdigit = GetProcAddress(real_sdl, "SDL_isdigit");
+      |                   ^
+stubs.c:1030:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1030 |     p_SDL_isspace = GetProcAddress(real_sdl, "SDL_isspace");
+      |                   ^
+stubs.c:1031:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1031 |     p_SDL_itoa = GetProcAddress(real_sdl, "SDL_itoa");
+      |                ^
+stubs.c:1032:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1032 |     p_SDL_lltoa = GetProcAddress(real_sdl, "SDL_lltoa");
+      |                 ^
+stubs.c:1033:15: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1033 |     p_SDL_log = GetProcAddress(real_sdl, "SDL_log");
+      |               ^
+stubs.c:1034:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1034 |     p_SDL_ltoa = GetProcAddress(real_sdl, "SDL_ltoa");
+      |                ^
+stubs.c:1035:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1035 |     p_SDL_malloc = GetProcAddress(real_sdl, "SDL_malloc");
+      |                  ^
+stubs.c:1036:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1036 |     p_SDL_memcmp = GetProcAddress(real_sdl, "SDL_memcmp");
+      |                  ^
+stubs.c:1037:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1037 |     p_SDL_memcpy = GetProcAddress(real_sdl, "SDL_memcpy");
+      |                  ^
+stubs.c:1038:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1038 |     p_SDL_memmove = GetProcAddress(real_sdl, "SDL_memmove");
+      |                   ^
+stubs.c:1039:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1039 |     p_SDL_memset = GetProcAddress(real_sdl, "SDL_memset");
+      |                  ^
+stubs.c:1040:15: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1040 |     p_SDL_pow = GetProcAddress(real_sdl, "SDL_pow");
+      |               ^
+stubs.c:1041:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1041 |     p_SDL_qsort = GetProcAddress(real_sdl, "SDL_qsort");
+      |                 ^
+stubs.c:1042:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1042 |     p_SDL_realloc = GetProcAddress(real_sdl, "SDL_realloc");
+      |                   ^
+stubs.c:1043:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1043 |     p_SDL_scalbn = GetProcAddress(real_sdl, "SDL_scalbn");
+      |                  ^
+stubs.c:1044:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1044 |     p_SDL_setenv = GetProcAddress(real_sdl, "SDL_setenv");
+      |                  ^
+stubs.c:1045:15: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1045 |     p_SDL_sin = GetProcAddress(real_sdl, "SDL_sin");
+      |               ^
+stubs.c:1046:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1046 |     p_SDL_sinf = GetProcAddress(real_sdl, "SDL_sinf");
+      |                ^
+stubs.c:1047:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1047 |     p_SDL_snprintf = GetProcAddress(real_sdl, "SDL_snprintf");
+      |                    ^
+stubs.c:1048:16: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1048 |     p_SDL_sqrt = GetProcAddress(real_sdl, "SDL_sqrt");
+      |                ^
+stubs.c:1049:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1049 |     p_SDL_sscanf = GetProcAddress(real_sdl, "SDL_sscanf");
+      |                  ^
+stubs.c:1050:22: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1050 |     p_SDL_strcasecmp = GetProcAddress(real_sdl, "SDL_strcasecmp");
+      |                      ^
+stubs.c:1051:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1051 |     p_SDL_strchr = GetProcAddress(real_sdl, "SDL_strchr");
+      |                  ^
+stubs.c:1052:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1052 |     p_SDL_strcmp = GetProcAddress(real_sdl, "SDL_strcmp");
+      |                  ^
+stubs.c:1053:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1053 |     p_SDL_strdup = GetProcAddress(real_sdl, "SDL_strdup");
+      |                  ^
+stubs.c:1054:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1054 |     p_SDL_strlcat = GetProcAddress(real_sdl, "SDL_strlcat");
+      |                   ^
+stubs.c:1055:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1055 |     p_SDL_strlcpy = GetProcAddress(real_sdl, "SDL_strlcpy");
+      |                   ^
+stubs.c:1056:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1056 |     p_SDL_strlen = GetProcAddress(real_sdl, "SDL_strlen");
+      |                  ^
+stubs.c:1057:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1057 |     p_SDL_strlwr = GetProcAddress(real_sdl, "SDL_strlwr");
+      |                  ^
+stubs.c:1058:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1058 |     p_SDL_strncasecmp = GetProcAddress(real_sdl, "SDL_strncasecmp");
+      |                       ^
+stubs.c:1059:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1059 |     p_SDL_strncmp = GetProcAddress(real_sdl, "SDL_strncmp");
+      |                   ^
+stubs.c:1060:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1060 |     p_SDL_strrchr = GetProcAddress(real_sdl, "SDL_strrchr");
+      |                   ^
+stubs.c:1061:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1061 |     p_SDL_strrev = GetProcAddress(real_sdl, "SDL_strrev");
+      |                  ^
+stubs.c:1062:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1062 |     p_SDL_strstr = GetProcAddress(real_sdl, "SDL_strstr");
+      |                  ^
+stubs.c:1063:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1063 |     p_SDL_strtod = GetProcAddress(real_sdl, "SDL_strtod");
+      |                  ^
+stubs.c:1064:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1064 |     p_SDL_strtol = GetProcAddress(real_sdl, "SDL_strtol");
+      |                  ^
+stubs.c:1065:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1065 |     p_SDL_strtoll = GetProcAddress(real_sdl, "SDL_strtoll");
+      |                   ^
+stubs.c:1066:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1066 |     p_SDL_strtoul = GetProcAddress(real_sdl, "SDL_strtoul");
+      |                   ^
+stubs.c:1067:20: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1067 |     p_SDL_strtoull = GetProcAddress(real_sdl, "SDL_strtoull");
+      |                    ^
+stubs.c:1068:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1068 |     p_SDL_strupr = GetProcAddress(real_sdl, "SDL_strupr");
+      |                  ^
+stubs.c:1069:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1069 |     p_SDL_tolower = GetProcAddress(real_sdl, "SDL_tolower");
+      |                   ^
+stubs.c:1070:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1070 |     p_SDL_toupper = GetProcAddress(real_sdl, "SDL_toupper");
+      |                   ^
+stubs.c:1071:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1071 |     p_SDL_uitoa = GetProcAddress(real_sdl, "SDL_uitoa");
+      |                 ^
+stubs.c:1072:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1072 |     p_SDL_ulltoa = GetProcAddress(real_sdl, "SDL_ulltoa");
+      |                  ^
+stubs.c:1073:17: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1073 |     p_SDL_ultoa = GetProcAddress(real_sdl, "SDL_ultoa");
+      |                 ^
+stubs.c:1074:23: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1074 |     p_SDL_utf8strlcpy = GetProcAddress(real_sdl, "SDL_utf8strlcpy");
+      |                       ^
+stubs.c:1075:21: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1075 |     p_SDL_vsnprintf = GetProcAddress(real_sdl, "SDL_vsnprintf");
+      |                     ^
+stubs.c:1076:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1076 |     p_SDL_vsscanf = GetProcAddress(real_sdl, "SDL_vsscanf");
+      |                   ^
+stubs.c:1077:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1077 |     p_SDL_wcslcat = GetProcAddress(real_sdl, "SDL_wcslcat");
+      |                   ^
+stubs.c:1078:19: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1078 |     p_SDL_wcslcpy = GetProcAddress(real_sdl, "SDL_wcslcpy");
+      |                   ^
+stubs.c:1079:18: warning: ISO C forbids assignment between function pointer and 'void *' [-Wpedantic]
+ 1079 |     p_SDL_wcslen = GetProcAddress(real_sdl, "SDL_wcslen");
+      |                  ^
+stubs.c: In function 'SDL_GetDisplayBounds':
+stubs.c:1147:13: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1147 |     return ((get_bounds_t)p_SDL_GetDisplayBounds)(display_index, rect);
+      |             ^
+stubs.c: In function 'SDL_CreateWindow':
+stubs.c:1162:18: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1162 |     void* win = ((create_t)p_SDL_CreateWindow)(title, x, y, w, h, flags);
+      |                  ^
+stubs.c: In function 'SDL_DestroyWindow':
+stubs.c:1172:6: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1172 |     ((destroy_t)p_SDL_DestroyWindow)(window);
+      |      ^
+hooks.c: In function 'online_viewport_poll':
+hooks.c:1476:10: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1476 |         ((fn_get_size_t)p_SDL_GetWindowSize)(g_proxy_sdl_window, &now.window_w, &now.window_h);
+      |          ^
+hooks.c:1479:10: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1479 |         ((fn_get_size_t)p_SDL_GL_GetDrawableSize)(g_proxy_sdl_window,
+      |          ^
+hooks.c: In function 'online_reset_native_sound_state':
+hooks.c:1633:56: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 1633 |     if (p_synth_effects_init && !IsBadCodePtr((FARPROC)(void*)p_synth_effects_init)) {
+      |                                                        ^
+hooks.c:1633:47: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1633 |     if (p_synth_effects_init && !IsBadCodePtr((FARPROC)(void*)p_synth_effects_init)) {
+      |                                               ^
+hooks.c:1636:54: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 1636 |     if (p_syn_enable_range && !IsBadCodePtr((FARPROC)(void*)p_syn_enable_range)) {
+      |                                                      ^
+hooks.c:1636:45: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 1636 |     if (p_syn_enable_range && !IsBadCodePtr((FARPROC)(void*)p_syn_enable_range)) {
+      |                                             ^
+hooks.c: In function 'hooked_mrand':
+hooks.c:2454:19: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2454 |         result = ((uint32_t (__cdecl*)(void))g_hooks_rng_mrand_trampoline)();
+      |                   ^
+hooks.c:2460:13: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2460 |     return ((uint32_t (__cdecl*)(void))g_hooks_rng_mrand_trampoline)();
+      |             ^
+hooks.c: In function 'hooked_rnd':
+hooks.c:2475:25: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2475 |     fn_rng_rnd_t real = (fn_rng_rnd_t)g_hooks_rng_rnd_trampoline;
+      |                         ^
+hooks.c: In function 'hooked_frnd':
+hooks.c:2507:26: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2507 |     fn_rng_frnd_t real = (fn_rng_frnd_t)g_hooks_rng_frnd_trampoline;
+      |                          ^
+hooks.c: In function 'hooked_rnd5050':
+hooks.c:2534:29: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2534 |     fn_rng_rnd5050_t real = (fn_rng_rnd5050_t)g_hooks_rng_rnd5050_trampoline;
+      |                             ^
+hooks.c: In function 'hooked_rndsign':
+hooks.c:2575:19: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2575 |         result = ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
+      |                   ^
+hooks.c:2581:13: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2581 |     return ((long double (__cdecl*)(void))g_hooks_rng_rndsign_trampoline)();
+      |             ^
+hooks.c: In function 'hooked_onein':
+hooks.c:2598:23: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 2598 |     fn_onein_t real = (fn_onein_t)g_hooks_onein_trampoline;
+      |                       ^
+hooks.c: In function 'menu_mode_main_filter_proxy':
+hooks.c:14513:43: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14513 |             fn_btn_player_filter_t orig = (fn_btn_player_filter_t)g_main_start_orig_action;
+      |                                           ^
+hooks.c: In function 'apply_main_menu_mode_button':
+hooks.c:14542:63: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+14542 |         *(void**)((uint8_t*)start_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_main_filter_proxy;
+      |                                                               ^
+hooks.c:14563:72: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+14563 |         if (up_btn) *(void**)((uint8_t*)up_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_arrow_up_filter_proxy;
+      |                                                                        ^
+hooks.c:14570:76: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+14570 |         if (down_btn) *(void**)((uint8_t*)down_btn + BTN_OFS_ACTION_PTR) = (void*)&menu_mode_arrow_down_filter_proxy;
+      |                                                                            ^
+hooks.c: In function 'add_mods_button_to_options':
+hooks.c:14623:47: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+14623 |             *(void**)((uint8_t*)btn + 0xE4) = (void*)&mods_entry_player_filter_proxy;
+      |                                               ^
+hooks.c: In function 'hooks_window_active_display':
+hooks.c:14804:20: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14804 |         display = ((fn_get_display_t)p_SDL_GetWindowDisplayIndex)(g_proxy_sdl_window);
+      |                    ^
+hooks.c: In function 'hooks_window_display_bounds':
+hooks.c:14819:10: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14819 |         ((fn_get_bounds_t)p_SDL_GetDisplayBounds)(display, &bounds) == 0 &&
+      |          ^
+hooks.c: In function 'hooks_window_flags':
+hooks.c:14849:13: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14849 |     return ((fn_get_flags_t)p_SDL_GetWindowFlags)(g_proxy_sdl_window);
+      |             ^
+hooks.c: In function 'hooks_window_refresh_geometry':
+hooks.c:14880:10: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14880 |         ((fn_get_size_t)p_SDL_GetWindowSize)(g_proxy_sdl_window, &ww, &wh);
+      |          ^
+hooks.c:14883:10: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14883 |         ((fn_get_size_t)p_SDL_GL_GetDrawableSize)(g_proxy_sdl_window, &dw, &dh);
+      |          ^
+hooks.c: In function 'hooks_window_apply_mode':
+hooks.c:14964:15: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14964 |         rc = ((fn_sdl_set_window_fullscreen_t)p_SDL_SetWindowFullscreen)(
+      |               ^
+hooks.c:14967:49: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+14967 |             const char* err = p_SDL_GetError ? ((const char* (__cdecl *)(void))p_SDL_GetError)() : "unknown SDL error";
+      |                                                 ^
+hooks.c: In function 'content_bridge_turtle_trans':
+hooks.c:15648:11: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+15648 |         ? (fn_turtle_trans_t)g_turtle_trans_trampoline
+      |           ^
+hooks.c: In function 'content_bridge_sprite_batch_plot':
+hooks.c:15693:11: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+15693 |         ? (fn_sprite_batch_plot_t)g_sprite_batch_plot_trampoline
+      |           ^
+hooks.c: In function 'hooks_plot_native_tile_fallback':
+hooks.c:15796:11: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+15796 |         ? (fn_sprite_batch_plot_t)g_sprite_batch_plot_trampoline
+      |           ^
+hooks.c: In function 'hooks_init':
+hooks.c:16035:88: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16035 |     if (!install_detour(&g_options_enter_detour, (void*)(uintptr_t)ADDR_OPTIONS_ENTER, (void*)&hooked_options_enter, 5)) {
+      |                                                                                        ^
+hooks.c:16039:34: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16039 |     p_options_enter_trampoline = (fn_void_void_t)g_options_enter_detour.trampoline;
+      |                                  ^
+hooks.c:16041:102: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16041 |     if (!install_detour(&g_options_enter_paused_detour, (void*)(uintptr_t)ADDR_OPTIONS_ENTER_PAUSED, (void*)&hooked_options_enter_paused, 5)) {
+      |                                                                                                      ^
+hooks.c:16045:41: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16045 |     p_options_enter_paused_trampoline = (fn_void_void_t)g_options_enter_paused_detour.trampoline;
+      |                                         ^
+hooks.c:16047:86: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16047 |     if (!install_detour(&g_state_switch_detour, (void*)(uintptr_t)ADDR_STATE_SWITCH, (void*)&hooked_state_switch, 7)) {
+      |                                                                                      ^
+hooks.c:16050:37: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16050 |         p_state_switch_trampoline = (fn_state_switch_t)g_state_switch_detour.trampoline;
+      |                                     ^
+hooks.c:16053:110: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16053 |     if (!install_detour(&g_main_update_with_buttons_detour, (void*)(uintptr_t)ADDR_MAIN_UPDATE_WITH_BUTTONS, (void*)&hooked_main_update_with_buttons, 6)) {
+      |                                                                                                              ^
+hooks.c:16056:49: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16056 |         p_main_update_with_buttons_trampoline = (fn_main_update_with_buttons_t)g_main_update_with_buttons_detour.trampoline;
+      |                                                 ^
+hooks.c:16059:104: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16059 |     if (!install_detour(&g_main_player_poll_cmds_detour, (void*)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS, (void*)&hooked_main_player_poll_cmds, 5)) {
+      |                                                                                                        ^
+hooks.c:16062:46: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16062 |         p_main_player_poll_cmds_trampoline = (fn_main_player_poll_cmds_t)g_main_player_poll_cmds_detour.trampoline;
+      |                                              ^
+hooks.c:16065:84: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16065 |     if (!install_detour(&g_game_update_detour, (void*)(uintptr_t)ADDR_GAME_UPDATE, (void*)&hooked_game_update, 5)) {
+      |                                                                                    ^
+hooks.c:16068:36: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16068 |         p_game_update_trampoline = (fn_game_update_t)g_game_update_detour.trampoline;
+      |                                    ^
+hooks.c:16077:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16077 |                         (void*)&hooked_thing_new,
+      |                         ^
+hooks.c:16081:34: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16081 |         p_thing_new_trampoline = (fn_thing_new_t)g_thing_new_detour.trampoline;
+      |                                  ^
+hooks.c:16086:82: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16086 |     if (!install_detour(&g_player_die_detour, (void*)(uintptr_t)ADDR_PLAYER_DIE, (void*)&hooked_player_die, 5)) {
+      |                                                                                  ^
+hooks.c:16089:35: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16089 |         p_player_die_trampoline = (fn_player_die_t)g_player_die_detour.trampoline;
+      |                                   ^
+hooks.c:16096:80: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16096 |     if (!install_detour(&g_rgba_load_detour, (void*)(uintptr_t)ADDR_RGBA_LOAD, (void*)&hooked_rgba_load, 8)) {
+      |                                                                                ^
+hooks.c:16099:34: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16099 |         p_rgba_load_trampoline = (fn_rgba_load_t)g_rgba_load_detour.trampoline;
+      |                                  ^
+hooks.c:16104:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16104 |                         (void*)&hooked_game_player_colour_index,
+      |                         ^
+hooks.c:16108:49: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16108 |         p_game_player_colour_index_trampoline = (fn_game_player_colour_index_t)g_game_player_colour_index_detour.trampoline;
+      |                                                 ^
+hooks.c:16113:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16113 |                         (void*)&hooked_game_set_player_colour_index,
+      |                         ^
+hooks.c:16117:53: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16117 |         p_game_set_player_colour_index_trampoline = (fn_game_set_player_colour_index_t)g_game_set_player_colour_index_detour.trampoline;
+      |                                                     ^
+hooks.c:16122:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16122 |                         (void*)&hooked_game_player_colour,
+      |                         ^
+hooks.c:16126:43: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16126 |         p_game_player_colour_trampoline = (fn_game_player_colour_t)g_game_player_colour_detour.trampoline;
+      |                                           ^
+hooks.c:16131:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16131 |                         (void*)&hooked_game_inc_player_colour_ex,
+      |                         ^
+hooks.c:16135:50: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16135 |         p_game_inc_player_colour_ex_trampoline = (fn_game_inc_player_colour_ex_t)g_game_inc_player_colour_ex_detour.trampoline;
+      |                                                  ^
+hooks.c:16145:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16145 |                         (void*)&hooked_draw_player_body,
+      |                         ^
+hooks.c:16157:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16157 |                         (void*)&hooked_sprite_batch_plot,
+      |                         ^
+hooks.c:16169:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16169 |                         (void*)&hooked_turtle_trans,
+      |                         ^
+hooks.c:16179:84: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16179 |     if (!install_detour(&g_mapgen_init_detour, (void*)(uintptr_t)ADDR_MAPGEN_INIT, (void*)&hooked_mapgen_init, 9)) {
+      |                                                                                    ^
+hooks.c:16183:32: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16183 |     p_mapgen_init_trampoline = (fn_void_void_t)g_mapgen_init_detour.trampoline;
+      |                                ^
+hooks.c:16193:25: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16193 |                         (void*)&hooked_mapgen_build_map,
+      |                         ^
+hooks.c:16198:13: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16198 |             (fn_void_void_t)g_mapgen_build_map_detour.trampoline;
+      |             ^
+hooks.c:16205:29: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16205 |                             (void*)&hooked_tile_action_ex,
+      |                             ^
+hooks.c:16211:17: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16211 |                 (fn_tile_action_t)g_tile_action_ex_detour.trampoline;
+      |                 ^
+hooks.c:16221:96: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16221 |     if (!install_detour(&g_high_water_action_detour, (void*)(uintptr_t)ADDR_HIGH_WATER_ACTION, (void*)&hooked_high_water_action, 9)) {
+      |                                                                                                ^
+hooks.c:16224:42: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16224 |         p_high_water_action_trampoline = (fn_tile_action_t)g_high_water_action_detour.trampoline;
+      |                                          ^
+hooks.c:16233:86: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16233 |     if (!install_detour(&g_atlas_upload_detour, (void*)(uintptr_t)ADDR_ATLAS_UPLOAD, (void*)&hooked_atlas_upload, 5)) {
+      |                                                                                      ^
+hooks.c:16236:37: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16236 |         p_atlas_upload_trampoline = (fn_atlas_upload_t)g_atlas_upload_detour.trampoline;
+      |                                     ^
+hooks.c:16239:76: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16239 |     if (!install_detour(&g_rng_mrand_detour, (void*)(uintptr_t)ADDR_MRAND, (void*)&hooked_mrand, 10)) {
+      |                                                                            ^
+hooks.c:16244:72: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16244 |     if (!install_detour(&g_rng_rnd_detour, (void*)(uintptr_t)ADDR_RND, (void*)&hooked_rnd, 10)) {
+      |                                                                        ^
+hooks.c:16249:74: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16249 |     if (!install_detour(&g_rng_frnd_detour, (void*)(uintptr_t)ADDR_FRND, (void*)&hooked_frnd, 13)) {
+      |                                                                          ^
+hooks.c:16254:80: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16254 |     if (!install_detour(&g_rng_rnd5050_detour, (void*)(uintptr_t)ADDR_RND5050, (void*)&hooked_rnd5050, 10)) {
+      |                                                                                ^
+hooks.c:16259:80: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16259 |     if (!install_detour(&g_rng_rndsign_detour, (void*)(uintptr_t)ADDR_RNDSIGN, (void*)&hooked_rndsign, 13)) {
+      |                                                                                ^
+hooks.c:16266:72: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16266 |     if (!install_detour(&g_onein_detour, (void*)(uintptr_t)ADDR_ONEIN, (void*)&hooked_onein, 8)) {
+      |                                                                        ^
+hooks.c:16272:90: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16272 |     if (!install_detour(&g_respawn_warble_detour, (void*)(uintptr_t)ADDR_RESPAWN_WARBLE, (void*)&hooked_respawn_warble, 12)) {
+      |                                                                                          ^
+hooks.c:16275:39: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16275 |         p_respawn_warble_trampoline = (fn_synth_callback_t)g_respawn_warble_detour.trampoline;
+      |                                       ^
+hooks.c:16277:106: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16277 |     if (!install_detour(&g_synth_effect_whistling_detour, (void*)(uintptr_t)ADDR_SYNTH_EFFECT_WHISTLING, (void*)&hooked_synth_effect_whistling, 6)) {
+      |                                                                                                          ^
+hooks.c:16280:47: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16280 |         p_synth_effect_whistling_trampoline = (fn_synth_callback_t)g_synth_effect_whistling_detour.trampoline;
+      |                                               ^
+hooks.c:16282:96: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+16282 |     if (!install_detour(&g_sound_sword_ching_detour, (void*)(uintptr_t)ADDR_SOUND_SWORD_CHING, (void*)&hooked_sound_sword_ching, 6)) {
+      |                                                                                                ^
+hooks.c:16285:42: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+16285 |         p_sound_sword_ching_trampoline = (fn_sound_sword_ching_t)g_sound_sword_ching_detour.trampoline;
+      |                                          ^
+hooks.c: At top level:
+hooks.c:14011:20: warning: 'online_hub_player_filter_proxy' defined but not used [-Wunused-function]
+14011 | static int __cdecl online_hub_player_filter_proxy(void* btn, int event_code) {
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:13473:13: warning: 'mods_draw_background' defined but not used [-Wunused-function]
+13473 | static void mods_draw_background(const ModsLayout* L) {
+      |             ^~~~~~~~~~~~~~~~~~~~
+hooks.c:10168:13: warning: 'online_hub_draw_overlay_card' defined but not used [-Wunused-function]
+10168 | static void online_hub_draw_overlay_card(const OnlineLayout* L, float card_w, float card_h, float* out_x, float* out_y) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:7183:12: warning: 'online_hub_add_friend_spec' defined but not used [-Wunused-function]
+ 7183 | static int online_hub_add_friend_spec(const char* spec) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:3136:12: warning: 'console_apply_config_value' defined but not used [-Wunused-function]
+ 3136 | static int console_apply_config_value(int idx, int cfg_idx, const char* value) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:2942:13: warning: 'mods_set_collapsed' defined but not used [-Wunused-function]
+ 2942 | static void mods_set_collapsed(int mod_index, int collapsed) {
+      |             ^~~~~~~~~~~~~~~~~~
+hooks.c:2822:13: warning: 'build_repeat' defined but not used [-Wunused-function]
+ 2822 | static void build_repeat(char* dst, size_t dst_sz, char ch, int count) {
+      |             ^~~~~~~~~~~~
+hooks.c:2817:13: warning: 'draw_text_right' defined but not used [-Wunused-function]
+ 2817 | static void draw_text_right(float right_x, float y, float r, float g, float b, const char* text) {
+      |             ^~~~~~~~~~~~~~~
+hooks.c:2813:13: warning: 'draw_text_centered' defined but not used [-Wunused-function]
+ 2813 | static void draw_text_centered(float cx, float y, float r, float g, float b, const char* text) {
+      |             ^~~~~~~~~~~~~~~~~~
+hooks.c:2799:13: warning: 'draw_text' defined but not used [-Wunused-function]
+ 2799 | static void draw_text(float x, float y, float r, float g, float b, const char* text) {
+      |             ^~~~~~~~~
+hooks.c:2751:12: warning: 'is_custom_state_ptr' defined but not used [-Wunused-function]
+ 2751 | static int is_custom_state_ptr(void* state_ptr) {
+      |            ^~~~~~~~~~~~~~~~~~~
+hooks.c:723:39: warning: 'p_game_inc_player_colour_ex' defined but not used [-Wunused-variable]
+  723 | static fn_game_inc_player_colour_ex_t p_game_inc_player_colour_ex = (fn_game_inc_player_colour_ex_t)(uintptr_t)ADDR_GAME_INC_PLAYER_COLOUR_EX;
+      |                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:721:38: warning: 'p_game_player_colour' defined but not used [-Wunused-variable]
+  721 | static fn_game_player_colour_t       p_game_player_colour = (fn_game_player_colour_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR;
+      |                                      ^~~~~~~~~~~~~~~~~~~~
+hooks.c:719:42: warning: 'p_game_set_player_colour_index' defined but not used [-Wunused-variable]
+  719 | static fn_game_set_player_colour_index_t p_game_set_player_colour_index = (fn_game_set_player_colour_index_t)(uintptr_t)ADDR_GAME_SET_PLAYER_COLOUR_INDEX;
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:717:38: warning: 'p_game_player_colour_index' defined but not used [-Wunused-variable]
+  717 | static fn_game_player_colour_index_t p_game_player_colour_index = (fn_game_player_colour_index_t)(uintptr_t)ADDR_GAME_PLAYER_COLOUR_INDEX;
+      |                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:666:38: warning: 'p_plot_text_set_shadow' defined but not used [-Wunused-variable]
+  666 | static fn_plot_text_set_shadow_t     p_plot_text_set_shadow = (fn_plot_text_set_shadow_t)(uintptr_t)ADDR_PLOT_TEXT_SET_SHADOW;
+      |                                      ^~~~~~~~~~~~~~~~~~~~~~
+hooks.c:657:38: warning: 'p_misc_id' defined but not used [-Wunused-variable]
+  657 | static volatile int*                 p_misc_id = (volatile int*)(uintptr_t)ADDR_MISC_ID;
+      |                                      ^~~~~~~~~
+hooks.c:653:37: warning: 'p_main_cursor_spin' defined but not used [-Wunused-variable]
+  653 | static fn_main_cursor_spin_t        p_main_cursor_spin = (fn_main_cursor_spin_t)(uintptr_t)ADDR_MAIN_CURSOR_SPIN;
+      |                                     ^~~~~~~~~~~~~~~~~~
+hooks.c: In function 'console_show_history':
+hooks.c:4505:42: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size between 371 and 380 [-Wformat-truncation=]
+ 4505 |         snprintf(out, sizeof(out), "%2d: %s", i + 1, g_console_history[i]);
+      |                                          ^~
+hooks.c:4505:9: note: 'snprintf' output between 5 and 525 bytes into a destination of size 384
+ 4505 |         snprintf(out, sizeof(out), "%2d: %s", i + 1, g_console_history[i]);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'console_find_in_output':
+hooks.c:4556:39: warning: '%s' directive output may be truncated writing up to 383 bytes into a region of size 382 [-Wformat-truncation=]
+ 4556 |         snprintf(out, sizeof(out), "  %s", hits[i]);
+      |                                       ^~
+hooks.c:4556:9: note: 'snprintf' output between 3 and 386 bytes into a destination of size 384
+ 4556 |         snprintf(out, sizeof(out), "  %s", hits[i]);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'console_set_mod_config_value':
+hooks.c:5184:63: warning: '%s' directive output may be truncated writing up to 383 bytes into a region of size 362 [-Wformat-truncation=]
+ 5184 |             snprintf(out, sizeof(out), "Value must be one of: %s", opts);
+      |                                                               ^~   ~~~~
+hooks.c:5184:13: note: 'snprintf' output between 23 and 406 bytes into a destination of size 384
+ 5184 |             snprintf(out, sizeof(out), "Value must be one of: %s", opts);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'online_apply_p2p_peer':
+hooks.c:8217:68: warning: '%s' directive output may be truncated writing up to 255 bytes into a region of size 171 [-Wformat-truncation=]
+ 8217 |             snprintf(status, sizeof(status), "P2P endpoint failed: %s", err[0] ? err : "unknown error");
+      |                                                                    ^~
+hooks.c:8217:13: note: 'snprintf' output between 22 and 277 bytes into a destination of size 192
+ 8217 |             snprintf(status, sizeof(status), "P2P endpoint failed: %s", err[0] ? err : "unknown error");
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'online_hub_render_login_gateway':
+hooks.c:10423:51: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size 128 [-Wformat-truncation=]
+10423 |             snprintf(username, sizeof(username), "%s_", g_online_capture_buf);
+      |                                                   ^~    ~~~~~~~~~~~~~~~~~~~~
+hooks.c:10423:13: note: 'snprintf' output between 2 and 513 bytes into a destination of size 128
+10423 |             snprintf(username, sizeof(username), "%s_", g_online_capture_buf);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'online_hub_render_ui':
+hooks.c:10613:49: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size 224 [-Wformat-truncation=]
+10613 |                 snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
+      |                                                 ^~    ~~~~~~~~~~~~~~~~~~~~
+hooks.c:10613:17: note: 'snprintf' output between 2 and 513 bytes into a destination of size 224
+10613 |                 snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c:10618:45: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size 224 [-Wformat-truncation=]
+10618 |             snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
+      |                                             ^~    ~~~~~~~~~~~~~~~~~~~~
+hooks.c:10618:13: note: 'snprintf' output between 2 and 513 bytes into a destination of size 224
+10618 |             snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'online_server_begin_pending_match':
+hooks.c:8141:54: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size between 64 and 111 [-Wformat-truncation=]
+ 8141 |     snprintf(text, sizeof(text), "Match found: %s on %s",
+      |                                                      ^~
+hooks.c:8141:5: note: 'snprintf' output between 18 and 192 bytes into a destination of size 128
+ 8141 |     snprintf(text, sizeof(text), "Match found: %s on %s",
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 8142 |              g_online_pending_match.opponent[0] ? g_online_pending_match.opponent : "opponent",
+      |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 8143 |              g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
+      |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'online_server_handle_line':
+hooks.c:8497:75: warning: '%s' directive output may be truncated writing up to 255 bytes into a region of size 242 [-Wformat-truncation=]
+ 8497 |         snprintf(g_online_status, sizeof(g_online_status), "Login failed: %s", text[0] ? text : "?");
+      |                                                                           ^~
+hooks.c:8497:9: note: 'snprintf' output between 15 and 270 bytes into a destination of size 256
+ 8497 |         snprintf(g_online_status, sizeof(g_online_status), "Login failed: %s", text[0] ? text : "?");
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hooks.c: In function 'online_advance_net_gameplay_tick':
+hooks.c:14719:41: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size 366 [-Wformat-truncation=]
+14719 |                      "ggpo.net: failed (%s)",
+      |                                         ^~
+hooks.c:14717:13: note: 'snprintf' output between 20 and 531 bytes into a destination of size 384
+14717 |             snprintf(out,
+      |             ^~~~~~~~~~~~~
+14718 |                      sizeof(out),
+      |                      ~~~~~~~~~~~~
+14719 |                      "ggpo.net: failed (%s)",
+      |                      ~~~~~~~~~~~~~~~~~~~~~~~~
+14720 |                      err[0] ? err : "see log");
+      |                      ~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'lua_assets_build_color_masks':
+lua_manager.c:3651:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 3651 |         IsBadCodePtr((FARPROC)(void*)p_stbi_load) ||
+      |                               ^
+lua_manager.c:3651:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 3651 |         IsBadCodePtr((FARPROC)(void*)p_stbi_load) ||
+      |                      ^
+lua_manager.c:3652:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 3652 |         IsBadCodePtr((FARPROC)(void*)p_stbi_image_free)) {
+      |                               ^
+lua_manager.c:3652:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 3652 |         IsBadCodePtr((FARPROC)(void*)p_stbi_image_free)) {
+      |                      ^
+lua_manager.c: In function 'mod_assets_native_load_ready':
+lua_manager.c:4055:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4055 |     if (IsBadCodePtr((FARPROC)(void*)p_atlas_add_spritesheet_from_rgba) ||
+      |                               ^
+lua_manager.c:4055:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4055 |     if (IsBadCodePtr((FARPROC)(void*)p_atlas_add_spritesheet_from_rgba) ||
+      |                      ^
+lua_manager.c:4056:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4056 |         IsBadCodePtr((FARPROC)(void*)p_sprite_count) ||
+      |                               ^
+lua_manager.c:4056:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4056 |         IsBadCodePtr((FARPROC)(void*)p_sprite_count) ||
+      |                      ^
+lua_manager.c:4057:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4057 |         IsBadCodePtr((FARPROC)(void*)p_stbi_load) ||
+      |                               ^
+lua_manager.c:4057:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4057 |         IsBadCodePtr((FARPROC)(void*)p_stbi_load) ||
+      |                      ^
+lua_manager.c:4058:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4058 |         IsBadCodePtr((FARPROC)(void*)p_stbi_image_free)) {
+      |                               ^
+lua_manager.c:4058:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4058 |         IsBadCodePtr((FARPROC)(void*)p_stbi_image_free)) {
+      |                      ^
+lua_manager.c: In function 'mod_assets_can_rebuild_now':
+lua_manager.c:4067:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4067 |     if (IsBadCodePtr((FARPROC)(void*)p_atlas_exit) ||
+      |                               ^
+lua_manager.c:4067:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4067 |     if (IsBadCodePtr((FARPROC)(void*)p_atlas_exit) ||
+      |                      ^
+lua_manager.c:4068:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4068 |         IsBadCodePtr((FARPROC)(void*)p_sprites_reset) ||
+      |                               ^
+lua_manager.c:4068:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4068 |         IsBadCodePtr((FARPROC)(void*)p_sprites_reset) ||
+      |                      ^
+lua_manager.c:4069:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 4069 |         IsBadCodePtr((FARPROC)(void*)p_load_gfx)) {
+      |                               ^
+lua_manager.c:4069:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 4069 |         IsBadCodePtr((FARPROC)(void*)p_load_gfx)) {
+      |                      ^
+lua_manager.c: In function 'audio_runtime_ensure_ready':
+lua_manager.c:5291:25: warning: cast between incompatible function types from 'FARPROC' {aka 'int (__attribute__((stdcall)) *)()'} to 'Mix_Chunk * (__attribute__((cdecl)) *)(SDL_RWops *, int)' [-Wcast-function-type]
+ 5291 |     p_mix_load_wav_rw = (fn_mix_load_wav_rw_t)GetProcAddress(g_audio_mixer_module, "Mix_LoadWAV_RW");
+      |                         ^
+lua_manager.c:5296:24: warning: cast between incompatible function types from 'FARPROC' {aka 'int (__attribute__((stdcall)) *)()'} to 'void (__attribute__((cdecl)) *)(Mix_Chunk *)' [-Wcast-function-type]
+ 5296 |     p_mix_free_chunk = (fn_mix_free_chunk_t)GetProcAddress(g_audio_mixer_module, "Mix_FreeChunk");
+      |                        ^
+lua_manager.c:5297:22: warning: cast between incompatible function types from 'FARPROC' {aka 'int (__attribute__((stdcall)) *)()'} to 'Mix_Music * (__attribute__((cdecl)) *)(const char *)' [-Wcast-function-type]
+ 5297 |     p_mix_load_mus = (fn_mix_load_mus_t)GetProcAddress(g_audio_mixer_module, "Mix_LoadMUS");
+      |                      ^
+lua_manager.c:5301:24: warning: cast between incompatible function types from 'FARPROC' {aka 'int (__attribute__((stdcall)) *)()'} to 'void (__attribute__((cdecl)) *)(Mix_Music *)' [-Wcast-function-type]
+ 5301 |     p_mix_free_music = (fn_mix_free_music_t)GetProcAddress(g_audio_mixer_module, "Mix_FreeMusic");
+      |                        ^
+lua_manager.c:5302:23: warning: cast between incompatible function types from 'FARPROC' {aka 'int (__attribute__((stdcall)) *)()'} to 'const char * (__attribute__((cdecl)) *)(void)' [-Wcast-function-type]
+ 5302 |     p_mix_get_error = (fn_mix_get_error_t)GetProcAddress(g_audio_mixer_module, "Mix_GetError");
+      |                       ^
+lua_manager.c: In function 'reload_engine_gfx_atlases':
+lua_manager.c:5848:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 5848 |     if (IsBadCodePtr((FARPROC)(void*)p_atlas_exit)) return 0;
+      |                               ^
+lua_manager.c:5848:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 5848 |     if (IsBadCodePtr((FARPROC)(void*)p_atlas_exit)) return 0;
+      |                      ^
+lua_manager.c:5849:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 5849 |     if (IsBadCodePtr((FARPROC)(void*)p_sprites_reset)) return 0;
+      |                               ^
+lua_manager.c:5849:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 5849 |     if (IsBadCodePtr((FARPROC)(void*)p_sprites_reset)) return 0;
+      |                      ^
+lua_manager.c:5850:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 5850 |     if (IsBadCodePtr((FARPROC)(void*)p_load_gfx)) return 0;
+      |                               ^
+lua_manager.c:5850:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 5850 |     if (IsBadCodePtr((FARPROC)(void*)p_load_gfx)) return 0;
+      |                      ^
+lua_manager.c: In function 'lua_manager_game_state_offset_name':
+lua_manager.c:6405:16: warning: comparison of unsigned expression in '>= 0' is always true [-Wtype-limits]
+ 6405 |     if (offset >= offsetof(FullStateBlobHeader, field) && offset < offsetof(FullStateBlobHeader, field) + sizeof(((FullStateBlobHeader*)0)->field)) return #field
+      |                ^~
+lua_manager.c:6407:5: note: in expansion of macro 'FULL_STATE_FIELD_RANGE'
+ 6407 |     FULL_STATE_FIELD_RANGE(magic);
+      |     ^~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'game_get_room_dims':
+lua_manager.c:7477:49: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 7477 |     if (p_map_tiles_h && !IsBadCodePtr((FARPROC)(void*)p_map_tiles_h)) {
+      |                                                 ^
+lua_manager.c:7477:40: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 7477 |     if (p_map_tiles_h && !IsBadCodePtr((FARPROC)(void*)p_map_tiles_h)) {
+      |                                        ^
+lua_manager.c: In function 'lua_ui_find_button_by_action_ptr':
+lua_manager.c:9180:17: warning: unused variable 'state_name' [-Wunused-variable]
+ 9180 |     const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
+      |                 ^~~~~~~~~~
+lua_manager.c: In function 'lua_ui_find_button_by_label':
+lua_manager.c:9220:17: warning: unused variable 'state_name' [-Wunused-variable]
+ 9220 |     const char* state_name = ui_state_name_from_ptr(ui_current_state_ptr());
+      |                 ^~~~~~~~~~
+lua_manager.c: In function 'lua_ui_button_invoke_ptr':
+lua_manager.c:9341:26: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 9341 |         if (IsBadCodePtr((FARPROC)fn_raw)) {
+      |                          ^
+lua_manager.c:9373:81: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 9373 |             if (link_ptr && !nolink && p_state_switch && !IsBadCodePtr((FARPROC)(void*)p_state_switch)) {
+      |                                                                                 ^
+lua_manager.c:9373:72: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 9373 |             if (link_ptr && !nolink && p_state_switch && !IsBadCodePtr((FARPROC)(void*)p_state_switch)) {
+      |                                                                        ^
+lua_manager.c: In function 'lua_game_player_colour':
+lua_manager.c:9774:56: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+ 9774 |     if (!p_game_player_colour || IsBadCodePtr((FARPROC)(void*)p_game_player_colour)) {
+      |                                                        ^
+lua_manager.c:9774:47: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+ 9774 |     if (!p_game_player_colour || IsBadCodePtr((FARPROC)(void*)p_game_player_colour)) {
+      |                                               ^
+lua_manager.c: In function 'lua_game_room_tiles':
+lua_manager.c:10033:46: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+10033 |         !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+      |                                              ^
+lua_manager.c:10033:37: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+10033 |         !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+      |                                     ^
+lua_manager.c: In function 'lua_game_room_tile':
+lua_manager.c:10077:46: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+10077 |         !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+      |                                              ^
+lua_manager.c:10077:37: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+10077 |         !p_map_tile || IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+      |                                     ^
+lua_manager.c: In function 'lua_game_map_size':
+lua_manager.c:10291:31: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+10291 |     if (IsBadCodePtr((FARPROC)(void*)pw) || IsBadCodePtr((FARPROC)(void*)ph)) {
+      |                               ^
+lua_manager.c:10291:22: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+10291 |     if (IsBadCodePtr((FARPROC)(void*)pw) || IsBadCodePtr((FARPROC)(void*)ph)) {
+      |                      ^
+lua_manager.c:10291:67: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+10291 |     if (IsBadCodePtr((FARPROC)(void*)pw) || IsBadCodePtr((FARPROC)(void*)ph)) {
+      |                                                                   ^
+lua_manager.c:10291:58: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+10291 |     if (IsBadCodePtr((FARPROC)(void*)pw) || IsBadCodePtr((FARPROC)(void*)ph)) {
+      |                                                          ^
+lua_manager.c: In function 'lua_game_snapshot':
+lua_manager.c:10628:106: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+10628 |         if (include_tiles && in_game && room_w > 0 && room_h > 0 && p_map_tile && !IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+      |                                                                                                          ^
+lua_manager.c:10628:97: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+10628 |         if (include_tiles && in_game && room_w > 0 && room_h > 0 && p_map_tile && !IsBadCodePtr((FARPROC)(void*)p_map_tile)) {
+      |                                                                                                 ^
+lua_manager.c: In function 'lua_game_is_solid':
+lua_manager.c:11736:50: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+11736 |     if (!p_is_pos_solid || IsBadCodePtr((FARPROC)(void*)p_is_pos_solid)) {
+      |                                                  ^
+lua_manager.c:11736:41: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+11736 |     if (!p_is_pos_solid || IsBadCodePtr((FARPROC)(void*)p_is_pos_solid)) {
+      |                                         ^
+lua_manager.c: At top level:
+lua_manager.c:13013:5: warning: string length '23452' is greater than the length '4095' ISO C99 compilers are required to support [-Woverlength-strings]
+13013 |     "end\n";
+      |     ^~~~~~~
+lua_manager.c:13284:5: warning: string length '7565' is greater than the length '4095' ISO C99 compilers are required to support [-Woverlength-strings]
+13284 |     "mod.anim = anim\n";
+      |     ^~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'content_builtin_sprite_resolve':
+lua_manager.c:15117:50: warning: ISO C forbids conversion of function pointer to object pointer type [-Wpedantic]
+15117 |         !p_sprite_count || IsBadCodePtr((FARPROC)(void*)p_sprite_count)) {
+      |                                                  ^
+lua_manager.c:15117:41: warning: ISO C forbids conversion of object pointer to function pointer type [-Wpedantic]
+15117 |         !p_sprite_count || IsBadCodePtr((FARPROC)(void*)p_sprite_count)) {
+      |                                         ^
+lua_manager.c: At top level:
+lua_manager.c:14215:13: warning: 'hot_reload_schedule_menu_state_reset_if_needed' defined but not used [-Wunused-function]
+14215 | static void hot_reload_schedule_menu_state_reset_if_needed(int structural_change) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:7613:20: warning: 'ui_native_player_filter_proxy' defined but not used [-Wunused-function]
+ 7613 | static int __cdecl ui_native_player_filter_proxy(void* btn, int event_code) {
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:7585:12: warning: 'ui_native_run_player_filter' defined but not used [-Wunused-function]
+ 7585 | static int ui_native_run_player_filter(void* btn, int event_code) {
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:1659:13: warning: 'str_lower' defined but not used [-Wunused-function]
+ 1659 | static void str_lower(char* s) {
+      |             ^~~~~~~~~
+lua_manager.c:316:31: warning: 'p_atlas_upload' defined but not used [-Wunused-variable]
+  316 | static fn_atlas_upload_t      p_atlas_upload      = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
+      |                               ^~~~~~~~~~~~~~
+lua_manager.c:315:31: warning: 'p_atlas_get' defined but not used [-Wunused-variable]
+  315 | static fn_atlas_get_t         p_atlas_get         = (fn_atlas_get_t)(uintptr_t)ADDR_ATLAS_GET;
+      |                               ^~~~~~~~~~~
+lua_manager.c:307:35: warning: 'p_main_player_poll_cmds' defined but not used [-Wunused-variable]
+  307 | static fn_main_player_poll_cmds_t p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'mod_manifest_set_defaults':
+lua_manager.c:1005:75: warning: '\mod.json' directive output may be truncated writing 9 bytes into a region of size between 1 and 260 [-Wformat-truncation=]
+ 1005 |     snprintf(manifest->manifest_path, sizeof(manifest->manifest_path), "%s\\mod.json", manifest->folder_path);
+      |                                                                           ^~~~~~~~~~
+lua_manager.c:1005:5: note: 'snprintf' output between 10 and 269 bytes into a destination of size 260
+ 1005 |     snprintf(manifest->manifest_path, sizeof(manifest->manifest_path), "%s\\mod.json", manifest->folder_path);
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'mod_storage_load':
+lua_manager.c:2729:37: warning: '%s' directive output may be truncated writing up to 639 bytes into a region of size 64 [-Wformat-truncation=]
+ 2729 |         snprintf(key, sizeof(key), "%s", line);
+      |                                     ^~   ~~~~
+lua_manager.c:2729:9: note: 'snprintf' output between 1 and 640 bytes into a destination of size 64
+ 2729 |         snprintf(key, sizeof(key), "%s", line);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:2743:51: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size 64 [-Wformat-truncation=]
+ 2743 |             snprintf(type_str, sizeof(type_str), "%s", rest);
+      |                                                   ^~   ~~~~
+lua_manager.c:2743:13: note: 'snprintf' output between 1 and 512 bytes into a destination of size 64
+ 2743 |             snprintf(type_str, sizeof(type_str), "%s", rest);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:2740:51: warning: '%s' directive output may be truncated writing up to 511 bytes into a region of size 64 [-Wformat-truncation=]
+ 2740 |             snprintf(type_str, sizeof(type_str), "%s", rest);
+      |                                                   ^~   ~~~~
+lua_manager.c:2740:13: note: 'snprintf' output between 1 and 512 bytes into a destination of size 64
+ 2740 |             snprintf(type_str, sizeof(type_str), "%s", rest);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'lua_mod_get_path':
+lua_manager.c:7805:43: warning: 'snprintf' output may be truncated before the last format character [-Wformat-truncation=]
+ 7805 |         snprintf(out, sizeof(out), "%s\\%s", mod->folder_path, rel);
+      |                                           ^
+lua_manager.c:7805:9: note: 'snprintf' output 2 or more bytes (assuming 261) into a destination of size 260
+ 7805 |         snprintf(out, sizeof(out), "%s\\%s", mod->folder_path, rel);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'lua_mod_dofile':
+lua_manager.c:7817:41: warning: 'snprintf' output may be truncated before the last format character [-Wformat-truncation=]
+ 7817 |     snprintf(path, sizeof(path), "%s\\%s", mod->folder_path, rel);
+      |                                         ^
+lua_manager.c:7817:5: note: 'snprintf' output 2 or more bytes (assuming 261) into a destination of size 260
+ 7817 |     snprintf(path, sizeof(path), "%s\\%s", mod->folder_path, rel);
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'lua_assets_build_color_masks':
+lua_manager.c:3787:53: warning: '%s' directive output may be truncated writing up to 95 bytes into a region of size between 0 and 259 [-Wformat-truncation=]
+ 3787 |         snprintf(base_full, sizeof(base_full), "%s\\%s_base.tga", out_full_dir, key);
+      |                                                     ^~                          ~~~
+lua_manager.c:3787:9: note: 'snprintf' output between 11 and 365 bytes into a destination of size 260
+ 3787 |         snprintf(base_full, sizeof(base_full), "%s\\%s_base.tga", out_full_dir, key);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:3799:13: warning: 'snprintf' argument 6 overlaps destination object 'layers' [-Wrestrict]
+ 3799 |             snprintf(layers[li].relpath, sizeof(layers[li].relpath), "%s/%s_%s.tga", out_dir, key, layers[li].name);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:3624:23: note: destination object referenced by 'restrict'-qualified argument 1 was declared here
+ 3624 |     ModColorMaskLayer layers[MOD_COLOR_MASK_MAX_LAYERS];
+      |                       ^~~~~~
+lua_manager.c:3800:77: warning: '%s' directive output may be truncated writing up to 95 bytes into a region of size between 0 and 259 [-Wformat-truncation=]
+ 3800 |             snprintf(layers[li].fullpath, sizeof(layers[li].fullpath), "%s\\%s_%s.tga", out_full_dir, key, layers[li].name);
+      |                                                                             ^~                        ~~~
+lua_manager.c:3800:13: note: 'snprintf' output between 7 and 392 bytes into a destination of size 260
+ 3800 |             snprintf(layers[li].fullpath, sizeof(layers[li].fullpath), "%s\\%s_%s.tga", out_full_dir, key, layers[li].name);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:3800:13: warning: 'snprintf' argument 6 overlaps destination object 'layers' [-Wrestrict]
+lua_manager.c:3624:23: note: destination object referenced by 'restrict'-qualified argument 1 was declared here
+ 3624 |     ModColorMaskLayer layers[MOD_COLOR_MASK_MAX_LAYERS];
+      |                       ^~~~~~
+lua_manager.c: In function 'lua_audio_play_music':
+lua_manager.c:11210:53: warning: '%s' directive output may be truncated writing up to 259 bytes into a region of size 240 [-Wformat-truncation=]
+11210 |         snprintf(err, sizeof(err), "file not found: %s", full_path);
+      |                                                     ^~   ~~~~~~~~~
+lua_manager.c:11210:9: note: 'snprintf' output between 17 and 276 bytes into a destination of size 256
+11210 |         snprintf(err, sizeof(err), "file not found: %s", full_path);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'load_mod_lua':
+lua_manager.c:13373:67: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size between 0 and 259 [-Wformat-truncation=]
+13373 |         snprintf(mod->config_path, sizeof(mod->config_path), "%s\\%s", mod->folder_path, mod->config_rel);
+      |                                                                   ^~
+lua_manager.c:13373:9: note: 'snprintf' output between 2 and 388 bytes into a destination of size 260
+13373 |         snprintf(mod->config_path, sizeof(mod->config_path), "%s\\%s", mod->folder_path, mod->config_rel);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:13382:67: warning: '\storage.cfg' directive output may be truncated writing 12 bytes into a region of size between 1 and 260 [-Wformat-truncation=]
+13382 |         snprintf(mod->storage_path, sizeof(mod->storage_path), "%s\\storage.cfg", mod->folder_path);
+      |                                                                   ^~~~~~~~~~~~~
+lua_manager.c:13382:9: note: 'snprintf' output between 13 and 272 bytes into a destination of size 260
+13382 |         snprintf(mod->storage_path, sizeof(mod->storage_path), "%s\\storage.cfg", mod->folder_path);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:13380:69: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size between 0 and 259 [-Wformat-truncation=]
+13380 |         snprintf(mod->storage_path, sizeof(mod->storage_path), "%s\\%s", mod->folder_path, mod->storage_rel);
+      |                                                                     ^~
+lua_manager.c:13380:9: note: 'snprintf' output between 2 and 388 bytes into a destination of size 260
+13380 |         snprintf(mod->storage_path, sizeof(mod->storage_path), "%s\\%s", mod->folder_path, mod->storage_rel);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:13387:63: warning: '\binds.cfg' directive output may be truncated writing 10 bytes into a region of size between 1 and 260 [-Wformat-truncation=]
+13387 |         snprintf(mod->binds_path, sizeof(mod->binds_path), "%s\\binds.cfg", mod->folder_path);
+      |                                                               ^~~~~~~~~~~
+lua_manager.c:13387:9: note: 'snprintf' output between 11 and 270 bytes into a destination of size 260
+13387 |         snprintf(mod->binds_path, sizeof(mod->binds_path), "%s\\binds.cfg", mod->folder_path);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:13385:65: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size between 0 and 259 [-Wformat-truncation=]
+13385 |         snprintf(mod->binds_path, sizeof(mod->binds_path), "%s\\%s", mod->folder_path, mod->binds_rel);
+      |                                                                 ^~
+lua_manager.c:13385:9: note: 'snprintf' output between 2 and 388 bytes into a destination of size 260
+13385 |         snprintf(mod->binds_path, sizeof(mod->binds_path), "%s\\%s", mod->folder_path, mod->binds_rel);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:13406:47: warning: '%s' directive output may be truncated writing up to 127 bytes into a region of size between 0 and 259 [-Wformat-truncation=]
+13406 |     snprintf(lua_path, sizeof(lua_path), "%s\\%s", mod->folder_path, mod->entry);
+      |                                               ^~
+lua_manager.c:13406:5: note: 'snprintf' output between 2 and 388 bytes into a destination of size 260
+13406 |     snprintf(lua_path, sizeof(lua_path), "%s\\%s", mod->folder_path, mod->entry);
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'hot_reload_scan_mod_dir':
+lua_manager.c:14125:57: warning: 'snprintf' output may be truncated before the last format character [-Wformat-truncation=]
+14125 |         snprintf(child_full, sizeof(child_full), "%s\\%s", full_dir, fd.cFileName);
+      |                                                         ^
+lua_manager.c:14125:9: note: 'snprintf' output 2 or more bytes (assuming 261) into a destination of size 260
+14125 |         snprintf(child_full, sizeof(child_full), "%s\\%s", full_dir, fd.cFileName);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c:14126:55: warning: 'snprintf' output may be truncated before the last format character [-Wformat-truncation=]
+14126 |         snprintf(child_rel, sizeof(child_rel), "%s\\%s", rel_dir, fd.cFileName);
+      |                                                       ^
+lua_manager.c:14126:9: note: 'snprintf' output 2 or more bytes (assuming 261) into a destination of size 260
+14126 |         snprintf(child_rel, sizeof(child_rel), "%s\\%s", rel_dir, fd.cFileName);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+lua_manager.c: In function 'hot_reload_compute_signature':
+lua_manager.c:14169:57: warning: '%s' directive output may be truncated writing up to 259 bytes into a region of size 255 [-Wformat-truncation=]
+14169 |             snprintf(mod_full, sizeof(mod_full), "mods\\%s", fd.cFileName);
+      |                                                         ^~   ~~~~~~~~~~~~
+lua_manager.c:14169:13: note: 'snprintf' output between 6 and 265 bytes into a destination of size 260
+14169 |             snprintf(mod_full, sizeof(mod_full), "mods\\%s", fd.cFileName);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+FAIL: could not map synthetic game state at 0x00490000 (got 00000000)
+  occupied: base=00490000 size=0x3000 state=0x1000 type=0x40000
+  occupied: base=004a0000 size=0x9000 state=0x1000 type=0x40000
+  occupied: base=004b0000 size=0x1000 state=0x1000 type=0x20000
+  occupied: base=004b1000 size=0x34000 state=0x2000 type=0x20000
+  occupied: base=004f0000 size=0x10000 state=0x1000 type=0x40000
+  occupied: base=00500000 size=0x3000 state=0x1000 type=0x40000
+  occupied: base=00510000 size=0x11000 state=0x1000 type=0x40000
+  occupied: base=00530000 size=0x11000 state=0x1000 type=0x40000
+  occupied: base=00550000 size=0xc000 state=0x2000 type=0x20000
+native rollback serializer tests failed with exit code 1.
+At C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\tests\run_core_native_tests.ps1:36 char:9
++         throw "$Name failed with exit code $LASTEXITCODE."
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (native rollback...th exit code 1.:String) [], RuntimeException
+    + FullyQualifiedErrorId : native rollback serializer tests failed with exit code 1.
+ 

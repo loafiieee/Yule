@@ -93,10 +93,11 @@ Console commands:
 
 The rollback model is intentionally close to GGPO:
 
-1. Capture a compact game snapshot before a frame.
+1. Reuse the retained canonical boundary snapshot before a frame.
 2. Feed deterministic inputs for player 0 and player 1.
 3. Run exactly one native game tick.
-4. Save/checksum the resulting state.
+4. Capture the resulting state once as the next boundary; derive its checksum and optional
+   component diagnostics from the same checksum-canonical scratch blob.
 5. If remote input arrives late and differs from prediction:
    - load the saved pre-frame state
    - replay frames with corrected inputs
@@ -120,9 +121,13 @@ Values that have already mattered:
 - native game tick counter
 - player structs
 - active room / old room / room lerp state
-- camera state
+- camera X/Y plus shake amplitude/decay
+- authoritative simulation `_game_w` / `_game_h`; online capture/ticks temporarily pin
+  the synchronized values, then restore each client's local logical dimensions for render
 - thing count and thing array
 - tilemap dimensions and data pointer contents
+- deterministic V2 `map.lua` state, RNG, clock, object lifecycle generations,
+  contact history, sprite overrides, script identity, and fault state
 - transient game state
 - leader/loser/controller/player pointer fields
 - waterfall/effect pointers if they leak into checksum or simulation
@@ -135,10 +140,12 @@ Do not fix desyncs by blindly zeroing fields. First decide whether the field is:
 
 ## What Real GGPO Needs
 
-The existing code has callback-shaped rollback scaffolding, but its schema, input
-confirmation, correction, checksum, and floating-point P0 defects must be repaired first.
-After that contract passes the seeded chaos suite, the custom UDP harness can be replaced
-or bypassed with GGPO sessions and callbacks.
+The existing code has callback-shaped rollback scaffolding plus v17 reliable input and
+checksum confirmation with hard recoverability boundaries, a coordinated correction
+barrier, and canonical native-tick floating-point controls. Production still needs the
+fully typed native state adapter, the remaining checksum-field audit, and the long seeded
+chaos/native-soak contract. After those pass, the custom UDP harness can be replaced or
+bypassed with GGPO sessions and callbacks.
 
 Required GGPO callback mapping:
 
@@ -229,11 +236,46 @@ This keeps the client simple, gives enough performance headroom for a relay, and
 The built-in online hub is back in the framework and can be opened from the main-menu `ONLINE` button or the `online.hub` console command. It is translated from the old Lua hub into C-side framework UI and currently has three tabs:
 
 - Play: account login/register with a compact opt-in `Remember me` checkbox backed by Windows Credential Manager, Casual Queue, Competitive Queue, queue leave, and server-driven match launch.
-- Friends: username entry for adding friends, incoming friend requests, incoming 5-minute challenges, friend list, accept/decline actions, and friend challenges.
+- Friends: username entry for adding friends, incoming friend requests, incoming 5-minute
+  challenges with their selected map, friend list, accept/decline actions, and a
+  left/right picker containing the exact compatible-map intersection before a challenge
+  is sent. A keyboard/controller/mouse social menu exposes persistent mute, block,
+  unblock, and unfriend controls.
 - Settings: server address as a single `host:port` field, the local P2P UDP port (`Auto` by default), and challenge notifications.
-- Online result: after a completed online match, both clients report win/loss to the server. Only two reports naming the same winner produce a confirmed result and Elo update; a lone or conflicting report becomes a no-contest. Players can then requeue or return to the hub. Prematch/connect failures skip this screen and return directly to the hub.
+- Online result: after a normally completed online match, both clients report win/loss to the server. Only two reports naming the same winner produce a confirmed result and Elo update; a lone or conflicting report becomes a no-contest. Deliberately leaving a committed match sends an explicit forfeit, immediately awarding the connected opponent the win. A late P2P-loss report racing that forfeit replays the same exact terminal result instead of producing a stale-result error. Completion returns directly to the hub and uses a compact bottom-right notification; there is no fullscreen result state. Requeue becomes available after confirmation, while prematch/connect failures create no result notification.
 
-The default control server is `eggnogg.loafiieee.com:47778`, persisted in `mods\online_hub.cfg`. The prototype server lives in `online_server/server.js` and handles login/registration, public Elo, hidden server-side MMR, casual queue, competitive MMR-range queue, friends, friend requests, 5-minute challenges, shared-map selection, and P2P match setup.
+### Launch arguments and `yule://` links
+
+The installer can register a per-user `yule://` handler. These public links are suitable
+for LFG messages:
+
+```text
+yule://hub
+yule://requests
+yule://queue/casual
+yule://queue/competitive
+yule://challenge/player_1
+```
+
+Equivalent command-line switches are `--online`, `--requests`, `--queue=casual`,
+`--queue=competitive`, and `--challenge=player_1`. Challenge targets must be canonical
+lowercase account names.
+
+Queue, inbox, and challenge actions wait for authentication; a remembered sign-in proceeds
+directly, while another login can be completed in the hub. Pending actions expire after
+two minutes and cancel when the hub is closed. Challenge links still require an available
+friend and open the normal compatible-map picker.
+
+Links cannot carry passwords, server/peer addresses, match IDs, or tokens, and there is no
+direct-session join route. Unknown routes, query/fragment syntax, percent encoding,
+userinfo, conflicts, and malformed targets reject the complete online action.
+
+The default control server is `eggnogg.loafiieee.com:47778`, persisted in
+`mods\online_hub.cfg`. The prototype server lives in `online_server/server.js` and handles
+login/registration, public Elo, hidden server-side MMR, casual queue, competitive
+MMR-range queue, friends, friend requests, authoritative friend-challenge map selection,
+5-minute challenges, persistent private block/mute state, bilateral private rematches,
+shared-map selection, and P2P match setup.
 
 The current control channel is bounded newline-delimited JSON over nonblocking raw TCP.
 TCP connect and login response each have independent 10-second wall-clock deadlines.
@@ -247,11 +289,15 @@ certificate validation, it does not protect credentials or match tokens from an 
 attacker.
 
 After TCP connects, the client requests and validates the server's flat `server_info`
-advertisement before it sends the login/register request. Control protocol 2, match
-protocol 3, P2P protocol 16, and packet-auth capability are all required. `auth_ok` repeats
-the same fields and `match_found` repeats the match/P2P versions, so a stale or mixed
-deployment fails at the handshake (and again at match setup as defense in depth) instead
-of consuming a queue match that cannot start.
+advertisement before it sends the login/register request. Control protocol 3, match
+protocol 3, P2P protocol 17, packet-auth capability, social-controls capability, and
+private-rematch capability are all required. `auth_ok` repeats the same fields and `match_found` repeats the match/P2P
+versions, so a stale or mixed deployment fails at the handshake (and again at match setup
+as defense in depth) instead of consuming a queue match that cannot start.
+
+The checked-out client/server source is v17, but the live public service still advertises
+P2P v16. The public service must be deployed and restarted atomically, then pass both TCP
+and UDP deployment preflight, before a server-issued match can use this client.
 
 Gameplay remains direct P2P through `ggpo_net`. The server chooses the map from
 the intersection of both complete client manifests (capped at 96 KiB), sends
@@ -263,22 +309,29 @@ appropriate, otherwise public), and each client sends authenticated HELLOs only
 to the selected peer endpoint for that attempt. This prevents the peers from
 pinning different simultaneously advertised paths; swapping host/join cannot
 improve NAT traversal. Every
-nonempty server `map_key` must resolve to that exact installed map, and different
+nonempty server `map_key` must resolve to the installed package signature (including
+external asset and optional `map.lua` bytes), and different
 game/framework fingerprints abort server-managed prematch before native setup.
-Connection attempts, native match initialization, state transfer, and neutral
-frame-zero input exchange run behind the match-found countdown. The client stays
-in the hub if that work outlasts the timer. Once frame zero is locally restorable,
+Connection attempts, native match initialization, rollback-layout finalization, state
+transfer, and neutral frame-zero input exchange run behind the match-found countdown.
+The P2P session begins held with zero rollback capacity. Only after the exact map/content,
+the exact mapgen-pinned script is active and non-faulted (or the package declares none),
+the synchronized seed, native reset, and native start are installed does it transactionally
+allocate history/transfer storage and require the peer's matching 32-bit structural layout
+ID plus exact capacity. Missing proof waits; mismatch aborts before hold release. The
+client stays in the hub if that work outlasts the timer. Once frame zero is locally restorable,
 it reports READY and still waits until the server has received READY from both
 clients and broadcasts the gameplay-start commit. Pre-commit failure is an
 explicit no-contest setup abort with no win/loss screen or Elo change. Setup has
-a bounded timeout and never exposes a frozen GAME frame. Cosmetic profile/asset packets are compile-disabled
-in `ggpo_net`; online match setup does not send cosmetics.
+a bounded timeout and never exposes a frozen GAME frame. Generic cosmetic profile/asset
+packets are compile-disabled in `ggpo_net`. The only presentation preference exchanged is
+the fixed-size player palette tuple described below.
 
-GGPO UDP v16 authenticates every peer datagram. The server supplies both peers one
+GGPO UDP v17 authenticates every peer datagram. The server supplies both peers one
 identical 256-bit `p2p_auth_token` as exactly 64 hexadecimal characters; the older
 per-user `p2p_token` remains only server-probe authorization. `ggpo_net_set_match_token`
 decodes and domain-separates the match secret. Each packet uses HMAC-SHA-256 truncated to
-128 bits, with a direction key binding v16, sender role, and a 64-bit CSPRNG session ID.
+128 bits, with a direction key binding v17, sender role, and a 64-bit CSPRNG session ID.
 The receiver verifies the role and tag in constant time before source/session adoption,
 then applies an exact 4,096-packet replay window. Endpoint or session migration is
 permitted only through an authenticated HELLO at frame zero before confirmation. Missing
@@ -308,7 +361,7 @@ manual recovery. Player-facing copy deliberately describes only `Remember me`; s
 backend and cleanup details remain in non-secret diagnostics rather than the login UI.
 
 F6/F7 `ggpo.net` host/join and F2/F3/F4 rollback tools remain debug tools, not
-the player-facing online flow. Direct v16 host/join requires both developers to
+the player-facing online flow. Direct v17 host/join requires both developers to
 copy the same 64-hex secret and run `ggpo.net key` first. That command clears the
 clipboard after deriving a one-shot in-memory key, so the secret never enters
 console history or logs.
@@ -329,45 +382,150 @@ claim that the current rollback transport is reliable:
 
 For ugly links, prefer `ggpo.net highping 140` over `ggpo.net smoothping 140`. The conservative profile should feel more delayed or stuttery, but it should avoid the worst long freeze-and-correct cycles.
 
-State correction is capped to avoid giant hard pauses:
+Correction is now a bilateral barrier, not a short unilateral wait:
 
-- the host keeps sending/retrying correction state, but does not freeze while waiting for the peer's ACK
-- correction, frame-advantage, and prediction waits are capped to about 60 ticks
-- the joiner hard-waits for a correction for about 60 ticks, then resumes prediction while the state transfer continues
-- if the correction arrives late, the client applies it as a visible snap instead of staying frozen for many seconds
-- correction transfers use delta chunks against the last shared correction/start-state baseline when possible, with full-state chunks as the fallback
+- both peers freeze gameplay while authenticated input delivery and selective ACKs continue;
+- the host offers the retained pre-state of the first divergent frame plus one exact mutual
+  input horizon; bulk snapshot transfer begins only after the host authenticates the
+  joiner's RECEIVING tuple, and the joiner validates a complete staged snapshot before
+  READY;
+- immutable role-local input rings are the replay authority. Retained finalized history is
+  only a fallback for an acknowledged input whose ring generation was legitimately retired,
+  so stale pre-rollback history and independently delayed ACK viewpoints cannot deadlock a
+  fully received barrier;
+- both peers rewind and replay the same pinned inputs, compare one transcript identity, and
+  resume only after COMMIT/APPLIED/RELEASE/RELEASE_ACK;
+- an authenticated `BYE` sent from RELEASE_ACK retains the exact terminal tuple for
+  disconnect attribution even if the host consumed that acknowledgment and cleared its
+  active barrier one service tick before the datagram arrived;
+- the former 60-tick “resume prediction while transfer continues” path is gone;
+- no-progress has a bounded terminal timeout, and correction policy cannot be disabled in
+  the middle of a barrier; and
+- correction currently sends a full snapshot. Delta chunks remain disabled until an
+  authenticated base-negotiation/fallback phase exists.
 
-The freeze cap improves responsiveness but can let simulation continue beyond recoverable
-input/history and can apply a late correction without a shared barrier. Those are P0
-correctness problems; tuning the cap or prediction count is not their solution.
+UDP backpressure is no longer reported as a successful send. Physical sends,
+`WSAEWOULDBLOCK`/`WSAENOBUFS`, and hard Winsock errors are classified separately. A blocked
+state/correction datagram retains its exact queue entry and transfer cursor for retry;
+fresh INPUT/ACK/HELLO traffic is attempted before delayed and bulk work, and correction
+bursts are capped at eight datagrams per service tick. `net.diag` and `ggpo.net` report
+would-block, hard-error, and deferred-work counts. This is a fixed control-first baseline,
+not congestion control or selective correction-chunk reliability.
+
+Frame-advantage throttling remains a separate latency policy with its existing bounded
+wait/catch-up behavior; it is not allowed to dissolve a correction barrier.
+
+Prediction itself no longer resumes after its recoverability cap. At the oldest unresolved
+input it enters a hard selective-resend stall until the exact input arrives or the existing
+peer timeout disconnects. A history slot also cannot be reused until both peers have proved
+the frame's checksum was successfully compared; checksum-delivery no-progress stalls and
+then disconnects instead of overwriting required state. Corrections now use the bilateral
+barrier above; the remaining P0 risk is incomplete deterministic native-state coverage,
+not unilateral late-snapshot application.
 
 ## Rollback Correctness Status
 
-The current authenticated v16 transport still has known desync and recovery hazards. The
+The current authenticated v17 transport still has known desync and recovery hazards. The
 full design and acceptance contract are in
 `docs/superpowers/specs/2026-07-17-online-rollback-correctness-design.md`; prioritized work
 is tracked in `TODO.txt`.
 
-The required P0 repairs are:
+Several bounded correctness slices are complete. Rollback storage is now frozen and allocated
+only after the selected map/content and native reset/start state exist. Socket/auth-only
+held startup has zero rollback capacity; transactional finalization allocates the complete
+history/transfer set, and peers must prove the same non-cryptographic 32-bit structural
+layout ID and exact capacity before release and authoritative initial-state capture. Retry
+clears the old proof and reannounces it for the fresh session.
 
-- freeze rollback schema/size only after the selected map and deterministic content load;
-- separate monotonic latest-received and highest-contiguous remote input horizons, with
-  ACK/selective resend that cannot regress prediction under reordering;
-- gate checksum/correction/state retirement on the highest contiguous horizon and reject
-  stale/far-future frames before they can overwrite newer wrapped ring entries;
-- refuse to advance beyond recoverable input or retained-state history;
-- replace asynchronous host correction with a mutually confirmed-frame transaction that
-  validates the full blob before applying and replays buffered inputs on both peers;
-- replace pointer-dependent raw slabs with a typed, versioned, pointer-free schema and
-  explicit controller/player roles, including reconstruction of dynamic entity count and
-  allocator state across spawn/despawn/death; and
-- checksum every simulation input, including gameplay RNG and active-room dependencies,
-  while enforcing one x87/MXCSR environment for live and replay ticks.
+Input/history rings also use wrap-safe uint32
+serial ordering, reject stale and implausibly future frames within a single 512-slot
+generation, preserve newer slot generations, and keep prediction provenance from
+regressing under reordered redundant input.
+
+Every simulated tick now creates exactly one canonical frame-boundary capture. Boundary
+`N + 1` is simultaneously frame `N`'s post-state/checksum source and the retained pre-state
+for the next live or replayed tick. Initial and received authoritative snapshots seed that
+same cache. The serializer canonicalizes one scratch copy and derives both its CRC and
+optional component summary from it, preventing history, checksum publication, correction,
+and diagnostics from recapturing different live-memory moments.
+
+P2P v17 adds the missing wire-level confirmation slice. Each INPUT packet carries a
+monotonic cumulative remote-input ACK plus a 512-bit selective ACK covering the complete
+admitted ring generation. The receiver tracks separate highest-contiguous remote-input and
+peer-acknowledged local-input horizons; duplicate or reordered ACKs cannot lower either
+one. Same-frame inputs are immutable: a local second value is refused, while peer
+equivocation is a terminal protocol error. Of the 64 input slots, the sender transmits the
+live edge first, then the oldest unacknowledged hole, and uses any remaining capacity for a
+newest-to-oldest defensive tail. An unacknowledged local input cannot be silently
+overwritten by the next modulo-512 generation.
+
+Checksum publication and comparison use the minimum of both contiguous input horizons and
+the last completely simulated, non-predicted frame. Publication is suspended while
+rollback or correction makes history provisional. Authenticated remote checksums are
+cached by exact frame and compared oldest-first only after the local horizon and replayed
+history make them eligible; conflicting same-frame checksums fail closed. A
+generation-scoped cumulative `checksum_ack_next` advances only after successful comparison.
+The sender transmits the live edge first and then fills the checksum batch from the oldest
+unacknowledged frame, so dropped batches are recovered by go-back-N retry. Rollback history
+is retired only after both directions prove comparison; at the 512-frame boundary the
+session services transport in a hard stall and disconnects after bounded checksum
+no-progress rather than overwriting the slot. The fixed v17 INPUT packet is 1,292 bytes and
+has a compile-time `<= 1,400` byte guard.
+
+Network-provided start and correction blobs also use a receiver-side transaction. The
+complete transport-canonical blob, schema, size, and advertised checksum are validated
+before mutation. A preallocated raw backup is restored and byte-verified after any load or
+post-load verification failure; inability to restore is terminal. The final prematch state
+load preserves authenticated input rings and monotonic ACK horizons, including newer
+prematch evidence. A safely restored transient load is attempted at most three times in
+one call; the third failure returns with the exact old state and a retryable session.
+
+Correction now uses the authenticated bilateral `D..H` barrier described above. The
+remaining required P0 repairs are:
+
+- replace production pointer-dependent raw slabs with the fully typed native adapter. A
+  standalone canonical envelope now validates compatibility/map-script identity, explicit
+  roles, fixed-pool occupancy/allocator metadata, stable behavior IDs, ordered danger
+  references, tiles, canonical values, section bounds, and failed-decode atomicity. Active
+  entity bytes `0x02..0x157` remain an opaque bridge and there is no native capture/apply
+  integration yet. The final adapter still needs checked native reconstruction and semantic
+  equality for the encoded controller/player roles. The fixed 16-slot thing pool needs
+  semantic occupancy,
+  allocator-counter, slot/type/lifecycle, and map-script-generation validation across
+  spawn/despawn/death; entity updater/animation, danger-list, and particle pointers need
+  stable IDs and checked local reconstruction; and
+- finish the simulation-field checksum audit. Canonicalization v6 keeps gameplay RNG,
+  simulation camera X/Y, camera-shake amplitude/decay, `_game_w`, `_game_h`, `_resumed`,
+  and the `_mine_anim` same-tick guard at `0x541EFC` checksum-authoritative. Shake controls
+  zero-versus-two gameplay RNG draws and writes
+  camera X/Y; prior-tick camera X can change loser respawn. Height affects vertical camera
+  clamps and camera-relative ambient paths. The online loop captures authoritative post-
+  tick RNG/camera/shake/dimensions and restores them before every live, rollback, and
+  correction pre-state/tick,
+  so local `adjust_layout` rewrites cannot affect gameplay; it restores each client's local
+  logical dimensions afterward for rendering. Every native GAME update uses
+  vanilla-compatible x87 `0x037F` and MXCSR `0x00001F80` controls with exact caller-control
+  restoration. The mine guard is retained because native `_mine_anim` checks it before the
+  sound call, mine-tile mutation, and shake write; the adjacent sword-sound and crowd-cheer
+  debounce stamps remain presentation-only and masked. The masked crowd/chant state can
+  change whether a near-win chant-pitch draw runs, so its verified sound-only return site
+  `0x42C9B8` is routed to cosmetic RNG. Remaining exclusions still require reader-by-reader
+  native proof.
 
 Authentication, replay rejection, and socket retry remain valuable completed layers, but
 they do not close these deterministic-state defects. Production GGPO integration is gated
 on the repaired state/input callbacks and seeded network-chaos suite; a library swap cannot
 make incomplete serialization deterministic.
+
+The v16 layout-proof slice reused the formerly receiver-unused packed `last_checksum` slot
+without changing that version's packet size. V17 retains the field as `state_layout_id`
+but intentionally expands and version-locks the ordinary packet for its confirmation
+envelope; v16 and v17 peers cannot interoperate. The field's meaning is not a general
+old-DLL compatibility guarantee: managed mixed clients are also rejected by the immutable
+game/framework binary fingerprint. The layout ID identifies structure rather than content;
+the server-selected `map_key` chooses an advertised map package, but its current 32-bit
+signature is not cryptographic identity. A complete gameplay-mod/content/rules/config
+manifest remains required.
 
 ## Online UX Status
 
@@ -380,42 +538,113 @@ screen queues the game's actual mouse renderer once at the topmost render layer.
 the live native global scale, black shadow pass, animated red/yellow color pass,
 `misc[7]` artwork, and native hotspot instead of the former white/custom-scale plot.
 
-The current Game Over state shows the outcome, opponent, map, server confirmation/rating
-text, and responsive Requeue and Hub buttons. Requeue remains in a waiting state until the
-server confirms the result. It exists for the asynchronous server-confirmation/requeue
-step rather than replacing vanilla local-play results. Result and hub are transient sibling
-states: Hub/Back always resolves to a stable native owner, and an inactive result state is
-rejected instead of recreating a generic Game Over page. A commit and immediate server
-forfeit result received in one TCP batch resolves directly from the start barrier without
-entering a dead GAME state. The Friends tab supports add/remove, requests, presence,
-direct challenges, accept/decline, and five-minute expiry.
+Online completion has no fullscreen win/loss/game-over state. It returns to the Play tab in
+the hub and shows a compact bottom-right result notification with the opponent, map, server
+status, and confirmed rating delta. Before confirmation its neutral `RESULT REPORTED`
+heading does not claim an unverified outcome. Closing or expiring that provisional toast
+retains the exact match identity so a delayed server confirmation can refresh it. The normal
+queue rows remain gated until confirmation, and Hub/Back is explicitly owned by the stable
+native main menu rather than the ended GAME state. A commit and immediate server forfeit
+ result received in one TCP batch resolves directly from the start barrier without entering
+ a dead GAME state. The Friends tab supports add/remove, requests, presence,
+direct challenges, a complete compatible-map picker, selected-map display,
+accept/decline, five-minute expiry, and a focusable social context menu. `C`, controller
+X/Y, or right-click opens Challenge/Mute/Block/Unfriend for a friend and Unblock for a
+blocked user; arrows/D-pad, confirm, back, mouse hover, and wheel all work inside it.
+Muting suppresses only that friend's challenge pop-up—the challenge remains in the inbox.
+Blocking persistently removes friendship, requests, and pending challenges in both
+directions and excludes the pair from both queues. A block-list snapshot intentionally
+omits presence and Elo, the other user receives only generic unavailability, and
+unblocking does not silently restore friendship. Friend presence is derived from
+authenticated server state and distinguishes ordinary online, casual queue, competitive
+queue, setting up a match, active match, and offline. Friends are refreshed at queue and
+match lifecycle boundaries; clients cannot publish arbitrary presence, busy friends
+cannot be challenged, and blocked entries expose no presence. The control-v3 picker streams an exact
+counted begin/choice/end response keyed by a client request ID. The server validates the
+ selection when the challenge is created and recomputes the intersection at accept, so
+ stale or client-invented keys cannot choose a match map.
 
-During an established match, the pause, options, console, and Mods overlays keep rollback
-service and simulation moving while local gameplay input is neutralized. The GGPO-active
-key guard consumes F1-F12 so unsafe debug/window actions cannot mutate the match. Support
-for arbitrary native screens outside those audited overlays remains future work.
+After a confirmed committed result, that same compact notification can expose a
+45-second private-rematch offer. It remains non-modal and supports its visible buttons,
+`R`/`N`, controller X/Y, and mouse. The first acceptance only waits and notifies the
+opponent; both players must explicitly accept before the server creates a fresh match.
+The exact previous map is revalidated, while match ID, roles, seed, rendezvous token, and
+packet-auth token are regenerated. Rematches are always private and unranked, including
+after a competitive match, so they cannot farm Elo or silently re-enter a queue. Joining a
+queue, blocking, disconnecting, declining, closing the actionable result notification,
+expiration, or entering another match closes the offer for both players. All messages are
+bound to the retained result's exact positive match ID, and starting the fresh match clears
+the old result UI only after the new protocol and map data validate.
+
+During an established match, the pause/options pages, both players' native input-remapping
+pages, the console, and Mods overlays keep rollback service and simulation moving while
+local gameplay input is neutralized. The two remapping states use the native common
+button-update owner, so they receive one online tick per menu update without a second
+remap-specific tick path. The GGPO-active key guard consumes F1-F12 so unsafe debug/window
+actions cannot mutate the match. Support for arbitrary native screens outside those
+audited overlays remains future work.
 
 Still-open UX work includes:
 
 - ping and direct/relay route display on the player-facing match card;
-- a bilateral private rematch flow (distinct from queue-again);
-- friend-challenge map selection from the two clients' manifest intersection;
-- block/mute and richer social presence;
-- synchronized player colors if cosmetics are deliberately reintroduced; and
 - live small-window, DPI, mouse-hitbox, native-cursor, and two-client acceptance.
 
 ## Player Identity And Cosmetics
 
-Cosmetics and character customization are out of the online protocol for now. They can still be designed for offline/local play, but online match setup should not send cosmetic profiles, cosmetic assets, hats, outfits, or customization payloads.
+Arbitrary cosmetics and character customization remain outside the online protocol. Online
+match setup must not send cosmetic profiles, assets, hats, outfits, or mod-defined
+customization payloads.
+
+There is one deliberately narrow exception: each client captures the built-in skin and
+clothing palette indices for its locally assigned fighter (host/P1 or join/P2). A
+fixed-size authenticated P2P packet exchanges those two bounded IDs and an exact peer echo
+during prematch. Both tuples and both acknowledgements are required before READY. After the
+authoritative frame-zero restore, the client applies each tuple to its server-assigned
+player slot. The palette array is presentation-only and is not in rollback state or
+gameplay checksums. Socket retries keep the local choice but discard stale peer proof.
 
 Current online cosmetic rules:
 
 - usernames and player indicators can be UI-only overlays
-- gameplay match setup does not exchange cosmetic data
-- cosmetic data is not sent every frame
+- gameplay match setup exchanges only the two fixed built-in palette IDs
+- the palette tuple is repeated only through the frame-zero prematch barrier
 - cosmetics do not affect gameplay simulation
 - cosmetics are not included in rollback state checksums or desync decisions
-- missing or mismatched cosmetic assets should not block an online match because they are not part of the match contract
+- generic cosmetic assets are never transferred and cannot block a match
+- a malformed, conflicting, or one-sided palette tuple does block prematch rather than
+  silently assigning the wrong player's colors
+
+## Discord Rich Presence
+
+The optional Discord desktop integration reports only a closed set of coarse states:
+menus, local play, hub/sign-in/social, casual or competitive queue, prematch, and
+casual/competitive/private online match. Hooks passes a fixed enum rather than text, so
+the activity cannot contain usernames, opponents, maps, Elo, match IDs, endpoints,
+credentials, session/P2P tokens, party secrets, or arbitrary mod data. It publishes no
+buttons or joinable instance.
+
+The dependency-free client uses Discord's local Windows RPC pipe with overlapped,
+incremental, 64-KiB-bounded I/O. It never waits for Discord or performs network access.
+Updates coalesce and are rate-limited; absent, closed, malformed, or restarted Discord
+clients cannot stall gameplay. `discord_presence` is toggled from Online Settings. A
+deployment-owned public numeric `discord_application_id` is required in
+`mods/modframework.cfg`; without one, the row reads `UNAVAILABLE` and no connection is
+attempted. See `DISCORD_RICH_PRESENCE.md` for the exact data contract and release test.
+
+## Discord LFG bridge
+
+The optional server-side LFG bridge posts one embed while an authenticated player is
+actually waiting in the casual or competitive queue. It is outbound Discord REST only:
+there is no Gateway session, intents, command endpoint, or new matchmaking authority.
+The server passes only the canonical public username and queue; mentions are disabled and
+the bot never receives ratings, match IDs, control/P2P endpoints, credentials,
+rendezvous data, or authentication tokens.
+
+Its two HTTPS buttons enter the completed safe `yule://` handoff for the existing friend
+challenge or same public queue. Posts retire on leave, match, disconnect, queue change,
+and orderly server shutdown. Discord request timeouts, response sizes, tracked users,
+retries, and 429 delays are bounded. See `DISCORD_LFG_BOT.md` for the secret environment
+file, channel permissions, loopback HTTPS-proxy handoff, and release test.
 
 ## Matchmaking / Transport Status
 
@@ -427,7 +656,7 @@ not host/join details.
 
 The current direct transport supplies symmetric public/LAN candidate probing, three
 fresh-socket attempts, bounded setup/disconnect policy, and authenticated/replay-protected
-v16 UDP packets. The client-side control transport supplies atomic queued sends, bounded
+v17 UDP packets. The client-side control transport supplies atomic queued sends, bounded
 receive framing, strict flat-JSON parsing, connect/auth deadlines, and all-or-nothing map
 manifest publication.
 
@@ -451,30 +680,55 @@ roadmap item.
 ## Implementation Milestones
 
 The following prototype milestones are implemented in source and covered by focused
-tests: data/control messages, account/queue/friend/challenge server flow, built-in hub,
-strict client control transport, map manifests, symmetric direct signaling, v16 packet
-authentication, bounded P2P retry, prematch preparation behind the countdown, menu-time
-simulation, result reporting/UI, credential storage, and gameplay-Lua suspension.
+tests: data/control messages, account/queue/friend/challenge server flow, authoritative
+friend-challenge map picking, built-in hub,
+strict client control transport, map manifests, symmetric direct signaling, v17 packet
+authentication, bounded P2P retry, post-content rollback-layout freeze/proof, monotonic
+contiguous input confirmation and selective resend, hard input/checksum recovery,
+generation-scoped reliable checksum ACK/retry, transactional received-state application,
+failure-atomic live-tick pre-state restoration, mutually confirmed correction replay/release,
+post-stall once-per-frame local-input commit, checksum-authoritative camera shake and
+simulation dimensions with peer-local render restoration, active-match peer-local
+room/mine palette preservation across rollback/correction, canonical native-tick FP
+controls, a standalone
+canonical rollback-envelope foundation,
+deterministic map-local Lua rollback state, prematch preparation behind the countdown,
+menu-time simulation, result reporting/UI, credential storage, and gameplay-mod Lua
+suspension, built-in palette synchronization, and privacy-bounded Discord Rich Presence.
+The server-side Discord LFG bridge and strict public HTTPS redirect are also complete in
+source with focused privacy/lifecycle tests.
 
-Remaining release milestones include the P0 rollback schema/input/history/correction/
-checksum repairs, their deterministic chaos/soak acceptance, the security and
+Remaining release milestones include the P0 typed native-state adapter and remaining
+checksum-field coverage, their deterministic chaos/soak acceptance, the security and
 infrastructure items above, full mod/content/config compatibility enforcement, production
 GGPO integration, physical two-machine/NAT/window acceptance, and production operations.
-Private rematch, friend map choice, color synchronization, social integrations, and richer
-UI are later product work.
+Broader UI work remains later product work.
 
 ## Mod And Anti-Cheat Policy
 
-Framework-managed Lua owners are classified from actual API use. Gameplay-affecting
+Framework-managed mod Lua owners are classified from actual API use. Gameplay-affecting
 owners are suspended from match assignment through cleanup, their callbacks/mutators are
 guarded, and known transient overrides are neutralized. Cosmetic/read-only Lua may remain
 active inside that boundary. Hiding the Mods page is not the mechanism; it remains
 inspectable and explains suspension.
 
 Server-managed prematch also rejects differing peer-reported 32-bit game/framework build
-fingerprints and requires an exact server-selected `map_key`. These identifiers catch
+fingerprints, requires an exact server-selected `map_key`, and proves an exact final
+rollback structural ID/capacity after content initialization. These identifiers catch
 ordinary incompatibility but are non-cryptographic reports from the clients, so they are
 not anti-cheat.
+
+The current custom-map key carries only the existing 32-bit package signature. Requiring
+the same server-selected string prevents ordinary mismatches, but hash collisions are not
+a cryptographic content proof; the complete manifest upgrade remains open.
+
+An optional V2 `map.lua` is not a suspended general mod. It runs in a separate restricted
+VM, its exact source/bindings are map identity, and all permitted persistent state is a
+fixed pointer-free section of the rollback blob. Filesystem/network/OS/FFI/debug/dynamic
+code and the non-bit-stable numeric power operator are unavailable. Managed prematch
+requires the exact pinned script to be active and healthy before layout publication or
+READY; bind/start failure is an explicit setup abort, never silent unscripted gameplay.
+This is a determinism boundary, not anti-cheat against a modified native client.
 
 Before public/ranked play, add a complete deterministic compatibility manifest covering
 the enabled gameplay-mod set, content-registry state, loaded maps/assets, relevant rules
@@ -494,26 +748,105 @@ Existing debug/manual probes:
 4. F6/F7 authenticated localhost host/join session after `ggpo.net key`.
 
 Focused automated coverage now includes the strict control parser and hook lifecycle,
-real-socket send-queue behavior, v16 packet authentication/replay rejection and paired
-prematch flow, server auth/token generation, result-screen routing, gameplay-mod guards,
-credential storage, map V2/content bridge behavior, map-generation retirement, updater
-transactions, and window policy/static integration. The exact command set and remaining
-manual order live in `docs/superpowers/plans/2026-07-17-todo-batch-verification.md`.
+real-socket send-queue behavior, v17 packet authentication/replay rejection and paired
+prematch flow/layout finalization and mismatch/retry guards, server auth/token generation,
+result-toast routing, gameplay-mod guards,
+credential storage, map V2/content bridge and map-script sandbox/snapshot behavior,
+map-generation retirement, updater transactions, window policy/static integration, and a
+guarded production-serializer regression covering raw roundtrip, canonical transport
+validation/pointer rejection, canonical load scrubbing, preflight no-mutation, and atomic
+peer-local palette sidecar restoration. It also proves that the single canonical-blob
+analyzer returns the same CRC used by the boundary and derives its component summary without
+a second save. The
+guarded core suite also covers hostile/nested FP-control restoration and the standalone
+identity-pinned canonical-envelope codec; the paired runner forces a coordinated
+correction under loss, delay/reordering, and authenticated duplicate replay, including
+exact-ring replay after stale pre-rollback history. A second
+paired case holds one peer transport-only, proves stalled wall-tick input samples remain
+uncommitted, and commits only the fresh sample present when prediction recovery clears.
+The long correction mode enables chaos from frame one, injects one-sided canonical
+divergence at frame 600 after history-ring reuse, completes the agreed snapshot/replay
+barrier (including duplicate replay and a forced state-chunk `would-block`), and continues
+both roles through frame 2,047. It requires prediction and rollback on each role, one final
+matching checksum, and bilateral cumulative checksum proof in the new correction
+generation.
+The ordinary paired chaos case runs changing nonzero inputs through frame 2,047 under
+20% seeded loss and one-to-eight-tick delay/reordering, reuses the complete 512-slot
+history ring four times, exercises prediction/rollback on both roles, matches the target
+checksum, and drains its bilateral checksum proof. Each peer also streams all 2,048
+finalized canonical pre-frame blobs plus post-frame checksums to a private temporary trace;
+the supervisor structurally parses and byte-compares every record, reports the exact first
+frame/byte on disagreement, and deletes both traces. Its Python supervisor reads both child
+output pipes concurrently so debug logging cannot block one peer and fabricate a timeout.
+A second paired mode preserves the synchronized canonical boundary while rebasing its
+test epoch to `UINT32_MAX - 1023`, recreates only the neutral prediction/ACK prefix a
+naturally long-running session would already own, and drives the same 2,048 exact records
+through authenticated loss and delay/reordering. It crosses frame zero halfway through,
+finishes at frame 1,023, exercises prediction and rollback on both roles, and drains the
+bilateral checksum proof after the wrap. Production has no rebase path; its normal uint32
+serial-ordering code is the path exercised after the test-only setup.
+
+Saved trace pairs can be inspected without exposing raw state:
+
+```text
+python tools/peer_trace_diff.py host-trace.bin join-trace.bin
+python tools/peer_trace_diff.py --json host-trace.bin join-trace.bin
+```
+
+The streaming parser bounds each state record, rejects empty, truncated, oversized, or
+nonconsecutive streams (including incorrect wrap sequences), and stops at the first valid
+divergence. It prints only the record/frame, difference kinds, first state-byte offset,
+post-frame checksums, lengths, and SHA-256 state hashes. Exit codes are `0` for identical,
+`1` for divergent, and `2` for invalid input or usage. Recognized EGG0/v9 states add
+non-overlapping component SHA-256, changed entity slots/tile counts, and the exact first
+known header/map-script/player/entity/tile location without printing state bytes. Older or
+arbitrary valid traces retain the generic report.
+
+On the first coordinated checksum divergence, each client now automatically preserves
+its exact canonical post-frame boundary under `mods\desync_repros`. Corresponding files
+share the opaque pair tag, divergent frame, and player-role suffix:
+
+```text
+trace_<pair>_f<frame>_p0.bin
+trace_<pair>_f<frame>_p1.bin
+meta_<pair>_f<frame>_p0.txt
+meta_<pair>_f<frame>_p1.txt
+```
+
+Compare the two `.bin` files with `tools/peer_trace_diff.py`. The metadata records the
+boundary, commands, FP controls, delay/prediction settings, and current transport,
+rollback, stall, correction, and simulated-network counters. It also records both peers'
+executable/framework build IDs, rollback layout identity/capacity, and a hash of the
+deterministic transport settings. An independently generated chaos seed plus up to 8,192
+chronological simulated drop/delay/queue-overflow events records the service tick, packet
+type, and outcome without retaining packet bytes. It deliberately contains no account
+credentials, username, endpoint, raw session ID, or match token. A responder may mark
+`remote_checksum_known=0` when its correction request arrived before the peer's checksum;
+the detecting peer retains the reciprocal checksum. File I/O runs on a bounded background
+worker and each temporary file is flushed before its atomic replacement. The larger bundle
+still needs the complete content/map/mod/rules manifest fingerprint, full-session input
+history, lossless spill for more than 8,192 pre-divergence chaos events, and sequence-aware
+network measurements.
+The exact command set and remaining manual order live in
+`docs/superpowers/plans/2026-07-17-todo-batch-verification.md`.
 
 Additional tests to add:
 
-- paired deterministic sessions with thousands of changing, nonzero input frames and
-  exact per-frame canonical state/checksum assertions;
-- prediction, multi-frame rollback, input/state ring wrap, frame-number wrap, forced
-  mismatch, transactional correction, and disconnect at every correction phase;
-- seeded ordinary/burst loss, delay, reorder, duplicate, `WSAEWOULDBLOCK`, bandwidth cap,
-  and input-versus-correction traffic competition at the 64-input and 512-state edges;
+- seeded ordinary/burst loss, delay, reorder, duplicate, repeated/burst socket backpressure,
+  bandwidth cap, and input-versus-correction traffic competition at the 64-input and
+  512-state edges (one forced correction-chunk would-block/retry is covered);
 - semantic save/load tests for controller/player roles and every typed schema component;
-- differing prior maps followed by the same selected map/content layout;
+- live clients arriving from differing prior maps and then loading the same selected
+  map/content layout (the synthetic differing-bootstrap/shared-final-size case is covered);
 - long native soaks across rooms, deaths, respawns, score changes, match reset, hazards,
   custom maps, menus, audio/render/window variants, and differing initial FP modes;
-- first-divergence component/field/entity/tile diagnostics and a secret-free two-peer repro
-  bundle/diff tool;
+- two-client visual soaks that force ordinary rollback and coordinated correction during
+  room transitions and mine tints, verifying the new room palette always settles and mine
+  tint always returns without making presentation colours gameplay-authoritative;
+- completion of the automatic secret-free repro bundle around the paired first-divergence
+  snapshots: the complete content/map/mod/rules manifest fingerprint, full-session inputs,
+  lossless spill beyond the bounded chaos-event history, and sequence-aware network
+  measurements;
 - dynamic two-client version/map/content/mod mismatch rejection;
 - two-machine LAN and home-NAT tests; and
 - internet tests with direct/relay failover after those transports exist.
@@ -540,20 +873,20 @@ Desync diagnostics should report:
 
 Implemented prototype surface:
 
-- account login/registration, queue-first hub, casual/competitive queue, friends and
-  challenges;
+- account login/registration, queue-first hub, casual/competitive queue, friends,
+  challenges, persistent block/mute controls, and authoritative compatible-map picking;
 - synchronized hidden prematch setup and direct authenticated P2P rollback transport;
-- complete shared-map manifests and exact server-selected map identity;
-- bounded retry/disconnect handling and a custom confirmed-result Requeue/Hub screen;
+- complete shared-map manifests, exact server-selected map identity, and a
+  server-revalidated friend-challenge map choice;
+- bounded retry/disconnect handling and a compact confirmed-result toast with safe hub requeue gating;
 - gameplay-Lua suspension, debug diagnostics, desync dumps, simulated loss/jitter, and
   configurable prototype latency controls; and
 - strict client control framing/parser/deadlines (without transport encryption).
 
 Open production gates:
 
-- typed deterministic state schema, monotonic/recoverable input protocol, coordinated
-  correction, full simulation checksum coverage, canonical FP controls, and chaos/soak
-  acceptance;
+- typed deterministic native-state capture/apply, full simulation checksum coverage, and
+  long chaos/native-soak acceptance;
 - real GGPO session wrapper;
 - TLS/certificate validation and hardened session authentication;
 - cryptographically trustworthy match configs plus complete version/map/mod/content/
@@ -561,7 +894,7 @@ Open production gates:
 - relay fallback, IPv6, route choice, and two-machine internet soak testing;
 - hardened server-side result validation and durable production storage/operations;
 - a clear public/private content policy and stronger integrity boundary;
-- private rematch and the remaining UX/runtime acceptance; and
+- live private-rematch and the remaining UX/runtime acceptance; and
 - release logging/monitoring that is useful without exposing secrets.
 
 ## Build Command

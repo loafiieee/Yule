@@ -16,7 +16,15 @@
 
 #include "update_ext.h"
 
-#ifdef UPDATE_EXT_TEST
+/*
+ * Owner-side release tooling reads this unique marker from the compiled proxy.
+ * It prevents a channel such as 1.1 from packaging a DLL that still identifies
+ * itself as 1.0 and repeatedly offering the same update after relaunch.
+ */
+const char g_yule_framework_version_marker[] =
+    "YULE_FRAMEWORK_VERSION=" FRAMEWORK_VERSION;
+
+#if defined(UPDATE_EXT_TEST) || defined(UPDATE_EXT_HELPER)
 #define LOG_DEBUG(...) ((void)0)
 #define LOG_INFO(...)  ((void)0)
 #define LOG_WARN(...)  ((void)0)
@@ -46,7 +54,8 @@
 #define UPDATE_JSON_MAX_DEPTH       16
 #define UPDATE_JOURNAL_MAGIC_V1     "YULE_UPDATE_JOURNAL 1"
 #define UPDATE_JOURNAL_MAGIC_V2     "YULE_UPDATE_JOURNAL 2"
-#define UPDATE_JOURNAL_MAGIC        UPDATE_JOURNAL_MAGIC_V2
+#define UPDATE_JOURNAL_MAGIC_V3     "YULE_UPDATE_JOURNAL 3"
+#define UPDATE_JOURNAL_MAGIC        UPDATE_JOURNAL_MAGIC_V3
 #define UPDATE_RECOVERY_SUFFIX      ".update-recovery"
 #define UPDATE_UNKNOWN_SHA256       \
     "0000000000000000000000000000000000000000000000000000000000000000"
@@ -80,6 +89,7 @@ static volatile LONG g_update_booted = 0;
 static volatile LONG g_update_cancel = 0;
 static volatile LONG g_update_apply_requested = 0;
 static volatile LONG g_update_recovery_restart = 0;
+static volatile LONG g_update_helper_pending = 0;
 
 #ifdef UPDATE_EXT_TEST
 /* Simulates Windows keeping a renamed image section alive until process exit. */
@@ -1381,6 +1391,17 @@ int update_ext_config_set(const char* key, const char* value) {
     return ok;
 }
 
+int update_ext_config_get(const char* key, char* out, size_t cap) {
+    int ok;
+    update_ensure_init();
+    if (!update_cfg_key_valid(key) || !out || cap == 0u) return 0;
+    out[0] = '\0';
+    EnterCriticalSection(&g_update.cfg_lock);
+    ok = update_cfg_get(key, out, cap);
+    LeaveCriticalSection(&g_update.cfg_lock);
+    return ok;
+}
+
 static void update_read_config(void) {
     char value[UPDATE_URL_CAP];
     int auto_update = 1;
@@ -1715,6 +1736,27 @@ static int update_file_matches(const char* path, const UpdateFileSpec* spec) {
            _stricmp(hash, spec->sha256) == 0;
 }
 
+static int update_capture_regular_file_integrity(const char* path,
+                                                 uint64_t* out_size,
+                                                 char out_sha256[65]) {
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    uint64_t size;
+    if (!path || !out_size || !out_sha256 ||
+        !GetFileAttributesExA(path, GetFileExInfoStandard, &info) ||
+        (info.dwFileAttributes &
+            (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+        return 0;
+    }
+    size = ((uint64_t)info.nFileSizeHigh << 32) |
+           (uint64_t)info.nFileSizeLow;
+    if (size > UPDATE_FILE_MAX_BYTES ||
+        !update_sha256_file(path, size, out_sha256)) {
+        return 0;
+    }
+    *out_size = size;
+    return 1;
+}
+
 static int update_build_download_url(const char* base, const char* relative,
                                      char* out, size_t cap) {
     size_t a = strlen(base);
@@ -1783,7 +1825,10 @@ typedef struct UpdateApplyEntry {
     char staged[UPDATE_ABS_CAP];
     char backup[UPDATE_ABS_CAP];
     char quarantine[UPDATE_ABS_CAP];
+    char original_sha256[65];
+    uint64_t original_size;
     int had_original;
+    int has_original_integrity;
     int swapped;
 } UpdateApplyEntry;
 
@@ -1797,8 +1842,31 @@ typedef struct UpdateJournal {
         uint64_t size;
         int had_original;
         int has_integrity;
+        char original_sha256[65];
+        uint64_t original_size;
+        int has_original_integrity;
     } files[UPDATE_MAX_FILES];
 } UpdateJournal;
+
+static int update_entry_original_matches(const UpdateApplyEntry* entry) {
+    int exists = 0;
+    DWORD attrs = INVALID_FILE_ATTRIBUTES;
+    char hash[65];
+    if (!entry || !entry->has_original_integrity ||
+        !update_path_query(entry->target, &exists, &attrs) ||
+        (exists && (attrs &
+            (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) ||
+        exists != (entry->had_original ? 1 : 0)) {
+        return 0;
+    }
+    if (!exists) {
+        return entry->original_size == 0u &&
+               _stricmp(entry->original_sha256,
+                        UPDATE_UNKNOWN_SHA256) == 0;
+    }
+    return update_sha256_file(entry->target, entry->original_size, hash) &&
+           _stricmp(hash, entry->original_sha256) == 0;
+}
 
 static int update_delete_file_if_present(const char* path) {
     DWORD attrs = INVALID_FILE_ATTRIBUTES;
@@ -1859,14 +1927,19 @@ static int update_journal_write_state(UpdateJournal* journal,
     size_t i;
     int n;
     int ok;
+    const char* magic;
     if (!journal || journal->count == 0 ||
         journal->count > UPDATE_MAX_FILES ||
         !update_journal_path(path)) return 0;
-    cap = 128u + journal->count * (UPDATE_MAX_PATH + 128u);
+    if (journal->version == 3) magic = UPDATE_JOURNAL_MAGIC_V3;
+    else if (journal->version == 2) magic = UPDATE_JOURNAL_MAGIC_V2;
+    else return 0;
+    cap = 128u + journal->count * (UPDATE_MAX_PATH + 224u);
     text = (char*)malloc(cap);
     if (!text) return 0;
     n = snprintf(text + used, cap - used,
-                 UPDATE_JOURNAL_MAGIC "\nphase=%s\ncount=%lu\n",
+                 "%s\nphase=%s\ncount=%lu\n",
+                 magic,
                  committed ? "committed" : "applying",
                  (unsigned long)journal->count);
     if (n < 0 || (size_t)n >= cap - used) {
@@ -1882,11 +1955,36 @@ static int update_journal_write_state(UpdateJournal* journal,
             free(text);
             return 0;
         }
-        n = snprintf(text + used, cap - used, "file=%d:%llu:%s:%s\n",
-                     journal->files[i].had_original ? 1 : 0,
-                     (unsigned long long)journal->files[i].size,
-                     journal->files[i].sha256,
-                     journal->files[i].path);
+        if (journal->version >= 3) {
+            if (!journal->files[i].has_original_integrity ||
+                !update_sha256_valid(
+                    journal->files[i].original_sha256) ||
+                journal->files[i].original_size > UPDATE_FILE_MAX_BYTES ||
+                (journal->files[i].had_original
+                    ? _stricmp(journal->files[i].original_sha256,
+                               UPDATE_UNKNOWN_SHA256) == 0
+                    : (journal->files[i].original_size != 0u ||
+                       _stricmp(journal->files[i].original_sha256,
+                                UPDATE_UNKNOWN_SHA256) != 0))) {
+                free(text);
+                return 0;
+            }
+            n = snprintf(text + used, cap - used,
+                         "file=%d:%llu:%s:%llu:%s:%s\n",
+                         journal->files[i].had_original ? 1 : 0,
+                         (unsigned long long)journal->files[i].size,
+                         journal->files[i].sha256,
+                         (unsigned long long)journal->files[i].original_size,
+                         journal->files[i].original_sha256,
+                         journal->files[i].path);
+        } else {
+            n = snprintf(text + used, cap - used,
+                         "file=%d:%llu:%s:%s\n",
+                         journal->files[i].had_original ? 1 : 0,
+                         (unsigned long long)journal->files[i].size,
+                         journal->files[i].sha256,
+                         journal->files[i].path);
+        }
         if (n < 0 || (size_t)n >= cap - used) {
             free(text);
             return 0;
@@ -1904,7 +2002,7 @@ static int update_journal_write(const UpdateApplyEntry* entries, size_t count,
     size_t i;
     if (!entries || count == 0 || count > UPDATE_MAX_FILES) return 0;
     memset(&journal, 0, sizeof(journal));
-    journal.version = 2;
+    journal.version = 3;
     journal.committed = committed ? 1 : 0;
     journal.count = count;
     for (i = 0; i < count; i++) {
@@ -1917,6 +2015,30 @@ static int update_journal_write(const UpdateApplyEntry* entries, size_t count,
         journal.files[i].size = entries[i].spec.size;
         journal.files[i].had_original = entries[i].had_original ? 1 : 0;
         journal.files[i].has_integrity = 1;
+        if (entries[i].has_original_integrity) {
+            journal.files[i].original_size = entries[i].original_size;
+            journal.files[i].has_original_integrity = 1;
+            if (!update_copy(journal.files[i].original_sha256,
+                             sizeof(journal.files[i].original_sha256),
+                             entries[i].original_sha256)) return 0;
+#ifdef UPDATE_EXT_TEST
+        } else if (entries[i].had_original) {
+            if (!update_capture_regular_file_integrity(
+                    entries[i].target,
+                    &journal.files[i].original_size,
+                    journal.files[i].original_sha256)) return 0;
+            journal.files[i].has_original_integrity = 1;
+        } else {
+            journal.files[i].original_size = 0u;
+            journal.files[i].has_original_integrity = 1;
+            if (!update_copy(journal.files[i].original_sha256,
+                             sizeof(journal.files[i].original_sha256),
+                             UPDATE_UNKNOWN_SHA256)) return 0;
+#else
+        } else {
+            return 0;
+#endif
+        }
     }
     return update_journal_write_state(&journal, committed);
 }
@@ -2048,7 +2170,8 @@ static int update_journal_load(UpdateJournal* journal) {
     cursor = (char*)bytes;
     line = update_next_line(&cursor);
     if (!line) goto fail;
-    if (strcmp(line, UPDATE_JOURNAL_MAGIC_V2) == 0) journal->version = 2;
+    if (strcmp(line, UPDATE_JOURNAL_MAGIC_V3) == 0) journal->version = 3;
+    else if (strcmp(line, UPDATE_JOURNAL_MAGIC_V2) == 0) journal->version = 2;
     else if (strcmp(line, UPDATE_JOURNAL_MAGIC_V1) == 0) journal->version = 1;
     else goto fail;
     line = update_next_line(&cursor);
@@ -2090,6 +2213,35 @@ static int update_journal_load(UpdateJournal* journal) {
             journal->files[i].sha256[64] = '\0';
             if (!update_sha256_valid(journal->files[i].sha256)) goto fail;
             journal->files[i].has_integrity = 1;
+            if (journal->version >= 3) {
+                const char* original_size_begin = rel;
+                const char* original_size_end;
+                const char* original_hash_begin;
+                const char* original_hash_end;
+                colon = strchr((char*)original_size_begin, ':');
+                if (!colon) goto fail;
+                original_size_end = colon;
+                original_hash_begin = colon + 1;
+                colon = strchr((char*)original_hash_begin, ':');
+                if (!colon ||
+                    (size_t)(colon - original_hash_begin) != 64u) goto fail;
+                original_hash_end = colon;
+                rel = colon + 1;
+                if (!update_decimal_u64(
+                        original_size_begin,
+                        original_size_end,
+                        &journal->files[i].original_size) ||
+                    journal->files[i].original_size >
+                        UPDATE_FILE_MAX_BYTES) goto fail;
+                memcpy(journal->files[i].original_sha256,
+                       original_hash_begin,
+                       (size_t)(original_hash_end -
+                                original_hash_begin));
+                journal->files[i].original_sha256[64] = '\0';
+                if (!update_sha256_valid(
+                        journal->files[i].original_sha256)) goto fail;
+                journal->files[i].has_original_integrity = 1;
+            }
         }
         if (!update_path_is_safe(rel) ||
             !update_copy(journal->files[i].path,
@@ -2103,6 +2255,15 @@ static int update_journal_load(UpdateJournal* journal) {
             }
         }
         journal->files[i].had_original = line[5] == '1';
+        if (journal->version >= 3 &&
+            (journal->files[i].had_original
+                ? _stricmp(journal->files[i].original_sha256,
+                           UPDATE_UNKNOWN_SHA256) == 0
+                : (journal->files[i].original_size != 0u ||
+                   _stricmp(journal->files[i].original_sha256,
+                            UPDATE_UNKNOWN_SHA256) != 0))) {
+            goto fail;
+        }
     }
     while ((line = update_next_line(&cursor)) != NULL) {
         if (*line) goto fail;
@@ -2185,8 +2346,8 @@ static int update_journal_file_matches(const char* target,
     return update_file_matches(target, &spec);
 }
 
-/* An applying V2 journal can be promoted safely when the complete release set
- * is already installed exactly as declared. This is the common crash window
+/* A V2/V3 journal is complete only when the entire release set is installed
+ * exactly as declared. For an applying journal this is the common crash window
  * after the last target move but before phase=committed reached disk, and it
  * avoids rolling a currently mapped framework DLL backward. Cleanup-only and
  * mixed reduced journals are intentionally ineligible. */
@@ -2195,7 +2356,7 @@ static int update_journal_targets_are_complete(const UpdateJournal* journal,
     size_t i;
     if (!journal || !out_complete) return 0;
     *out_complete = 0;
-    if (journal->version < 2 || journal->committed) return 1;
+    if (journal->version < 2) return 1;
     for (i = 0; i < journal->count; i++) {
         char target[UPDATE_ABS_CAP];
         char quarantine[UPDATE_ABS_CAP];
@@ -2645,15 +2806,171 @@ static void update_reconcile_legacy_backups(void) {
     }
 }
 
+typedef enum UpdateStagedTransactionState {
+    UPDATE_STAGED_NONE = 0,
+    UPDATE_STAGED_PRISTINE,
+    UPDATE_STAGED_INTERRUPTED,
+    UPDATE_STAGED_BLOCKED
+} UpdateStagedTransactionState;
+
+static int update_journal_entry_paths(const UpdateJournal* journal,
+                                      size_t index,
+                                      UpdateApplyEntry* entry) {
+    char staging_root[UPDATE_ABS_CAP];
+    if (!journal || !entry || index >= journal->count ||
+        !update_release_path_is_safe(journal->files[index].path) ||
+        !journal->files[index].has_integrity ||
+        !update_join_path(staging_root, sizeof(staging_root), g_update.root,
+                          UPDATE_STAGING_REL)) {
+        return 0;
+    }
+    memset(entry, 0, sizeof(*entry));
+    if (!update_copy(entry->spec.path, sizeof(entry->spec.path),
+                     journal->files[index].path) ||
+        !update_copy(entry->spec.sha256, sizeof(entry->spec.sha256),
+                     journal->files[index].sha256) ||
+        !update_prepare_relative_path(g_update.root,
+                                      journal->files[index].path,
+                                      entry->target,
+                                      sizeof(entry->target), 0) ||
+        !update_prepare_relative_path(staging_root,
+                                      journal->files[index].path,
+                                      entry->staged,
+                                      sizeof(entry->staged), 0) ||
+        !update_backup_path(entry->backup, sizeof(entry->backup),
+                            entry->target) ||
+        !update_recovery_quarantine_path(entry->quarantine,
+                                         entry->target)) {
+        return 0;
+    }
+    entry->spec.size = journal->files[index].size;
+    entry->spec.overwrite = 1;
+    entry->had_original = journal->files[index].had_original ? 1 : 0;
+    entry->original_size = journal->files[index].original_size;
+    entry->has_original_integrity =
+        journal->files[index].has_original_integrity ? 1 : 0;
+    if (journal->files[index].has_original_integrity &&
+        !update_copy(entry->original_sha256,
+                     sizeof(entry->original_sha256),
+                     journal->files[index].original_sha256)) {
+        return 0;
+    }
+    return 1;
+}
+
+static UpdateStagedTransactionState
+update_classify_staged_transaction(UpdateJournal* out_journal,
+                                   UpdateApplyEntry* out_entries,
+                                   size_t* out_count,
+                                   char* error,
+                                   size_t error_cap) {
+    char journal_path[UPDATE_ABS_CAP];
+    UpdateJournal journal;
+    UpdateApplyEntry entries[UPDATE_MAX_FILES];
+    size_t i;
+    int journal_exists = 0;
+    int mutation_evidence = 0;
+    int invalid_pristine = 0;
+    if (out_count) *out_count = 0u;
+    if (error && error_cap) error[0] = '\0';
+    if (!update_journal_path(journal_path) ||
+        !update_path_query(journal_path, &journal_exists, NULL)) {
+        if (error && error_cap) {
+            snprintf(error, error_cap,
+                     "cannot inspect transaction journal");
+        }
+        return UPDATE_STAGED_BLOCKED;
+    }
+    if (!journal_exists) return UPDATE_STAGED_NONE;
+    if (!update_journal_load(&journal)) {
+        if (error && error_cap) {
+            snprintf(error, error_cap,
+                     "transaction journal is corrupt");
+        }
+        return UPDATE_STAGED_BLOCKED;
+    }
+    if (journal.version < 3 || journal.committed) {
+        if (out_journal) *out_journal = journal;
+        return UPDATE_STAGED_INTERRUPTED;
+    }
+    for (i = 0; i < journal.count; i++) {
+        int target_exists = 0;
+        int staged_exists = 0;
+        int backup_exists = 0;
+        int quarantine_exists = 0;
+        int target_is_replacement = 0;
+        if (!journal.files[i].has_original_integrity ||
+            !update_journal_entry_paths(&journal, i, &entries[i]) ||
+            !update_regular_file_or_missing(entries[i].target,
+                                            &target_exists) ||
+            !update_regular_file_or_missing(entries[i].staged,
+                                            &staged_exists) ||
+            !update_regular_file_or_missing(entries[i].backup,
+                                            &backup_exists) ||
+            !update_regular_file_or_missing(entries[i].quarantine,
+                                            &quarantine_exists)) {
+            if (error && error_cap) {
+                snprintf(error, error_cap,
+                         "cannot safely inspect staged transaction");
+            }
+            return UPDATE_STAGED_BLOCKED;
+        }
+        if (target_exists) {
+            target_is_replacement =
+                update_file_matches(entries[i].target,
+                                    &entries[i].spec);
+        }
+        if (backup_exists || quarantine_exists ||
+            (!staged_exists && target_is_replacement)) {
+            mutation_evidence = 1;
+        }
+        if (!staged_exists ||
+            !update_file_matches(entries[i].staged, &entries[i].spec) ||
+            !update_entry_original_matches(&entries[i])) {
+            invalid_pristine = 1;
+        }
+    }
+    if (mutation_evidence) {
+        if (out_journal) *out_journal = journal;
+        return UPDATE_STAGED_INTERRUPTED;
+    }
+    if (invalid_pristine) {
+        if (error && error_cap) {
+            snprintf(error, error_cap,
+                     "staged update or original target changed");
+        }
+        return UPDATE_STAGED_BLOCKED;
+    }
+    if (out_journal) *out_journal = journal;
+    if (out_entries) memcpy(out_entries, entries, sizeof(entries));
+    if (out_count) *out_count = journal.count;
+    return UPDATE_STAGED_PRISTINE;
+}
+
 static int update_recover_under_mutex(void) {
     HANDLE mutex = update_named_mutex("Install");
     char staging_root[UPDATE_ABS_CAP];
     int ok;
+    UpdateStagedTransactionState staged_state;
+    char classify_error[UPDATE_STATUS_CAP];
     if (!update_lock_mutex(mutex, 15000)) {
         if (mutex) CloseHandle(mutex);
         return 0;
     }
-    ok = update_recover_journal();
+    staged_state = update_classify_staged_transaction(
+        NULL, NULL, NULL, classify_error, sizeof(classify_error));
+    if (staged_state == UPDATE_STAGED_PRISTINE) {
+        InterlockedExchange(&g_update_helper_pending, 1);
+        InterlockedExchange(&g_update_recovery_restart, 1);
+        ok = 1;
+    } else if (staged_state == UPDATE_STAGED_BLOCKED) {
+        LOG_ERROR("update: %s; retaining staged transaction",
+                  classify_error[0] ? classify_error :
+                      "staged transaction is unsafe");
+        ok = 0;
+    } else {
+        ok = update_recover_journal();
+    }
     if (ok && !InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
         update_reconcile_legacy_backups();
         if (!update_join_path(staging_root, sizeof(staging_root), g_update.root,
@@ -2832,6 +3149,28 @@ static int update_apply_manifest(const UpdateManifest* manifest,
                 entry->had_original = 1;
             }
         }
+        if (entry->had_original) {
+            if (!update_capture_regular_file_integrity(
+                    entry->target,
+                    &entry->original_size,
+                    entry->original_sha256)) {
+                snprintf(error, error_cap,
+                         "cannot fingerprint original target: %s",
+                         spec->path);
+                goto fail;
+            }
+        } else {
+            entry->original_size = 0u;
+            if (!update_copy(entry->original_sha256,
+                             sizeof(entry->original_sha256),
+                             UPDATE_UNKNOWN_SHA256)) {
+                snprintf(error, error_cap,
+                         "cannot record missing original target: %s",
+                         spec->path);
+                goto fail;
+            }
+        }
+        entry->has_original_integrity = 1;
         update_set_status(UPDATE_APPLYING, "downloading %s (%lu/%lu)",
                           spec->path, (unsigned long)(i + 1),
                           (unsigned long)manifest->file_count);
@@ -2860,6 +3199,12 @@ static int update_apply_manifest(const UpdateManifest* manifest,
                      entries[i].spec.path);
             goto fail;
         }
+        if (!update_entry_original_matches(&entries[i])) {
+            snprintf(error, error_cap,
+                     "original target changed while staging: %s",
+                     entries[i].spec.path);
+            goto fail;
+        }
     }
     if (update_cancelled()) {
         snprintf(error, error_cap, "cancelled");
@@ -2870,6 +3215,16 @@ static int update_apply_manifest(const UpdateManifest* manifest,
         goto fail;
     }
     journal_written = 1;
+#if !defined(UPDATE_EXT_TEST)
+    /* The injected DLL never renames a live import. The one-shot updater
+     * revalidates this V3 journal after this process closes and owns every
+     * write-through swap before it relaunches eggnoggplus.exe. */
+    update_set_status(UPDATE_RESTART_PENDING,
+                      "verified update ready - restart");
+    InterlockedExchange(&g_update_helper_pending, 1);
+    ok = 1;
+    goto done;
+#endif
     update_set_status(UPDATE_APPLYING, "installing verified update...");
     for (i = 0; i < count; i++) {
         if (entries[i].had_original &&
@@ -2920,6 +3275,216 @@ done:
     return ok;
 }
 
+static void update_helper_status(char* status, size_t status_cap,
+                                 const char* text) {
+    if (!status || status_cap == 0u) return;
+    update_copy_trunc(status, status_cap, text ? text : "");
+}
+
+static UpdateHelperResult
+update_helper_apply_pristine(UpdateApplyEntry* entries,
+                             size_t count,
+                             char* status,
+                             size_t status_cap) {
+    char journal_path[UPDATE_ABS_CAP];
+    char staging_root[UPDATE_ABS_CAP];
+    size_t i;
+    if (!entries || count == 0u || count > UPDATE_MAX_FILES ||
+        !update_journal_path(journal_path) ||
+        !update_join_path(staging_root, sizeof(staging_root), g_update.root,
+                          UPDATE_STAGING_REL)) {
+        update_helper_status(status, status_cap,
+                             "staged transaction paths are invalid");
+        return UPDATE_HELPER_BLOCKED;
+    }
+    for (i = 0; i < count; i++) {
+        if (!update_file_matches(entries[i].staged, &entries[i].spec) ||
+            !update_entry_original_matches(&entries[i])) {
+            update_helper_status(status, status_cap,
+                                 "staged update changed during final verification");
+            return UPDATE_HELPER_BLOCKED;
+        }
+    }
+    for (i = 0; i < count; i++) {
+        if (entries[i].had_original &&
+            !MoveFileExA(entries[i].target, entries[i].backup,
+                         MOVEFILE_REPLACE_EXISTING |
+                             MOVEFILE_WRITE_THROUGH)) {
+            break;
+        }
+        if (!MoveFileExA(entries[i].staged, entries[i].target,
+                         MOVEFILE_REPLACE_EXISTING |
+                             MOVEFILE_WRITE_THROUGH)) {
+            break;
+        }
+        entries[i].swapped = 1;
+    }
+    if (i != count) {
+        if (!update_rollback(entries, count)) {
+            update_helper_status(status, status_cap,
+                                 "update move failed and rollback is incomplete");
+            return UPDATE_HELPER_BLOCKED;
+        }
+        (void)DeleteFileA(journal_path);
+        (void)update_remove_tree(staging_root);
+        update_helper_status(status, status_cap,
+                             "update failed safely; previous version restored");
+        return UPDATE_HELPER_ROLLED_BACK;
+    }
+    for (i = 0; i < count; i++) {
+        if (!update_file_matches(entries[i].target, &entries[i].spec)) {
+            if (!update_rollback(entries, count)) {
+                update_helper_status(
+                    status, status_cap,
+                    "installed update failed verification and rollback is incomplete");
+                return UPDATE_HELPER_BLOCKED;
+            }
+            (void)DeleteFileA(journal_path);
+            (void)update_remove_tree(staging_root);
+            update_helper_status(
+                status, status_cap,
+                "installed update failed verification; previous version restored");
+            return UPDATE_HELPER_ROLLED_BACK;
+        }
+    }
+    if (!update_journal_write(entries, count, 1)) {
+        /* The applying V3 journal still names the complete verified target set.
+         * Recovery can safely promote this exact cut point forward. */
+        if (!update_recover_journal()) {
+            update_helper_status(status, status_cap,
+                                 "update commit failed and recovery is incomplete");
+            return UPDATE_HELPER_BLOCKED;
+        }
+    } else if (!update_recover_journal()) {
+        update_helper_status(status, status_cap,
+                             "updated files could not be finalized");
+        return UPDATE_HELPER_BLOCKED;
+    }
+    InterlockedExchange(&g_update_recovery_restart, 0);
+    InterlockedExchange(&g_update_helper_pending, 0);
+    if (!update_remove_tree(staging_root)) {
+        update_helper_status(status, status_cap,
+                             "update installed but staging cleanup is blocked");
+        return UPDATE_HELPER_BLOCKED;
+    }
+    update_helper_status(status, status_cap,
+                         "verified update installed");
+    return UPDATE_HELPER_UPDATED;
+}
+
+UpdateHelperResult update_ext_helper_service(char* status, size_t status_cap) {
+    HANDLE mutex;
+    UpdateJournal journal;
+    UpdateApplyEntry entries[UPDATE_MAX_FILES];
+    size_t count = 0u;
+    UpdateStagedTransactionState staged_state;
+    UpdateHelperResult result = UPDATE_HELPER_BLOCKED;
+    char classify_error[UPDATE_STATUS_CAP];
+    char staging_root[UPDATE_ABS_CAP];
+    int journal_exists = 0;
+    update_ensure_init();
+    update_helper_status(status, status_cap, "");
+    mutex = update_named_mutex("Install");
+    if (!update_lock_mutex(mutex, 30000)) {
+        if (mutex) CloseHandle(mutex);
+        update_helper_status(status, status_cap,
+                             "another instance is updating");
+        return UPDATE_HELPER_BLOCKED;
+    }
+    staged_state = update_classify_staged_transaction(
+        &journal, entries, &count, classify_error, sizeof(classify_error));
+    if (staged_state == UPDATE_STAGED_BLOCKED) {
+        update_helper_status(status, status_cap,
+                             classify_error[0] ? classify_error :
+                                 "update recovery is blocked");
+        goto done;
+    }
+    if (staged_state == UPDATE_STAGED_PRISTINE) {
+        result = update_helper_apply_pristine(entries, count,
+                                              status, status_cap);
+        goto done;
+    }
+    if (staged_state == UPDATE_STAGED_INTERRUPTED) {
+        int completed_forward = 0;
+        if (journal.version >= 2) {
+            if (!update_journal_targets_are_complete(
+                    &journal, &completed_forward)) {
+                update_helper_status(
+                    status, status_cap,
+                    "interrupted update targets cannot be inspected");
+                goto done;
+            }
+        }
+        if (!update_recover_journal()) {
+            update_helper_status(status, status_cap,
+                                 "interrupted update recovery is incomplete");
+            goto done;
+        }
+        InterlockedExchange(&g_update_recovery_restart, 0);
+        InterlockedExchange(&g_update_helper_pending, 0);
+        result = completed_forward
+            ? UPDATE_HELPER_UPDATED : UPDATE_HELPER_ROLLED_BACK;
+        update_helper_status(
+            status, status_cap,
+            completed_forward
+                ? "interrupted verified update completed"
+                : "interrupted update rolled back safely");
+    } else {
+        result = UPDATE_HELPER_READY;
+        update_helper_status(status, status_cap, "ready");
+    }
+    update_reconcile_legacy_backups();
+    if (!update_join_path(staging_root, sizeof(staging_root), g_update.root,
+                          UPDATE_STAGING_REL)) {
+        update_helper_status(status, status_cap,
+                             "update staging path is invalid");
+        result = UPDATE_HELPER_BLOCKED;
+        goto done;
+    }
+    if (!update_remove_tree(staging_root)) {
+        update_helper_status(status, status_cap,
+                             "update staging cleanup is blocked");
+        result = UPDATE_HELPER_BLOCKED;
+        goto done;
+    }
+    {
+        char journal_path[UPDATE_ABS_CAP];
+        if (!update_journal_path(journal_path) ||
+            !update_path_query(journal_path, &journal_exists, NULL) ||
+            journal_exists) {
+            update_helper_status(status, status_cap,
+                                 "transaction evidence remains unresolved");
+            result = UPDATE_HELPER_BLOCKED;
+        }
+    }
+done:
+    ReleaseMutex(mutex);
+    CloseHandle(mutex);
+    return result;
+}
+
+#ifdef UPDATE_EXT_HELPER_TEST
+int update_ext_helper_set_root_for_test(const char* root) {
+    char full[UPDATE_ABS_CAP];
+    DWORD n;
+    DWORD attrs;
+    if (!root || !root[0]) return 0;
+    n = GetFullPathNameA(root, sizeof(full), full, NULL);
+    if (n == 0u || n >= sizeof(full)) return 0;
+    attrs = GetFileAttributesA(full);
+    if (attrs == INVALID_FILE_ATTRIBUTES ||
+        !(attrs & FILE_ATTRIBUTE_DIRECTORY) ||
+        (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        return 0;
+    }
+    update_ensure_init();
+    EnterCriticalSection(&g_update.lock);
+    n = update_copy(g_update.root, sizeof(g_update.root), full) ? 1u : 0u;
+    LeaveCriticalSection(&g_update.lock);
+    return n ? 1 : 0;
+}
+#endif
+
 /* ---- Asynchronous public API ------------------------------------------ */
 
 enum {
@@ -2949,11 +3514,19 @@ static int update_run_apply(void) {
         LOG_ERROR("update: %s", error);
         return 0;
     }
-    update_set_status(UPDATE_RESTART_PENDING, "%s installed - restart",
-                      manifest.version);
+    if (InterlockedCompareExchange(&g_update_helper_pending, 0, 0)) {
+        update_set_status(UPDATE_RESTART_PENDING, "%s ready - restart",
+                          manifest.version);
+    } else {
+        update_set_status(UPDATE_RESTART_PENDING, "%s installed - restart",
+                          manifest.version);
+    }
     InterlockedExchange(&g_update_notice, 1);
-    LOG_INFO("update: %s installed and verified; restart to load it",
-             manifest.version);
+    LOG_INFO("update: %s %s; restart to load it",
+             manifest.version,
+             InterlockedCompareExchange(&g_update_helper_pending, 0, 0)
+                ? "staged and verified for YuleUpdater"
+                : "installed and verified");
     return 1;
 }
 
@@ -2971,8 +3544,11 @@ static int update_run_check(void) {
         return 0;
     }
     if (InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
-        update_set_status(UPDATE_RESTART_PENDING,
-                          "recovery complete - restart");
+        update_set_status(
+            UPDATE_RESTART_PENDING,
+            InterlockedCompareExchange(&g_update_helper_pending, 0, 0)
+                ? "verified update ready - restart"
+                : "recovery complete - restart");
         InterlockedExchange(&g_update_notice, 1);
         LOG_WARN("update: restart the game to finish recovery");
         return 0;
@@ -3390,7 +3966,7 @@ static void update_test_storage(void) {
     entry.had_original = 1;
     update_test_set_expected(&entry, "replacement");
 
-    /* A V2 applying journal whose entire installed set matches is completed
+    /* A V3 applying journal whose entire installed set matches is completed
      * forward. This avoids rolling an already-installed mapped DLL backward. */
     update_test_prepare_swap(target, staged, backup,
                              "original", "replacement");
@@ -3398,9 +3974,11 @@ static void update_test_storage(void) {
     {
         UpdateJournal loaded;
         assert(update_journal_load(&loaded));
-        assert(loaded.version == 2 && !loaded.committed && loaded.count == 1);
+        assert(loaded.version == 3 && !loaded.committed && loaded.count == 1);
         assert(loaded.files[0].has_integrity);
+        assert(loaded.files[0].has_original_integrity);
         assert(loaded.files[0].size == strlen("replacement"));
+        assert(loaded.files[0].original_size == strlen("original"));
         assert(strcmp(loaded.files[0].sha256, entry.spec.sha256) == 0);
     }
     assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
@@ -3428,7 +4006,7 @@ static void update_test_storage(void) {
     assert(!update_path_exists(quarantine, NULL));
     assert(!update_path_exists(journal_path, NULL));
 
-    /* A pre-existing quarantine makes an otherwise complete V2 set
+    /* A pre-existing quarantine makes an otherwise complete V3 set
      * ineligible for roll-forward, so it cannot be orphaned by commit cleanup. */
     update_test_prepare_swap(target, staged, backup,
                              "quarantine-original", "replacement");
@@ -3581,12 +4159,11 @@ static void update_test_storage(void) {
      * quarantine, then retains only the still-failing original work. */
     update_test_prepare_swap(target, staged, backup,
                              "mixed-original-one", "replacement");
-    assert(update_delete_file_if_present(target2));
-    assert(update_delete_file_if_present(staged2));
-    assert(update_delete_file_if_present(backup2));
-    assert(update_delete_file_if_present(quarantine2));
-    assert(CreateDirectoryA(target2, NULL));
+    update_test_prepare_swap(target2, staged2, backup2,
+                             "mixed-original-two", "replacement-two");
     assert(update_journal_write(batch, 2, 0));
+    assert(update_delete_file_if_present(target2));
+    assert(CreateDirectoryA(target2, NULL));
     assert(MoveFileExA(target, backup, MOVEFILE_WRITE_THROUGH));
     assert(MoveFileExA(staged, target, MOVEFILE_WRITE_THROUGH));
     update_test_write(target, "mixed-corrupt-one");

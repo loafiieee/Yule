@@ -177,8 +177,7 @@ Its live write/read/delete roundtrip is intentionally disabled by default becaus
 touches the user's real Credential Manager. Enable it with:
 
 ```powershell
-$env:EGGNOGGPLUS_CREDENTIAL_TEST_LIVE='1'
-.\build\credential_ext_test.exe
+powershell -ExecutionPolicy Bypass -File .\tests\run_core_native_tests.ps1 -LiveCredential
 ```
 
 The test uses a process-unique `.invalid` identity and deletes it before and after the

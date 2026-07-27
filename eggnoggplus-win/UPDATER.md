@@ -63,88 +63,119 @@ forbidden in release manifests, and release paths must leave enough room for
 that suffix.
 The manifest is limited to 32 files, 128 MiB per file, and 256 MiB total.
 
+## Publishing a release
+
+Use this order for every release. Because the former `1.1` channel was briefly public,
+that version is retired and must not be reused; use `1.2` for the next release:
+
+1. Change `FRAMEWORK_VERSION` in `update_ext.h` to `"1.2"`.
+2. Close Eggnogg+ and `YuleUpdater.exe`.
+3. Run `bash compile.sh`.
+4. Build the release:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version 1.2 -Notes "Short release notes"
+   ```
+
+5. Upload the complete `dist/releases/1.2/` directory to a temporary directory
+   on the server. Verify that each uploaded file's size and SHA-256 matches
+   `dist/releases/latest.json`, then rename the temporary directory to `1.2`.
+6. Upload `dist/releases/latest.json` to `latest.json.new`, validate its JSON,
+   and atomically rename it to `latest.json` **last**.
+7. Fetch the public `latest.json` and every public payload URL once to confirm
+   the version, size, and digest before enabling an in-game install.
+
+Publishing the payload directory before the channel document is mandatory. A
+client can safely ignore an unadvertised directory; it cannot safely install a
+manifest whose files are absent or whose DLL reports an older version.
+
+`tools/build_release.ps1` fails before writing release output unless all three
+versions match exactly: its `-Version`, `FRAMEWORK_VERSION` in `update_ext.h`,
+and the unique version marker embedded in the deployed `SDL2.dll`. A verified
+`build/SDL2_test.dll` must also exist and its SHA-256 must match the deployed DLL
+exactly. The deployed `YuleUpdater.exe` must likewise match
+`build/YuleUpdater.exe`. The publisher never replaces either deployed file.
+
+Do not work around a version mismatch by editing only `latest.json`. If an
+incorrect release was advertised, restore the previous valid `latest.json`
+first, remove the bad version directory only after it is no longer advertised,
+then rebuild the new version using the sequence above.
+
 ## Install guarantees
 
 Every payload is downloaded to staging, checked for its declared size and
-SHA-256 digest, and preflighted before any live file changes. Installation uses a
-cross-process mutex, `.old` backups, write-through moves, and a transaction
-journal. A failed swap is rolled back; an interrupted transaction is recovered on
-the next check.
+SHA-256 digest, and preflighted without renaming a live framework DLL. The
+in-process updater records a durable Journal V3 transaction and reports
+`verified update ready - restart`.
 
-Journal V2 stores the expected installed size and SHA-256 for every target. A
-committed transaction is fully rehashed before any backup is deleted. Valid
-targets are kept; a missing/corrupt target rolls the complete set back when all
-required backups exist. If an artifact is missing, the updater retains the
-journal and remaining backups rather than guessing. Legacy V1 applying journals
-can still roll back, while V1 committed journals fail safely because they lack
-the digest needed to authorize backup deletion.
+`YuleUpdater.exe` is installed beside the game and deliberately excluded from
+`latest.json`, so an update never replaces the helper responsible for recovering
+it. It is not the normal game entry point: Start Menu, Steam, and `yule://` all
+launch `eggnoggplus.exe` directly.
 
-An applying V2 journal is also rehashed as a complete set. If every original
-release target already matches and no reserved quarantine exists, recovery
-atomically promotes it to committed and completes forward. This covers a crash
-after the last target move but before the commit write without rolling a mapped
-framework DLL backward. Cleanup-only and reduced journals are never eligible;
-reduced unresolved entries carry a non-authorizing digest sentinel so even a
-matching subset cannot become a split-version commit.
+The helper is statically linked against the MinGW runtime and release packaging
+rejects any helper that imports `lua51.dll`, `libgcc_s_dw2-1.dll`,
+`libwinpthread-1.dll`, or `SDL2_mixer.dll`. This is required: a helper may not
+map a DLL that its own transaction renames and then attempts to delete.
 
-Rollback does not try to delete a DLL that Windows may already have mapped.
-Instead it renames the rejected target to `<target>.update-recovery`, restores
-the `.old` file at the normal target path, and then tries to remove the
-quarantine. If Windows keeps that renamed image alive, the updater retains both
-the quarantine and an atomically rewritten cleanup-only journal, stops before
-another check/install, and reports `recovery complete - restart`. Cleanup
-entries use `had_original=0`, which older updater builds already understand.
-The next clean launch removes the released quarantine, finalizes the journal,
-and clears abandoned updater staging without demanding a second restart.
+When a verified transaction reaches `UPDATE_RESTART_PENDING`, the framework waits
+until Eggnogg is in a safe menu rather than interrupting gameplay or an online match.
+It then starts `YuleUpdater.exe` with the exact current process ID. The helper opens
+that process before requesting `WM_CLOSE`, waits up to two minutes for orderly exit,
+and never force-terminates it. It then enumerates processes and refuses to touch disk if
+another process is running the exact same installed `eggnoggplus.exe`; the transaction
+remains staged until every same-install instance is closed. Only after those checks does
+it acquire the installation mutex and apply the pristine transaction or reconcile an
+interrupted one.
+It then relaunches `eggnoggplus.exe` with ordinary non-ephemeral game arguments and
+exits. Online/deep-link intents already consumed by the old process are not replayed.
 
-If one file is quarantined successfully while another file cannot yet be
-recovered, the updater atomically publishes a reduced mixed journal: completed
-entries are dropped, retained quarantines become cleanup-only entries, and only
-the unresolved original entries remain. An older restored updater therefore
-cleans the quarantine even if the other error persists, while keeping the
-journal until that remaining file is safe.
+The helper is not required to start or use the DLL proxy, music engine, mods, online
+hub, shortcuts, Steam entry, or deep links. It exists solely because a running process
+cannot safely replace its mapped `SDL2.dll`. If it is missing or unsafe, the game stays
+open, the verified transaction remains staged, and the framework retries the handoff
+without touching installed files.
 
-For a running framework DLL, the updater currently attempts to rename the mapped
-target to `.old` and install the staged file at the original path. It does not
-unload itself or use a reboot/helper process. If Windows rejects that live-file
-rename, apply fails and rolls back. If it succeeds, the process continues using
-the already-mapped old code and the new DLL is loaded after exit/relaunch. The
-actual loaded `SDL2.dll` case is not covered by the standalone test and still
-requires release-machine verification.
+Journal V3 stores the expected replacement size/SHA-256 and the original target
+size/SHA-256 (or explicit absence) for every file. During handoff the updater
+rehashes both sides, rejects reparse points and changed originals, then uses
+write-through target-to-`.old` and staged-to-target moves. It rehashes the whole
+installed set before committing and deleting backups. Any partial swap rolls the
+whole transaction back; incomplete or ambiguous recovery preserves the evidence
+and blocks launch instead of guessing.
 
-The journal cannot make the direct-import bootstrap itself power-fail safe.
-`eggnoggplus.exe` imports `SDL2.dll` before this updater can run, so interruption
-between either pair of live-file renames can leave that pathname missing and
-prevent automatic in-process recovery. Until a stable launcher/helper owns
-those swaps, the conservative manual boundary is: close **every** game process;
-only when the normal target is missing and the adjacent `.old` is a regular
-file, restore `.old` to the missing pathname. Never overwrite an existing
-target, and preserve the journal, staging directory, quarantine files, and log
-so the next launch can verify and reconcile them.
+Legacy V1/V2, reduced cleanup, `.update-recovery`, and `.old` transactions remain
+recovery-compatible. A complete applying V2/V3 set can finish forward; a corrupt
+committed set rolls back when its complete backups exist. With no journal, a
+missing normal target may consume its adjacent regular `.old` backup before
+launch. This automatic closed-game recovery replaces the former manual
+missing-target procedure.
+
+The updater verifies that `eggnoggplus.exe` and `SDL2.dll` are regular
+non-reparse files, forwards the original argument boundaries without invoking a
+shell, and uses the installation root as the working directory. It logs only a
+timestamp, result class, and bounded recovery status to
+`mods/updater.log`; command-line values are never logged.
+
+Opening `eggnoggplus.exe` directly is the supported path. A pristine transaction
+found on boot remains staged until the framework reaches a safe menu and performs
+the same one-shot handoff.
 
 Updater shutdown must run only from normal application code. It must never wait
 for its worker from `DllMain`, where the Windows loader lock is held.
 
 ## Recovery messages
 
-- `recovery complete - restart` means the interrupted transaction was verified
-  and reconciled on disk, but this process may still be executing a different
-  mapped image. Fully close every Eggnogg+ instance and launch again. Do not
-  delete `.old`, `.update-recovery`, or the journal while a game process is open.
-- `recovery blocked - see modframework.log` means the updater deliberately
-  preserved the transaction because a journal, target, backup, path, or
-  permission check could not be proven safe. Close all game instances and use
-  **Retry** once. If it repeats, keep copies of `mods/update_staging` and the
-  adjacent recovery files before repairing from a complete release package;
-  the detailed non-destructive reason is in `mods/modframework.log`.
+- `verified update ready - restart` means downloads and the V3 transaction are
+  durable. Return to a safe menu; the framework will close, update, and relaunch.
+- An updater recovery dialog means it deliberately preserved the transaction
+  because a journal, target, backup, path, or permission check could not be
+  proven safe. Do not delete `.old`, `.update-recovery`, or
+  `mods/update_staging`; inspect `mods/updater.log` and retain the
+  evidence before repairing from a complete release package.
 
-If a required DLL pathname is missing and the game cannot start far enough to
-show either message, use only the closed-game, missing-target `.old` procedure
-above. Do not delete the transaction evidence or copy over an existing target.
-
-The updater never silently treats a missing backup or corrupt target as a
-successful recovery, and it does not begin another installation while recovery
-requires a restart.
+The updater never silently treats a missing backup or corrupt target as success,
+and it does not stage another installation while a transaction remains pending.
 
 ## Verification
 
@@ -154,9 +185,10 @@ From the repository folder, run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tests\run_updater_test.ps1
+powershell -ExecutionPolicy Bypass -File .\tests\run_update_helper_test.ps1
 ```
 
-The script builds the updater test, starts a temporary HTTP server bound only to
+The first script builds the updater test, starts a temporary HTTP server bound only to
 `127.0.0.1`, and runs parsing, hashing, transactional apply, rollback/recovery,
 complete-set roll-forward, simulated mapped-DLL single/multi-file restart
 handoff, reduced-journal non-authorization, access-error retention, and a real
@@ -179,6 +211,14 @@ PASS: updater tests completed in disposable build directories; the live SDL2.dll
 The temporary server and test directories are stopped/removed automatically,
 including when a test fails.
 
+The second guarded script builds the self-contained one-shot helper, rejects imports of
+every replaceable release DLL, and uses a benign child
+fixture. It exercises power-cut states in disposable roots and byte-exact
+argument forwarding without starting the game. It also proves that a second process
+running the exact target executable blocks disk changes. A final `PASS` confirms pristine,
+partial, complete-before-commit, corrupt-commit, changed-original, corrupt
+staging/journal, and legacy backup recovery behavior.
+
 ### In-game status check
 
 For the non-destructive UI portion, start Eggnogg+, open **Mods > Framework**,
@@ -189,12 +229,12 @@ back on, close and reopen the menu, and confirm the setting persists. `Check` or
 manufacture a test; installation is meaningful only when the configured
 channel offers a newer, correctly hashed release.
 
-The one-command test above is the safe way to exercise an actual apply without
+The two guarded tests above are the safe way to exercise staging and pre-import
+apply without
 a newer production release. It deterministically simulates the mapped-file
-quarantine/relaunch state machine, but replacement of the real, currently
-mapped `SDL2.dll`, production HTTPS, abrupt process termination, and two
-simultaneously running game instances remain release-machine checks because a
-standalone test cannot reproduce Windows' image-section locking behavior.
+quarantine/relaunch state machine plus helper-owned swaps, but production HTTPS,
+abrupt machine/process termination, and two simultaneously running instances
+remain release-machine checks.
 
 ### Manual build command
 

@@ -623,14 +623,15 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             case SDL_CONTROLLERBUTTONDOWN: {
                 int action = 0;
+                int online_hub = hooks_online_hub_active();
                 if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP) action = 1;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) action = 2;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) action = 3;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) action = 4;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_A) action = 5;
-                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_B) action = 5;
-                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_X) action = 5;
-                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y) action = 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_B) action = online_hub ? 6 : 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_X) action = online_hub ? 7 : 5;
+                else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_Y) action = online_hub ? 8 : 5;
                 else if (event->cbutton.button == SDL_CONTROLLER_BUTTON_BACK) action = 6;
 
                 if (action && hooks_console_control_action(action)) {
@@ -665,8 +666,17 @@ int SDL_PollEvent(SDL_Event* event) {
                 break;
             case SDL_JOYBUTTONDOWN: {
                 int action = 0;
-                if (event->jbutton.button == 0 || event->jbutton.button == 1 ||
-                    event->jbutton.button == 2 || event->jbutton.button == 3) {
+                int online_hub = hooks_online_hub_active();
+                if (online_hub && event->jbutton.button == 0) {
+                    action = 5;
+                } else if (online_hub && event->jbutton.button == 1) {
+                    action = 6;
+                } else if (online_hub && event->jbutton.button == 2) {
+                    action = 7;
+                } else if (online_hub && event->jbutton.button == 3) {
+                    action = 8;
+                } else if (event->jbutton.button == 0 || event->jbutton.button == 1 ||
+                           event->jbutton.button == 2 || event->jbutton.button == 3) {
                     action = 5;
                 } else if (event->jbutton.button == 6 || event->jbutton.button == 7) {
                     action = 6;
@@ -716,6 +726,7 @@ int SDL_PollEvent(SDL_Event* event) {
             case SDL_QUIT:
                 // Notify Lua mods (best-effort) before quit is delivered to the game.
                 (void)lua_manager_on_event("quit", 0, 0, 0, 0, 0, 0);
+                hooks_runtime_shutdown();
                 consumed = 0;
                 break;
             default:

@@ -62,7 +62,7 @@ def struct_body(name: str) -> str:
 
 
 # The server-issued shared packet key has short-lived owners only. It must not
-# leak into match history/result state, logs, or the separate rendezvous token.
+# leak into match history/result records, logs, or the separate rendezvous token.
 pending = struct_body("OnlinePendingMatch")
 retry = struct_body("OnlineConnectRetry")
 active = struct_body("OnlineActiveMatch")
@@ -88,6 +88,7 @@ assert '"control_protocol"' in protocol
 assert '"match_protocol"' in protocol
 assert '"p2p_protocol"' in protocol
 assert '"cap_p2p_auth"' in protocol
+assert '"cap_private_rematch"' in protocol
 assert "GGPO_NET_PROTOCOL_VERSION" in protocol
 
 attempt = function_body("online_connect_start_attempt")
@@ -141,27 +142,60 @@ result_order = [
     "g_online_pending_match.active = 0;",
     'stop_ggpo_net("online server result")',
     "online_result_prepare",
-    "online_open_result_screen();",
+    "online_return_to_hub_after_match",
 ]
 cursor = 0
 for marker in result_order:
     cursor = result_branch.index(marker, cursor) + len(marker)
 assert "ADDR_GAME_STATE" not in result_branch
+assert "!g_online_result.active &&" in result_branch
+assert "g_online_result.toast_visible = 1" in result_branch
+assert "g_online_result.server_confirmed = 1" in result_branch
 
 send_end = function_body("online_server_send_match_end")
 assert "g_online_active_match.match_id" in send_end
 assert "!g_online_active_match.server_committed" in send_end
 
 console_cancel = function_body("online_cancel_match_from_console")
-assert "online_finish_active_match(ONLINE_MATCH_RESULT_LOSS" in console_cancel
+assert "online_forfeit_active_match" in console_cancel
 assert "online_result_prepare" not in console_cancel
-assert "online_open_result_screen" not in console_cancel
+assert "online_return_to_hub_after_match" not in console_cancel
+
+forfeit_match = function_body("online_forfeit_active_match")
+forfeit_order = [
+    "g_online_active_match.result_reported = 1",
+    "online_server_send_match_abort",
+    "online_result_prepare(ONLINE_MATCH_RESULT_LOSS",
+    "online_return_to_hub_after_match",
+]
+cursor = 0
+for marker in forfeit_order:
+    cursor = forfeit_match.index(marker, cursor) + len(marker)
+assert "online_server_send_match_end" not in forfeit_match
+
+monitor_match = function_body("online_monitor_active_match_state")
+assert "online_forfeit_active_match" in monitor_match
+
+hub_enter = function_body("online_hub_enter")
+assert "online_forfeit_active_match" in hub_enter
+assert "online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS)" not in hub_enter
+
+# A leader is assigned on every ordinary death. It can select an online winner
+# only while the native terminal countdown is active; final score is the
+# independent fallback and must also require a positive target plus a lead.
+winner_detection = function_body("online_native_winner_player")
+assert "*g_game_end_countdown > 0" in winner_detection
+assert "loser == (uintptr_t)p_player_slots[0]" in winner_detection
+assert "leader == (uintptr_t)p_player_slots[0]" in winner_detection
+assert "*g_game_score_target > 0" in winner_detection
+assert "s0 >= target && s0 > s1" in winner_detection
+assert "s1 >= target && s1 > s0" in winner_detection
 
 server_disconnect = function_body("online_handle_server_match_disconnect")
 assert "online_clear_match_state();" in server_disconnect
 assert "online_hub_open();" in server_disconnect
 assert "online_result_prepare" not in server_disconnect
-assert "online_open_result_screen" not in server_disconnect
+assert "online_return_to_hub_after_match" not in server_disconnect
 
 # The server's receive-idle timeout must not forfeit a quiet hub or long match.
 # Heartbeats share the bounded atomic send queue and reset with connection state.
@@ -189,35 +223,69 @@ assert "malloc" in manifest and "free" in manifest
 assert "only part was sent" not in manifest
 assert "static char maps_json" not in manifest
 
-# A completed match enters the actual result state. Its full UI has real mouse
-# hit-testing; the small toast is only a fallback outside that state.
-open_result = function_body("online_open_result_screen")
-assert "g_online_result_state" in open_result
-assert "p_state_switch" in open_result
+# Online results are compact bottom-right notifications only. Completion lands
+# in the normal hub with main as its stable Back owner; no fullscreen result
+# GameState, buttons, input branch, or stale transition remains.
+assert "g_online_result_state" not in SOURCE
+assert "online_open_result_screen" not in SOURCE
+assert "online_result_button_metrics" not in SOURCE
+assert "online_result_activate" not in SOURCE
 
-render_result = function_body("online_result_render")
-assert "online_result_render_toast" not in render_result
-assert "online_result_button_metrics" in render_result
-assert "online_hub_draw_button_box" in render_result
-assert "online_result_button_at" in function_body("hooks_online_hub_mousemotion")
-mouse_button = function_body("hooks_online_hub_mousebutton")
-assert "online_result_button_at" in mouse_button
-assert "online_result_activate" in mouse_button
+return_to_hub = function_body("online_return_to_hub_after_match")
+assert "online_hub_open();" in return_to_hub
+assert "g_online_return_state = main_state;" in return_to_hub
+assert "g_online_pending_return_state = main_state;" in return_to_hub
+assert "g_online_force_main_return_once = already_in_hub ? 0 : 1;" in return_to_hub
+finish_match = function_body("online_finish_active_match")
+assert finish_match.index("online_result_prepare") < finish_match.index(
+    "online_return_to_hub_after_match"
+)
 
+result_record = struct_body("OnlineResultToast")
+assert "int active;" in result_record
+assert "int toast_visible;" in result_record
+assert "int match_id;" in result_record
+prepare_result = function_body("online_result_prepare")
+assert "g_online_result.active = 1" in prepare_result
+assert "g_online_result.toast_visible = 1" in prepare_result
+
+render_toast = function_body("online_result_render_toast")
+assert "g_online_result.toast_visible" in render_toast
+assert '"RESULT REPORTED"' in render_toast
+assert "g_online_result.server_confirmed" in render_toast
 pre_swap = function_body("hooks_online_on_pre_swap")
-assert "state_ptr != (void*)&g_online_result_state" in pre_swap
+assert "g_online_result.active && g_online_result.toast_visible" in pre_swap
+assert "online_result_render_toast();" in pre_swap
 
-# Result and hub are transient siblings, never one another's Back target. The
-# previous Result -> Hub path copied p_state_last()==Result into the hub return
-# state; Back then reopened an inactive result page, whose enter callback
-# fabricated GAME OVER, producing an endless two-screen loop.
+# Dismissing or expiring a provisional toast retains its exact match identity,
+# so the asynchronous confirmation is still admitted. Confirmed records may be
+# retired with the toast. Requeue remains blocked until confirmation.
+tick_toast = function_body("online_result_tick_toast")
+assert "online_result_dismiss(1)" in tick_toast
+dismiss_result = function_body("online_result_dismiss")
+hide_pos = dismiss_result.index("g_online_result.toast_visible = 0")
+confirmed_pos = dismiss_result.index("if (g_online_result.server_confirmed)", hide_pos)
+clear_pos = dismiss_result.index("memset(&g_online_result", confirmed_pos)
+assert hide_pos < confirmed_pos < clear_pos
+mouse_button = function_body("hooks_online_hub_mousebutton")
+assert "online_result_dismiss(1)" in mouse_button
+send_queue = function_body("online_server_send_queue")
+assert "g_online_result.active && !g_online_result.server_confirmed" in send_queue
+assert '"Waiting for the server result before requeueing."' in send_queue
+
+abort_branch = server_lines[result_end:]
+assert "memset(&g_online_result, 0, sizeof(g_online_result));" in abort_branch
+
+# Hub/console return targets remain sanitized even though results no longer own
+# a state, and completed-match routing explicitly prevents Back from reopening
+# the dead GAME state.
 sanitize_return = function_body("online_hub_sanitize_return_state")
 assert "g_online_hub_state" in sanitize_return
-assert "g_online_result_state" in sanitize_return
 assert "ADDR_MAIN_STATE" in sanitize_return
 
 hub_enter = function_body("online_hub_enter")
-assert "last == (void*)&g_online_result_state" in hub_enter
+assert "if (g_online_force_main_return_once)" in hub_enter
+assert "last = (void*)(uintptr_t)ADDR_MAIN_STATE;" in hub_enter
 assert "online_hub_sanitize_return_state(last)" in hub_enter
 assert "online_hub_sanitize_return_state(g_online_pending_return_state)" in pre_swap
 
@@ -226,14 +294,6 @@ assert "online_hub_sanitize_return_state(g_online_return_state)" in close_hub
 assert "online_hub_close_to_return_state();" in function_body("online_activate_selected")
 assert "online_hub_close_to_return_state();" in function_body("hooks_online_hub_keydown")
 assert "online_hub_close_to_return_state();" in function_body("hooks_online_hub_control_action")
-
-result_enter = function_body("online_result_enter")
-assert "online_hub_open();" in result_enter
-assert "g_online_result.active = 1" not in result_enter
-assert "Match ended." not in result_enter
-state_switch = function_body("hooked_state_switch")
-assert "target == (void*)&g_online_result_state && !g_online_result.active" in state_switch
-assert "online_hub_sanitize_return_state(g_online_return_state)" in state_switch
 
 # The login row is a conventional compact checkbox, and main-menu mode writes
 # share the updater's atomic/comment-preserving config path.

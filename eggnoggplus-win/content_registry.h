@@ -23,11 +23,34 @@ typedef enum ContentAnimationMode {
     CONTENT_ANIMATION_ONCE = 2
 } ContentAnimationMode;
 
+/* Collision presets deliberately compile to verified vanilla, single-cell
+ * behavior glyphs. This keeps native collision/update code authoritative while
+ * allowing a map tile's visual symbol to be independent from its behavior. */
+typedef enum ContentCollisionMode {
+    CONTENT_COLLISION_NATIVE = 0,
+    CONTENT_COLLISION_SOLID = 1,
+    CONTENT_COLLISION_PASS_THROUGH = 2,
+    CONTENT_COLLISION_HAZARD = 3
+} ContentCollisionMode;
+
+typedef enum ContentForceMode {
+    CONTENT_FORCE_ADD = 0,
+    CONTENT_FORCE_SET = 1
+} ContentForceMode;
+
 enum {
-    CONTENT_TILE_MIRROR_WITH_ROOM = 1u << 0,
-    CONTENT_TILE_RANDOM_PHASE     = 1u << 1,
+    CONTENT_FORCE_AXIS_X = 1u << 0,
+    CONTENT_FORCE_AXIS_Y = 1u << 1,
+    CONTENT_FORCE_VALID_AXES = CONTENT_FORCE_AXIS_X | CONTENT_FORCE_AXIS_Y
+};
+
+enum {
+    CONTENT_TILE_MIRROR_WITH_ROOM       = 1u << 0,
+    CONTENT_TILE_RANDOM_PHASE           = 1u << 1,
+    CONTENT_TILE_NATIVE_VISUAL_UNDERLAY = 1u << 2,
     CONTENT_TILE_VALID_FLAGS      = CONTENT_TILE_MIRROR_WITH_ROOM |
-                                    CONTENT_TILE_RANDOM_PHASE
+                                    CONTENT_TILE_RANDOM_PHASE |
+                                    CONTENT_TILE_NATIVE_VISUAL_UNDERLAY
 };
 
 /* Declarative, deterministic tile definition. Runtime atlas IDs deliberately
@@ -50,6 +73,17 @@ typedef struct ContentTileDef {
     int32_t animation_mode;
     int32_t layer;
     uint32_t flags;
+
+    /* Deterministic interaction data. native_glyph is the effective glyph
+     * emitted to map generation after applying collision_mode. force_axes
+     * distinguishes an omitted component from an explicitly authored zero. */
+    int32_t collision_mode;
+    int32_t force_mode;
+    uint32_t force_axes;
+    float force_x;
+    float force_y;
+    float max_speed_x;
+    float max_speed_y;
 
     float offset_x;
     float offset_y;
@@ -76,6 +110,13 @@ typedef struct ContentTileInput {
     ContentAnimationMode animation_mode;
     int layer;
     uint32_t flags;
+    ContentCollisionMode collision_mode;
+    ContentForceMode force_mode;
+    uint32_t force_axes;
+    float force_x;
+    float force_y;
+    float max_speed_x;
+    float max_speed_y;
     float offset_x;
     float offset_y;
     float scale_x;
@@ -145,6 +186,15 @@ int content_registry_sha256_file(const char* path,
                                  char out_hex[CONTENT_SHA256_HEX_SIZE],
                                  char* err,
                                  size_t err_cap);
+
+/* SHA-256 for an already captured immutable byte buffer. Package scanners use
+ * this when validation and identity must refer to the exact same read. */
+int content_registry_sha256_bytes(const void* data,
+                                  size_t len,
+                                  uint8_t out[CONTENT_SHA256_SIZE],
+                                  char out_hex[CONTENT_SHA256_HEX_SIZE],
+                                  char* err,
+                                  size_t err_cap);
 
 #ifdef __cplusplus
 }

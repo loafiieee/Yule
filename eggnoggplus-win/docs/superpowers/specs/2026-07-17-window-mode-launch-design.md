@@ -137,12 +137,11 @@ and window events rather than newer SDL DPI APIs.
 
 `tests/window_policy_test.c` checks representative presets, largest-preset maximize
 selection on large/medium/small displays, and an exhaustive requested size grid for
-bounds and exact 3:2 output. Build it with strict warnings:
+bounds and exact 3:2 output. Build and launch it only through the guarded runner,
+which prepares the MinGW runtime `PATH` and preflights its DLLs:
 
 ```powershell
-gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-  tests\window_policy_test.c -o build\window_policy_test.exe
-.\build\window_policy_test.exe
+powershell -ExecutionPolicy Bypass -File .\tests\run_core_native_tests.ps1
 ```
 
 `tests/window_runtime_static_test.py` guards loader-lock ownership, event routing,

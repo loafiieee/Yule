@@ -266,6 +266,25 @@ int content_bridge_draw_action(const void* tile,
         !ops->sprite_batch_plot || render.layer < 0 || render.layer > 1) {
         return 0;
     }
+    if (ops->visual_override) {
+        ContentBridgeVisualOverride override;
+        override.sprite_index = render.sprite_index;
+        override.offset_x = 0.0f;
+        override.offset_y = 0.0f;
+        if (ops->visual_override(ops->user, render.cell_index, render.key,
+                                 render.sprite_index, &override)) {
+            if (override.sprite_index < 0 || !isfinite(override.offset_x) ||
+                !isfinite(override.offset_y) ||
+                fabsf(override.offset_x) > CONTENT_BRIDGE_VISUAL_OFFSET_LIMIT ||
+                fabsf(override.offset_y) > CONTENT_BRIDGE_VISUAL_OFFSET_LIMIT) {
+                return 0;
+            }
+            render.sprite_index = override.sprite_index;
+            render.offset_x += override.offset_x;
+            render.offset_y += override.offset_y;
+            if (!isfinite(render.offset_x) || !isfinite(render.offset_y)) return 0;
+        }
+    }
     sprite_id = -1;
     if (!ops->resolve_sprite(ops->user, render.sprite_sheet,
                              render.sprite_index, &sprite_id) ||

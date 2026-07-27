@@ -1,0 +1,156 @@
+[13:34:28] [WARN] [maps][legacy] warning: map has only one source room
+[13:34:28] [WARN] [maps][symbol_test] warning: map has only one source room
+[13:34:28] [WARN] [maps][builtin_skin] warning: map has only one source room
+[13:34:28] [WARN] [maps][expanded_skin] warning: map has only one source room
+[13:34:28] [WARN] [maps][space_skin] warning: map has only one source room
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[2].symbol] error: duplicate symbol "$"
+[13:34:28] [ERROR] [maps][bad] [data.json][line=1][col=36] error: duplicate object key 'format'
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[1]] error: unknown key "sprite_indx"
+[13:34:28] [ERROR] [maps][bad] [data.json][line=1][col=43] error: JSON strings cannot contain NUL
+[13:34:28] [ERROR] [maps][bad] [data.json][rules.score_target] error: expected null or positive integer
+[13:34:28] [WARN] [maps][bad] warning: map has only one source room
+[13:34:28] [ERROR] [maps][bad] [data.json][id] error: v2 requires a non-empty stable id
+[13:34:28] [ERROR] [maps][bad] [data.json][id] error: id is too long for a map content namespace
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[1].layer] error: expected integer in 0..1
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[1].collision] error: expected native, solid, pass_through, or hazard
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[1].force_mode] error: expected add or set
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[1].force_mode] error: force_mode requires force_x and/or force_y
+[13:34:28] [ERROR] [maps][bad] [data.json][tileset.tiles[1].native_glyph] error: native collision requires a safe native_glyph (builtin overrides default to their symbol)
+[13:34:28] [WARN] [maps][asset_test] warning: map has only one source room
+[13:34:28] [WARN] [maps][geometry_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][geometry_test] [data.json][tileset.tiles[1]] error: sprite_index/frame_count exceeds the external sheet's 4 sprites
+[13:34:28] [WARN] [maps][asset_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][asset_test] [data.json][tileset.tiles[1].asset_sha256] error: declared SHA-256 does not match file bytes
+[13:34:28] [INFO] [maps] scanning maps/ for custom maps
+[13:34:28] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:34:28] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:34:28] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[13:34:28] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:34:28] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:34:28] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:34:28] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps][v2_online_identity_test_44436] scanning folder: maps\v2_online_identity_test_44436
+[13:34:28] [INFO] [maps][v2_online_identity_test_44436] loading json: maps\v2_online_identity_test_44436\data.json
+[13:34:28] [INFO] [maps][v2_online_identity_test_44436] loading map: maps\v2_online_identity_test_44436\data.map
+[13:34:28] [WARN] [maps][v2_online_identity_test_44436] warning: map has only one source room
+[13:34:28] [INFO] [maps][online_identity_test] registered: name="Online identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[13:34:28] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[13:34:28] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps] registry ready: 4 custom maps (was 0)
+[13:34:28] [INFO] [maps] detected maps/ change; rebuilding registry
+[13:34:28] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:34:28] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:34:28] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[13:34:28] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:34:28] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:34:28] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:34:28] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps][v2_online_identity_test_44436] scanning folder: maps\v2_online_identity_test_44436
+[13:34:28] [INFO] [maps][v2_online_identity_test_44436] loading json: maps\v2_online_identity_test_44436\data.json
+[13:34:28] [INFO] [maps][v2_online_identity_test_44436] loading map: maps\v2_online_identity_test_44436\data.map
+[13:34:28] [WARN] [maps][v2_online_identity_test_44436] warning: map has only one source room
+[13:34:28] [INFO] [maps][online_identity_test] registered: name="Online identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[13:34:28] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[13:34:28] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps] registry reloaded: 4 custom maps (was 4)
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][script_test] [map.lua] error: syntax error
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][script_test] [map.lua] error: unknown tile binding
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][script_test] [map.lua] error: scripts require eggnogg-map/v2
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][script_test] [map.lua] error: script exceeds the 256 KiB package limit
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][script_test] [map.lua] error: script must be a direct, regular, non-reparse file
+[13:34:28] [WARN] [maps][script_test] warning: map has only one source room
+[13:34:28] [ERROR] [maps][script_test] [map.lua] error: script must be a direct, regular, non-reparse file
+[13:34:28] [INFO] [maps] scanning maps/ for custom maps
+[13:34:28] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:34:28] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:34:28] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[13:34:28] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:34:28] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:34:28] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:34:28] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] scanning folder: maps\v2_script_identity_test_44436
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] loading json: maps\v2_script_identity_test_44436\data.json
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] loading map: maps\v2_script_identity_test_44436\data.map
+[13:34:28] [WARN] [maps][v2_script_identity_test_44436] warning: map has only one source room
+[13:34:28] [INFO] [maps][script_identity_test] registered: name="Script identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[13:34:28] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[13:34:28] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps] registry ready: 4 custom maps (was 0)
+[13:34:28] [INFO] [maps] detected maps/ change; rebuilding registry
+[13:34:28] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:34:28] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:34:28] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[13:34:28] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:34:28] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:34:28] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:34:28] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] scanning folder: maps\v2_script_identity_test_44436
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] loading json: maps\v2_script_identity_test_44436\data.json
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] loading map: maps\v2_script_identity_test_44436\data.map
+[13:34:28] [WARN] [maps][v2_script_identity_test_44436] warning: map has only one source room
+[13:34:28] [ERROR] [maps][v2_script_identity_test_44436] [map.lua] error: syntax error
+[13:34:28] [ERROR] [maps][v2_script_identity_test_44436] map rejected: 1 errors, 1 warnings
+[13:34:28] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[13:34:28] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [ERROR] [maps] reload rejected because a previously valid package is now invalid (1 rejected); keeping last known-good registry
+[13:34:28] [INFO] [maps] detected maps/ change; rebuilding registry
+[13:34:28] [INFO] [maps][example_map] scanning folder: maps\example_map
+[13:34:28] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[13:34:28] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[13:34:28] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[13:34:28] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[13:34:28] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[13:34:28] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[13:34:28] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] scanning folder: maps\v2_script_identity_test_44436
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] loading json: maps\v2_script_identity_test_44436\data.json
+[13:34:28] [INFO] [maps][v2_script_identity_test_44436] loading map: maps\v2_script_identity_test_44436\data.map
+[13:34:28] [WARN] [maps][v2_script_identity_test_44436] warning: map has only one source room
+[13:34:28] [INFO] [maps][script_identity_test] registered: name="Script identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[13:34:28] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[13:34:28] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[13:34:28] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords
+[13:34:28] [INFO] [maps] registry reloaded: 4 custom maps (was 4)
+custom_maps_v2_test: all checks passed

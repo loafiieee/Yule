@@ -1,7 +1,3 @@
-help
-eval os.exit(1)
-state.main
-state.change main
 state main
 state
 ls
@@ -32,3 +28,37 @@ ggpo.net host
 state
 state.switch
 state.switch gameplay
+music.scan
+discord.app
+sys.info
+framework.api
+mods.list
+music.scan
+discord.app
+discord.app off
+music.play 8
+music.play 9
+music.play 8
+music.play 10
+music.play random
+music.play 8
+music.play 9
+music.output_rate
+music.output_rate 44100
+music.output_rate 80000
+music.output_rate 10000
+music.output_rate 999999
+music.output_rate 192000
+music.output_rate 8000
+music.output_rate 48000
+dev on
+lua.mod options_demo return mod.audio.play_bytebreat("t*((t>>12|t>>8)&63&t>>4)",{duration=4,loops=1,volume=.6})
+lua.mod options_demo return mod.audio.play_bytebeat("t*((t>>12|t>>8)&63&t>>4)",{duration=4,loops=1,volume=.6})
+lua.mod options_demo return mod.audio.play_bytebeat("sin(2*pi*220*time)*.3",{mode="floatbeat",sample_rate=22050,duration=2})
+lua.mod options_demo local s=mod.audio.status(); return s.generated_chunks,s.generated_bytes
+lua.mod options_demo return mod.audio.stop_sfx()
+lua.mod options_demo return mod.audio.clear_generated()
+dev off
+dev on lua.mod options_demo local ok,v=mod.audio.play_bytebeat("t*((t>>12|t>>8)&63&t>>4)",{duration=4,loops=1,volume=.6}); return ok,ok and v.backend or v,ok and v.pcm_bytes or 0
+dev on
+lua.mod options_demo local ok,v=mod.audio.play_bytebeat("t*((t>>12|t>>8)&63&t>>4)",{duration=4,loops=1,volume=.6}); return ok,ok and v.backend or v,ok and v.pcm_bytes or 0

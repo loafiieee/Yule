@@ -3,7 +3,7 @@
   "id": "v2_symbolic_demo",
   "name": "V2 Symbolic Tile Demo",
   "author": "Eggnogg+",
-  "description": "Runtime acceptance fixture for symbolic tiles, per-map atlases, transforms, mirroring, and native fallback.",
+  "description": "Runtime acceptance fixture for simple visual/collision tiles plus rollback-safe spring and fan behavior in map.lua.",
   "sort_order": 1000,
   "rules": {
     "mode": "swords",
@@ -17,16 +17,17 @@
     "order": ["center", "outer"]
   },
   "tileset": {
+    "sprite_sheet": "tiles.png",
+    "cell_w": 16,
+    "cell_h": 16,
+    "padding": 0,
+    "native_layout": true,
     "tiles": [
       {
         "id": "external_green_animation",
         "symbol": "$",
         "name": "External green animation",
-        "native_glyph": "x",
-        "sprite_sheet": "tiles.png",
-        "cell_w": 16,
-        "cell_h": 16,
-        "padding": 0,
+        "collision": "solid",
         "sprite_index": 2,
         "frame_count": 3,
         "frame_ticks": 8,
@@ -58,6 +59,27 @@
         "tint": [1.0, 0.3, 0.15, 0.95]
       },
       {
+        "id": "spring_pad",
+        "symbol": ">",
+        "name": "Scripted spring pad",
+        "collision": "solid",
+        "native_visual": "underlay",
+        "sprite_index": 128,
+        "layer": 0,
+        "tint": [1.0, 0.85, 0.2, 1.0]
+      },
+      {
+        "id": "mirrored_fan",
+        "symbol": "}",
+        "name": "Scripted mirrored fan",
+        "collision": "pass_through",
+        "sprite_sheet": "builtin:tiles",
+        "sprite_index": 4,
+        "layer": 0,
+        "mirror_with_room": true,
+        "tint": [0.55, 0.75, 1.0, 0.9]
+      },
+      {
         "id": "intentional_native_fallback",
         "symbol": "&",
         "name": "Intentional native fallback",
@@ -74,7 +96,7 @@
       "ambient": "dust"
     },
     "outer": {
-      "ambient": "bubbles"
+      "ambient": "boil"
     }
   }
 }

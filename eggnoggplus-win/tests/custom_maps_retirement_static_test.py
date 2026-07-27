@@ -25,12 +25,12 @@ shutdown = function_body("void custom_maps_shutdown")
 reclaim = function_body("static void free_unpinned_retired_registry_maps")
 
 assert "old_maps == g_engine_pinned_registry_maps" in swap
-assert "retire_registry_maps(old_maps);" in swap
-assert "free(old_maps);" in swap
+assert "retire_registry_maps(old_maps, old_count);" in swap
+assert "free_registry_map_array(old_maps, old_count);" in swap
 assert "free_unpinned_retired_registry_maps();" in swap
 
 assert "retired->maps == g_engine_pinned_registry_maps" in reclaim
-assert "free(retired->maps);" in reclaim
+assert "free_registry_map_array(retired->maps, retired->count);" in reclaim
 assert "g_engine_pinned_registry_maps = g_custom_registry.maps;" in mapgen
 assert mapgen.count("g_engine_pinned_registry_maps = NULL;") >= 3
 assert mapgen.count("free_unpinned_retired_registry_maps();") >= 4
@@ -40,4 +40,3 @@ free_retired = shutdown.index("free_retired_registry_maps();")
 assert clear_pin < free_retired
 
 print("custom map retirement static checks: OK")
-

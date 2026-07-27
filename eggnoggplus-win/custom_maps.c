@@ -13,6 +13,7 @@
 #include "custom_maps.h"
 #include "content_registry.h"
 #include "log.h"
+#include "map_script.h"
 
 #define MAPS_PREFIX "[maps]"
 
@@ -30,8 +31,20 @@
 #define CUSTOM_MAP_MAX_CONTENT_TILES 64
 #define CUSTOM_MAP_MAX_CONTENT_SHEETS 16
 #define CUSTOM_MAP_MAX_TEXT_FILE_BYTES (4u * 1024u * 1024u)
+#define CUSTOM_MAP_MAX_SCRIPT_BYTES MAP_SCRIPT_SOURCE_MAX
 #define CUSTOM_MAP_MAX_ASSET_BYTES (64ull * 1024ull * 1024ull)
-#define CUSTOM_MAP_MAX_SHEET_SPRITES 65535
+#define CUSTOM_MAP_MAX_SHEET_SPRITES 8192
+#define NATIVE_TILE_SPRITE_COUNT 128
+/* thing_new scans 16 records but deliberately skips slot zero. Two of the
+ * remaining 15 records are the native players, leaving at most 13 room-reset
+ * allocations. K and the surrounding spawn action dereference allocation
+ * without a complete failure path, so map validation reserves that capacity
+ * conservatively across every native reset spawner. */
+#define NATIVE_THING_POOL_RECORDS 16
+#define NATIVE_THING_ALLOCATABLE_SLOTS (NATIVE_THING_POOL_RECORDS - 1)
+#define NATIVE_PLAYER_RESERVED_SLOTS 2
+#define NATIVE_ROOM_RESET_SPAWN_LIMIT \
+    (NATIVE_THING_ALLOCATABLE_SLOTS - NATIVE_PLAYER_RESERVED_SLOTS)
 
 #define ADDR_MAP_SELECTOR            0x55A2F4u
 #define ADDR_MAP_MODE                0x55A2F8u
@@ -145,6 +158,20 @@ typedef struct MapContentSheet {
     uint32_t atlas_flags;
 } MapContentSheet;
 
+typedef struct ResolvedMapSheet {
+    char key[CONTENT_SHEET_KEY_MAX];
+    char relative_path[MAX_PATH];
+    char full_path[MAX_PATH];
+    char asset_sha256[CONTENT_SHA256_HEX_SIZE];
+    int cell_w;
+    int cell_h;
+    int padding;
+    int sprite_count;
+    int image_w;
+    int image_h;
+    int external;
+} ResolvedMapSheet;
+
 typedef struct ParsedTileset {
     char owner[CONTENT_OWNER_MAX];
     ContentRegistryTx* transaction;
@@ -152,7 +179,18 @@ typedef struct ParsedTileset {
     int tile_count;
     MapContentSheet sheets[CUSTOM_MAP_MAX_CONTENT_SHEETS];
     int sheet_count;
+    char default_sheet_key[CONTENT_SHEET_KEY_MAX];
+    int default_sheet_sprite_count;
+    int native_layout;
 } ParsedTileset;
+
+typedef struct OptionalMapScriptSource {
+    unsigned char* bytes;
+    size_t size;
+    int present;
+    char full_path[MAX_PATH];
+    char sha256[CONTENT_SHA256_HEX_SIZE];
+} OptionalMapScriptSource;
 
 typedef struct CustomMapRoom {
     char id[CUSTOM_MAP_MAX_ID];
@@ -184,6 +222,16 @@ typedef struct CustomMap {
     int content_tile_count;
     MapContentSheet content_sheets[CUSTOM_MAP_MAX_CONTENT_SHEETS];
     int content_sheet_count;
+    char default_sheet_key[CONTENT_SHEET_KEY_MAX];
+    int default_sheet_sprite_count;
+    int native_layout;
+    int max_native_room_spawns;
+    int native_k_marker_count;
+    char script_full_path[MAX_PATH];
+    char script_sha256[CONTENT_SHA256_HEX_SIZE];
+    unsigned char* script_source;
+    size_t script_size;
+    uint64_t script_id;
 } CustomMap;
 
 typedef struct CustomMapRegistry {
@@ -195,6 +243,7 @@ typedef struct CustomMapRegistry {
 
 typedef struct RetiredRegistryBuffer {
     CustomMap* maps;
+    int count;
     struct RetiredRegistryBuffer* next;
 } RetiredRegistryBuffer;
 
@@ -216,6 +265,9 @@ static RetiredRegistryBuffer* g_retired_registry_buffers = NULL;
  * replace that registry while the map is still live, so exactly that buffer
  * remains pinned until another custom or vanilla definition is installed. */
 static CustomMap* g_engine_pinned_registry_maps = NULL;
+static const CustomMap* g_engine_pinned_map = NULL;
+static int g_engine_pinned_selector = -1;
+static uint64_t g_engine_pinned_generation = 0;
 static uint64_t g_custom_maps_signature = 0;
 static uint64_t g_custom_maps_failed_signature = 0;
 static uint64_t g_custom_maps_generation = 1;
@@ -337,7 +389,7 @@ static uint32_t weak_map_package_hash32(const char* json_text,
     const uint64_t modp = 4294967291ull;
     uint64_t h = weak_map_hash32(json_text, map_text);
     int i;
-    if (!map || map->content_sheet_count <= 0) return (uint32_t)h;
+    if (!map) return (uint32_t)h;
     for (i = 0; i < map->content_sheet_count; i++) {
         const MapContentSheet* sheet = &map->content_sheets[i];
         const unsigned char* p;
@@ -348,6 +400,19 @@ static uint32_t weak_map_package_hash32(const char* json_text,
         }
         h = ((h * 16777619ull) + separator) % modp;
         for (p = (const unsigned char*)sheet->asset_sha256; *p; p++) {
+            h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+        }
+    }
+    if (map->script_sha256[0]) {
+        const unsigned char* p;
+        static const unsigned char separator = 0xffu;
+        static const char script_name[] = "map.lua";
+        h = ((h * 16777619ull) + separator) % modp;
+        for (p = (const unsigned char*)script_name; *p; p++) {
+            h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+        }
+        h = ((h * 16777619ull) + separator) % modp;
+        for (p = (const unsigned char*)map->script_sha256; *p; p++) {
             h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
         }
     }
@@ -420,6 +485,7 @@ static void signature_add_map_folder_files(uint64_t* xor_accum,
     }
     do {
         char relative_path[MAX_PATH];
+        uint64_t entry_hash;
         if (file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         int written = snprintf(relative_path, sizeof(relative_path), "%s\\%s",
                                folder_name, file_data.cFileName);
@@ -428,14 +494,45 @@ static void signature_add_map_folder_files(uint64_t* xor_accum,
                           hash_signature_entry("map_file_path_too_long", 0, 0, 0));
             continue;
         }
-        signature_add(
-            xor_accum, add_accum, count,
-            hash_signature_entry(
-                relative_path,
-                file_data.dwFileAttributes,
-                filetime_to_u64(&file_data.ftLastWriteTime),
-                ((uint64_t)file_data.nFileSizeHigh << 32) |
-                    (uint64_t)file_data.nFileSizeLow));
+        entry_hash = hash_signature_entry(
+            relative_path,
+            file_data.dwFileAttributes,
+            filetime_to_u64(&file_data.ftLastWriteTime),
+            ((uint64_t)file_data.nFileSizeHigh << 32) |
+                (uint64_t)file_data.nFileSizeLow);
+        {
+            const char* extension = strrchr(file_data.cFileName, '.');
+            int is_script = _stricmp(file_data.cFileName, "map.lua") == 0;
+            int is_png = extension && _stricmp(extension, ".png") == 0;
+            char full_path[MAX_PATH];
+            char digest[CONTENT_SHA256_HEX_SIZE];
+            char err[128];
+            uint64_t max_size = is_script
+                ? (uint64_t)CUSTOM_MAP_MAX_SCRIPT_BYTES
+                : CUSTOM_MAP_MAX_ASSET_BYTES;
+            static const char script_unreadable_marker[] =
+                "map.lua:unreadable-or-unsafe";
+            static const char png_unreadable_marker[] =
+                "png:unreadable-or-unsafe";
+            if (is_script || is_png) {
+                const char* unreadable_marker = is_script
+                    ? script_unreadable_marker
+                    : png_unreadable_marker;
+                if (!(file_data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+                    ((((uint64_t)file_data.nFileSizeHigh << 32) |
+                      (uint64_t)file_data.nFileSizeLow) <= max_size) &&
+                    path_join(full_path, sizeof(full_path), folder_path,
+                              file_data.cFileName) &&
+                    content_registry_sha256_file(full_path, NULL, digest,
+                                                 err, sizeof(err))) {
+                    entry_hash = hash_bytes64(entry_hash, digest, strlen(digest));
+                } else {
+                    entry_hash = hash_bytes64(entry_hash, unreadable_marker,
+                                               strlen(unreadable_marker));
+                }
+            }
+        }
+        signature_add(xor_accum, add_accum, count, entry_hash);
     } while (FindNextFileA(find_handle, &file_data));
     FindClose(find_handle);
 }
@@ -474,7 +571,7 @@ static uint64_t custom_maps_compute_signature(void) {
 
     {
         uint64_t final_hash = 1469598103934665603ull;
-        const uint64_t version = 2ull;
+        const uint64_t version = 3ull;
         final_hash = hash_bytes64(final_hash, &version, sizeof(version));
         final_hash = hash_bytes64(final_hash, &xor_accum, sizeof(xor_accum));
         final_hash = hash_bytes64(final_hash, &add_accum, sizeof(add_accum));
@@ -590,6 +687,297 @@ static int read_text_file(const char* path, char** out_text) {
 
     text[read_count] = '\0';
     *out_text = text;
+    return 1;
+}
+
+static void optional_map_script_source_dispose(OptionalMapScriptSource* source) {
+    if (!source) return;
+    free(source->bytes);
+    memset(source, 0, sizeof(*source));
+}
+
+/* map.lua is deliberately a single, direct package file. Opening the reparse
+ * point itself and denying write/delete sharing keeps the validated bytes,
+ * digest, and stored path tied to one regular file for the whole read. */
+static int read_optional_map_script_source(MapDiagnostics* diag,
+                                           const char* folder_path,
+                                           int format_version,
+                                           OptionalMapScriptSource* out) {
+    char candidate[MAX_PATH];
+    char folder_full[MAX_PATH];
+    char expected_full[MAX_PATH];
+    char script_full[MAX_PATH];
+    DWORD attrs;
+    DWORD error_code;
+    DWORD folder_length;
+    DWORD script_length;
+    HANDLE folder = INVALID_HANDLE_VALUE;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    BY_HANDLE_FILE_INFORMATION folder_info;
+    BY_HANDLE_FILE_INFORMATION info;
+    DWORD expected_size;
+    DWORD bytes_read = 0;
+    DWORD extra_read = 0;
+    unsigned char extra_byte = 0;
+    size_t length;
+    int ok = 0;
+
+    if (!diag || !folder_path || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    if (!path_join(candidate, sizeof(candidate), folder_path, "map.lua")) {
+        diag_log(diag, 1, "[map.lua] error: script path is too long");
+        return 0;
+    }
+
+    folder_length = GetFullPathNameA(folder_path, (DWORD)sizeof(folder_full),
+                                     folder_full, NULL);
+    script_length = GetFullPathNameA(candidate, (DWORD)sizeof(script_full),
+                                     script_full, NULL);
+    if (folder_length == 0 || folder_length >= (DWORD)sizeof(folder_full) ||
+        script_length == 0 || script_length >= (DWORD)sizeof(script_full)) {
+        diag_log(diag, 1, "[map.lua] error: cannot form a bounded absolute package path");
+        return 0;
+    }
+    length = strlen(folder_full);
+    while (length > 0 &&
+           (folder_full[length - 1] == '\\' || folder_full[length - 1] == '/') &&
+           !(length == 3 && folder_full[1] == ':')) {
+        folder_full[--length] = '\0';
+    }
+    if (!path_join(expected_full, sizeof(expected_full), folder_full, "map.lua") ||
+        _stricmp(expected_full, script_full) != 0) {
+        diag_log(diag, 1, "[map.lua] error: script must resolve directly inside its map folder");
+        return 0;
+    }
+
+    attrs = GetFileAttributesA(script_full);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        error_code = GetLastError();
+        if (error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND) {
+            return 1;
+        }
+        diag_log(diag, 1, "[map.lua] error: cannot inspect optional script (Windows error %lu)",
+                 (unsigned long)error_code);
+        return 0;
+    }
+    out->present = 1;
+    if (format_version != 2) {
+        diag_log(diag, 1, "[map.lua] error: scripts require eggnogg-map/v2");
+        return 0;
+    }
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) ||
+        (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        diag_log(diag, 1, "[map.lua] error: script must be a direct, regular, non-reparse file");
+        return 0;
+    }
+
+    folder = CreateFileA(folder_full, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+                         NULL, OPEN_EXISTING,
+                         FILE_FLAG_BACKUP_SEMANTICS |
+                             FILE_FLAG_OPEN_REPARSE_POINT,
+                         NULL);
+    if (folder == INVALID_HANDLE_VALUE ||
+        !GetFileInformationByHandle(folder, &folder_info) ||
+        !(folder_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        (folder_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        if (folder != INVALID_HANDLE_VALUE) CloseHandle(folder);
+        diag_log(diag, 1, "[map.lua] error: map folder must be a direct, non-reparse directory");
+        return 0;
+    }
+
+    file = CreateFileA(script_full, GENERIC_READ, FILE_SHARE_READ, NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT |
+                           FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        diag_log(diag, 1, "[map.lua] error: cannot open script safely (Windows error %lu)",
+                 (unsigned long)GetLastError());
+        CloseHandle(folder);
+        return 0;
+    }
+    if (!GetFileInformationByHandle(file, &info) ||
+        (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY |
+                                  FILE_ATTRIBUTE_REPARSE_POINT))) {
+        diag_log(diag, 1, "[map.lua] error: opened script is not a direct regular file");
+        goto done;
+    }
+    if (info.nFileSizeHigh != 0 ||
+        info.nFileSizeLow > (DWORD)CUSTOM_MAP_MAX_SCRIPT_BYTES) {
+        diag_log(diag, 1, "[map.lua] error: script exceeds the 256 KiB package limit");
+        goto done;
+    }
+    expected_size = info.nFileSizeLow;
+    out->bytes = (unsigned char*)malloc((size_t)expected_size + 1u);
+    if (!out->bytes) {
+        diag_log(diag, 1, "[map.lua] error: out of memory while reading script");
+        goto done;
+    }
+    if (expected_size != 0 &&
+        (!ReadFile(file, out->bytes, expected_size, &bytes_read, NULL) ||
+         bytes_read != expected_size)) {
+        diag_log(diag, 1, "[map.lua] error: could not read the complete script");
+        goto done;
+    }
+    if (!ReadFile(file, &extra_byte, 1, &extra_read, NULL) || extra_read != 0) {
+        diag_log(diag, 1, "[map.lua] error: script changed while it was being read");
+        goto done;
+    }
+    if (expected_size != 0 && memchr(out->bytes, '\0', expected_size)) {
+        diag_log(diag, 1, "[map.lua] error: embedded NUL bytes are not supported");
+        goto done;
+    }
+    out->bytes[expected_size] = '\0';
+    out->size = (size_t)expected_size;
+    if (!content_registry_sha256_bytes(out->bytes, out->size, NULL,
+                                       out->sha256, NULL, 0)) {
+        diag_log(diag, 1, "[map.lua] error: cannot hash validated bytes");
+        goto done;
+    }
+    snprintf(out->full_path, sizeof(out->full_path), "%s", script_full);
+    ok = 1;
+
+done:
+    CloseHandle(file);
+    CloseHandle(folder);
+    if (!ok) optional_map_script_source_dispose(out);
+    return ok;
+}
+
+static uint64_t map_script_id_from_package(const char* digest,
+                                           const CustomMap* map) {
+    static const char domain[] = "eggnoggplus/map-script-definition/v1";
+    unsigned char canonical[(sizeof(domain) - 1u) +
+                            (CONTENT_SHA256_HEX_SIZE - 1u) + 2u +
+                            CUSTOM_MAP_MAX_CONTENT_TILES *
+                                (3u + CONTENT_KEY_MAX - 1u)];
+    uint8_t identity_digest[CONTENT_SHA256_SIZE];
+    size_t position = 0;
+    uint64_t value = 0;
+    int i;
+    if (!digest || strlen(digest) != CONTENT_SHA256_HEX_SIZE - 1u || !map ||
+        map->content_tile_count < 0 ||
+        map->content_tile_count > CUSTOM_MAP_MAX_CONTENT_TILES) {
+        return 0;
+    }
+    memcpy(canonical + position, domain, sizeof(domain) - 1u);
+    position += sizeof(domain) - 1u;
+    memcpy(canonical + position, digest, CONTENT_SHA256_HEX_SIZE - 1u);
+    position += CONTENT_SHA256_HEX_SIZE - 1u;
+    canonical[position++] = (unsigned char)(map->content_tile_count & 0xff);
+    canonical[position++] = (unsigned char)((map->content_tile_count >> 8) & 0xff);
+    for (i = 0; i < map->content_tile_count; i++) {
+        size_t key_length = strlen(map->content_tiles[i].key);
+        if (key_length == 0 || key_length >= CONTENT_KEY_MAX ||
+            position + 3u + key_length > sizeof(canonical)) {
+            return 0;
+        }
+        canonical[position++] = (unsigned char)map->content_tiles[i].symbol;
+        canonical[position++] = (unsigned char)(key_length & 0xffu);
+        canonical[position++] = (unsigned char)((key_length >> 8) & 0xffu);
+        memcpy(canonical + position, map->content_tiles[i].key, key_length);
+        position += key_length;
+    }
+    if (!content_registry_sha256_bytes(canonical, position, identity_digest,
+                                       NULL, NULL, 0)) {
+        return 0;
+    }
+    for (i = 0; i < 8; i++) {
+        value = (value << 8) | (uint64_t)identity_digest[i];
+    }
+    /* The VM reserves zero for "no script". Canonicalizing the vanishingly
+     * unlikely truncated SHA-256 result keeps this identity total. */
+    return value ? value : UINT64_C(1);
+}
+
+static int custom_map_script_definition(const CustomMap* map,
+                                        MapScriptDefinition* out_definition,
+                                        MapScriptTileBinding* out_bindings,
+                                        size_t bindings_cap,
+                                        char* out_chunk_name,
+                                        size_t chunk_name_cap) {
+    int i;
+    int written;
+    if (!map || !out_definition || !out_bindings || !out_chunk_name ||
+        map->script_id == 0 || !map->script_source ||
+        map->content_tile_count < 0 ||
+        (size_t)map->content_tile_count > bindings_cap) {
+        return 0;
+    }
+    written = snprintf(out_chunk_name, chunk_name_cap, "@%s",
+                       map->script_full_path);
+    if (written < 0 || (size_t)written >= chunk_name_cap) return 0;
+    for (i = 0; i < map->content_tile_count; i++) {
+        out_bindings[i].symbol = map->content_tiles[i].symbol;
+        out_bindings[i].qualified_key = map->content_tiles[i].key;
+    }
+    memset(out_definition, 0, sizeof(*out_definition));
+    out_definition->script_id = map->script_id;
+    out_definition->chunk_name = out_chunk_name;
+    out_definition->source = (const char*)map->script_source;
+    out_definition->source_len = map->script_size;
+    out_definition->bindings = out_bindings;
+    out_definition->binding_count = (size_t)map->content_tile_count;
+    return 1;
+}
+
+static int custom_map_attach_optional_script(MapDiagnostics* diag,
+                                             const char* folder_path,
+                                             CustomMap* map) {
+    OptionalMapScriptSource source;
+    MapScriptDefinition definition;
+    MapScriptTileBinding bindings[CUSTOM_MAP_MAX_CONTENT_TILES];
+    char chunk_name[MAX_PATH + 2];
+    char err[512];
+    int valid;
+    if (!diag || !folder_path || !map) return 0;
+    memset(&source, 0, sizeof(source));
+    if (!read_optional_map_script_source(diag, folder_path,
+                                         map->format_version, &source)) {
+        return 0;
+    }
+    if (!source.present) return 1;
+
+    map->script_id = map_script_id_from_package(source.sha256, map);
+    if (map->script_id == 0) {
+        diag_log(diag, 1, "[map.lua] error: could not derive a stable script identity");
+        optional_map_script_source_dispose(&source);
+        return 0;
+    }
+    snprintf(map->script_full_path, sizeof(map->script_full_path), "%s",
+             source.full_path);
+    snprintf(map->script_sha256, sizeof(map->script_sha256), "%s",
+             source.sha256);
+    map->script_source = source.bytes;
+    map->script_size = source.size;
+    source.bytes = NULL;
+    optional_map_script_source_dispose(&source);
+
+    if (!custom_map_script_definition(map, &definition, bindings,
+                                      sizeof(bindings) / sizeof(bindings[0]),
+                                      chunk_name, sizeof(chunk_name))) {
+        diag_log(diag, 1, "[map.lua] error: could not build the validation definition");
+        free(map->script_source);
+        map->script_source = NULL;
+        map->script_size = 0;
+        map->script_id = 0;
+        map->script_full_path[0] = '\0';
+        map->script_sha256[0] = '\0';
+        return 0;
+    }
+    err[0] = '\0';
+    valid = map_script_validate(&definition, err, sizeof(err));
+    if (!valid) {
+        diag_log(diag, 1, "[map.lua] error: %s",
+                 err[0] ? err : "script validation failed");
+        free(map->script_source);
+        map->script_source = NULL;
+        map->script_size = 0;
+        map->script_id = 0;
+        map->script_full_path[0] = '\0';
+        map->script_sha256[0] = '\0';
+        return 0;
+    }
     return 1;
 }
 
@@ -1451,6 +1839,134 @@ static int parsed_tileset_add_sheet(MapDiagnostics* diag,
     return 1;
 }
 
+static int resolve_map_sheet(MapDiagnostics* diag,
+                             ParsedTileset* tileset,
+                             const char* folder_path,
+                             const char* path,
+                             const char* sprite_sheet,
+                             const char* expected_sha,
+                             int cell_w,
+                             int cell_h,
+                             int padding,
+                             int geometry_authored,
+                             ResolvedMapSheet* out) {
+    char err[256];
+    if (!diag || !tileset || !folder_path || !path || !sprite_sheet ||
+        !sprite_sheet[0] || !out) {
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+    out->cell_w = cell_w;
+    out->cell_h = cell_h;
+    out->padding = padding;
+    snprintf(out->relative_path, sizeof(out->relative_path), "%s",
+             sprite_sheet);
+
+    if (_strnicmp(sprite_sheet, "builtin:", 8) == 0) {
+        if (geometry_authored) {
+            diag_log(diag, 1,
+                     "[data.json][%s] error: cell_w, cell_h, and padding only apply to external PNG sheets",
+                     path);
+            return 0;
+        }
+        if (expected_sha && expected_sha[0]) {
+            diag_log(diag, 1,
+                     "[data.json][%s.asset_sha256] error: omit hash for built-in sheets",
+                     path);
+            return 0;
+        }
+        if (strlen(sprite_sheet) >= sizeof(out->key)) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: built-in sheet key is too long",
+                     path);
+            return 0;
+        }
+        snprintf(out->key, sizeof(out->key), "%s", sprite_sheet);
+        return 1;
+    }
+
+    {
+        WIN32_FILE_ATTRIBUTE_DATA file_info;
+        uint64_t file_size = 0;
+        char actual_sha[CONTENT_SHA256_HEX_SIZE];
+        if (!map_asset_direct_name_valid(sprite_sheet) ||
+            !path_join(out->full_path, sizeof(out->full_path), folder_path,
+                       sprite_sheet)) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: expected a direct .png filename inside the map folder",
+                     path);
+            return 0;
+        }
+        if (!GetFileAttributesExA(out->full_path, GetFileExInfoStandard,
+                                  &file_info) ||
+            (file_info.dwFileAttributes &
+             (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: file is missing, a directory, or a reparse point",
+                     path);
+            return 0;
+        }
+        file_size = ((uint64_t)file_info.nFileSizeHigh << 32) |
+                    (uint64_t)file_info.nFileSizeLow;
+        if (file_size == 0 || file_size > CUSTOM_MAP_MAX_ASSET_BYTES) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: PNG must be 1 byte..64 MiB",
+                     path);
+            return 0;
+        }
+        if (!map_asset_png_header_valid(out->full_path, &out->image_w,
+                                        &out->image_h)) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: invalid PNG header or dimensions (max 4096x4096)",
+                     path);
+            return 0;
+        }
+        if (out->image_w < cell_w || out->image_h < cell_h ||
+            ((out->image_w + padding) % (cell_w + padding)) != 0 ||
+            ((out->image_h + padding) % (cell_h + padding)) != 0) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: PNG dimensions %dx%d do not form a whole %dx%d grid with padding %d",
+                     path, out->image_w, out->image_h, cell_w, cell_h,
+                     padding);
+            return 0;
+        }
+        err[0] = '\0';
+        if (!content_registry_sha256_file(out->full_path, NULL, actual_sha,
+                                         err, sizeof(err))) {
+            diag_log(diag, 1, "[data.json][%s.sprite_sheet] error: %s",
+                     path, err[0] ? err : "SHA-256 failure");
+            return 0;
+        }
+        if (expected_sha && expected_sha[0] &&
+            _stricmp(expected_sha, actual_sha) != 0) {
+            diag_log(diag, 1,
+                     "[data.json][%s.asset_sha256] error: declared SHA-256 does not match file bytes",
+                     path);
+            return 0;
+        }
+        out->sprite_count =
+            ((out->image_w + padding) / (cell_w + padding)) *
+            ((out->image_h + padding) / (cell_h + padding));
+        if (out->sprite_count > CUSTOM_MAP_MAX_SHEET_SPRITES) {
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: sheet grid contains %d sprites (max %d)",
+                     path, out->sprite_count,
+                     CUSTOM_MAP_MAX_SHEET_SPRITES);
+            return 0;
+        }
+        snprintf(out->asset_sha256, sizeof(out->asset_sha256), "%s",
+                 actual_sha);
+        if (!parsed_tileset_add_sheet(diag, tileset, sprite_sheet,
+                                      out->full_path, out->asset_sha256,
+                                      cell_w, cell_h, padding,
+                                      out->sprite_count, out->key)) {
+            return 0;
+        }
+        out->external = 1;
+        return 1;
+    }
+}
+
 static void parsed_tileset_abort(ParsedTileset* tileset) {
     if (!tileset) return;
     if (tileset->transaction) content_registry_abort(tileset->transaction);
@@ -1462,16 +1978,31 @@ static int parse_v2_tileset(MapDiagnostics* diag,
                             const char* folder_path,
                             const char* owner,
                             ParsedTileset* out_tileset) {
-    static const char* const tileset_keys[] = { "tiles" };
+    static const char* const tileset_keys[] = {
+        "sprite_sheet", "asset_sha256", "cell_w", "cell_h", "padding",
+        "native_layout", "tiles"
+    };
     static const char* const tile_keys[] = {
         "id", "symbol", "name", "native_glyph", "sprite_sheet",
         "asset_sha256", "sprite_index", "frame_count", "frame_ticks",
         "animation", "layer", "mirror_with_room", "random_phase",
+        "native_visual",
         "offset_x", "offset_y", "scale_x", "scale_y", "angle_degrees", "tint",
-        "cell_w", "cell_h", "padding"
+        "cell_w", "cell_h", "padding", "collision", "force_mode",
+        "force_x", "force_y", "max_speed_x", "max_speed_y"
     };
     JsonValue* tileset_value = json_object_get(root_value, "tileset");
     JsonValue* tiles_value;
+    ResolvedMapSheet default_sheet;
+    char default_sprite_sheet[MAX_PATH];
+    char default_expected_sha[CONTENT_SHA256_HEX_SIZE];
+    int default_cell_w = 16;
+    int default_cell_h = 16;
+    int default_padding = 0;
+    int native_layout = 0;
+    int have_default_sheet = 0;
+    int top_geometry_authored = 0;
+    int top_valid = 1;
     int start_errors = diag->error_count;
     int i;
     memset(out_tileset, 0, sizeof(*out_tileset));
@@ -1489,6 +2020,74 @@ static int parse_v2_tileset(MapDiagnostics* diag,
     }
     reject_unknown_keys(diag, tileset_value, "tileset", tileset_keys,
                         (int)(sizeof(tileset_keys) / sizeof(tileset_keys[0])));
+    memset(&default_sheet, 0, sizeof(default_sheet));
+    top_valid &= json_read_bounded_string(diag, tileset_value, "sprite_sheet",
+                                          "tileset", 0,
+                                          default_sprite_sheet,
+                                          sizeof(default_sprite_sheet));
+    top_valid &= json_read_bounded_string(diag, tileset_value, "asset_sha256",
+                                          "tileset", 0,
+                                          default_expected_sha,
+                                          sizeof(default_expected_sha));
+    top_valid &= json_read_int_range(diag, tileset_value, "cell_w", "tileset",
+                                     16, 1, 512, &default_cell_w);
+    top_valid &= json_read_int_range(diag, tileset_value, "cell_h", "tileset",
+                                     16, 1, 512, &default_cell_h);
+    top_valid &= json_read_int_range(diag, tileset_value, "padding", "tileset",
+                                     0, 0, 64, &default_padding);
+    top_valid &= json_read_bool(diag, tileset_value, "native_layout", "tileset",
+                                0, &native_layout);
+    top_geometry_authored = json_object_get(tileset_value, "cell_w") != NULL ||
+                            json_object_get(tileset_value, "cell_h") != NULL ||
+                            json_object_get(tileset_value, "padding") != NULL;
+    if (json_object_get(tileset_value, "sprite_sheet") &&
+        !default_sprite_sheet[0]) {
+        diag_log(diag, 1,
+                 "[data.json][tileset.sprite_sheet] error: expected non-empty string");
+        top_valid = 0;
+    }
+    if (default_expected_sha[0] && !default_sprite_sheet[0]) {
+        diag_log(diag, 1,
+                 "[data.json][tileset.asset_sha256] error: default hash requires tileset.sprite_sheet");
+        top_valid = 0;
+    }
+    if (native_layout && !default_sprite_sheet[0]) {
+        diag_log(diag, 1,
+                 "[data.json][tileset.native_layout] error: native layout requires an external default sprite_sheet");
+        top_valid = 0;
+    }
+    if (top_valid && default_sprite_sheet[0]) {
+        if (!resolve_map_sheet(diag, out_tileset, folder_path, "tileset",
+                               default_sprite_sheet, default_expected_sha,
+                               default_cell_w, default_cell_h,
+                               default_padding, top_geometry_authored,
+                               &default_sheet)) {
+            top_valid = 0;
+        } else {
+            have_default_sheet = 1;
+            snprintf(out_tileset->default_sheet_key,
+                     sizeof(out_tileset->default_sheet_key), "%s",
+                     default_sheet.key);
+            out_tileset->default_sheet_sprite_count =
+                default_sheet.sprite_count;
+        }
+    }
+    if (top_valid && native_layout) {
+        if (!have_default_sheet || !default_sheet.external) {
+            diag_log(diag, 1,
+                     "[data.json][tileset.native_layout] error: native layout requires an external default map sheet");
+            top_valid = 0;
+        } else if (default_sheet.sprite_count < NATIVE_TILE_SPRITE_COUNT) {
+            diag_log(diag, 1,
+                     "[data.json][tileset.native_layout] error: map sheet needs at least 128 sprites because native tile actions address the first 128 cells; extra cells are allowed");
+            top_valid = 0;
+        }
+    }
+    out_tileset->native_layout = native_layout && top_valid;
+    if (!top_valid || diag->error_count != start_errors) {
+        parsed_tileset_abort(out_tileset);
+        return 0;
+    }
     tiles_value = json_object_get(tileset_value, "tiles");
     if (!tiles_value) return diag->error_count == start_errors;
     if (tiles_value->type != JSON_ARRAY) {
@@ -1510,19 +2109,24 @@ static int parse_v2_tileset(MapDiagnostics* diag,
         char name[CONTENT_NAME_MAX];
         char symbol[2];
         char native_glyph[2];
-        char sprite_sheet[MAX_PATH];
-        char expected_sha[CONTENT_SHA256_HEX_SIZE];
-        char actual_sha[CONTENT_SHA256_HEX_SIZE];
-        char full_path[MAX_PATH];
-        char sheet_key[CONTENT_SHEET_KEY_MAX];
+        char tile_sprite_sheet[MAX_PATH];
+        char effective_sprite_sheet[MAX_PATH];
+        char tile_expected_sha[CONTENT_SHA256_HEX_SIZE];
+        char effective_expected_sha[CONTENT_SHA256_HEX_SIZE];
+        ResolvedMapSheet resolved_sheet;
         char animation[24];
+        char collision[24];
+        char native_visual[24];
+        char force_mode[24];
         char err[256];
         int mirror = 0;
         int random_phase = 0;
-        int cell_w = 16;
-        int cell_h = 16;
-        int padding = 0;
+        int cell_w = default_cell_w;
+        int cell_h = default_cell_h;
+        int padding = default_padding;
         int sheet_sprite_count = 0;
+        int tile_sheet_authored = 0;
+        int tile_geometry_authored = 0;
         int valid = 1;
         snprintf(path, sizeof(path), "tileset.tiles[%d]", i + 1);
         memset(&input, 0, sizeof(input));
@@ -1539,25 +2143,75 @@ static int parse_v2_tileset(MapDiagnostics* diag,
                                           symbol, sizeof(symbol));
         valid &= json_read_bounded_string(diag, value, "name", path, 0,
                                           name, sizeof(name));
-        valid &= json_read_bounded_string(diag, value, "native_glyph", path, 1,
+        valid &= json_read_bounded_string(diag, value, "native_glyph", path, 0,
                                           native_glyph, sizeof(native_glyph));
-        valid &= json_read_bounded_string(diag, value, "sprite_sheet", path, 1,
-                                          sprite_sheet, sizeof(sprite_sheet));
+        valid &= json_read_bounded_string(diag, value, "sprite_sheet", path, 0,
+                                          tile_sprite_sheet,
+                                          sizeof(tile_sprite_sheet));
         valid &= json_read_bounded_string(diag, value, "asset_sha256", path, 0,
-                                          expected_sha, sizeof(expected_sha));
+                                          tile_expected_sha,
+                                          sizeof(tile_expected_sha));
         valid &= json_read_bounded_string(diag, value, "animation", path, 0,
                                           animation, sizeof(animation));
+        valid &= json_read_bounded_string(diag, value, "collision", path, 0,
+                                           collision, sizeof(collision));
+        valid &= json_read_bounded_string(diag, value, "native_visual", path, 0,
+                                          native_visual,
+                                          sizeof(native_visual));
+        valid &= json_read_bounded_string(diag, value, "force_mode", path, 0,
+                                          force_mode, sizeof(force_mode));
         if (!valid) continue;
-        valid &= json_read_int_range(diag, value, "cell_w", path, 16, 1, 512,
+        valid &= json_read_int_range(diag, value, "cell_w", path,
+                                     default_cell_w, 1, 512,
                                      &cell_w);
-        valid &= json_read_int_range(diag, value, "cell_h", path, 16, 1, 512,
+        valid &= json_read_int_range(diag, value, "cell_h", path,
+                                     default_cell_h, 1, 512,
                                      &cell_h);
-        valid &= json_read_int_range(diag, value, "padding", path, 0, 0, 64,
+        valid &= json_read_int_range(diag, value, "padding", path,
+                                     default_padding, 0, 64,
                                      &padding);
-        if ((unsigned char)symbol[0] < 0x21 || (unsigned char)symbol[0] > 0x7e ||
-            glyph_allowed(symbol[0])) {
+        tile_sheet_authored = json_object_get(value, "sprite_sheet") != NULL;
+        tile_geometry_authored = json_object_get(value, "cell_w") != NULL ||
+                                 json_object_get(value, "cell_h") != NULL ||
+                                 json_object_get(value, "padding") != NULL;
+        if (tile_sheet_authored && !tile_sprite_sheet[0]) {
             diag_log(diag, 1,
-                     "[data.json][%s.symbol] error: symbol must be one printable, non-vanilla ASCII glyph",
+                     "[data.json][%s.sprite_sheet] error: expected non-empty string",
+                     path);
+            valid = 0;
+        }
+        if (tile_sprite_sheet[0]) {
+            snprintf(effective_sprite_sheet,
+                     sizeof(effective_sprite_sheet), "%s",
+                     tile_sprite_sheet);
+        } else if (default_sprite_sheet[0]) {
+            snprintf(effective_sprite_sheet,
+                     sizeof(effective_sprite_sheet), "%s",
+                     default_sprite_sheet);
+        } else {
+            effective_sprite_sheet[0] = '\0';
+            diag_log(diag, 1,
+                     "[data.json][%s.sprite_sheet] error: missing tile sheet and tileset has no default sprite_sheet",
+                     path);
+            valid = 0;
+        }
+        if (tile_expected_sha[0]) {
+            snprintf(effective_expected_sha,
+                     sizeof(effective_expected_sha), "%s",
+                     tile_expected_sha);
+        } else if (!tile_sheet_authored ||
+                   (default_sprite_sheet[0] &&
+                    _stricmp(effective_sprite_sheet,
+                             default_sprite_sheet) == 0)) {
+            snprintf(effective_expected_sha,
+                     sizeof(effective_expected_sha), "%s",
+                     default_expected_sha);
+        } else {
+            effective_expected_sha[0] = '\0';
+        }
+        if ((unsigned char)symbol[0] < 0x20 || (unsigned char)symbol[0] > 0x7e) {
+            diag_log(diag, 1,
+                     "[data.json][%s.symbol] error: symbol must be one printable ASCII glyph",
                      path);
             valid = 0;
         }
@@ -1568,95 +2222,84 @@ static int parse_v2_tileset(MapDiagnostics* diag,
         }
         input.id = id;
         input.name = name[0] ? name : NULL;
-        input.native_glyph = native_glyph[0];
-        if (_strnicmp(sprite_sheet, "builtin:", 8) == 0) {
-            if (json_object_get(value, "cell_w") || json_object_get(value, "cell_h") ||
-                json_object_get(value, "padding")) {
-                diag_log(diag, 1,
-                         "[data.json][%s] error: cell_w, cell_h, and padding only apply to external PNG sheets",
-                         path);
-                valid = 0;
-            }
-            if (expected_sha[0]) {
-                diag_log(diag, 1,
-                         "[data.json][%s.asset_sha256] error: omit hash for built-in sheets", path);
-                valid = 0;
-            }
-            if (strlen(sprite_sheet) >= sizeof(sheet_key)) {
-                diag_log(diag, 1,
-                         "[data.json][%s.sprite_sheet] error: built-in sheet key is too long", path);
-                valid = 0;
-                sheet_key[0] = '\0';
-            } else {
-                memcpy(sheet_key, sprite_sheet, strlen(sprite_sheet) + 1);
-            }
-            input.asset_sha256_hex = NULL;
+        if (!collision[0] || strcmp(collision, "native") == 0) {
+            input.collision_mode = CONTENT_COLLISION_NATIVE;
+        } else if (strcmp(collision, "solid") == 0) {
+            input.collision_mode = CONTENT_COLLISION_SOLID;
+        } else if (strcmp(collision, "pass_through") == 0 ||
+                   strcmp(collision, "passthrough") == 0) {
+            input.collision_mode = CONTENT_COLLISION_PASS_THROUGH;
+        } else if (strcmp(collision, "hazard") == 0) {
+            input.collision_mode = CONTENT_COLLISION_HAZARD;
         } else {
-            WIN32_FILE_ATTRIBUTE_DATA file_info;
-            uint64_t file_size = 0;
-            int image_w = 0;
-            int image_h = 0;
-            if (!map_asset_direct_name_valid(sprite_sheet) ||
-                !path_join(full_path, sizeof(full_path), folder_path, sprite_sheet)) {
+            diag_log(diag, 1,
+                     "[data.json][%s.collision] error: expected native, solid, pass_through, or hazard",
+                     path);
+            valid = 0;
+        }
+        if (!force_mode[0] || strcmp(force_mode, "add") == 0) {
+            input.force_mode = CONTENT_FORCE_ADD;
+        } else if (strcmp(force_mode, "set") == 0) {
+            input.force_mode = CONTENT_FORCE_SET;
+        } else {
+            diag_log(diag, 1,
+                     "[data.json][%s.force_mode] error: expected add or set", path);
+            valid = 0;
+        }
+        if (json_object_get(value, "force_x")) input.force_axes |= CONTENT_FORCE_AXIS_X;
+        if (json_object_get(value, "force_y")) input.force_axes |= CONTENT_FORCE_AXIS_Y;
+        valid &= json_read_float_range(diag, value, "force_x", path, 0.0f,
+                                       -64.0f, 64.0f, &input.force_x);
+        valid &= json_read_float_range(diag, value, "force_y", path, 0.0f,
+                                       -64.0f, 64.0f, &input.force_y);
+        valid &= json_read_float_range(diag, value, "max_speed_x", path, 0.0f,
+                                       0.0f, 64.0f, &input.max_speed_x);
+        valid &= json_read_float_range(diag, value, "max_speed_y", path, 0.0f,
+                                       0.0f, 64.0f, &input.max_speed_y);
+        if (json_object_get(value, "force_mode") && input.force_axes == 0) {
+            diag_log(diag, 1,
+                     "[data.json][%s.force_mode] error: force_mode requires force_x and/or force_y",
+                     path);
+            valid = 0;
+        }
+        if (input.collision_mode == CONTENT_COLLISION_NATIVE) {
+            if (!native_glyph[0] && glyph_allowed(symbol[0]) &&
+                content_registry_tile_native_glyph_allowed(symbol[0])) {
+                native_glyph[0] = symbol[0];
+                native_glyph[1] = '\0';
+            }
+            if (!native_glyph[0]) {
                 diag_log(diag, 1,
-                         "[data.json][%s.sprite_sheet] error: expected a direct .png filename inside the map folder",
+                         "[data.json][%s.native_glyph] error: native collision requires a safe native_glyph (builtin overrides default to their symbol)",
                          path);
                 valid = 0;
-            } else {
-                if (!GetFileAttributesExA(full_path, GetFileExInfoStandard, &file_info) ||
-                    (file_info.dwFileAttributes &
-                     (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
-                    diag_log(diag, 1,
-                             "[data.json][%s.sprite_sheet] error: file is missing, a directory, or a reparse point",
-                             path);
-                    valid = 0;
-                } else if ((file_size = ((uint64_t)file_info.nFileSizeHigh << 32) |
-                                         (uint64_t)file_info.nFileSizeLow) == 0 ||
-                           file_size > CUSTOM_MAP_MAX_ASSET_BYTES) {
-                    diag_log(diag, 1,
-                             "[data.json][%s.sprite_sheet] error: PNG must be 1 byte..64 MiB",
-                             path);
-                    valid = 0;
-                } else if (!map_asset_png_header_valid(full_path, &image_w, &image_h)) {
-                    diag_log(diag, 1,
-                             "[data.json][%s.sprite_sheet] error: invalid PNG header or dimensions (max 4096x4096)",
-                             path);
-                    valid = 0;
-                } else if (image_w < cell_w || image_h < cell_h ||
-                           ((image_w + padding) % (cell_w + padding)) != 0 ||
-                           ((image_h + padding) % (cell_h + padding)) != 0) {
-                    diag_log(diag, 1,
-                             "[data.json][%s.sprite_sheet] error: PNG dimensions %dx%d do not form a whole %dx%d grid with padding %d",
-                             path, image_w, image_h, cell_w, cell_h, padding);
-                    valid = 0;
-                } else if (!content_registry_sha256_file(full_path, NULL, actual_sha,
-                                                         err, sizeof(err))) {
-                    diag_log(diag, 1, "[data.json][%s.sprite_sheet] error: %s", path, err);
-                    valid = 0;
-                } else if (expected_sha[0] && _stricmp(expected_sha, actual_sha) != 0) {
-                    diag_log(diag, 1,
-                             "[data.json][%s.asset_sha256] error: declared SHA-256 does not match file bytes",
-                             path);
-                    valid = 0;
-                } else {
-                    sheet_sprite_count = ((image_w + padding) / (cell_w + padding)) *
-                                         ((image_h + padding) / (cell_h + padding));
-                    if (sheet_sprite_count > CUSTOM_MAP_MAX_SHEET_SPRITES) {
-                        diag_log(diag, 1,
-                                 "[data.json][%s.sprite_sheet] error: sheet grid contains %d sprites (max %d)",
-                                 path, sheet_sprite_count, CUSTOM_MAP_MAX_SHEET_SPRITES);
-                        valid = 0;
-                    } else if (!parsed_tileset_add_sheet(diag, out_tileset, sprite_sheet,
-                                                  full_path, actual_sha,
-                                                  cell_w, cell_h, padding,
-                                                  sheet_sprite_count, sheet_key)) {
-                        valid = 0;
-                    }
-                }
             }
-            input.asset_sha256_hex = valid ? actual_sha : expected_sha;
         }
-        input.sprite_sheet = sheet_key;
+        input.native_glyph = native_glyph[0];
+        memset(&resolved_sheet, 0, sizeof(resolved_sheet));
+        if (valid && have_default_sheet &&
+            _stricmp(effective_sprite_sheet, default_sprite_sheet) == 0 &&
+            cell_w == default_sheet.cell_w &&
+            cell_h == default_sheet.cell_h &&
+            padding == default_sheet.padding &&
+            (!effective_expected_sha[0] ||
+             _stricmp(effective_expected_sha,
+                      default_sheet.asset_sha256) == 0)) {
+            resolved_sheet = default_sheet;
+        } else if (valid &&
+                   !resolve_map_sheet(
+                       diag, out_tileset, folder_path, path,
+                       effective_sprite_sheet, effective_expected_sha,
+                       cell_w, cell_h, padding,
+                       tile_geometry_authored ||
+                           (!tile_sheet_authored && top_geometry_authored),
+                       &resolved_sheet)) {
+            valid = 0;
+        }
+        sheet_sprite_count = resolved_sheet.sprite_count;
+        input.sprite_sheet = resolved_sheet.key;
+        input.asset_sha256_hex = resolved_sheet.external
+            ? resolved_sheet.asset_sha256 : NULL;
         valid &= json_read_int_range(diag, value, "sprite_index", path, 0, 0, 1000000,
                                      &input.sprite_index);
         valid &= json_read_int_range(diag, value, "frame_count", path, 1, 1, 256,
@@ -1693,6 +2336,16 @@ static int parse_v2_tileset(MapDiagnostics* diag,
         }
         if (mirror) input.flags |= CONTENT_TILE_MIRROR_WITH_ROOM;
         if (random_phase) input.flags |= CONTENT_TILE_RANDOM_PHASE;
+        if (!native_visual[0] || strcmp(native_visual, "replace") == 0) {
+            /* Custom rendering replaces the native draw by default. */
+        } else if (strcmp(native_visual, "underlay") == 0) {
+            input.flags |= CONTENT_TILE_NATIVE_VISUAL_UNDERLAY;
+        } else {
+            diag_log(diag, 1,
+                     "[data.json][%s.native_visual] error: expected replace or underlay",
+                     path);
+            valid = 0;
+        }
         if (!animation[0] || strcmp(animation, "loop") == 0) {
             input.animation_mode = CONTENT_ANIMATION_LOOP;
         } else if (strcmp(animation, "ping_pong") == 0 || strcmp(animation, "pingpong") == 0) {
@@ -1711,7 +2364,10 @@ static int parse_v2_tileset(MapDiagnostics* diag,
             continue;
         }
         alias.symbol = symbol[0];
-        alias.native_glyph = native_glyph[0];
+        if (input.collision_mode == CONTENT_COLLISION_SOLID) alias.native_glyph = '@';
+        else if (input.collision_mode == CONTENT_COLLISION_PASS_THROUGH) alias.native_glyph = 'x';
+        else if (input.collision_mode == CONTENT_COLLISION_HAZARD) alias.native_glyph = 'X';
+        else alias.native_glyph = native_glyph[0];
         if (!content_registry_make_key(owner, id, alias.key, err, sizeof(err))) {
             diag_log(diag, 1, "[data.json][%s.id] error: %s", path, err);
             continue;
@@ -2071,13 +2727,13 @@ static void parse_map_file(MapDiagnostics* diag,
                     char ch = trimmed[1 + i];
                     int alias_index = parsed_tileset_find_symbol(tileset, ch);
                     int cell_index = row_index * ROOM_TEMPLATE_W + i;
-                    if (glyph_allowed(ch)) {
-                        current_room->glyphs[cell_index] = ch;
-                    } else if (alias_index >= 0) {
+                    if (alias_index >= 0) {
                         current_room->glyphs[cell_index] =
                             tileset->tiles[alias_index].native_glyph;
                         current_room->content_tile[cell_index] =
                             (unsigned char)(alias_index + 1);
+                    } else if (glyph_allowed(ch)) {
+                        current_room->glyphs[cell_index] = ch;
                     } else {
                         current_room->glyphs[cell_index] = ' ';
                         diag_log(diag, 1,
@@ -2142,6 +2798,60 @@ static void validate_room_glyph_footprints(MapDiagnostics* diag, const ParsedMap
             }
         }
     }
+}
+
+static int native_reset_spawn_kind(char glyph) {
+    if (glyph == 'K') return 1;
+    if (glyph == '*') return 2;
+    if (glyph == 'm') return 3;
+    return 0;
+}
+
+static void validate_native_room_spawn_budget(MapDiagnostics* diag,
+                                              const ParsedMapFile* parsed_map,
+                                              int* out_max_room_spawns,
+                                              int* out_k_marker_count) {
+    int room_index;
+    int max_room_spawns = 0;
+    int total_k_markers = 0;
+
+    for (room_index = 0; room_index < parsed_map->room_count; room_index++) {
+        const ParsedMapRoom* room = &parsed_map->rooms[room_index];
+        int spawn_count = 0;
+        int k_count = 0;
+        int sword_count = 0;
+        int mine_count = 0;
+        int cell;
+        for (cell = 0; cell < ROOM_TEMPLATE_SIZE; cell++) {
+            switch (native_reset_spawn_kind(room->glyphs[cell])) {
+                case 1: k_count++; break;
+                case 2: sword_count++; break;
+                case 3: mine_count++; break;
+                default: break;
+            }
+        }
+        spawn_count = k_count + sword_count + mine_count;
+        if (spawn_count > max_room_spawns) max_room_spawns = spawn_count;
+        total_k_markers += k_count;
+        /* Preserve established mine-only/sword-only rooms: mine allocation
+         * checks NULL and sword_new recycles swords. A room containing K is
+         * different because spawn_thing_action dereferences its failed type-3
+         * allocation. Conservatively count every reset spawner in that room
+         * so ordering cannot consume a slot K depends on. */
+        if (k_count > 0 && spawn_count > NATIVE_ROOM_RESET_SPAWN_LIMIT) {
+            diag_log(
+                diag, 1,
+                "[data.map][room=%s] error: native room-reset spawn budget is %d/%d "
+                "(K hazards=%d, swords=%d, mines=%d); thing_new has %d allocatable "
+                "slots after skipping slot zero and two are reserved for players",
+                room->id, spawn_count, NATIVE_ROOM_RESET_SPAWN_LIMIT,
+                k_count, sword_count, mine_count,
+                NATIVE_THING_ALLOCATABLE_SLOTS
+            );
+        }
+    }
+    if (out_max_room_spawns) *out_max_room_spawns = max_room_spawns;
+    if (out_k_marker_count) *out_k_marker_count = total_k_markers;
 }
 
 static int path_join(char* dst, size_t dst_size, const char* a, const char* b) {
@@ -2234,7 +2944,21 @@ static int registry_reserve(CustomMapRegistry* registry, int needed) {
     return 1;
 }
 
-static void retire_registry_maps(CustomMap* maps) {
+static void free_registry_map_array(CustomMap* maps, int count) {
+    int i;
+    if (!maps) return;
+    for (i = 0; i < count; i++) {
+        if (maps[i].content_transaction) {
+            content_registry_abort(maps[i].content_transaction);
+            maps[i].content_transaction = NULL;
+        }
+        free(maps[i].script_source);
+        maps[i].script_source = NULL;
+    }
+    free(maps);
+}
+
+static void retire_registry_maps(CustomMap* maps, int count) {
     RetiredRegistryBuffer* retired;
 
     if (!maps) return;
@@ -2246,6 +2970,7 @@ static void retire_registry_maps(CustomMap* maps) {
     }
 
     retired->maps = maps;
+    retired->count = count;
     retired->next = g_retired_registry_buffers;
     g_retired_registry_buffers = retired;
 }
@@ -2254,7 +2979,7 @@ static void free_retired_registry_maps(void) {
     RetiredRegistryBuffer* retired = g_retired_registry_buffers;
     while (retired) {
         RetiredRegistryBuffer* next = retired->next;
-        free(retired->maps);
+        free_registry_map_array(retired->maps, retired->count);
         free(retired);
         retired = next;
     }
@@ -2273,7 +2998,7 @@ static void free_unpinned_retired_registry_maps(void) {
             continue;
         }
         *link = retired->next;
-        free(retired->maps);
+        free_registry_map_array(retired->maps, retired->count);
         free(retired);
     }
 }
@@ -2563,6 +3288,12 @@ static int build_custom_map(MapDiagnostics* diag,
         out_map->content_sheet_count = tileset->sheet_count;
         memcpy(out_map->content_sheets, tileset->sheets,
                (size_t)tileset->sheet_count * sizeof(out_map->content_sheets[0]));
+        snprintf(out_map->default_sheet_key,
+                 sizeof(out_map->default_sheet_key), "%s",
+                 tileset->default_sheet_key);
+        out_map->default_sheet_sprite_count =
+            tileset->default_sheet_sprite_count;
+        out_map->native_layout = tileset->native_layout;
         out_map->content_transaction = tileset->transaction;
         tileset->transaction = NULL;
     }
@@ -2597,6 +3328,8 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
     MapDiagnostics diag;
     char content_owner[CONTENT_OWNER_MAX];
     int format_version = 0;
+    int max_native_room_spawns = 0;
+    int native_k_marker_count = 0;
 
     memset(&diag, 0, sizeof(diag));
     memset(&parsed_tileset, 0, sizeof(parsed_tileset));
@@ -2641,10 +3374,18 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
                    format_version == 2 ? &parsed_tileset : NULL,
                    &parsed_map);
     validate_room_glyph_footprints(&diag, &parsed_map);
+    validate_native_room_spawn_budget(&diag, &parsed_map,
+                                      &max_native_room_spawns,
+                                      &native_k_marker_count);
     if (diag.error_count != 0) goto cleanup;
 
     if (!build_custom_map(&diag, &parsed_map, json_root, fd->cFileName,
                           format_version, &parsed_tileset, &custom_map)) {
+        goto cleanup;
+    }
+    custom_map.max_native_room_spawns = max_native_room_spawns;
+    custom_map.native_k_marker_count = native_k_marker_count;
+    if (!custom_map_attach_optional_script(&diag, folder_path, &custom_map)) {
         goto cleanup;
     }
 
@@ -2661,11 +3402,27 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
         goto cleanup;
     }
     custom_map.content_transaction = NULL;
+    custom_map.script_source = NULL;
 
-    map_info(custom_map.id,
-             "registered: name=\"%s\" author=\"%s\" source_rooms=%d final_rooms=%d mode=%s",
-             custom_map.name, custom_map.author, custom_map.source_room_count,
-             custom_map.source_room_count * 2 - 1, custom_map.mode ? "karate" : "swords");
+    if (custom_map.native_k_marker_count > 0) {
+        map_info(custom_map.id,
+                 "registered: name=\"%s\" author=\"%s\" source_rooms=%d final_rooms=%d "
+                 "mode=%s K-room reset budget<=%d/%d k_markers=%d",
+                 custom_map.name, custom_map.author, custom_map.source_room_count,
+                 custom_map.source_room_count * 2 - 1,
+                 custom_map.mode ? "karate" : "swords",
+                 custom_map.max_native_room_spawns,
+                 NATIVE_ROOM_RESET_SPAWN_LIMIT,
+                 custom_map.native_k_marker_count);
+    } else {
+        map_info(custom_map.id,
+                 "registered: name=\"%s\" author=\"%s\" source_rooms=%d final_rooms=%d "
+                 "mode=%s native_reset_spawners<=%d k_markers=0",
+                 custom_map.name, custom_map.author, custom_map.source_room_count,
+                 custom_map.source_room_count * 2 - 1,
+                 custom_map.mode ? "karate" : "swords",
+                 custom_map.max_native_room_spawns);
+    }
 
 cleanup:
     if (diag.error_count != 0) {
@@ -2678,6 +3435,8 @@ cleanup:
         content_registry_abort(custom_map.content_transaction);
         custom_map.content_transaction = NULL;
     }
+    free(custom_map.script_source);
+    custom_map.script_source = NULL;
     json_free_value(json_root);
     free(json_text);
     free(map_text);
@@ -2730,15 +3489,8 @@ static void apply_custom_map(const CustomMap* map) {
 }
 
 static void registry_clear(CustomMapRegistry* registry) {
-    int i;
     if (!registry) return;
-    for (i = 0; i < registry->count; i++) {
-        if (registry->maps[i].content_transaction) {
-            content_registry_abort(registry->maps[i].content_transaction);
-            registry->maps[i].content_transaction = NULL;
-        }
-    }
-    free(registry->maps);
+    free_registry_map_array(registry->maps, registry->count);
     registry->maps = NULL;
     registry->count = 0;
     registry->cap = 0;
@@ -2825,10 +3577,12 @@ static int registry_commit_content_reload(CustomMapRegistry* incoming,
 
 static void registry_swap_in(CustomMapRegistry* incoming) {
     CustomMap* old_maps;
+    int old_count;
 
     if (!incoming) return;
 
     old_maps = g_custom_registry.maps;
+    old_count = g_custom_registry.count;
     g_custom_registry = *incoming;
     g_custom_maps_generation++;
     incoming->maps = NULL;
@@ -2837,9 +3591,9 @@ static void registry_swap_in(CustomMapRegistry* incoming) {
     incoming->rejected_count = 0;
 
     if (old_maps == g_engine_pinned_registry_maps) {
-        retire_registry_maps(old_maps);
+        retire_registry_maps(old_maps, old_count);
     } else {
-        free(old_maps);
+        free_registry_map_array(old_maps, old_count);
     }
     free_unpinned_retired_registry_maps();
 }
@@ -2916,6 +3670,9 @@ void custom_maps_init(void) {
     g_custom_registry.count = 0;
     g_custom_registry.cap = 0;
     g_engine_pinned_registry_maps = NULL;
+    g_engine_pinned_map = NULL;
+    g_engine_pinned_selector = -1;
+    g_engine_pinned_generation = 0;
     g_custom_maps_signature = 0;
     g_custom_maps_failed_signature = 0;
 
@@ -2924,9 +3681,13 @@ void custom_maps_init(void) {
 
 void custom_maps_shutdown(void) {
     CustomMapRegistry empty = { 0 };
+    map_script_deactivate();
     (void)registry_commit_content_reload(&empty, &g_custom_registry);
     registry_clear(&g_custom_registry);
     g_engine_pinned_registry_maps = NULL;
+    g_engine_pinned_map = NULL;
+    g_engine_pinned_selector = -1;
+    g_engine_pinned_generation = 0;
     free_retired_registry_maps();
     g_custom_maps_signature = 0;
     g_custom_maps_failed_signature = 0;
@@ -2945,6 +3706,9 @@ void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void)) {
     if (g_custom_registry.count <= 0) {
         orig_mapgen_init();
         g_engine_pinned_registry_maps = NULL;
+        g_engine_pinned_map = NULL;
+        g_engine_pinned_selector = -1;
+        g_engine_pinned_generation = g_custom_maps_generation;
         free_unpinned_retired_registry_maps();
         return;
     }
@@ -2957,6 +3721,9 @@ void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void)) {
     if (selector < VANILLA_MAP_COUNT) {
         orig_mapgen_init();
         g_engine_pinned_registry_maps = NULL;
+        g_engine_pinned_map = NULL;
+        g_engine_pinned_selector = selector;
+        g_engine_pinned_generation = g_custom_maps_generation;
         free_unpinned_retired_registry_maps();
         return;
     }
@@ -2967,6 +3734,9 @@ void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void)) {
                   MAPS_PREFIX, selector, custom_index, g_custom_registry.count);
         orig_mapgen_init();
         g_engine_pinned_registry_maps = NULL;
+        g_engine_pinned_map = NULL;
+        g_engine_pinned_selector = -1;
+        g_engine_pinned_generation = 0;
         free_unpinned_retired_registry_maps();
         return;
     }
@@ -2974,6 +3744,9 @@ void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void)) {
     map_info(g_custom_registry.maps[custom_index].id, "applying custom map for selector index %d", selector);
     apply_custom_map(&g_custom_registry.maps[custom_index]);
     g_engine_pinned_registry_maps = g_custom_registry.maps;
+    g_engine_pinned_map = &g_custom_registry.maps[custom_index];
+    g_engine_pinned_selector = selector;
+    g_engine_pinned_generation = g_custom_maps_generation;
     free_unpinned_retired_registry_maps();
 }
 
@@ -3083,6 +3856,83 @@ int custom_maps_selector_for_key(const char* key, int* out_selector) {
     return 0;
 }
 
+static void custom_maps_set_script_error(char* err, size_t err_cap,
+                                         const char* message) {
+    if (!err || err_cap == 0) return;
+    snprintf(err, err_cap, "%s", message ? message : "map script error");
+    err[err_cap - 1] = '\0';
+}
+
+void custom_maps_deactivate_script(void) {
+    map_script_deactivate();
+}
+
+int custom_maps_activate_script_for_selector(int selector,
+                                             const MapScriptHost* host,
+                                             char* err,
+                                             size_t err_cap) {
+    MapScriptDefinition definition;
+    MapScriptTileBinding bindings[CUSTOM_MAP_MAX_CONTENT_TILES];
+    char chunk_name[MAX_PATH + 2];
+    const CustomMap* map;
+
+    if (err && err_cap) err[0] = '\0';
+    if (selector >= 0 && selector < VANILLA_MAP_COUNT) {
+        map_script_deactivate();
+        return 1;
+    }
+    /* Do not poll/rebuild here. The native roomdefs and the validated source
+     * must come from the exact generation pinned during mapgen_init. */
+    if (!g_custom_maps_inited || !g_engine_pinned_registry_maps ||
+        !g_engine_pinned_map || selector != g_engine_pinned_selector) {
+        map_script_deactivate();
+        custom_maps_set_script_error(err, err_cap,
+                                     "selected map is not pinned for script activation");
+        return 0;
+    }
+    map = g_engine_pinned_map;
+    if (map->script_id == 0 || !map->script_source) {
+        map_script_deactivate();
+        return 1;
+    }
+    if (!custom_map_script_definition(map, &definition, bindings,
+                                      sizeof(bindings) / sizeof(bindings[0]),
+                                      chunk_name, sizeof(chunk_name))) {
+        map_script_deactivate();
+        custom_maps_set_script_error(err, err_cap,
+                                     "pinned map script definition is invalid");
+        return 0;
+    }
+    map_script_deactivate();
+    if (!map_script_activate(&definition, host, err, err_cap)) {
+        map_script_deactivate();
+        if (err && err_cap && !err[0]) {
+            custom_maps_set_script_error(err, err_cap,
+                                         "map script activation failed");
+        }
+        return 0;
+    }
+    return 1;
+}
+
+static void custom_map_content_view_copy(const CustomMap* map,
+                                         int selector,
+                                         uint64_t generation,
+                                         CustomMapContentView* out_view) {
+    if (!map || !out_view) return;
+    out_view->generation = generation;
+    out_view->selector = selector;
+    out_view->format_version = map->format_version;
+    out_view->source_room_count = map->source_room_count;
+    out_view->content_tile_count = map->content_tile_count;
+    snprintf(out_view->default_sheet_key,
+             sizeof(out_view->default_sheet_key), "%s",
+             map->default_sheet_key);
+    out_view->default_sheet_sprite_count =
+        map->default_sheet_sprite_count;
+    out_view->native_layout = map->native_layout;
+}
+
 int custom_maps_content_view_open(int selector, CustomMapContentView* out_view) {
     int custom_index;
     const CustomMap* map;
@@ -3096,10 +3946,39 @@ int custom_maps_content_view_open(int selector, CustomMapContentView* out_view) 
     custom_index = selector - VANILLA_MAP_COUNT;
     if (custom_index < 0 || custom_index >= g_custom_registry.count) return -1;
     map = &g_custom_registry.maps[custom_index];
-    out_view->generation = g_custom_maps_generation;
-    out_view->format_version = map->format_version;
-    out_view->source_room_count = map->source_room_count;
-    out_view->content_tile_count = map->content_tile_count;
+    custom_map_content_view_copy(map, selector, g_custom_maps_generation,
+                                 out_view);
+    return 1;
+}
+
+int custom_maps_pinned_content_view(int selector,
+                                    CustomMapContentView* out_view) {
+    if (!out_view) return -1;
+    memset(out_view, 0, sizeof(*out_view));
+    out_view->selector = selector;
+    if (selector >= 0 && selector < VANILLA_MAP_COUNT) {
+        return 0;
+    }
+    if (!g_custom_maps_inited || !g_engine_pinned_map ||
+        selector != g_engine_pinned_selector ||
+        g_engine_pinned_generation == 0) {
+        return -1;
+    }
+    custom_map_content_view_copy(g_engine_pinned_map, selector,
+                                 g_engine_pinned_generation, out_view);
+    return 1;
+}
+
+int custom_maps_pinned_script_id(int selector, uint64_t* out_script_id) {
+    if (!out_script_id) return -1;
+    *out_script_id = 0;
+    if (selector >= 0 && selector < VANILLA_MAP_COUNT) return 0;
+    if (!g_custom_maps_inited || !g_engine_pinned_map ||
+        selector != g_engine_pinned_selector ||
+        g_engine_pinned_generation == 0) {
+        return -1;
+    }
+    *out_script_id = g_engine_pinned_map->script_id;
     return 1;
 }
 
@@ -3261,6 +4140,8 @@ int custom_maps_validate_package_text(const char* folder_id,
     int format_version = 0;
     int ok = 0;
     int room;
+    int max_native_room_spawns = 0;
+    int native_k_marker_count = 0;
     if (out_summary) memset(out_summary, 0, sizeof(*out_summary));
     if (!folder_id || !folder_id[0] || !folder_path || !json_text || !map_text ||
         strlen(json_text) > CUSTOM_MAP_MAX_TEXT_FILE_BYTES ||
@@ -3280,9 +4161,15 @@ int custom_maps_validate_package_text(const char* folder_id,
     parse_map_file(&diag, map_text, format_version == 2 ? &tileset : NULL,
                    &parsed_map);
     validate_room_glyph_footprints(&diag, &parsed_map);
+    validate_native_room_spawn_budget(&diag, &parsed_map,
+                                      &max_native_room_spawns,
+                                      &native_k_marker_count);
     if (diag.error_count != 0) goto done;
     if (!build_custom_map(&diag, &parsed_map, root, folder_id,
                           format_version, &tileset, &map)) goto done;
+    map.max_native_room_spawns = max_native_room_spawns;
+    map.native_k_marker_count = native_k_marker_count;
+    if (!custom_map_attach_optional_script(&diag, folder_path, &map)) goto done;
     ok = 1;
 
 done:
@@ -3290,6 +4177,24 @@ done:
         out_summary->format_version = format_version;
         out_summary->source_room_count = map.source_room_count;
         out_summary->content_tile_count = map.content_tile_count;
+        snprintf(out_summary->default_sheet_key,
+                 sizeof(out_summary->default_sheet_key), "%s",
+                 map.default_sheet_key);
+        out_summary->default_sheet_sprite_count =
+            map.default_sheet_sprite_count;
+        out_summary->native_layout = map.native_layout;
+        out_summary->max_native_room_spawns = max_native_room_spawns;
+        out_summary->native_room_spawn_limit = NATIVE_ROOM_RESET_SPAWN_LIMIT;
+        out_summary->native_k_marker_count = native_k_marker_count;
+        out_summary->has_script = map.script_id != 0 && map.script_source != NULL;
+        out_summary->script_size = map.script_size;
+        out_summary->script_id = map.script_id;
+        snprintf(out_summary->script_full_path,
+                 sizeof(out_summary->script_full_path), "%s",
+                 map.script_full_path);
+        snprintf(out_summary->script_sha256,
+                 sizeof(out_summary->script_sha256), "%s",
+                 map.script_sha256);
         for (room = 0; room < map.source_room_count; room++) {
             int cell;
             for (cell = 0; cell < ROOM_TEMPLATE_SIZE; cell++) {
@@ -3301,6 +4206,8 @@ done:
     }
     parsed_tileset_abort(&tileset);
     if (map.content_transaction) content_registry_abort(map.content_transaction);
+    free(map.script_source);
+    map.script_source = NULL;
     json_free_value(root);
     return ok && diag.error_count == 0;
 }

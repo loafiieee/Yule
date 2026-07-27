@@ -1,0 +1,249 @@
+FAIL tests\custom_maps_v2_test.c:277: custom_maps_validate_package_text("v2_symbolic_demo", folder, json_text, map_text, &summary)
+FAIL tests\custom_maps_v2_test.c:286: summary.has_script == 1
+FAIL tests\custom_maps_v2_test.c:287: summary.script_size > 0
+FAIL tests\custom_maps_v2_test.c:288: summary.script_id != 0
+FAIL tests\custom_maps_v2_test.c:289: strlen(summary.script_sha256) == CONTENT_SHA256_HEX_SIZE - 1u
+[14:01:20] [WARN] [maps][legacy] warning: map has only one source room
+[14:01:20] [WARN] [maps][symbol_test] warning: map has only one source room
+[14:01:20] [WARN] [maps][builtin_skin] warning: map has only one source room
+[14:01:20] [WARN] [maps][expanded_skin] warning: map has only one source room
+[14:01:20] [WARN] [maps][space_skin] warning: map has only one source room
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[2].symbol] error: duplicate symbol "$"
+[14:01:20] [ERROR] [maps][bad] [data.json][line=1][col=36] error: duplicate object key 'format'
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[1]] error: unknown key "sprite_indx"
+[14:01:20] [ERROR] [maps][bad] [data.json][line=1][col=43] error: JSON strings cannot contain NUL
+[14:01:20] [ERROR] [maps][bad] [data.json][rules.score_target] error: expected null or positive integer
+[14:01:20] [WARN] [maps][bad] warning: map has only one source room
+[14:01:20] [ERROR] [maps][bad] [data.json][id] error: v2 requires a non-empty stable id
+[14:01:20] [ERROR] [maps][bad] [data.json][id] error: id is too long for a map content namespace
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[1].layer] error: expected integer in 0..1
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[1].collision] error: expected native, solid, pass_through, or hazard
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[1].force_mode] error: expected add or set
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[1].force_mode] error: force_mode requires force_x and/or force_y
+[14:01:20] [ERROR] [maps][bad] [data.json][tileset.tiles[1].native_glyph] error: native collision requires a safe native_glyph (builtin overrides default to their symbol)
+[14:01:20] [WARN] [maps][asset_test] warning: map has only one source room
+[14:01:20] [WARN] [maps][geometry_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][geometry_test] [data.json][tileset.tiles[1]] error: sprite_index/frame_count exceeds the external sheet's 4 sprites
+[14:01:20] [WARN] [maps][asset_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][asset_test] [data.json][tileset.tiles[1].asset_sha256] error: declared SHA-256 does not match file bytes
+[14:01:20] [WARN] [maps][tileset_defaults] warning: map has only one source room
+[14:01:20] [ERROR] [maps][missing_default] [data.json][tileset.tiles[1].sprite_sheet] error: missing tile sheet and tileset has no default sprite_sheet
+[14:01:20] [WARN] [maps][native_default] warning: map has only one source room
+[14:01:20] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: native sheet must be 128x256 with 16x16 cells, padding 0, and 128 sprites
+[14:01:20] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: native sheet must be 128x256 with 16x16 cells, padding 0, and 128 sprites
+[14:01:20] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: native layout requires an external default sprite_sheet
+[14:01:20] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: native layout requires an external default map sheet
+[14:01:20] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: expected boolean
+[14:01:20] [INFO] [maps] scanning maps/ for custom maps
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_online_identity_test_22380] scanning folder: maps\v2_online_identity_test_22380
+[14:01:20] [INFO] [maps][v2_online_identity_test_22380] loading json: maps\v2_online_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_online_identity_test_22380] loading map: maps\v2_online_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_online_identity_test_22380] warning: map has only one source room
+[14:01:20] [INFO] [maps][online_identity_test] registered: name="Online identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+[14:01:20] [INFO] [maps] registry ready: 3 custom maps (was 0)
+[14:01:20] [INFO] [maps] detected maps/ change; rebuilding registry
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_online_identity_test_22380] scanning folder: maps\v2_online_identity_test_22380
+[14:01:20] [INFO] [maps][v2_online_identity_test_22380] loading json: maps\v2_online_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_online_identity_test_22380] loading map: maps\v2_online_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_online_identity_test_22380] warning: map has only one source room
+[14:01:20] [INFO] [maps][online_identity_test] registered: name="Online identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+[14:01:20] [INFO] [maps] registry reloaded: 3 custom maps (was 3)
+[14:01:20] [INFO] [maps] scanning maps/ for custom maps
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+[14:01:20] [INFO] [maps][v2_tileset_identity_test_22380] scanning folder: maps\v2_tileset_identity_test_22380
+[14:01:20] [INFO] [maps][v2_tileset_identity_test_22380] loading json: maps\v2_tileset_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_tileset_identity_test_22380] loading map: maps\v2_tileset_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_tileset_identity_test_22380] warning: map has only one source room
+[14:01:20] [INFO] [maps][tileset_identity_test] registered: name="Tileset identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[14:01:20] [INFO] [maps] registry ready: 3 custom maps (was 0)
+[14:01:20] [INFO] [maps] detected maps/ change; rebuilding registry
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+FAIL tests\custom_maps_v2_test.c:805: strcmp(key_native, key_asset) != 0
+FAIL tests\custom_maps_v2_test.c:811: strcmp(sheet_key_native, view.default_sheet_key) != 0
+FAIL tests\custom_maps_v2_test.c:885: custom_maps_validate_package_text("script_test", folder, v2_builtin_json(), map_text, &summary)
+FAIL tests\custom_maps_v2_test.c:888: summary.has_script == 1
+FAIL tests\custom_maps_v2_test.c:889: summary.script_size == sizeof(valid_script) - 1u
+FAIL tests\custom_maps_v2_test.c:890: summary.script_id != 0
+FAIL tests\custom_maps_v2_test.c:892: _stricmp(summary.script_full_path, expected_script_full) == 0
+FAIL tests\custom_maps_v2_test.c:893: strcmp(summary.script_sha256, expected_script_sha256) == 0
+FAIL tests\custom_maps_v2_test.c:894: custom_maps_validate_package_text("script_test", folder, binding_variant_json, map_text, &summary)
+FAIL tests\custom_maps_v2_test.c:897: summary.script_id != 0
+FAIL tests\custom_maps_v2_test.c:898: summary.script_id != original_script_id
+FAIL tests\custom_maps_v2_test.c:899: custom_maps_validate_package_text("script_test", folder, binding_order_a_json, map_text, &summary)
+FAIL tests\custom_maps_v2_test.c:903: ordered_script_id != 0
+FAIL tests\custom_maps_v2_test.c:904: custom_maps_validate_package_text("script_test", folder, binding_order_b_json, map_text, &summary)
+FAIL tests\custom_maps_v2_test.c:907: summary.script_id != 0
+FAIL tests\custom_maps_v2_test.c:908: summary.script_id != ordered_script_id
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+[14:01:20] [INFO] [maps][v2_tileset_identity_test_22380] scanning folder: maps\v2_tileset_identity_test_22380
+[14:01:20] [INFO] [maps][v2_tileset_identity_test_22380] loading json: maps\v2_tileset_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_tileset_identity_test_22380] loading map: maps\v2_tileset_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_tileset_identity_test_22380] warning: map has only one source room
+[14:01:20] [INFO] [maps][tileset_identity_test] registered: name="Tileset identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords
+[14:01:20] [INFO] [maps] registry reloaded: 3 custom maps (was 3)
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: could not compile map.lua: ...in\eggnoggplus-win\build\map_script_package_test\map.lua:2: <name> or '...' expected near '<eof>'
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: could not initialize map.lua: ...in\eggnoggplus-win\build\map_script_package_test\map.lua:1: callback references an unknown map tile
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: scripts require eggnogg-map/v2
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: script exceeds the 256 KiB package limit
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: script must be a direct, regular, non-reparse file
+[14:01:20] [WARN] [maps][script_test] warning: map has only one source room
+[14:01:20] [ERROR] [maps][script_test] [map.lua] error: script must be a direct, regular, non-reparse file
+[14:01:20] [INFO] [maps] scanning maps/ for custom maps
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+FAIL tests\custom_maps_v2_test.c:1028: manifest_key_for_prefix(manifest, "custom:script_identity_test:", key_a, sizeof(key_a))
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] scanning folder: maps\v2_script_identity_test_22380
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] loading json: maps\v2_script_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] loading map: maps\v2_script_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_script_identity_test_22380] warning: map has only one source room
+[14:01:20] [ERROR] [maps][v2_script_identity_test_22380] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_script_identity_test_22380] map rejected: 1 errors, 1 warnings
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+[14:01:20] [INFO] [maps] registry ready: 2 custom maps (was 0)
+[14:01:20] [INFO] [maps] detected maps/ change; rebuilding registry
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] scanning folder: maps\v2_script_identity_test_22380
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] loading json: maps\v2_script_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] loading map: maps\v2_script_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_script_identity_test_22380] warning: map has only one source room
+[14:01:20] [ERROR] [maps][v2_script_identity_test_22380] [map.lua] error: could not compile map.lua: ...gnoggplus-win\maps\v2_script_identity_test_22380\map.lua:1: <name> or '...' expected near '<eof>'
+[14:01:20] [ERROR] [maps][v2_script_identity_test_22380] map rejected: 1 errors, 1 warnings
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+FAIL tests\custom_maps_v2_test.c:1045: manifest_key_for_prefix(manifest, "custom:script_identity_test:", key_after_invalid, sizeof(key_after_invalid))
+FAIL tests\custom_maps_v2_test.c:1064: manifest_key_for_prefix(manifest, "custom:script_identity_test:", key_b, sizeof(key_b))
+FAIL tests\custom_maps_v2_test.c:1067: strcmp(key_a, key_b) != 0
+25 custom map v2 test(s) failed
+[14:01:20] [INFO] [maps] registry reloaded: 2 custom maps (was 2)
+[14:01:20] [INFO] [maps] detected maps/ change; rebuilding registry
+[14:01:20] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:01:20] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:01:20] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:01:20] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords
+[14:01:20] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:01:20] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:01:20] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:01:20] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] scanning folder: maps\v2_script_identity_test_22380
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] loading json: maps\v2_script_identity_test_22380\data.json
+[14:01:20] [INFO] [maps][v2_script_identity_test_22380] loading map: maps\v2_script_identity_test_22380\data.map
+[14:01:20] [WARN] [maps][v2_script_identity_test_22380] warning: map has only one source room
+[14:01:20] [ERROR] [maps][v2_script_identity_test_22380] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_script_identity_test_22380] map rejected: 1 errors, 1 warnings
+[14:01:20] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:01:20] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] [map.lua] error: could not lock map.lua sandbox: map.lua helper 'type' captures mutable upvalues; use map.state
+[14:01:20] [ERROR] [maps][v2_symbolic_demo] map rejected: 1 errors, 0 warnings
+[14:01:20] [INFO] [maps] registry reloaded: 2 custom maps (was 2)

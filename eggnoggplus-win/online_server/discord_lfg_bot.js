@@ -15,6 +15,8 @@ const RESPONSE_MAX = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 10000;
 const TRACKED_MAX = 2048;
 const PENDING_CREATE_MAX = 4096;
+const DEFAULT_POST_DELAY_MS = 2000;
+const POST_DELAY_MAX_MS = 30000;
 
 function validateConfig(config) {
   if (!config || config.enabled !== true) return { enabled: false };
@@ -27,6 +29,9 @@ function validateConfig(config) {
     token,
     channelId,
     publicBaseUrl: normalizePublicBaseUrl(config.publicBaseUrl),
+    postDelayMs: Number.isInteger(config.postDelayMs)
+      ? Math.max(0, Math.min(POST_DELAY_MAX_MS, config.postDelayMs))
+      : DEFAULT_POST_DELAY_MS,
   };
 }
 
@@ -66,6 +71,54 @@ function buildQueuePayload(username, queue, baseUrl) {
         },
       ],
     }],
+  };
+}
+
+function buildRetiredPayload(username, queue, reason = "left") {
+  if (!USERNAME_RE.test(username)) throw new Error("invalid LFG username");
+  if (queue !== "casual" && queue !== "competitive") {
+    throw new Error("invalid LFG queue");
+  }
+  const queueLabel = queue === "competitive" ? "Competitive" : "Casual";
+  const states = {
+    matched: {
+      title: "Match found",
+      description: `**${username}** found a match and is no longer waiting.`,
+      color: 0x57f287,
+    },
+    disconnected: {
+      title: "Player went offline",
+      description: `**${username}** left the ${queueLabel.toLowerCase()} queue.`,
+      color: 0x747f8d,
+    },
+    changed: {
+      title: "Queue changed",
+      description: `**${username}** is no longer waiting in this ${queueLabel.toLowerCase()} queue.`,
+      color: 0x747f8d,
+    },
+    shutdown: {
+      title: "Queue closed",
+      description: `**${username}** is no longer waiting in the ${queueLabel.toLowerCase()} queue.`,
+      color: 0x747f8d,
+    },
+    left: {
+      title: "Queue closed",
+      description: `**${username}** left the ${queueLabel.toLowerCase()} queue.`,
+      color: 0x747f8d,
+    },
+  };
+  const state = states[reason] || states.left;
+  return {
+    allowed_mentions: { parse: [], users: [], roles: [], replied_user: false },
+    embeds: [{
+      title: state.title,
+      description: state.description,
+      color: state.color,
+      fields: [{ name: "Queue", value: queueLabel, inline: true }],
+      footer: { text: "This LFG post is no longer active." },
+      timestamp: new Date().toISOString(),
+    }],
+    components: [],
   };
 }
 
@@ -132,6 +185,8 @@ class DiscordLfgBot {
     this.config = validateConfig(config);
     this.request = dependencies.request || discordRequest;
     this.delay = dependencies.delay || defaultDelay;
+    this.setTimer = dependencies.setTimer || setTimeout;
+    this.clearTimer = dependencies.clearTimer || clearTimeout;
     this.log = dependencies.log || (() => {});
     this.records = new Map();
     this.serial = Promise.resolve();
@@ -204,12 +259,21 @@ class DiscordLfgBot {
     }
     const prior = this.records.get(username);
     if (prior && prior.active && prior.queue === queue) return true;
-    if (prior) this.queueLeft(username);
+    if (prior) this.queueLeft(username, "changed");
     const generation = (prior ? prior.generation : 0) + 1;
-    const record = { generation, active: true, queue, messageId: "" };
+    const record = {
+      generation,
+      active: true,
+      queue,
+      messageId: "",
+      timer: null,
+    };
     this.records.set(username, record);
     const payload = buildQueuePayload(username, queue, this.config.publicBaseUrl);
-    const queued = this.enqueue(async () => {
+    const create = () => {
+      record.timer = null;
+      if (!record.active || this.records.get(username) !== record) return false;
+      const queued = this.enqueue(async () => {
       const created = await this.api(
         "POST", `/channels/${this.config.channelId}/messages`, payload,
       );
@@ -220,36 +284,52 @@ class DiscordLfgBot {
       const current = this.records.get(username);
       if (!current || current !== record || !current.active) {
         await this.api(
-          "DELETE",
+          "PATCH",
           `/channels/${this.config.channelId}/messages/${messageId}`,
+          buildRetiredPayload(username, queue, record.retireReason || "left"),
         );
         return;
       }
       current.messageId = messageId;
       this.log(`Discord LFG post created for ${username}/${queue}`);
-    });
-    if (!queued) {
-      if (this.records.get(username) === record) this.records.delete(username);
-      return false;
+      });
+      if (!queued && this.records.get(username) === record) {
+        this.records.delete(username);
+      }
+      return !!queued;
+    };
+    if (this.config.postDelayMs > 0) {
+      record.timer = this.setTimer(create, this.config.postDelayMs);
+      if (record.timer && typeof record.timer.unref === "function") {
+        record.timer.unref();
+      }
+    } else {
+      return create();
     }
     return true;
   }
 
-  queueLeft(username) {
+  queueLeft(username, reason = "left") {
     if (!USERNAME_RE.test(username)) return false;
     const record = this.records.get(username);
     if (!record) return true;
     record.active = false;
+    record.retireReason = reason;
     record.generation++;
     this.records.delete(username);
+    if (record.timer !== null) {
+      this.clearTimer(record.timer);
+      record.timer = null;
+    }
     if (this.enabled && SNOWFLAKE_RE.test(record.messageId)) {
       const messageId = record.messageId;
       this.enqueue(async () => {
         await this.api(
-          "DELETE",
+          "PATCH",
           `/channels/${this.config.channelId}/messages/${messageId}`,
+          buildRetiredPayload(username, record.queue, reason),
         );
-        this.log(`Discord LFG post retired for ${username}`);
+        this.log(`Discord LFG post updated for ${username} (${reason})`);
       }, { critical: true });
     }
     return true;
@@ -263,7 +343,9 @@ class DiscordLfgBot {
     if (this.closed) return;
     const retire = options.retire !== false;
     if (retire) {
-      for (const username of [...this.records.keys()]) this.queueLeft(username);
+      for (const username of [...this.records.keys()]) {
+        this.queueLeft(username, "shutdown");
+      }
       await this.flush();
     }
     this.closed = true;
@@ -278,12 +360,16 @@ function createDiscordLfgBotFromEnv(env = process.env, dependencies = {}) {
     token: env.DISCORD_LFG_BOT_TOKEN,
     channelId: env.DISCORD_LFG_CHANNEL_ID,
     publicBaseUrl: env.DISCORD_LFG_PUBLIC_BASE_URL,
+    postDelayMs: env.DISCORD_LFG_POST_DELAY_MS === undefined
+      ? DEFAULT_POST_DELAY_MS
+      : Number.parseInt(String(env.DISCORD_LFG_POST_DELAY_MS), 10),
   }, dependencies);
 }
 
 module.exports = {
   validateConfig,
   buildQueuePayload,
+  buildRetiredPayload,
   discordRequest,
   DiscordLfgBot,
   createDiscordLfgBotFromEnv,

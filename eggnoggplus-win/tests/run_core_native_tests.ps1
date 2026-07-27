@@ -72,6 +72,12 @@ try {
         'tests\launch_request_test.c', 'launch_request.c', 'online_control.c',
         '-o', 'build\launch_request_test.exe'
     )
+    Invoke-NativeTest 'existing-process launch IPC tests' '.\build\launch_ipc_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        '-DLAUNCH_IPC_TEST', '-static', '-static-libgcc',
+        'tests\launch_ipc_test.c', 'launch_ipc.c', 'launch_request.c', 'online_control.c',
+        '-o', 'build\launch_ipc_test.exe', '-luser32', '-lshell32'
+    )
     Invoke-NativeTest 'window policy tests' '.\build\window_policy_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\window_policy_test.c',
@@ -125,7 +131,7 @@ try {
         'bytebeat_stream.c',
         'third_party\quickjs-ng\quickjs-amalgam.c',
         '-w',
-        'online_control.c', 'launch_request.c', 'lua_manager.c', 'ggpo_ext.c',
+        'online_control.c', 'launch_request.c', 'launch_ipc.c', 'lua_manager.c', 'ggpo_ext.c',
         'ggpo_loopback.c', 'ggpo_local.c', 'ggpo_net.c',
         'fp_control.c', 'rollback_schema.c',
         'font_ext.c', 'texture_ext.c', 'log.c', 'net_ext.c', 'update_ext.c',
@@ -163,6 +169,7 @@ try {
         'tests\bytebeat_js_static_test.py',
         'tests\music_console_static_test.py',
         'tests\discord_lfg_server_static_test.py',
+        'tests\server_updater_static_test.py',
         'tests\installer_lifecycle_test.py',
         'tests\net_backpressure_static_test.py',
         'tests\window_runtime_static_test.py'

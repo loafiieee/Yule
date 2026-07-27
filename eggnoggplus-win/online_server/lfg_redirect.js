@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const http = require("http");
 
 const USERNAME_RE = /^[a-z0-9_]{1,24}$/;
@@ -79,22 +80,47 @@ function redirectResponse(req, res) {
     return;
   }
   const escaped = route.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  if (method === "HEAD") {
+    res.writeHead(302, {
+      "Location": route,
+      "Cache-Control": "no-store",
+      "Content-Type": "text/plain; charset=utf-8",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end();
+    return;
+  }
+  const nonce = crypto.randomBytes(18).toString("base64");
   const body = [
-    "<!doctype html><meta charset=\"utf-8\">",
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
     "<meta name=\"referrer\" content=\"no-referrer\">",
-    "<title>Open Yule</title>",
-    `<p><a rel="noreferrer" href="${escaped}">Open this link in Yule</a></p>`,
+    "<title>Opening Yule</title>",
+    "<style>body{font:16px system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:1.5rem;color:#eee;background:#17191d}a{display:inline-block;padding:.7rem 1rem;border-radius:.45rem;color:#111;background:#f0b429;font-weight:700;text-decoration:none}p{line-height:1.5;color:#c9ccd1}</style>",
+    "</head><body><h1>Opening Yule...</h1>",
+    `<p id="status">If nothing happens, <a id="open-yule" rel="noreferrer" href="${escaped}">open Yule</a>.</p>`,
+    `<script nonce="${nonce}">(() => {`,
+    "const link=document.getElementById('open-yule');",
+    "window.location.href=link.href;",
+    "setTimeout(()=>{",
+    "window.close();",
+    "setTimeout(()=>{",
+    "const status=document.getElementById('status');",
+    "if(status) status.firstChild.textContent='Yule was opened. Your browser kept this tab open; you can close it, or ';",
+    "},250);",
+    "},1800);",
+    "})();</script></body></html>",
   ].join("");
-  res.writeHead(302, {
-    "Location": route,
+  res.writeHead(200, {
     "Cache-Control": "no-store",
     "Content-Type": "text/html; charset=utf-8",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "Content-Length": Buffer.byteLength(body),
   });
-  res.end(method === "HEAD" ? undefined : body);
+  res.end(body);
 }
 
 function startRedirectServer(options = {}) {

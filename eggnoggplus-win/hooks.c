@@ -102,6 +102,7 @@
 #include "credential_ext.h"
 #include "online_control.h"
 #include "launch_request.h"
+#include "launch_ipc.h"
 #include "window_policy.h"
 #include "cursor_ext.h"
 #include "discord_rpc_ext.h"
@@ -1385,10 +1386,13 @@ typedef struct OnlineActiveMatch {
     int result_reported;
     int server_committed;
     int invalid_state_ticks;
+    int winner_player;
+    int awaiting_native_return;
     OnlineMatchResult result;
     char opponent[48];
     char map_label[128];
     char p2p_token[96];
+    char completion_status[192];
 } OnlineActiveMatch;
 
 typedef struct OnlineResultToast {
@@ -8574,18 +8578,21 @@ static int online_server_protocol_compatible(const char* json) {
     int packet_auth = 0;
     int social_controls = 0;
     int private_rematch = 0;
+    int p2p_relay = 0;
     return online_json_get_int(json, "control_protocol", &control_protocol) &&
            online_json_get_int(json, "match_protocol", &match_protocol) &&
            online_json_get_int(json, "p2p_protocol", &p2p_protocol) &&
            online_json_get_int(json, "cap_p2p_auth", &packet_auth) &&
            online_json_get_int(json, "cap_social_controls", &social_controls) &&
            online_json_get_int(json, "cap_private_rematch", &private_rematch) &&
+           online_json_get_int(json, "cap_p2p_relay", &p2p_relay) &&
            control_protocol == ONLINE_CONTROL_PROTOCOL_VERSION &&
            match_protocol == ONLINE_MATCH_PROTOCOL_VERSION &&
            p2p_protocol == (int)GGPO_NET_PROTOCOL_VERSION &&
            packet_auth == 1 &&
            social_controls == 1 &&
-           private_rematch == 1;
+           private_rematch == 1 &&
+           p2p_relay == 1;
 }
 
 static int online_match_protocol_compatible(const char* json) {
@@ -9058,9 +9065,19 @@ static void online_server_send_match_end(OnlineMatchResult result) {
     else if (result == ONLINE_MATCH_RESULT_LOSS) text = "loss";
     if (match_id <= 0 || !g_online_active_match.server_committed) return;
     if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
-    snprintf(line, sizeof(line), "{\"type\":\"match_end\",\"match_id\":%d,\"result\":\"%s\"}\n",
-             match_id,
-             text);
+    if (g_online_active_match.winner_player >= 0 &&
+        g_online_active_match.winner_player <= 1) {
+        snprintf(line, sizeof(line),
+                 "{\"type\":\"match_end\",\"match_id\":%d,\"result\":\"%s\",\"winner_player\":%d}\n",
+                 match_id,
+                 text,
+                 g_online_active_match.winner_player);
+    } else {
+        snprintf(line, sizeof(line),
+                 "{\"type\":\"match_end\",\"match_id\":%d,\"result\":\"%s\"}\n",
+                 match_id,
+                 text);
+    }
     online_server_send_raw(line);
 }
 
@@ -9134,6 +9151,7 @@ static void online_return_to_hub_after_match(const char* status) {
 static void online_active_match_capture_from_pending(void) {
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
     g_online_active_match.active = 1;
+    g_online_active_match.winner_player = -1;
     g_online_active_match.match_id = g_online_pending_match.match_id;
     g_online_active_match.local_player = ggpo_net_local_player();
     if (g_online_active_match.local_player < 0 || g_online_active_match.local_player > 1) {
@@ -9170,9 +9188,18 @@ static void online_finish_active_match(OnlineMatchResult result, const char* sta
         return;
     }
     g_online_active_match.result = result;
+    safe_copy(g_online_active_match.completion_status,
+              sizeof(g_online_active_match.completion_status),
+              status ? status : "Match complete.");
     if (send_report && !g_online_active_match.result_reported) {
         g_online_active_match.result_reported = 1;
         online_server_send_match_end(result);
+    }
+    if (g_online_active_match.awaiting_native_return) {
+        if (!g_online_result.active) {
+            online_result_prepare(result, status);
+        }
+        return;
     }
     if (ggpo_net_active()) stop_ggpo_net("online match complete");
     online_connect_reset();
@@ -9646,6 +9673,14 @@ static void online_apply_p2p_peer(const char* line) {
     online_json_get_int(line, "peer_public_port", &public_port);
     online_json_get_string(line, "peer_lan_host", lan_host, sizeof(lan_host));
     online_json_get_int(line, "peer_lan_port", &lan_port);
+    if (_stricmp(peer_route, "relay") == 0) {
+        /*
+         * "relay" is a non-address marker. Reuse the hostname which already
+         * passed the control-server configuration and DNS validation; the
+         * server-provided port may differ from its TCP listener.
+         */
+        safe_copy(host, sizeof(host), g_online_cfg.server_host);
+    }
     if (match_id <= 0 || port <= 0 || port > 65535 || !host[0]) return;
 
     if (g_online_pending_match.active && g_online_pending_match.match_id == match_id) {
@@ -10301,6 +10336,9 @@ static void online_server_handle_line(const char* line) {
         online_hub_set_status("Result reported; waiting for opponent.");
     } else if (_stricmp(type, "match_result") == 0) {
         OnlineMatchResult result;
+        int preserve_native_finish =
+            g_online_active_match.active &&
+            g_online_active_match.awaiting_native_return;
         OnlineRematchState prior_rematch_state = g_online_result.active
             ? g_online_result.rematch_state
             : ONLINE_REMATCH_NONE;
@@ -10339,7 +10377,9 @@ static void online_server_handle_line(const char* line) {
                 return;
             }
         }
-        if (ggpo_net_active()) stop_ggpo_net("online server result");
+        if (!preserve_native_finish && ggpo_net_active()) {
+            stop_ggpo_net("online server result");
+        }
         text[0] = '\0';
         online_json_get_string(line, "result", text, sizeof(text));
         result = online_match_result_from_text(text);
@@ -10369,7 +10409,9 @@ static void online_server_handle_line(const char* line) {
                 g_online_active_match.queue_mode = 0;
             }
             online_result_prepare(result, "Match complete.");
-            online_return_to_hub_after_match("Match complete.");
+            if (!preserve_native_finish) {
+                online_return_to_hub_after_match("Match complete.");
+            }
         }
         g_online_result.result = result;
         g_online_result.toast_visible = 1;
@@ -10423,21 +10465,36 @@ static void online_server_handle_line(const char* line) {
             safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match complete.");
             online_hub_set_status("Match complete.");
         }
-        online_pending_match_reset();
-        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
-        online_connect_reset();
+        if (preserve_native_finish) {
+            safe_copy(g_online_active_match.completion_status,
+                      sizeof(g_online_active_match.completion_status),
+                      "Match complete.");
+        } else {
+            online_pending_match_reset();
+            memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+            online_connect_reset();
+        }
     } else if (_stricmp(type, "match_abort") == 0 ||
                _stricmp(type, "match_end") == 0) {
+        int preserve_native_finish =
+            g_online_active_match.active &&
+            g_online_active_match.awaiting_native_return;
         if (!online_server_message_matches_current_match(line, type)) return;
-        if (ggpo_net_active()) stop_ggpo_net("online server");
-        online_clear_match_state();
         /* A no-contest/abort supersedes any provisional locally reported
          * outcome. Remove both its toast and retained match identity. */
         memset(&g_online_result, 0, sizeof(g_online_result));
         text[0] = '\0';
         online_json_get_string(line, "reason", text, sizeof(text));
         online_hub_set_status(text[0] ? text : "Online match setup ended.");
-        online_hub_open();
+        if (preserve_native_finish) {
+            safe_copy(g_online_active_match.completion_status,
+                      sizeof(g_online_active_match.completion_status),
+                      text[0] ? text : "Match ended as a no contest.");
+        } else {
+            if (ggpo_net_active()) stop_ggpo_net("online server");
+            online_clear_match_state();
+            online_hub_open();
+        }
     }
     if (is_online_hub_state_active()) {
         online_hub_rebuild_rows();
@@ -12688,6 +12745,34 @@ static void online_launch_clear(void) {
     g_online_launch.deadline_ms = 0;
 }
 
+static void online_launch_accept_request(const LaunchRequest* request,
+                                         const char* source) {
+    if (!request || request->action == LAUNCH_REQUEST_NONE) return;
+    if (g_online_launch.request.action != LAUNCH_REQUEST_NONE &&
+        (g_online_launch.request.action != request->action ||
+         strcmp(g_online_launch.request.target, request->target) != 0)) {
+        LOG_INFO("online.launch: replacing pending %s intent with %s intent from %s",
+                 launch_request_action_name(g_online_launch.request.action),
+                 launch_request_action_name(request->action),
+                 source ? source : "external activation");
+    }
+    g_online_launch.request = *request;
+    g_online_launch.hub_open_requested = 0;
+    g_online_launch.waiting_status_shown = 0;
+    g_online_launch.deadline_ms = (DWORD)online_control_deadline_after(
+        (uint32_t)GetTickCount(), ONLINE_LAUNCH_TIMEOUT_MS);
+    LOG_INFO("online.launch: accepted %s intent from %s",
+             launch_request_action_name(request->action),
+             source ? source : "external activation");
+}
+
+static void online_launch_poll_forwarded_requests(void) {
+    LaunchRequest request;
+    while (launch_ipc_poll(&request)) {
+        online_launch_accept_request(&request, "running-instance handoff");
+    }
+}
+
 /*
  * Parse via CommandLineToArgvW at a normal update boundary, never from
  * DllMain. UTF-8 conversion is only an interchange step: the launch parser
@@ -12758,11 +12843,7 @@ static void online_launch_parse_process_args(void) {
         return;
     }
     if (parsed != LAUNCH_REQUEST_PARSE_OK) return;
-    g_online_launch.request = request;
-    g_online_launch.deadline_ms = (DWORD)online_control_deadline_after(
-        (uint32_t)GetTickCount(), ONLINE_LAUNCH_TIMEOUT_MS);
-    LOG_INFO("online.launch: accepted %s intent",
-             launch_request_action_name(request.action));
+    online_launch_accept_request(&request, "process command line");
 }
 
 static int online_launch_find_friend(const char* username) {
@@ -12793,6 +12874,7 @@ static void online_launch_pump(void) {
     int friend_index;
 
     online_launch_parse_process_args();
+    online_launch_poll_forwarded_requests();
     action = g_online_launch.request.action;
     if (action == LAUNCH_REQUEST_NONE) return;
     now = (uint32_t)GetTickCount();
@@ -12806,12 +12888,19 @@ static void online_launch_pump(void) {
         online_launch_clear();
         return;
     }
+    /*
+     * A link activation is navigation, never an out-of-band forfeit button.
+     * Keep the validated intent pending until the current match/setup has
+     * reached its normal terminal state.
+     */
+    if (g_online_pending_match.active || g_online_active_match.active) return;
     if (!g_online_launch.hub_open_requested) {
         g_online_launch.hub_open_requested = 1;
         online_hub_open();
     }
     if (!is_online_hub_state_active()) return;
     if (action == LAUNCH_REQUEST_HUB) {
+        LOG_INFO("online.launch: completed hub intent");
         online_launch_clear();
         return;
     }
@@ -12829,6 +12918,7 @@ static void online_launch_pump(void) {
         g_online_tab = ONLINE_TAB_FRIENDS;
         online_hub_rebuild_rows();
         online_launch_select_first_inbox_row();
+        LOG_INFO("online.launch: completed requests intent");
         online_launch_clear();
         return;
     }
@@ -12847,6 +12937,9 @@ static void online_launch_pump(void) {
             ? "competitive" : "casual");
         if (g_online_queue_mode == desired_queue) {
             online_hub_rebuild_rows();
+            LOG_INFO("online.launch: completed %s intent",
+                     desired_queue == 2
+                        ? "queue/competitive" : "queue/casual");
             online_launch_clear();
         }
         return;
@@ -12869,10 +12962,14 @@ static void online_launch_pump(void) {
                      "%s is not an available friend.",
                      g_online_launch.request.target);
             online_hub_set_status(status);
+            LOG_INFO("online.launch: completed challenge intent; target %s unavailable",
+                     g_online_launch.request.target);
             online_launch_clear();
             return;
         }
         (void)online_try_send_friend_challenge(friend_index);
+        LOG_INFO("online.launch: completed challenge intent for %s",
+                 g_online_launch.request.target);
         online_launch_clear();
     }
 }
@@ -12984,6 +13081,15 @@ static void __cdecl online_hub_enter(void) {
 static void __cdecl online_hub_update(void) {
     online_sent_challenge_prune();
     online_server_update();
+    /*
+     * The native menu update hook parses the process URI and opens this custom
+     * state, but custom states do not pass through that hook afterward. Keep
+     * pumping the still-owned launch request here so manual or remembered
+     * authentication resumes requests/queue/challenge instead of stranding the
+     * user at the hub's default Play page. Running after server_update lets an
+     * auth_ok complete the requested action in the same hub tick.
+     */
+    online_launch_pump();
     online_match_pump_launch();
     lua_manager_on_tick();
     lua_manager_on_tick_post();
@@ -16879,6 +16985,8 @@ static void online_match_poll_completion(void) {
         local_player = clampi(g_online_active_match.local_player, 0, 1);
     }
     result = (winner == local_player) ? ONLINE_MATCH_RESULT_WIN : ONLINE_MATCH_RESULT_LOSS;
+    g_online_active_match.winner_player = winner;
+    g_online_active_match.awaiting_native_return = 1;
     LOG_INFO("online.match: completion match=%d local_player=%d winner=%d result=%s end=%d leader=0x%08X loser=0x%08X score=%d-%d target=%d",
              g_online_active_match.match_id,
              local_player,
@@ -18763,10 +18871,29 @@ static void* __cdecl hooked_state_switch(void* target) {
                         cur == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED);
     int entering_main = (target == (void*)(uintptr_t)ADDR_MAIN_STATE ||
                          target == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL);
+    int finish_online_after_switch =
+        leaving_game && entering_main &&
+        g_online_active_match.active &&
+        g_online_active_match.awaiting_native_return;
+    void* switched;
     if (leaving_game && entering_main && (g_online_active_match.active || g_online_result.active || ggpo_net_active())) {
         online_reset_native_sound_state("state switch to main");
     }
-    return real_switch ? real_switch(target) : target;
+    switched = real_switch ? real_switch(target) : target;
+    if (finish_online_after_switch) {
+        char status[192];
+        safe_copy(status, sizeof(status),
+                  g_online_active_match.completion_status[0]
+                      ? g_online_active_match.completion_status
+                      : "Match complete.");
+        LOG_INFO("online.match: native win sequence returned to main; opening hub");
+        if (ggpo_net_active()) stop_ggpo_net("native win sequence complete");
+        online_pending_match_reset();
+        memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+        online_connect_reset();
+        online_return_to_hub_after_match(status);
+    }
+    return switched;
 }
 
 

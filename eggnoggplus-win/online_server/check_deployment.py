@@ -94,11 +94,12 @@ def main() -> int:
     require_exact_int(info, "cap_p2p_auth", 1)
     require_exact_int(info, "cap_social_controls", 1)
     require_exact_int(info, "cap_private_rematch", 1)
+    require_exact_int(info, "cap_p2p_relay", 1)
     check_udp(args.host, args.port, args.timeout)
     print(
         f"OK {args.host}:{args.port}: control v{REQUIRED_CONTROL_PROTOCOL}, "
         f"match v{REQUIRED_MATCH_PROTOCOL}, P2P v{REQUIRED_P2P_PROTOCOL}, "
-        "packet authentication, social controls, private rematches, and UDP discovery available"
+        "packet authentication, social controls, private rematches, UDP relay, and UDP discovery available"
     )
     return 0
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -85,6 +86,7 @@ def assert_protocol(message: dict[str, object]) -> None:
     assert message.get("cap_p2p_auth") == 1
     assert message.get("cap_social_controls") == 1
     assert message.get("cap_private_rematch") == 1
+    assert message.get("cap_p2p_relay") == 1
 
 
 def main() -> int:
@@ -391,6 +393,77 @@ def main() -> int:
             # A setup abort cancels both clients without manufacturing a winner.
             matches = make_match(queue="competitive")
             pending_id = int(matches[0]["match_id"])
+            udp_peers = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in clients]
+            try:
+                for udp_peer in udp_peers:
+                    udp_peer.bind(("127.0.0.1", 0))
+                    udp_peer.settimeout(2.0)
+                for index, udp_peer in enumerate(udp_peers):
+                    udp_peer.sendto(
+                        json.dumps(
+                            {
+                                "type": "p2p_probe",
+                                "match_id": pending_id,
+                                "username": clients[index].name,
+                                "token": matches[index]["p2p_token"],
+                                "local_port": udp_peer.getsockname()[1],
+                            },
+                            separators=(",", ":"),
+                        ).encode(),
+                        ("127.0.0.1", port),
+                    )
+                direct_routes = [
+                    client.receive_type("p2p_peer") for client in clients
+                ]
+                assert all(message.get("peer_route") != "relay" for message in direct_routes)
+
+                # A fresh local socket is the client's bounded direct-path
+                # retry. The server switches both peers, not only the retrying
+                # side, to one symmetric relay route.
+                udp_peers[0].close()
+                udp_peers[0] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                udp_peers[0].bind(("127.0.0.1", 0))
+                udp_peers[0].settimeout(2.0)
+                udp_peers[0].sendto(
+                    json.dumps(
+                        {
+                            "type": "p2p_probe",
+                            "match_id": pending_id,
+                            "username": clients[0].name,
+                            "token": matches[0]["p2p_token"],
+                            "local_port": udp_peers[0].getsockname()[1],
+                        },
+                        separators=(",", ":"),
+                    ).encode(),
+                    ("127.0.0.1", port),
+                )
+                relay_routes = [
+                    client.receive_type("p2p_peer") for client in clients
+                ]
+                assert all(
+                    message.get("peer_route") == "relay"
+                    and message.get("peer_host") == "relay"
+                    and message.get("peer_port") == port
+                    for message in relay_routes
+                )
+
+                sender_player = int(matches[0]["role"])
+                relayed_packet = struct.pack(
+                    "<IHHQIQ16s",
+                    0x50474E45,
+                    17,
+                    1,
+                    0x1122334455667788,
+                    sender_player,
+                    1,
+                    b"\0" * 16,
+                )
+                udp_peers[0].sendto(relayed_packet, ("127.0.0.1", port))
+                received, _ = udp_peers[1].recvfrom(2048)
+                assert received == relayed_packet
+            finally:
+                for udp_peer in udp_peers:
+                    udp_peer.close()
             clients[0].send({"type": "match_abort", "match_id": pending_id, "reason": "test setup abort"})
             aborts = [client.receive_type("match_abort") for client in clients]
             assert all(message.get("match_id") == pending_id for message in aborts)
@@ -453,9 +526,22 @@ def main() -> int:
                     and message.get("presence") == "in_match"
                     for message in in_match_presence
                 )
-            clients[0].send({"type": "match_end", "match_id": normal_id, "result": "win"})
+            synchronized_winner = int(matches[0]["role"])
+            clients[0].send({
+                "type": "match_end",
+                "match_id": normal_id,
+                # The synchronized slot is authoritative even if a client's
+                # local win/loss interpretation is inverted.
+                "result": "loss",
+                "winner_player": synchronized_winner,
+            })
             clients[0].receive_type("match_report_ack")
-            clients[1].send({"type": "match_end", "match_id": normal_id, "result": "loss"})
+            clients[1].send({
+                "type": "match_end",
+                "match_id": normal_id,
+                "result": "loss",
+                "winner_player": synchronized_winner,
+            })
             results = [client.receive_type("match_result") for client in clients]
             assert results[0].get("result") == "win"
             assert results[1].get("result") == "loss"

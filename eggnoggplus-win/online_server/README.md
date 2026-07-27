@@ -22,15 +22,17 @@ Main protocol is newline-delimited JSON over TCP. The server handles:
 - server-derived friend presence for queues, match setup, and active gameplay
 - 5-minute friend challenges with an authoritative compatible-map picker
 - shared-map selection from each client's submitted map manifest
-- symmetric P2P candidate publication/hole-punch discovery; no relay fallback
+- symmetric P2P candidate publication/hole-punch discovery, followed by a bounded
+  match-owned UDP relay when a fresh direct-path socket generation is required
 - one random 256-bit `p2p_auth_token` per match for GGPO UDP v17 packet MACs
 
 ## Optional Discord LFG bridge
 
 The server can mirror genuinely waiting casual/competitive players to one configured
-Discord channel. It creates one embed per player, retires that exact post on leave, match,
-disconnect, queue change, or clean shutdown, and gives Discord only the public username
-and queue. Two link buttons enter the existing validated challenge or public-queue flow;
+Discord channel. It waits two seconds before creating one embed per genuinely waiting
+player, then edits that exact post into an inactive state on leave, match, disconnect,
+queue change, or clean shutdown. Direct friend challenges never post. Discord receives
+only the public username and queue. Two link buttons enter the existing validated challenge or public-queue flow;
 there is no direct match/token link.
 
 The integration uses outbound Discord REST only and needs no npm dependency, Gateway
@@ -42,6 +44,7 @@ DISCORD_LFG_ENABLED=1
 DISCORD_LFG_BOT_TOKEN=secret
 DISCORD_LFG_CHANNEL_ID=123456789012345678
 DISCORD_LFG_PUBLIC_BASE_URL=https://play.example.com/yule
+DISCORD_LFG_POST_DELAY_MS=2000
 LFG_REDIRECT_HOST=127.0.0.1
 LFG_REDIRECT_PORT=47880
 ```
@@ -67,6 +70,29 @@ map key/local selector, a per-user probe token, and the shared match packet-auth
 token. Host/join decides player/initial-state authority only; both clients probe
 and send HELLOs symmetrically.
 
+If a direct attempt needs a fresh UDP socket, the server changes both clients to one
+`relay` route on `UDP_PORT`. Relay packets are admitted only from the observed endpoint
+owned by that active match and server-assigned player slot, are bounded to protocol-v17
+packet sizes/types and per-second packet/byte budgets, and are forwarded one-for-one only
+to the recorded opponent endpoint. The peer still verifies the original end-to-end HMAC
+and replay sequence. Set `P2P_RELAY_ENABLED=0` only to diagnose direct traversal.
+
+## Safe source update
+
+From the deployed checkout, run:
+
+```bash
+cd /home/loaf/Yule/eggnoggplus-win/online_server
+chmod +x update_server.sh
+./update_server.sh
+```
+
+The updater clones and validates the latest `main` in a temporary directory before
+stopping systemd, swaps only server application files, restarts, and runs the local
+TCP/UDP deployment probe. It never stages `users.json`, `ratings.json`,
+`server_secret.key`, logs, environment/PID/socket files, caches, or `node_modules`, and
+restores the prior application files if startup or validation fails.
+
 ## Deployment compatibility check
 
 The server sends an unauthenticated, flat `server_info` welcome on every TCP
@@ -75,7 +101,7 @@ protocol 3 adds the counted friend-challenge map-intersection stream and
 server-revalidated selected map. Match protocol 3 advertises:
 
 ```json
-{"type":"server_info","control_protocol":3,"match_protocol":3,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1}
+{"type":"server_info","control_protocol":3,"match_protocol":3,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1}
 ```
 
 The same scalar version/capability fields are repeated in `auth_ok`, and each
@@ -87,6 +113,10 @@ The game client explicitly requests `server_info` after TCP completion and does 
 its login/register message until every required capability matches. It validates the
 repeated `auth_ok` and `match_found` fields as well, so an old or partially restarted
 deployment is rejected before queueing and again before peer setup.
+
+`cap_p2p_relay:1` is required by the current client so an old discovery-only deployment
+cannot silently strand strict-NAT players. A server started with
+`P2P_RELAY_ENABLED=0` advertises zero and is intentionally rejected.
 
 `cap_social_controls:1` is required by the current client. A block removes the mutual
 friendship, both pending request directions, and challenges in either direction. Either

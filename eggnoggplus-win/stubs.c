@@ -1377,8 +1377,6 @@ __attribute__((naked)) void SDL_HasSSE41() { asm("jmp *%0" : : "m"(p_SDL_HasSSE4
 __attribute__((naked)) void SDL_HasSSE42() { asm("jmp *%0" : : "m"(p_SDL_HasSSE42)); }
 __attribute__((naked)) void SDL_HasScreenKeyboardSupport() { asm("jmp *%0" : : "m"(p_SDL_HasScreenKeyboardSupport)); }
 __attribute__((naked)) void SDL_HideWindow() { asm("jmp *%0" : : "m"(p_SDL_HideWindow)); }
-__attribute__((naked)) void SDL_Init() { asm("jmp *%0" : : "m"(p_SDL_Init)); }
-__attribute__((naked)) void SDL_InitSubSystem() { asm("jmp *%0" : : "m"(p_SDL_InitSubSystem)); }
 __attribute__((naked)) void SDL_IntersectRect() { asm("jmp *%0" : : "m"(p_SDL_IntersectRect)); }
 __attribute__((naked)) void SDL_IntersectRectAndLine() { asm("jmp *%0" : : "m"(p_SDL_IntersectRectAndLine)); }
 __attribute__((naked)) void SDL_IsGameController() { asm("jmp *%0" : : "m"(p_SDL_IsGameController)); }

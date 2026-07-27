@@ -24,7 +24,11 @@ restorable synchronized frame zero and the server broadcasts the exact-match
 gameplay commit. Only that committed match may send or accept `match_end`,
 `match_report_ack`, `match_result`, or rating data.
 
-Normal completion requires both clients to name the same winner. A lone report
+Normal completion requires both clients to name the same winner. Native detection reports
+the synchronized winning player slot (0/1) alongside the compatibility `win`/`loss` word.
+The server records its random host/join player assignment and maps that slot to an account;
+an inverted local-player interpretation can therefore no longer turn one synchronized
+winner into two contradictory account names. A lone report
 that expires or two conflicting reports becomes a no-contest with no Elo
 mutation. Fully authoritative server-side result validation remains a
 production requirement.
@@ -37,7 +41,12 @@ replays the exact cached terminal result for that participant instead of
 returning `invalid or stale match result`. The one-message replay cache is
 cleared when a new match begins.
 
-The client first creates a provisional toast after reporting its local result.
+The client first creates a provisional toast after reporting its local result. Reporting
+does not stop rollback or switch state: the native terminal countdown and win animation
+continue normally. When Eggnogg itself switches from GAME to main, the hook lets that
+native switch finish, then tears down transport and queues the hub. A server confirmation
+or no-contest arriving during the animation updates retained result/status state but cannot
+skip the presentation.
 Its heading is `RESULT REPORTED`, not an unconfirmed win/loss claim. The exact
 match ID remains retained until the asynchronous server answer arrives. A
 confirmed `match_result` refreshes the toast with `YOU WON`, `YOU LOST`, or
@@ -68,7 +77,7 @@ same two-pass native cursor used by the hub and other online overlays.
 
 ## Navigation and requeue safety
 
-Completion queues the normal hub handoff and explicitly assigns the native
+After the native win sequence returns to main, completion queues the normal hub handoff and explicitly assigns the native
 main menu as the hub's Back owner. It cannot return to an ended GAME state or
 enter the former Result -> Hub -> Result loop because no result `GameState`
 exists.
@@ -84,6 +93,8 @@ single stable hub destination.
 - `g_online_result_state` and its fullscreen input/render paths do not exist.
 - Prematch/connect failures never manufacture a result notification.
 - Only an exact-ID, server-committed match may report or accept a result.
+- Normal reports use the synchronized winner slot and the server-owned slot/account map.
+- A normal report/confirmation cannot stop the native win countdown or skip its animation.
 - A committed deliberate exit is an explicit forfeit and awards the opponent.
 - A late duplicate report can only replay that participant's exact most-recent
   terminal message; it cannot mutate ratings or another match.
@@ -96,11 +107,13 @@ single stable hub destination.
 ## Verification
 
 `python tests\online_flow_integration_static_test.py` guards toast-only routing,
-terminal native winner gating, committed-forfeit routing, exact-ID retention,
+terminal native winner gating, winner-slot publication, post-native-switch teardown,
+committed-forfeit routing, exact-ID retention,
 confirmation refresh, abort cleanup, requeue gating, and stable hub ownership.
 `python tests\online_server_match_protocol_test.py` exercises the live control
 socket, including a forfeit plus late P2P-loss race that must replay the same
-win without a stale-result error. `python tests\online_cursor_static_test.py` guards native
+win without a stale-result error and a deliberately inverted local result paired with
+an agreed synchronized winner slot. `python tests\online_cursor_static_test.py` guards native
 cursor layering and toast hit-area coverage. A MinGW syntax check covers the C
 translation unit.
 

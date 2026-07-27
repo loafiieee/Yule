@@ -31,14 +31,19 @@ for forbidden in ("p2p_token", "auth_token", "peer_host", "peer_port"):
     assert forbidden not in join[join.index("lfgBot.queueJoined"):]
 
 remove = re.search(
-    r"function removeFromQueues\(client\).*?^}",
+    r"function removeFromQueues\(client, reason = \"left\"\).*?^}",
     SERVER,
     re.DOTALL | re.MULTILINE,
 ).group(0)
-assert "lfgBot.queueLeft(client.username)" in remove
+assert "lfgBot.queueLeft(client.username, reason)" in remove
+assert 'removeFromQueues(a, "matched")' in SERVER
+assert 'removeFromQueues(client, "disconnected")' in SERVER
 
 assert "allowed_mentions: { parse: [], users: [], roles: [], replied_user: false }" in BOT
 assert "retry_after" in BOT and "response.status === 429" in BOT
+assert "DEFAULT_POST_DELAY_MS = 2000" in BOT
+assert '"PATCH"' in BOT
+assert '"DELETE"' not in BOT
 assert "PENDING_CREATE_MAX = 4096" in BOT
 assert "pending-request limit reached" in BOT
 assert "Authorization" in BOT and "`Bot ${token}`" in BOT

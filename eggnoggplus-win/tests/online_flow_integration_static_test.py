@@ -76,6 +76,8 @@ for field in (
 ):
     assert field in pending
 assert "server_committed" in active
+assert "winner_player" in active
+assert "awaiting_native_return" in active
 
 begin = function_body("online_server_begin_pending_match")
 assert '"p2p_auth_token"' in begin
@@ -89,6 +91,7 @@ assert '"match_protocol"' in protocol
 assert '"p2p_protocol"' in protocol
 assert '"cap_p2p_auth"' in protocol
 assert '"cap_private_rematch"' in protocol
+assert '"cap_p2p_relay"' in protocol
 assert "GGPO_NET_PROTOCOL_VERSION" in protocol
 
 attempt = function_body("online_connect_start_attempt")
@@ -155,6 +158,7 @@ assert "g_online_result.server_confirmed = 1" in result_branch
 send_end = function_body("online_server_send_match_end")
 assert "g_online_active_match.match_id" in send_end
 assert "!g_online_active_match.server_committed" in send_end
+assert "winner_player" in send_end
 
 console_cancel = function_body("online_cancel_match_from_console")
 assert "online_forfeit_active_match" in console_cancel
@@ -239,6 +243,27 @@ assert "g_online_force_main_return_once = already_in_hub ? 0 : 1;" in return_to_
 finish_match = function_body("online_finish_active_match")
 assert finish_match.index("online_result_prepare") < finish_match.index(
     "online_return_to_hub_after_match"
+)
+native_wait = finish_match.index("if (g_online_active_match.awaiting_native_return)")
+assert native_wait < finish_match.index('stop_ggpo_net("online match complete")')
+assert finish_match.index("return;", native_wait) < finish_match.index(
+    'stop_ggpo_net("online match complete")'
+)
+
+poll_completion = function_body("online_match_poll_completion")
+assert "g_online_active_match.winner_player = winner;" in poll_completion
+assert "g_online_active_match.awaiting_native_return = 1;" in poll_completion
+assert poll_completion.index("winner_player = winner") < poll_completion.index(
+    "online_finish_active_match"
+)
+
+state_switch = function_body("hooked_state_switch")
+assert "finish_online_after_switch" in state_switch
+assert state_switch.index("switched = real_switch") < state_switch.index(
+    'stop_ggpo_net("native win sequence complete")'
+)
+assert state_switch.index('stop_ggpo_net("native win sequence complete")') < (
+    state_switch.index("online_return_to_hub_after_match(status)")
 )
 
 result_record = struct_body("OnlineResultToast")

@@ -5,6 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOKS = (ROOT / "hooks.c").read_text(encoding="utf-8")
 DLLMAIN = (ROOT / "dllmain.c").read_text(encoding="utf-8")
 PARSER = (ROOT / "launch_request.c").read_text(encoding="utf-8")
+IPC = (ROOT / "launch_ipc.c").read_text(encoding="utf-8")
+BUILD = (ROOT / "compile.sh").read_text(encoding="utf-8")
 INSTALLER = (ROOT / "installer" / "install.ps1").read_text(encoding="utf-8")
 
 
@@ -25,15 +27,29 @@ def body(source: str, marker: str) -> str:
 parse_process = body(HOOKS, "static void online_launch_parse_process_args")
 launch_pump = body(HOOKS, "static void online_launch_pump")
 main_update = body(HOOKS, "static int __cdecl hooked_main_update_with_buttons")
+hub_update = body(HOOKS, "static void __cdecl online_hub_update(void) {")
+process_attach = body(DLLMAIN, "BOOL WINAPI DllMain")
 hub_close = body(HOOKS, "static void online_hub_close_to_return_state(void) {")
 disconnect = body(HOOKS, "static void online_server_disconnect(const char* reason) {")
 handle_line = body(HOOKS, "static void online_server_handle_line(const char* line) {")
 
 # Command-line tokenization and Shell allocation cannot run from loader lock.
 assert "CommandLineToArgvW" not in DLLMAIN
+assert "normalize_process_working_directory();" in process_attach
+assert process_attach.index("normalize_process_working_directory();") < (
+    process_attach.index("install_crash_handler();")
+)
 assert "online_launch_pump();" in main_update
 assert main_update.index("online_launch_pump();") < main_update.index(
     "int result = real_update"
+)
+# Opening the custom hub leaves the native menu update path. The hub must keep
+# ownership of the pending intent and resume it immediately after auth traffic
+# is processed, including when the user had to enter credentials manually.
+assert "online_server_update();" in hub_update
+assert "online_launch_pump();" in hub_update
+assert hub_update.index("online_server_update();") < hub_update.index(
+    "online_launch_pump();"
 )
 assert "CommandLineToArgvW(GetCommandLineW(), &argc)" in parse_process
 assert "argc > 128" in parse_process
@@ -45,6 +61,8 @@ assert "LocalFree(wide_args)" in parse_process
 assert "online_server_send_queue" in launch_pump
 assert "online_try_send_friend_challenge" in launch_pump
 assert "online_hub_open();" in launch_pump
+assert '"online.launch: completed requests intent"' in launch_pump
+assert '"online.launch: completed %s intent"' in launch_pump
 assert "start_ggpo_net_join" not in launch_pump
 assert "p2p_token" not in launch_pump
 assert "password" not in launch_pump
@@ -64,6 +82,23 @@ assert '"friend_snapshot_begin"' in handle_line
 assert '"friend_snapshot_end"' in handle_line
 assert "g_online_friend_snapshot_complete = 1;" in handle_line
 assert "if (!g_online_friend_snapshot_complete)" in launch_pump
+
+# Protocol activations are forwarded into one existing process before SDL
+# creates a second game window. Ordinary direct launches stay multi-instance.
+assert "launch_ipc.c" in BUILD
+assert "launch_ipc_initialize()" in DLLMAIN
+assert DLLMAIN.index("launch_ipc_initialize()") < DLLMAIN.index(
+    "real_Init ? real_Init(flags)"
+)
+assert "ExitProcess(0u)" in DLLMAIN
+assert "CreateMutexW" in IPC
+assert "HWND_MESSAGE" in IPC
+assert "WM_COPYDATA" in IPC
+assert "SendMessageTimeoutW" in IPC
+assert "launch_ipc_request_valid" in IPC
+assert "AllowSetForegroundWindow" in IPC
+assert "launch_ipc_poll(&request)" in HOOKS
+assert "g_online_pending_match.active || g_online_active_match.active" in launch_pump
 
 # The installer must own and conservatively remove the per-user URI handler.
 assert "HKCU:\\Software\\Classes\\yule" in INSTALLER

@@ -4,6 +4,7 @@
 #include "lua_manager.h"
 #include "custom_maps.h"
 #include "content_tiles.h"
+#include "launch_ipc.h"
 
 
 #include <stdint.h>
@@ -37,6 +38,35 @@ static LONG CALLBACK luna_vectored_exception_handler(EXCEPTION_POINTERS* ep);
 
 static PVOID g_luna_vectored_handler = NULL;
 static LONG  g_luna_crash_reporting = 0;
+
+/*
+ * URL protocol handlers inherit the caller's current directory. A browser can
+ * therefore start the installed game from its own directory, which makes the
+ * native game miss data/ and also sends our relative logs/dumps somewhere
+ * unwritable. Normalize every entry point to the executable directory before
+ * either the game or framework performs relative-path I/O.
+ *
+ * Keep this loader-lock helper deliberately limited to kernel32 calls.
+ */
+static void normalize_process_working_directory(void) {
+    WCHAR executable[MAX_PATH];
+    DWORD length = GetModuleFileNameW(NULL, executable, MAX_PATH);
+    DWORD i;
+    if (length == 0u || length >= MAX_PATH) return;
+    for (i = length; i > 0u; i--) {
+        if (executable[i - 1u] == L'\\' ||
+            executable[i - 1u] == L'/') {
+            DWORD separator = i - 1u;
+            if (separator == 2u && executable[1] == L':') {
+                executable[3] = L'\0';
+            } else {
+                executable[separator] = L'\0';
+            }
+            (void)SetCurrentDirectoryW(executable);
+            return;
+        }
+    }
+}
 
 static void crash_append_line(const char* line) {
     // Best-effort, no CRT FILE* dependency.
@@ -387,10 +417,14 @@ typedef union {
 typedef void SDL_Window;
 typedef void (*SDL_GL_SwapWindow_t)(SDL_Window*);
 typedef int  (*SDL_PollEvent_t)(SDL_Event*);
+typedef int  (*SDL_Init_t)(Uint32);
 
 HMODULE real_sdl = NULL;
 static SDL_GL_SwapWindow_t real_SwapWindow = NULL;
 static SDL_PollEvent_t     real_PollEvent  = NULL;
+static SDL_Init_t          real_Init = NULL;
+static SDL_Init_t          real_InitSubSystem = NULL;
+static LONG                g_launch_ipc_gate_ran = 0;
 
 // ---------------- Time scaling (speedhack support) ----------------
 // Mods can modify a synthetic "delta_time" event each frame. We turn that
@@ -466,6 +500,28 @@ void lua_manager_on_frame();
 int  lua_manager_on_event(const char*, int, int, int, int, int, int);
 void lua_manager_on_key_event(int sym, int is_down);
 void lua_manager_shutdown();
+
+static void launch_ipc_gate(void) {
+    if (InterlockedCompareExchange(&g_launch_ipc_gate_ran, 1, 0) != 0) return;
+    if (launch_ipc_initialize()) {
+        /*
+         * This is a protocol-activation process, not a second game session.
+         * The request was acknowledged by the already-running instance before
+         * any SDL video initialization or native game window was created.
+         */
+        ExitProcess(0u);
+    }
+}
+
+int SDL_Init(Uint32 flags) {
+    launch_ipc_gate();
+    return real_Init ? real_Init(flags) : -1;
+}
+
+int SDL_InitSubSystem(Uint32 flags) {
+    launch_ipc_gate();
+    return real_InitSubSystem ? real_InitSubSystem(flags) : -1;
+}
 
 void SDL_GL_SwapWindow(SDL_Window* window) {
     luna_reinstall_crash_handler();
@@ -727,6 +783,7 @@ int SDL_PollEvent(SDL_Event* event) {
                 // Notify Lua mods (best-effort) before quit is delivered to the game.
                 (void)lua_manager_on_event("quit", 0, 0, 0, 0, 0, 0);
                 hooks_runtime_shutdown();
+                launch_ipc_shutdown();
                 consumed = 0;
                 break;
             default:
@@ -743,6 +800,7 @@ int SDL_PollEvent(SDL_Event* event) {
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hinstDLL);
+        normalize_process_working_directory();
         install_crash_handler();
         real_sdl = LoadLibraryA("SDL2_real.dll");
         if (!real_sdl) {
@@ -751,6 +809,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         }
         real_SwapWindow = (SDL_GL_SwapWindow_t)GetProcAddress(real_sdl, "SDL_GL_SwapWindow");
         real_PollEvent  = (SDL_PollEvent_t)    GetProcAddress(real_sdl, "SDL_PollEvent");
+        real_Init = (SDL_Init_t)GetProcAddress(real_sdl, "SDL_Init");
+        real_InitSubSystem = (SDL_Init_t)GetProcAddress(real_sdl, "SDL_InitSubSystem");
         init_stubs();
         log_init();
         LOG_INFO("Mod framework initializing...");

@@ -13,6 +13,7 @@ const CONFIG = {
   token: "abcDEF0123456789.token_value",
   channelId: "123456789012345678",
   publicBaseUrl: "https://example.test/yule",
+  postDelayMs: 0,
 };
 
 test("configuration fails closed", () => {
@@ -63,7 +64,7 @@ function fakeDiscord() {
   };
 }
 
-test("join posts once and leave retires the exact owned message", async () => {
+test("join posts once and leave edits the exact owned message", async () => {
   const discord = fakeDiscord();
   const logs = [];
   const bot = new DiscordLfgBot(CONFIG, {
@@ -83,12 +84,14 @@ test("join posts once and leave retires the exact owned message", async () => {
   assert.equal(bot.queueLeft("player_1"), true);
   await bot.flush();
   assert.equal(discord.calls.length, 2);
-  assert.equal(discord.calls[1].method, "DELETE");
+  assert.equal(discord.calls[1].method, "PATCH");
   assert.match(discord.calls[1].path, /\/messages\/100000000000000001$/);
+  assert.deepEqual(discord.calls[1].body.components, []);
+  assert.match(discord.calls[1].body.embeds[0].title, /Queue closed/);
   assert.equal(logs.some((line) => line.includes(CONFIG.token)), false);
 });
 
-test("leave racing create deletes the late message", async () => {
+test("leave racing create edits the late message", async () => {
   let resolveCreate;
   const calls = [];
   const create = new Promise((resolve) => { resolveCreate = resolve; });
@@ -108,7 +111,49 @@ test("leave racing create deletes the late message", async () => {
     body: JSON.stringify({ id: "222222222222222222" }),
   });
   await bot.flush();
-  assert.deepEqual(calls.map((call) => call.method), ["POST", "DELETE"]);
+  assert.deepEqual(calls.map((call) => call.method), ["POST", "PATCH"]);
+  assert.deepEqual(calls[1].body.components, []);
+});
+
+test("a sub-two-second queue stay never creates a Discord message", async () => {
+  const discord = fakeDiscord();
+  const timers = new Map();
+  let nextTimer = 1;
+  const bot = new DiscordLfgBot({ ...CONFIG, postDelayMs: 2000 }, {
+    request: discord.request,
+    setTimer: (callback, ms) => {
+      const id = nextTimer++;
+      timers.set(id, { callback, ms });
+      return id;
+    },
+    clearTimer: (id) => timers.delete(id),
+  });
+  assert.equal(bot.queueJoined("quick_match", "casual"), true);
+  assert.equal(timers.size, 1);
+  assert.equal([...timers.values()][0].ms, 2000);
+  assert.equal(bot.queueLeft("quick_match", "matched"), true);
+  assert.equal(timers.size, 0);
+  await bot.flush();
+  assert.equal(discord.calls.length, 0);
+});
+
+test("the delayed post is created once only after its timer fires", async () => {
+  const discord = fakeDiscord();
+  let timer = null;
+  const bot = new DiscordLfgBot({ ...CONFIG, postDelayMs: 2000 }, {
+    request: discord.request,
+    setTimer: (callback, ms) => {
+      timer = { callback, ms };
+      return 1;
+    },
+    clearTimer: () => { timer = null; },
+  });
+  assert.equal(bot.queueJoined("patient_user", "competitive"), true);
+  assert.equal(discord.calls.length, 0);
+  assert.equal(timer.ms, 2000);
+  timer.callback();
+  await bot.flush();
+  assert.deepEqual(discord.calls.map((call) => call.method), ["POST"]);
 });
 
 test("429 response uses server retry_after instead of hardcoded route rates", async () => {
@@ -154,7 +199,8 @@ test("orderly close retires active owned posts", async () => {
   bot.queueJoined("closing_user", "casual");
   await bot.flush();
   await bot.close({ retire: true });
-  assert.deepEqual(discord.calls.map((call) => call.method), ["POST", "DELETE"]);
+  assert.deepEqual(discord.calls.map((call) => call.method), ["POST", "PATCH"]);
+  assert.match(discord.calls[1].body.embeds[0].title, /Queue closed/);
   assert.equal(bot.enabled, false);
 });
 

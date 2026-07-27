@@ -7,7 +7,6 @@ Release/security blockers:
     - Protect the account/control channel with TLS, certificate/hostname validation, and
       hardened session authentication. It is currently strict and bounded, but still raw
       TCP; passwords and match tokens are visible to an on-path observer.
-    - Add relay fallback for hostile NAT, symmetric NAT, mobile hotspots, and CGNAT.
     - Add IPv6 P2P sockets and IPv6 candidate exchange.
     - Replace the peer-reported compatibility hints with a complete deterministic
       compatibility manifest covering game/framework/protocol versions, gameplay mods,
@@ -101,9 +100,9 @@ Runtime acceptance still required:
       close, queue cancellation, block cancellation, disconnect, and expiry; confirm a
       rematch after a competitive result is unranked and does not change Elo. The
       checked-out client and server source require control v3/match v3/P2P v17 plus
-      packet-auth, social-controls, and private-rematch capabilities, but the last public probe still
-      advertised P2P v16. A coordinated control-v3/P2P-v17 deploy, restart, and TCP+UDP
-      preflight on both LAN and public names is still pending.
+      packet-auth, social-controls, private-rematch, and UDP-relay capabilities. The public
+      server now passes control-v3/match-v3/P2P-v17 TCP+UDP discovery preflight, but the
+      relay-capability revision and real relay game round still need deployment/acceptance.
       Test loopback (two clients on one PC), LAN, and public routes; no source-only test
       replaces this live game round.
     - Soak pause/options, both players' input-remapping pages, console, and Mods during a
@@ -260,17 +259,21 @@ Feature backlog:
       tooling and registration logs. Generic `native_glyph: "K"` remains excluded because
       non-map registry owners do not pass this package audit. Guarded parser/runtime-fixture
       tests cover the exact limit, over-limit K, combined spawners, and compatibility.
-    - Privacy-bounded Discord LFG bridge: the Node control server now posts one configured
-      channel embed only for a player who remains in casual/competitive queue after normal
-      matchmaking, with HTTPS buttons for the existing validated friend challenge and
-      same-queue flows. It never receives ratings, match IDs, endpoints, credentials,
+    - Privacy-bounded Discord LFG bridge: the Node control server waits two seconds, then
+      posts one configured channel embed only for a player who is still in a public casual/
+      competitive queue after normal matchmaking. Challenges never create posts. HTTPS
+      buttons use the existing validated friend-challenge and same-queue flows. It never
+      receives ratings, match IDs, endpoints, credentials,
       rendezvous/auth data, or arbitrary links; mentions are disabled and there is no
       direct match route, Gateway, intents, commands, or inbound bot listener. Duplicate
       joins coalesce, generation ownership makes create/leave races safe, and exact posts
-      retire on queue change, leave, match, disconnect, or orderly SIGINT/SIGTERM. REST
+      are edited in place to remove their buttons and show matched/left/changed/offline/
+      shutdown status instead of being deleted. REST
       timeouts, responses, retries, 429 delays, tracked users, and logs are bounded. A
       loopback-only, no-store redirect exposes only the completed canonical public
-      `yule://` routes behind deployment TLS. Node and static tests cover payload privacy,
+      `yule://` routes behind deployment TLS; its landing page launches the protocol and
+      attempts to close itself, with a visible manual-close fallback when browser policy
+      refuses. Node and static tests cover payload privacy,
       lifecycles, rates, strict links/methods/headers/binds, server call ordering, and clean
       shutdown; real Discord/proxy/client acceptance remains above.
     - Expanded audio/music with bounded bytebeat and floatbeat: the existing mod-relative
@@ -361,12 +364,17 @@ Feature backlog:
       hub, social inbox, casual/competitive queue, or the existing compatible-map friend
       challenge picker. Auth-required actions wait for remembered/manual login, challenges
       wait for a complete friend snapshot, and every intent expires after two minutes or
-      cancels when leaving the hub. There is deliberately no raw endpoint, direct-session,
+      cancels when leaving the hub. A per-login-session, message-only Windows broker owns
+      validated activation handoff: a protocol launch forwards to the already-running game,
+      grants it foreground permission, and exits before SDL creates a second window. Normal
+      direct launches remain multi-instance for local testing, and an intent arriving during
+      a match waits instead of becoming an out-of-band forfeit. There is deliberately no raw endpoint, direct-session,
       credential, match-ID, or token route; malformed/conflicting actions and URI injection
       syntax reject the entire intent. The per-user installer handler uses a single quoted
       envelope, refuses an existing owner, never registers after incomplete adoption, and
       uninstall removes only its exact manifest-receipted registry tree. Native parser,
-      static runtime, isolated HKCU installer lifecycle, protocol documentation, and guarded
+      static runtime, isolated HKCU installer lifecycle, protocol documentation, full proxy
+      compilation, and guarded
       source/link coverage are complete; the separate privacy-bounded Discord consumers
       are completed below.
     - Guarded established-match disconnect phases: the ordinary paired case now advances
@@ -526,15 +534,39 @@ Feature backlog:
       drain the new correction generation's cumulative checksum proof in both directions.
       The original short correction case remains as a fast focused regression; both focused
       modes and the complete guarded prematch matrix pass.
-    - Committed disconnect/forfeit result race: deliberate local exits now send the
+    - Committed disconnect/forfeit and normal-result settlement: deliberate local exits send the
       server's committed `match_abort` forfeit signal instead of an ordinary loss guess, so
       the still-connected opponent receives an immediate confirmed win. The server keeps
       one exact terminal response per connected participant and idempotently replays it
       when a queued P2P-disconnect loss report arrives after resolution, eliminating the
       misleading `invalid or stale match result` status without letting old messages alter
       a new match. Native result detection is pinned to the terminal end countdown (leader/
-      loser identity) with positive-target final score as a fallback. Static client/server
-      checks and a live TCP protocol race cover the path.
+      loser identity) with positive-target final score as a fallback. Normal reports now
+      include the synchronized winning player slot; the server maps that slot through its
+      recorded host/join assignment, so an inverted client-local win/loss interpretation
+      cannot manufacture conflicting winners. Reporting no longer tears down rollback or
+      changes state: Eggnogg completes its native win animation and returns to main first,
+      then the client stops transport and opens the online hub. Static client/server checks
+      and live TCP protocol coverage pin legacy conflict rejection, slot-authoritative
+      agreement, disconnect replay, and the deferred native return.
+    - Bounded hostile-NAT UDP relay fallback: the rendezvous server still chooses one
+      deterministic direct loopback/LAN/public route first. A genuinely fresh client socket
+      generation switches both peers together to a server relay marker on the existing UDP
+      port. The client resolves that marker through its already-validated control hostname.
+      Relay admission is limited to active match-owned observed endpoints, the server-recorded
+      sender player slot, protocol-v17 packet bounds/types, and per-endpoint packet/byte
+      budgets; peer HMAC/replay validation remains end to end, and amplification is one for
+      one to the authenticated opponent endpoint. Cleanup removes endpoint ownership on
+      every result, abort, and disconnect. The isolated runtime test proves initial direct
+      routing, symmetric fallback after a fresh-socket retry, and byte-exact binary packet
+      forwarding. Established mid-game rebinding/resume remains open above.
+    - State-preserving online-server updater: `online_server/update_server.sh` shallow-clones
+      the latest configured branch into a disposable directory, runs Node/static/two-client
+      protocol tests before downtime, stages only non-runtime server files, stops systemd for
+      the swap, restarts, and runs the local TCP+UDP deployment probe. It never stages account
+      JSON, ratings, server secrets, logs, environment files, PID/socket files, `node_modules`,
+      or caches. Exact overwritten/new application files are tracked for rollback if start or
+      health validation fails; the live runtime state remains in place throughout.
     - Once-per-frame local-input commit boundary: hook-side physical input remains a
       tentative wall-tick sample until frame-zero, correction, frame-advantage, prediction,
       and checksum-retirement gates all permit simulation. Stalled updates repoll without
@@ -676,10 +708,10 @@ Feature backlog:
       capability handshake before login, rechecks auth/match version fields, and fails
       before queue/P2P setup on incompatibility. A public TCP+UDP preflight and isolated
       two-client runtime test prove that both peers receive one shared 64-hex match key
-      and distinct probe keys. The historical match-v3/P2P-v16 public server was backed up,
-      atomically deployed, restarted, hash-verified, and checked on both listeners; the
-      the current control-v3/P2P-v17 rollout and real two-game round remain in Runtime
-      acceptance. Legacy
+      and distinct probe keys. The public service now passes control-v3/match-v3/P2P-v17
+      TCP+UDP discovery preflight. The new relay capability deliberately makes the next
+      client require deployment of this server revision; the real two-game direct/relay
+      round remains in Runtime acceptance. Legacy
       unauthenticated fallback remains forbidden.
     - Bounded P2P connection retry: three fresh sockets/mappings, one deterministic
       server-selected loopback/LAN/public route per attempt, authenticated fresh-session

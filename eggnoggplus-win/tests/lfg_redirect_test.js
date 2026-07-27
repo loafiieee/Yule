@@ -95,11 +95,18 @@ function fakeResponse() {
 test("HTTP handoff is no-store and method bounded", () => {
   const ok = fakeResponse();
   redirectResponse({ method: "GET", url: "/yule/queue/casual" }, ok);
-  assert.equal(ok.status, 302);
-  assert.equal(ok.headers.Location, "yule://queue/casual");
+  assert.equal(ok.status, 200);
   assert.equal(ok.headers["Cache-Control"], "no-store");
   assert.equal(ok.headers["Referrer-Policy"], "no-referrer");
   assert.match(ok.body, /yule:\/\/queue\/casual/);
+  assert.match(ok.body, /window\.close\(\)/);
+  assert.match(ok.headers["Content-Security-Policy"], /script-src 'nonce-/);
+
+  const head = fakeResponse();
+  redirectResponse({ method: "HEAD", url: "/yule/queue/casual" }, head);
+  assert.equal(head.status, 302);
+  assert.equal(head.headers.Location, "yule://queue/casual");
+  assert.equal(head.body, "");
 
   const unknown = fakeResponse();
   redirectResponse({ method: "GET", url: "/yule/match/1" }, unknown);

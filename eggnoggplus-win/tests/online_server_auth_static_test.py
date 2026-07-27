@@ -56,6 +56,7 @@ for body in (server_info, auth_ok):
     assert "match_protocol: MATCH_PROTOCOL_VERSION" in body
     assert "p2p_protocol: P2P_PROTOCOL_VERSION" in body
     assert "cap_p2p_auth: 1" in body
+    assert "cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0" in body
 assert 'case "server_info": sendServerInfo(client); break;' in SOURCE
 assert "sendServerInfo(client);" in SOURCE[SOURCE.index("const server = net.createServer") :]
 
@@ -98,6 +99,11 @@ assert 'cancelMatch(match, "conflicting match reports; no contest")' in ended
 assert 'cancelMatch(match, "match result was not confirmed; no contest")' in ended
 assert 'finishMatch(match, [...match.results.values()][0], "single report")' not in ended
 assert "if (agreed) finishMatch" in ended
+assert "winner_player" in ended
+assert "match.player_by_index[winnerPlayer]" in ended
+assert "using ${winner}" in ended
+assert "player_by_index: []" in match_factory
+assert "match.player_by_index = [hostClient.username, joinClient.username]" in match_factory
 
 finish = function_body("function finishMatch")
 cancel = function_body("function cancelMatch")
@@ -110,6 +116,22 @@ assert "send(client, terminal)" in replay
 destroy = function_body("function destroyClient")
 assert 'cancelMatch(match, "opponent disconnected before gameplay")' in destroy
 assert 'finishMatch(match, other, "opponent disconnected")' in destroy
+
+# A fresh direct-path socket generation coordinates both peers onto one
+# match-owned bounded UDP relay. End-to-end packet HMAC validation remains in
+# the client transport.
+relay_packet = function_body("function handleRelayPacket")
+assert "GGPO_PACKET_MAGIC" in relay_packet
+assert "P2P_PROTOCOL_VERSION" in relay_packet
+assert "relayEndpointIndex" in relay_packet
+assert "match.player_by_index[senderPlayer] !== owner.username" in relay_packet
+assert "relayRateAllowed" in relay_packet
+register_endpoint = function_body("function registerP2pEndpoint")
+assert "generation >= 2" in register_endpoint
+assert "match.force_relay = true" in register_endpoint
+assert "match.p2p_notified = {}" in register_endpoint
+assert "clearRelayEndpoints(match)" in finish
+assert "clearRelayEndpoints(match)" in cancel
 
 # The periodic TTL applies only to pending setup. A legitimate committed match
 # is governed by result/disconnect handling and cannot be canceled at ten minutes.

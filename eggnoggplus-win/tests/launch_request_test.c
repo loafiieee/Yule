@@ -45,12 +45,25 @@ int main(void) {
     const char* none[] = {"game.exe", "-windowed", "ordinary.map"};
     const char* hub[] = {"game.exe", "--ONLINE"};
     const char* hub_uri[] = {"game.exe", "YuLe://hub"};
+    const char* shell_hub_uri[] = {
+        "game.exe", "--yule-uri=yule://hub/"
+    };
     const char* bare_uri[] = {"game.exe", "yule://"};
+    const char* shell_bare_uri[] = {
+        "game.exe", "--yule-uri=yule:///"
+    };
     const char* requests[] = {"game.exe", "yule://requests"};
+    const char* shell_requests[] = {"game.exe", "yule://requests/"};
     const char* casual[] = {"game.exe", "--queue=CASUAL"};
     const char* competitive[] = {"game.exe", "yule://queue/competitive"};
+    const char* shell_competitive[] = {
+        "game.exe", "yule://queue/competitive/"
+    };
     const char* challenge[] = {"game.exe", "--challenge=player_1"};
     const char* challenge_uri[] = {"game.exe", "yule://challenge/player_1"};
+    const char* shell_challenge_uri[] = {
+        "game.exe", "yule://challenge/player_1/"
+    };
     const char* duplicate[] = {
         "game.exe", "--queue=casual", "yule://queue/casual"
     };
@@ -75,6 +88,7 @@ int main(void) {
     const char* endpoint[] = {"game.exe", "yule://join/127.0.0.1:27015"};
     const char* credentials[] = {"game.exe", "yule://user:pass@hub"};
     const char* bad_scheme[] = {"game.exe", "yule:/hub"};
+    const char* double_slash[] = {"game.exe", "yule://hub//"};
     const char* bad_switch[] = {"game.exe", "--online=queue"};
     const char* bad_envelope[] = {"game.exe", "--yule-uri"};
     LaunchRequest request;
@@ -84,12 +98,18 @@ int main(void) {
     CHECK(request.action == LAUNCH_REQUEST_NONE);
     expect_action(2, hub, LAUNCH_REQUEST_HUB, "");
     expect_action(2, hub_uri, LAUNCH_REQUEST_HUB, "");
+    expect_action(2, shell_hub_uri, LAUNCH_REQUEST_HUB, "");
     expect_action(2, bare_uri, LAUNCH_REQUEST_HUB, "");
+    expect_action(2, shell_bare_uri, LAUNCH_REQUEST_HUB, "");
     expect_action(2, requests, LAUNCH_REQUEST_REQUESTS, "");
+    expect_action(2, shell_requests, LAUNCH_REQUEST_REQUESTS, "");
     expect_action(2, casual, LAUNCH_REQUEST_QUEUE_CASUAL, "");
     expect_action(2, competitive, LAUNCH_REQUEST_QUEUE_COMPETITIVE, "");
+    expect_action(2, shell_competitive, LAUNCH_REQUEST_QUEUE_COMPETITIVE, "");
     expect_action(2, challenge, LAUNCH_REQUEST_CHALLENGE, "player_1");
     expect_action(2, challenge_uri, LAUNCH_REQUEST_CHALLENGE, "player_1");
+    expect_action(2, shell_challenge_uri,
+                  LAUNCH_REQUEST_CHALLENGE, "player_1");
     expect_action(3, duplicate, LAUNCH_REQUEST_QUEUE_CASUAL, "");
     expect_action(2, enveloped, LAUNCH_REQUEST_QUEUE_COMPETITIVE, "");
 
@@ -104,6 +124,7 @@ int main(void) {
     expect_error(2, endpoint);
     expect_error(2, credentials);
     expect_error(2, bad_scheme);
+    expect_error(2, double_slash);
     expect_error(2, bad_switch);
     expect_error(2, bad_envelope);
     expect_error(3, injected_envelope);

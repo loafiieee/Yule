@@ -113,7 +113,9 @@ static int parse_uri(const char* uri,
                      LaunchRequest* out,
                      char* error,
                      size_t error_cap) {
+    char normalized_route[64];
     const char* route;
+    size_t route_len;
     static const char scheme[] = "yule://";
     if (uri_has_forbidden_syntax(uri)) {
         set_error(error, error_cap,
@@ -121,6 +123,22 @@ static int parse_uri(const char* uri,
         return 0;
     }
     route = uri + sizeof(scheme) - 1u;
+    route_len = strlen(route);
+    if (route_len >= sizeof(normalized_route)) {
+        set_error(error, error_cap, "yule URI action is too long");
+        return 0;
+    }
+    memcpy(normalized_route, route, route_len + 1u);
+    /*
+     * Windows ShellExecute canonicalizes authority-only custom URLs such as
+     * yule://hub to yule://hub/. Accept exactly that harmless terminal slash
+     * (and the same browser normalization on other completed routes). A second
+     * slash, query, fragment, encoding, or unknown action remains invalid.
+     */
+    if (route_len > 0u && normalized_route[route_len - 1u] == '/') {
+        normalized_route[route_len - 1u] = '\0';
+    }
+    route = normalized_route;
     if (!*route || ascii_equal_ci(route, "hub")) {
         out->action = LAUNCH_REQUEST_HUB;
         return 1;

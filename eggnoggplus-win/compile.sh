@@ -18,7 +18,7 @@ sources=(
   dllmain.c stubs.c hooks.c custom_maps.c
   content_registry.c content_tiles.c content_bridge.c map_script.c
   cursor_ext.c
-  credential_ext.c online_control.c launch_request.c
+  credential_ext.c online_control.c launch_request.c launch_ipc.c
   lua_manager.c ggpo_ext.c ggpo_loopback.c ggpo_local.c ggpo_net.c
   fp_control.c rollback_schema.c
   font_ext.c texture_ext.c log.c net_ext.c update_ext.c

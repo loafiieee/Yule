@@ -150,7 +150,14 @@ friend challenge, private rematch, opponent disconnect, and one client closing d
 prematch/countdown. Each path must either enter gameplay or return once to the hub with
 a useful status; there must be no countdown freeze, hub/result loop, or fullscreen
 win/lose page. An opponent leaving an active match should award the remaining player
-the win exactly once.
+the win exactly once. On an ordinary win, the native win animation/countdown must remain
+visible; only after Eggnogg returns to main should the online hub open. Both clients must
+agree on the winner without `conflicting match reports`.
+
+Test one pair across restrictive/mobile/CGNAT networks. The first log route may be
+`public`; after the fresh-socket retry both clients must log the same `route=relay` and
+finish prematch/gameplay. The server log should show
+`direct path did not establish; enabling bounded UDP relay`.
 
 During a match run:
 
@@ -188,11 +195,33 @@ private online values.
 ## Discord LFG bridge
 
 Deploy the service using `DISCORD_LFG_BOT.md`, one test channel, two Discord accounts,
-and the public HTTPS redirect. Cover both queues, duplicate joins, queue changes,
+and the public HTTPS redirect. A queue stay shorter than two seconds and any direct
+friend challenge must create no message. Cover both queues, duplicate joins, queue changes,
 manual leave, immediate match, disconnect, a Discord 429 response, and clean service
-restart. Challenge and queue buttons must open the registered `yule://` client route;
+restart. Each posted message must be edited in place to its matched/left/changed/offline
+state with no buttons, not deleted. Challenge and queue buttons must open the registered `yule://` client route;
 messages and logs must contain no match IDs, endpoints, credentials, ratings, tokens,
 or mentions.
+
+For the Windows handoff smoke test, close the game and run
+`Start-Process 'yule://hub'` from a directory other than the installation directory.
+Windows currently supplies `--yule-uri=yule://hub/`; the installed game must remain open,
+show the online hub, and record `online.launch: accepted hub intent` in its own
+`mods\modframework.log`. Repeat with requests, both queues, and an available canonical
+friend challenge. While the first game remains open, repeat every link and confirm it
+comes to the foreground and executes the action without creating a second game window.
+Launching `eggnoggplus.exe` normally a second time must still work for local testing.
+During an active match, a link must wait rather than forfeit. Test once with a remembered login and once after removing the remembered
+credential and logging in manually. In both cases the original action must resume after
+`auth_ok`; only `yule://hub` intentionally remains on the default hub page. No
+caller-directory `data/` or `mods/` tree should be created. The HTTPS handoff tab should
+close itself where browser policy allows; otherwise it must show the explicit manual-close
+fallback instead of remaining blank.
+
+For server-update acceptance, run `online_server/update_server.sh`, verify its local
+TCP/UDP probe succeeds, and compare hashes/content of `users.json`, `ratings.json`, and
+`server_secret.key` before and after. Force one bad service start in a disposable copy and
+confirm the old application files are restored while those runtime files never move.
 
 ## What still is not a live-complete feature
 

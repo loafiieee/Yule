@@ -259,12 +259,30 @@ yule://challenge/player_1
 
 Equivalent command-line switches are `--online`, `--requests`, `--queue=casual`,
 `--queue=competitive`, and `--challenge=player_1`. Challenge targets must be canonical
-lowercase account names.
+lowercase account names. Windows may hand an authority-only link to the application with
+one terminal slash, such as `yule://hub/`; this canonical form is accepted without making
+unknown, doubled-slash, encoded, query, or fragment routes valid.
+
+Browser and shell protocol launches inherit the caller's working directory. The framework
+normalizes it to the directory containing `eggnoggplus.exe` before relative game data,
+logs, crash dumps, or dependent DLLs are accessed. Consequently all entry points use the
+installed `data/` and `mods/` trees, and an early protocol-launch failure is reported in
+the installed `mods\crash.log` rather than the browser's directory.
+
+Only protocol activations are single-instance. The first game process owns a private
+per-login-session Windows message broker. A later valid `yule://` activation forwards its
+already-parsed bounded intent to that process, permits it to come to the foreground, and
+exits before SDL video initialization creates another game window. Starting the executable
+normally still permits two local instances for testing. A link received during match setup
+or gameplay remains pending and cannot force the player out of the match.
 
 Queue, inbox, and challenge actions wait for authentication; a remembered sign-in proceeds
-directly, while another login can be completed in the hub. Pending actions expire after
-two minutes and cancel when the hub is closed. Challenge links still require an available
-friend and open the normal compatible-map picker.
+directly, while another login can be completed in the hub. The custom hub continues
+pumping the original launch request after the native menu has handed off to it, so a
+successful manual or remembered login immediately resumes the requested inbox, queue, or
+challenge action instead of dropping the user on the default Play page. Pending actions
+expire after two minutes and cancel when the hub is closed. Challenge links still require
+an available friend and open the normal compatible-map picker.
 
 Links cannot carry passwords, server/peer addresses, match IDs, or tokens, and there is no
 direct-session join route. Unknown routes, query/fragment syntax, percent encoding,
@@ -291,15 +309,17 @@ attacker.
 After TCP connects, the client requests and validates the server's flat `server_info`
 advertisement before it sends the login/register request. Control protocol 3, match
 protocol 3, P2P protocol 17, packet-auth capability, social-controls capability, and
-private-rematch capability are all required. `auth_ok` repeats the same fields and `match_found` repeats the match/P2P
+private-rematch and UDP-relay capabilities are all required. `auth_ok` repeats the same fields and `match_found` repeats the match/P2P
 versions, so a stale or mixed deployment fails at the handshake (and again at match setup
 as defense in depth) instead of consuming a queue match that cannot start.
 
-The checked-out client/server source is v17, but the live public service still advertises
-P2P v16. The public service must be deployed and restarted atomically, then pass both TCP
-and UDP deployment preflight, before a server-issued match can use this client.
+The live public service advertises control v3/match v3/P2P v17, but does not advertise the
+new required relay capability until this server revision is deployed. Deploy/restart the
+server before launching this rebuilt client, then require the TCP/UDP deployment preflight
+to report UDP relay support.
 
-Gameplay remains direct P2P through `ggpo_net`. The server chooses the map from
+Gameplay uses end-to-end authenticated `ggpo_net` packets over a direct route when
+possible and the bounded server relay after a failed direct generation. The server chooses the map from
 the intersection of both complete client manifests (capped at 96 KiB), sends
 each client the stable key and that client's local selector, and randomly assigns
 host/join only for player slot and authoritative initial-state duties. Both peers
@@ -538,8 +558,10 @@ screen queues the game's actual mouse renderer once at the topmost render layer.
 the live native global scale, black shadow pass, animated red/yellow color pass,
 `misc[7]` artwork, and native hotspot instead of the former white/custom-scale plot.
 
-Online completion has no fullscreen win/loss/game-over state. It returns to the Play tab in
-the hub and shows a compact bottom-right result notification with the opponent, map, server
+Online completion has no fullscreen win/loss/game-over state. Detecting a winner reports
+the synchronized winning player slot while rollback keeps running; Eggnogg finishes its
+native win animation and returns to main on its own. Only then does the framework stop
+transport and open the hub's Play tab. A compact bottom-right result notification shows the opponent, map, server
 status, and confirmed rating delta. Before confirmation its neutral `RESULT REPORTED`
 heading does not claim an unverified outcome. Closing or expiring that provisional toast
 retains the exact match identity so a delayed server confirmation can refresh it. The normal
@@ -563,6 +585,11 @@ cannot be challenged, and blocked entries expose no presence. The control-v3 pic
 counted begin/choice/end response keyed by a client request ID. The server validates the
  selection when the challenge is created and recomputes the intersection at accept, so
  stale or client-invented keys cannot choose a match map.
+
+Both normal reports include the synchronized winning player slot. The server maps that
+slot through the host/join assignment it recorded when creating the match, rather than
+depending on each client's local “win/loss” interpretation. Legacy reports remain
+compatible, while true disagreement on synchronized slots still becomes a no-contest.
 
 After a confirmed committed result, that same compact notification can expose a
 45-second private-rematch offer. It remains non-modal and supports its visible buttons,
@@ -641,8 +668,11 @@ the bot never receives ratings, match IDs, control/P2P endpoints, credentials,
 rendezvous data, or authentication tokens.
 
 Its two HTTPS buttons enter the completed safe `yule://` handoff for the existing friend
-challenge or same public queue. Posts retire on leave, match, disconnect, queue change,
-and orderly server shutdown. Discord request timeouts, response sizes, tracked users,
+challenge or same public queue. A post is created only after the player remains publicly
+queued for two seconds; direct challenges never post. Leave, match, disconnect, queue
+change, and orderly shutdown edit the exact message into an inactive no-button state.
+The HTTPS landing page attempts to close itself after launching Yule and presents a manual
+close/reopen fallback when browser policy refuses. Discord request timeouts, response sizes, tracked users,
 retries, and 429 delays are bounded. See `DISCORD_LFG_BOT.md` for the secret environment
 file, channel permissions, loopback HTTPS-proxy handoff, and release test.
 
@@ -654,9 +684,12 @@ challenge state, shared-map selection, peer candidate signaling, per-match P2P s
 result confirmation, and rating updates. The client exposes queue/match lifecycle words,
 not host/join details.
 
-The current direct transport supplies symmetric public/LAN candidate probing, three
-fresh-socket attempts, bounded setup/disconnect policy, and authenticated/replay-protected
-v17 UDP packets. The client-side control transport supplies atomic queued sends, bounded
+The current transport supplies symmetric public/LAN candidate probing and authenticated/
+replay-protected v17 UDP packets. Direct traversal is attempted first. If that path needs
+a fresh socket generation, the server switches both players together to a bounded relay
+on its existing UDP port. Relay ownership is limited to the active match's observed
+endpoints and player slots, fixed packet bounds/types, one-for-one forwarding, and packet/
+byte budgets; peers still perform end-to-end HMAC and replay validation. The client-side control transport supplies atomic queued sends, bounded
 receive framing, strict flat-JSON parsing, connect/auth deadlines, and all-or-nothing map
 manifest publication.
 
@@ -668,7 +701,8 @@ results are trusted, it needs at least:
 - durable production account/match storage, rate limiting, abuse controls, and an admin
   dashboard;
 - authoritative result validation instead of trusting two client reports;
-- relay fallback for strict NAT/CGNAT and route selection/latency display;
+- established-match reconnect/rebinding, relay health/latency display, and adaptive route
+  failover beyond the completed prematch fallback;
 - IPv6 candidate exchange and sockets; and
 - an explicit production deployment, key rotation, monitoring, and recovery plan.
 
@@ -683,7 +717,8 @@ The following prototype milestones are implemented in source and covered by focu
 tests: data/control messages, account/queue/friend/challenge server flow, authoritative
 friend-challenge map picking, built-in hub,
 strict client control transport, map manifests, symmetric direct signaling, v17 packet
-authentication, bounded P2P retry, post-content rollback-layout freeze/proof, monotonic
+ authentication, bounded direct-to-relay P2P retry, canonical winner-slot reporting with
+ native win-sequence preservation, post-content rollback-layout freeze/proof, monotonic
 contiguous input confirmation and selective resend, hard input/checksum recovery,
 generation-scoped reliable checksum ACK/retry, transactional received-state application,
 failure-atomic live-tick pre-state restoration, mutually confirmed correction replay/release,
@@ -695,8 +730,9 @@ canonical rollback-envelope foundation,
 deterministic map-local Lua rollback state, prematch preparation behind the countdown,
 menu-time simulation, result reporting/UI, credential storage, and gameplay-mod Lua
 suspension, built-in palette synchronization, and privacy-bounded Discord Rich Presence.
-The server-side Discord LFG bridge and strict public HTTPS redirect are also complete in
-source with focused privacy/lifecycle tests.
+The server-side delayed/edit-in-place Discord LFG bridge, self-closing strict public HTTPS
+handoff, existing-process `yule://` broker, and state-preserving source updater are also
+complete in source with focused privacy/lifecycle tests.
 
 Remaining release milestones include the P0 typed native-state adapter and remaining
 checksum-field coverage, their deterministic chaos/soak acceptance, the security and

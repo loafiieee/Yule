@@ -59,6 +59,12 @@ const COMPETITIVE_BASE_RANGE = Number.parseInt(process.env.COMPETITIVE_BASE_RANG
 const COMPETITIVE_RANGE_PER_SEC = Number.parseInt(process.env.COMPETITIVE_RANGE_PER_SEC || "8", 10);
 const COMPETITIVE_MAX_RANGE = Number.parseInt(process.env.COMPETITIVE_MAX_RANGE || "650", 10);
 const UDP_DIAG = process.env.UDP_DIAG === "1";
+const P2P_RELAY_ENABLED = process.env.P2P_RELAY_ENABLED !== "0";
+const GGPO_PACKET_MAGIC = 0x50474e45;
+const GGPO_PACKET_MIN_BYTES = 44;
+const GGPO_PACKET_MAX_BYTES = 2048;
+const RELAY_PACKET_RATE_MAX = 600;
+const RELAY_BYTE_RATE_MAX = 768 * 1024;
 const lfgBot = createDiscordLfgBotFromEnv(process.env, {
   log: (line) => console.log(`[lfg] ${line}`),
 });
@@ -373,6 +379,7 @@ function sendServerInfo(client) {
     cap_p2p_auth: 1,
     cap_social_controls: 1,
     cap_private_rematch: 1,
+    cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0,
   });
 }
 
@@ -478,7 +485,7 @@ function broadcastQueueCounts() {
   }
 }
 
-function removeFromQueues(client) {
+function removeFromQueues(client, reason = "left") {
   const priorQueue = client.queue;
   for (const queue of [casualQueue, competitiveQueue]) {
     const idx = queue.indexOf(client);
@@ -486,7 +493,7 @@ function removeFromQueues(client) {
   }
   client.queue = "";
   client.queue_joined_at = 0;
-  if (priorQueue && client.username) lfgBot.queueLeft(client.username);
+  if (priorQueue && client.username) lfgBot.queueLeft(client.username, reason);
 }
 
 function rematchExpiresIn(rematch) {
@@ -612,8 +619,8 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
 
   cancelRematchesForUser(a.username, "player entered another match");
   cancelRematchesForUser(b.username, "player entered another match");
-  removeFromQueues(a);
-  removeFromQueues(b);
+  removeFromQueues(a, "matched");
+  removeFromQueues(b, "matched");
   a.last_match_terminal = null;
   b.last_match_terminal = null;
 
@@ -635,6 +642,8 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     p2p_auth_token: makeP2pAuthToken(),
     p2p_endpoints: new Map(),
     p2p_notified: {},
+    player_by_index: [],
+    force_relay: false,
   };
   activeMatches.set(match.id, match);
   a.match_id = match.id;
@@ -644,6 +653,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
   const aHosts = Math.random() < 0.5;
   const hostClient = aHosts ? a : b;
   const joinClient = aHosts ? b : a;
+  match.player_by_index = [hostClient.username, joinClient.username];
   const hostMapSel = aHosts ? shared.aSelector : shared.bSelector;
   const joinMapSel = aHosts ? shared.bSelector : shared.aSelector;
   const hostOpponent = joinClient.username;
@@ -772,6 +782,21 @@ function p2pAddressFor(receiverClient, receiverEndpoint, peerClient, peerEndpoin
   return legacyP2pAddress(receiverEndpoint, peerClient, peerEndpoint);
 }
 
+function relayAddressFor(peerEndpoint) {
+  return {
+    /* Clients deliberately replace this marker with their already-validated
+     * control-server hostname. No separately configured public hostname is
+     * needed on multi-homed deployments. */
+    host: "relay",
+    port: UDP_PORT,
+    route: "relay",
+    public_host: peerEndpoint.host,
+    public_port: peerEndpoint.port,
+    lan_host: "",
+    lan_port: 0,
+  };
+}
+
 function sendP2pPeerIfReady(match, username) {
   const peer = p2pPeerUsername(match, username);
   if (!peer) return;
@@ -782,7 +807,9 @@ function sendP2pPeerIfReady(match, username) {
   const peerEndpoint = match.p2p_endpoints && match.p2p_endpoints.get(peer);
   if (!client || !endpoint || !peerEndpoint) return;
 
-  const peerAddress = p2pAddressFor(client, endpoint, peerClient, peerEndpoint);
+  const peerAddress = match.force_relay
+    ? relayAddressFor(peerEndpoint)
+    : p2pAddressFor(client, endpoint, peerClient, peerEndpoint);
   if (!peerAddress || !peerAddress.host || !peerAddress.port) return;
 
   const notifyKey = `${peerAddress.route}:${peerAddress.host}:${peerAddress.port}:${peerAddress.public_host}:${peerAddress.public_port}`;
@@ -829,18 +856,105 @@ function registerP2pEndpoint(matchId, username, token, host, port, localPort, so
   }
 
   const prev = match.p2p_endpoints.get(username);
-  match.p2p_endpoints.set(username, {
+  const changed = !prev || prev.host !== host || prev.port !== port ||
+    prev.local_port !== localPort;
+  const generation = prev
+    ? (changed ? (prev.generation || 1) + 1 : (prev.generation || 1))
+    : 1;
+  if (prev) {
+    const oldKey = `${prev.host}:${prev.port}`;
+    const owner = relayEndpointIndex.get(oldKey);
+    if (owner && owner.matchId === match.id && owner.username === username) {
+      relayEndpointIndex.delete(oldKey);
+    }
+  }
+  const endpoint = {
     host,
     port,
     local_port: localPort,
     seen_at: now(),
-  });
+    generation,
+    relay_window_at: prev ? prev.relay_window_at : 0,
+    relay_packets: prev ? prev.relay_packets : 0,
+    relay_bytes: prev ? prev.relay_bytes : 0,
+  };
+  match.p2p_endpoints.set(username, endpoint);
+  relayEndpointIndex.set(`${host}:${port}`, { matchId: match.id, username });
 
-  if (!prev || prev.host !== host || prev.port !== port || prev.local_port !== localPort) {
-    console.log(`[p2p#${match.id}] ${username} ${source}=${host}:${port} local=${localPort}`);
+  if (changed) {
+    console.log(`[p2p#${match.id}] ${username} ${source}=${host}:${port} local=${localPort} generation=${generation}`);
+  }
+  if (P2P_RELAY_ENABLED && generation >= 2 && !match.force_relay) {
+    match.force_relay = true;
+    match.p2p_notified = {};
+    console.log(`[relay#${match.id}] direct path did not establish; enabling bounded UDP relay`);
   }
 
   maybeSendP2pPeers(match);
+}
+
+function clearRelayEndpoints(match) {
+  if (!match || !match.p2p_endpoints) return;
+  for (const [username, endpoint] of match.p2p_endpoints) {
+    const key = `${endpoint.host}:${endpoint.port}`;
+    const owner = relayEndpointIndex.get(key);
+    if (owner && owner.matchId === match.id && owner.username === username) {
+      relayEndpointIndex.delete(key);
+    }
+  }
+}
+
+function relayRateAllowed(endpoint, byteLength) {
+  const current = now();
+  if (!endpoint.relay_window_at ||
+      current - endpoint.relay_window_at >= 1000) {
+    endpoint.relay_window_at = current;
+    endpoint.relay_packets = 0;
+    endpoint.relay_bytes = 0;
+  }
+  if (endpoint.relay_packets >= RELAY_PACKET_RATE_MAX ||
+      endpoint.relay_bytes + byteLength > RELAY_BYTE_RATE_MAX) {
+    return false;
+  }
+  endpoint.relay_packets++;
+  endpoint.relay_bytes += byteLength;
+  return true;
+}
+
+function handleRelayPacket(buf, rinfo) {
+  if (!P2P_RELAY_ENABLED || !buf ||
+      buf.length < GGPO_PACKET_MIN_BYTES ||
+      buf.length > GGPO_PACKET_MAX_BYTES ||
+      buf.readUInt32LE(0) !== GGPO_PACKET_MAGIC ||
+      buf.readUInt16LE(4) !== P2P_PROTOCOL_VERSION) {
+    return false;
+  }
+  const packetType = buf.readUInt16LE(6);
+  const senderPlayer = buf.readUInt32LE(16);
+  if (packetType < 1 || packetType > 9 || senderPlayer > 1) return true;
+  const host = normalizeRemoteAddress(rinfo.address);
+  const port = sanitizePort(rinfo.port, 0);
+  const owner = relayEndpointIndex.get(`${host}:${port}`);
+  if (!owner) return true;
+  const match = activeMatches.get(owner.matchId);
+  if (!match || match.finished || !match.force_relay ||
+      !matchHasUser(match, owner.username) ||
+      !Array.isArray(match.player_by_index) ||
+      match.player_by_index[senderPlayer] !== owner.username) {
+    return true;
+  }
+  const source = match.p2p_endpoints.get(owner.username);
+  const peerUsername = p2pPeerUsername(match, owner.username);
+  const destination = match.p2p_endpoints.get(peerUsername);
+  if (!source || !destination ||
+      source.host !== host || source.port !== port ||
+      !relayRateAllowed(source, buf.length)) {
+    return true;
+  }
+  udpServer.send(buf, destination.port, destination.host, (err) => {
+    if (err) udpDiag(`[relay#${match.id}] send to ${peerUsername} failed: ${err.message}`);
+  });
+  return true;
 }
 
 function sendUdpJson(rinfo, payload) {
@@ -928,6 +1042,7 @@ function authOk(client, username) {
     cap_p2p_auth: 1,
     cap_social_controls: 1,
     cap_private_rematch: 1,
+    cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0,
   });
   sendFriendSnapshot(client);
   refreshFriendsFor(username);
@@ -994,7 +1109,7 @@ function handleJoinQueue(client, msg) {
   if (client.match_id) return sendError(client, "already in a match");
   cancelRematchesForUser(client.username, "player joined matchmaking");
   const queue = String(msg.queue || "casual").toLowerCase() === "competitive" ? "competitive" : "casual";
-  removeFromQueues(client);
+  removeFromQueues(client, "changed");
   client.queue = queue;
   client.queue_joined_at = now();
   if (queue === "competitive") competitiveQueue.push(client);
@@ -1008,7 +1123,7 @@ function handleJoinQueue(client, msg) {
 }
 
 function handleLeaveQueue(client) {
-  removeFromQueues(client);
+  removeFromQueues(client, "left");
   send(client, { type: "queue_left" });
   if (client.username) refreshFriendsFor(client.username);
   broadcastQueueCounts();
@@ -1386,6 +1501,7 @@ function finishMatch(match, winner, reason = "") {
       send(c, terminal);
     }
   }
+  clearRelayEndpoints(match);
   activeMatches.delete(match.id);
   refreshFriendsForUsers([match.a, match.b]);
 }
@@ -1406,6 +1522,7 @@ function cancelMatch(match, reason = "cancelled") {
       send(c, terminal);
     }
   }
+  clearRelayEndpoints(match);
   activeMatches.delete(match.id);
   refreshFriendsForUsers([match.a, match.b]);
 }
@@ -1553,7 +1670,24 @@ function handleMatchEnd(client, msg) {
   }
   const result = String(msg.result || "").toLowerCase();
   if (result === "win" || result === "loss") {
-    const winner = result === "win" ? client.username : (client.username === match.a ? match.b : match.a);
+    let winner = result === "win"
+      ? client.username
+      : (client.username === match.a ? match.b : match.a);
+    if (Object.prototype.hasOwnProperty.call(msg, "winner_player")) {
+      const winnerPlayer = msg.winner_player;
+      if (!Number.isInteger(winnerPlayer) || winnerPlayer < 0 || winnerPlayer > 1 ||
+          !Array.isArray(match.player_by_index) ||
+          !validUsername(match.player_by_index[winnerPlayer])) {
+        return sendError(client, "winner_player must be the synchronized player slot 0 or 1");
+      }
+      winner = match.player_by_index[winnerPlayer];
+      const expectedResult = winner === client.username ? "win" : "loss";
+      if (expectedResult !== result) {
+        console.warn(
+          `[match#${match.id}] ${client.username} local result=${result} disagreed with synchronized winner_player=${winnerPlayer}; using ${winner}`,
+        );
+      }
+    }
     if (match.results.has(client.username)) return;
     match.results.set(client.username, winner);
     if (match.results.size >= 2) {
@@ -1608,7 +1742,7 @@ function dispatch(client, msg) {
 function destroyClient(client) {
   if (!clients.has(client)) return;
   clients.delete(client);
-  removeFromQueues(client);
+  removeFromQueues(client, "disconnected");
   if (client.username && onlineByUser.get(client.username) === client) {
     /* Remove presence ownership before any challenge/friend snapshot. Otherwise
      * one stale "online" snapshot can precede the final offline refresh. */
@@ -1641,7 +1775,10 @@ function destroyClient(client) {
       const otherClient = connectedClient(other);
       if (!match.committed) cancelMatch(match, "opponent disconnected before gameplay");
       else if (otherClient) finishMatch(match, other, "opponent disconnected");
-      else activeMatches.delete(match.id);
+      else {
+        clearRelayEndpoints(match);
+        activeMatches.delete(match.id);
+      }
     }
   }
   try { client.socket.destroy(); } catch (_) {}
@@ -1666,6 +1803,7 @@ const casualQueue = [];
 const competitiveQueue = [];
 const challenges = new Map();
 const activeMatches = new Map();
+const relayEndpointIndex = new Map();
 const rematches = new Map();
 
 const matchSweepTimer = setInterval(() => {
@@ -1769,7 +1907,8 @@ server.on("error", (err) => {
 const udpServer = dgram.createSocket("udp4");
 
 udpServer.on("message", (buf, rinfo) => {
-  if (!buf || buf.length > 2048) return;
+  if (!buf || buf.length > GGPO_PACKET_MAX_BYTES) return;
+  if (handleRelayPacket(buf, rinfo)) return;
   let msg;
   try {
     msg = JSON.parse(buf.toString("utf8").trim());

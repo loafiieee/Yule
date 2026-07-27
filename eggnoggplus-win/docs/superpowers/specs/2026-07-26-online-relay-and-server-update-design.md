@@ -37,7 +37,10 @@ prefix. Binary forwarding requires all of:
 Forwarding is one input datagram to one authenticated opponent endpoint, so it is not an
 amplifier or arbitrary target proxy. The server does not mutate packets. The peer remains
 responsible for the existing end-to-end HMAC, session, sender, and replay-window checks.
-Every result, abort, and disconnect removes relay endpoint ownership.
+Setup aborts remove relay endpoint ownership immediately. A successfully finalized relay
+match retains only its existing authenticated participant endpoints for 15 seconds so the
+native win countdown can finish after result consensus; the bounded terminal lease then
+removes endpoint ownership. No new endpoint can register against a finished match.
 
 This is a prematch connectivity fallback. Established-match resume, authenticated NAT
 rebinding, adaptive route migration, congestion control, relay health display, IPv6, and
@@ -67,7 +70,7 @@ never moved, deleted, copied from Git, or included in rollback.
 
 - `tests/online_server_match_protocol_test.py` proves direct publication, a fresh-socket
   generation, symmetric relay notification, player-slot admission, and byte-exact binary
-  forwarding.
+  forwarding both before result consensus and during the bounded native-presentation grace.
 - `tests/online_server_auth_static_test.py` pins relay ownership, bounds, symmetric switch,
   result cleanup, and winner-slot/account mapping.
 - `tests/server_updater_static_test.py` pins clone-before-stop validation, protected state,

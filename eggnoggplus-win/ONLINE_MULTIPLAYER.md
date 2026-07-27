@@ -242,7 +242,7 @@ The built-in online hub is back in the framework and can be opened from the main
   is sent. A keyboard/controller/mouse social menu exposes persistent mute, block,
   unblock, and unfriend controls.
 - Settings: server address as a single `host:port` field, the local P2P UDP port (`Auto` by default), and challenge notifications.
-- Online result: after a normally completed online match, both clients report win/loss to the server. Only two reports naming the same winner produce a confirmed result and Elo update; a lone or conflicting report becomes a no-contest. Deliberately leaving a committed match sends an explicit forfeit, immediately awarding the connected opponent the win. A late P2P-loss report racing that forfeit replays the same exact terminal result instead of producing a stale-result error. Completion returns directly to the hub and uses a compact bottom-right notification; there is no fullscreen result state. Requeue becomes available after confirmation, while prematch/connect failures create no result notification.
+- Online result: after a normally completed online match, both clients report win/loss to the server. Only two reports naming the same winner produce a confirmed result and Elo update; a lone or conflicting report becomes a no-contest. Deliberately leaving a committed match sends an explicit forfeit, immediately awarding the connected opponent the win. A late P2P-loss report racing that forfeit replays the same exact terminal result instead of producing a stale-result error. Native GAME keeps ownership through its win countdown; only its own return to main opens the hub and compact bottom-right notification. There is no fullscreen result state. Requeue becomes available after confirmation, while prematch/connect failures create no result notification.
 
 ### Launch arguments and `yule://` links
 
@@ -313,10 +313,9 @@ private-rematch and UDP-relay capabilities are all required. `auth_ok` repeats t
 versions, so a stale or mixed deployment fails at the handshake (and again at match setup
 as defense in depth) instead of consuming a queue match that cannot start.
 
-The live public service advertises control v3/match v3/P2P v17, but does not advertise the
-new required relay capability until this server revision is deployed. Deploy/restart the
-server before launching this rebuilt client, then require the TCP/UDP deployment preflight
-to report UDP relay support.
+The current client requires control v3/match v3/P2P v17 plus relay capability. Deploy and
+restart this matching server revision before launching the rebuilt client, then require
+the TCP/UDP deployment preflight to report UDP relay support.
 
 Gameplay uses end-to-end authenticated `ggpo_net` packets over a direct route when
 possible and the bounded server relay after a failed direct generation. The server chooses the map from
@@ -560,7 +559,10 @@ the live native global scale, black shadow pass, animated red/yellow color pass,
 
 Online completion has no fullscreen win/loss/game-over state. Detecting a winner reports
 the synchronized winning player slot while rollback keeps running; Eggnogg finishes its
-native win animation and returns to main on its own. Only then does the framework stop
+native win animation and returns to main on its own. The live countdown/final-winner gate
+also suppresses any previously queued hub handoff and preserves presentation across a
+terminal server message or control disconnect. Relayed sessions retain their authenticated
+route for a bounded 15-second post-consensus grace. Only after native MAIN does the framework stop
 transport and open the hub's Play tab. A compact bottom-right result notification shows the opponent, map, server
 status, and confirmed rating delta. Before confirmation its neutral `RESULT REPORTED`
 heading does not claim an unverified outcome. Closing or expiring that provisional toast

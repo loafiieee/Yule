@@ -237,6 +237,8 @@ assert "online_result_activate" not in SOURCE
 
 return_to_hub = function_body("online_return_to_hub_after_match")
 assert "online_hub_open();" in return_to_hub
+assert "online_native_finish_is_presenting()" in return_to_hub
+assert "g_online_open_pending = 0;" in return_to_hub
 assert "g_online_return_state = main_state;" in return_to_hub
 assert "g_online_pending_return_state = main_state;" in return_to_hub
 assert "g_online_force_main_return_once = already_in_hub ? 0 : 1;" in return_to_hub
@@ -259,6 +261,8 @@ assert poll_completion.index("winner_player = winner") < poll_completion.index(
 
 state_switch = function_body("hooked_state_switch")
 assert "finish_online_after_switch" in state_switch
+assert "online_native_finish_is_presenting()" in state_switch
+assert "online_match_poll_completion();" in state_switch
 assert state_switch.index("switched = real_switch") < state_switch.index(
     'stop_ggpo_net("native win sequence complete")'
 )
@@ -281,6 +285,17 @@ assert "g_online_result.server_confirmed" in render_toast
 pre_swap = function_body("hooks_online_on_pre_swap")
 assert "g_online_result.active && g_online_result.toast_visible" in pre_swap
 assert "online_result_render_toast();" in pre_swap
+assert "g_online_open_pending && !online_native_finish_is_presenting()" in pre_swap
+
+native_presenting = function_body("online_native_finish_is_presenting")
+assert "*g_game_end_countdown > 0" in native_presenting
+assert "online_native_winner_player() >= 0" in native_presenting
+assert "online_state_is_ingame_menu(state)" in native_presenting
+
+server_disconnect = function_body("online_handle_server_match_disconnect")
+preserve_pos = server_disconnect.index("online_native_finish_is_presenting()")
+stop_pos = server_disconnect.index("stop_ggpo_net", preserve_pos)
+assert preserve_pos < stop_pos
 
 # Dismissing or expiring a provisional toast retains its exact match identity,
 # so the asynchronous confirmation is still admitted. Confirmed records may be

@@ -1,8 +1,8 @@
 # Eggnogg+ Online Server
 
 Dependency-free Node server for the built-in online hub. TCP handles accounts,
-friends, queues, challenges, and results. UDP is used only for direct P2P
-endpoint discovery; gameplay packets still go directly peer-to-peer.
+friends, queues, challenges, and results. UDP handles direct P2P endpoint
+discovery and a bounded match-owned relay fallback when direct traversal fails.
 
 ```powershell
 cd online_server
@@ -75,7 +75,10 @@ If a direct attempt needs a fresh UDP socket, the server changes both clients to
 owned by that active match and server-assigned player slot, are bounded to protocol-v17
 packet sizes/types and per-second packet/byte budgets, and are forwarded one-for-one only
 to the recorded opponent endpoint. The peer still verifies the original end-to-end HMAC
-and replay sequence. Set `P2P_RELAY_ENABLED=0` only to diagnose direct traversal.
+and replay sequence. A finalized relay match keeps only those existing authenticated
+endpoints for 15 seconds so the native win presentation can finish, then revokes them;
+setup aborts revoke immediately. Set `P2P_RELAY_ENABLED=0` only to diagnose direct
+traversal. `RELAY_FINISH_GRACE_MS` is clamped to 1-30 seconds.
 
 ## Safe source update
 
@@ -92,6 +95,12 @@ stopping systemd, swaps only server application files, restarts, and runs the lo
 TCP/UDP deployment probe. It never stages `users.json`, `ratings.json`,
 `server_secret.key`, logs, environment/PID/socket files, caches, or `node_modules`, and
 restores the prior application files if startup or validation fails.
+
+The restart probe waits up to 30 seconds for both listeners instead of treating
+the first refused connection as a failed deployment. An unusually slow host can
+use `YULE_READINESS_TIMEOUT_SECONDS=60 ./update_server.sh`. If readiness really
+fails, the updater prints systemd status and the tails of the server logs before
+performing the rollback.
 
 ## Deployment compatibility check
 
@@ -165,8 +174,9 @@ the server neither performs rollback nor validates game-state blobs. The standal
 canonical rollback envelope in the client is foundation-only. Production still needs its
 native typed capture/reconstruction/transaction adapter and remaining checksum-field audit.
 
-The checked-out server source advertises v17, but the live public service still advertises
-v16. Its coordinated replacement, restart, and TCP+UDP deployment preflight are pending.
+The checked-out server source advertises v17 plus the required relay capability. Every
+deployment must restart the service and pass the TCP+UDP deployment preflight; replacing
+files without restarting is not sufficient.
 
 Match protocol 3 adds a server-authoritative gameplay-start barrier. After the
 authenticated P2P link, authoritative state, and neutral frame zero are fully

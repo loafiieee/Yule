@@ -42,11 +42,14 @@ returning `invalid or stale match result`. The one-message replay cache is
 cleared when a new match begins.
 
 The client first creates a provisional toast after reporting its local result. Reporting
-does not stop rollback or switch state: the native terminal countdown and win animation
-continue normally. When Eggnogg itself switches from GAME to main, the hook lets that
-native switch finish, then tears down transport and queues the hub. A server confirmation
-or no-contest arriving during the animation updates retained result/status state but cannot
-skip the presentation.
+does not stop rollback or switch state: the native 599-frame terminal countdown and win
+animation continue normally. The preservation gate recognizes the retained completion
+flag, the live countdown, or the final winner while GAME/an in-game overlay still owns the
+screen. It blocks both fresh and already-queued hub handoffs and also covers terminal
+server messages or a control disconnect. When Eggnogg itself switches from GAME to main,
+the hook lets that native switch finish, then tears down transport and queues the hub. A
+server confirmation or no-contest arriving during the animation updates retained
+result/status state but cannot skip the presentation.
 Its heading is `RESULT REPORTED`, not an unconfirmed win/loss claim. The exact
 match ID remains retained until the asynchronous server answer arrives. A
 confirmed `match_result` refreshes the toast with `YOU WON`, `YOU LOST`, or
@@ -95,6 +98,7 @@ single stable hub destination.
 - Only an exact-ID, server-committed match may report or accept a result.
 - Normal reports use the synchronized winner slot and the server-owned slot/account map.
 - A normal report/confirmation cannot stop the native win countdown or skip its animation.
+- A queued hub handoff cannot cover GAME while native terminal presentation evidence remains.
 - A committed deliberate exit is an explicit forfeit and awards the opponent.
 - A late duplicate report can only replay that participant's exact most-recent
   terminal message; it cannot mutate ratings or another match.

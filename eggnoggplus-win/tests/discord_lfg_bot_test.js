@@ -91,6 +91,37 @@ test("join posts once and leave edits the exact owned message", async () => {
   assert.equal(logs.some((line) => line.includes(CONFIG.token)), false);
 });
 
+test("matched post is edited now and deleted after one-day retention", async () => {
+  const discord = fakeDiscord();
+  const timers = new Map();
+  let nextTimer = 1;
+  const bot = new DiscordLfgBot(CONFIG, {
+    request: discord.request,
+    setTimer: (callback, ms) => {
+      const id = nextTimer++;
+      timers.set(id, { callback, ms });
+      return id;
+    },
+    clearTimer: (id) => timers.delete(id),
+  });
+  bot.queueJoined("matched_user", "competitive");
+  await bot.flush();
+  bot.queueLeft("matched_user", "matched");
+  await bot.flush();
+
+  assert.deepEqual(discord.calls.map((call) => call.method), ["POST", "PATCH"]);
+  assert.match(discord.calls[1].body.embeds[0].title, /Match found/);
+  assert.equal(timers.size, 1);
+  assert.equal([...timers.values()][0].ms, 24 * 60 * 60 * 1000);
+
+  [...timers.values()][0].callback();
+  await bot.flush();
+  assert.deepEqual(discord.calls.map((call) => call.method),
+    ["POST", "PATCH", "DELETE"]);
+  assert.equal(discord.calls[2].body, undefined);
+  assert.equal(discord.calls[2].path, discord.calls[1].path);
+});
+
 test("leave racing create edits the late message", async () => {
   let resolveCreate;
   const calls = [];

@@ -391,7 +391,7 @@ def main() -> int:
             )
 
             # A setup abort cancels both clients without manufacturing a winner.
-            matches = make_match(queue="competitive")
+            matches = make_match()
             pending_id = int(matches[0]["match_id"])
             udp_peers = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in clients]
             try:
@@ -461,12 +461,47 @@ def main() -> int:
                 udp_peers[0].sendto(relayed_packet, ("127.0.0.1", port))
                 received, _ = udp_peers[1].recvfrom(2048)
                 assert received == relayed_packet
+
+                # Result finalization happens when the native clients begin
+                # their win presentation. A relayed match must retain its
+                # authenticated route long enough for that countdown to drain.
+                for client in clients:
+                    client.send({"type": "match_started", "match_id": pending_id})
+                for client in clients:
+                    client.receive_type("match_started")
+                synchronized_winner = int(matches[0]["role"])
+                clients[0].send({
+                    "type": "match_end",
+                    "match_id": pending_id,
+                    "result": "win",
+                    "winner_player": synchronized_winner,
+                })
+                clients[0].receive_type("match_report_ack")
+                clients[1].send({
+                    "type": "match_end",
+                    "match_id": pending_id,
+                    "result": "loss",
+                    "winner_player": synchronized_winner,
+                })
+                relay_results = [
+                    client.receive_type("match_result") for client in clients
+                ]
+                assert relay_results[0].get("result") == "win"
+                assert relay_results[1].get("result") == "loss"
+                udp_peers[0].sendto(relayed_packet, ("127.0.0.1", port))
+                received, _ = udp_peers[1].recvfrom(2048)
+                assert received == relayed_packet
             finally:
                 for udp_peer in udp_peers:
                     udp_peer.close()
-            clients[0].send({"type": "match_abort", "match_id": pending_id, "reason": "test setup abort"})
+
+            # A separate setup abort still revokes immediately and cannot
+            # manufacture a winner.
+            abort_matches = make_match(queue="competitive")
+            abort_id = int(abort_matches[0]["match_id"])
+            clients[0].send({"type": "match_abort", "match_id": abort_id, "reason": "test setup abort"})
             aborts = [client.receive_type("match_abort") for client in clients]
-            assert all(message.get("match_id") == pending_id for message in aborts)
+            assert all(message.get("match_id") == abort_id for message in aborts)
 
             # A loss report before the two-client start commit is also a cancel,
             # never a delayed YOU WON/LOST result.

@@ -157,7 +157,9 @@ agree on the winner without `conflicting match reports`.
 Test one pair across restrictive/mobile/CGNAT networks. The first log route may be
 `public`; after the fresh-socket retry both clients must log the same `route=relay` and
 finish prematch/gameplay. The server log should show
-`direct path did not establish; enabling bounded UDP relay`.
+`direct path did not establish; enabling bounded UDP relay`. On a completed relayed
+match it should also log the 15-second native-presentation grace, and packets must
+continue through the visible win animation.
 
 During a match run:
 

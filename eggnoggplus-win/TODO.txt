@@ -268,7 +268,8 @@ Feature backlog:
       direct match route, Gateway, intents, commands, or inbound bot listener. Duplicate
       joins coalesce, generation ownership makes create/leave races safe, and exact posts
       are edited in place to remove their buttons and show matched/left/changed/offline/
-      shutdown status instead of being deleted. REST
+      shutdown status. Matched posts remain visible for one day and are then deleted;
+      other inactive states remain as history. REST
       timeouts, responses, retries, 429 delays, tracked users, and logs are bounded. A
       loopback-only, no-store redirect exposes only the completed canonical public
       `yule://` routes behind deployment TLS; its landing page launches the protocol and
@@ -545,8 +546,10 @@ Feature backlog:
       include the synchronized winning player slot; the server maps that slot through its
       recorded host/join assignment, so an inverted client-local win/loss interpretation
       cannot manufacture conflicting winners. Reporting no longer tears down rollback or
-      changes state: Eggnogg completes its native win animation and returns to main first,
-      then the client stops transport and opens the online hub. Static client/server checks
+      changes state: a live countdown/final-winner gate also blocks previously queued hub
+      handoffs and terminal control messages while GAME owns the presentation. Eggnogg
+      completes its native win animation and returns to main first, then the client stops
+      transport and opens the online hub. Static client/server checks
       and live TCP protocol coverage pin legacy conflict rejection, slot-authoritative
       agreement, disconnect replay, and the deferred native return.
     - Bounded hostile-NAT UDP relay fallback: the rendezvous server still chooses one
@@ -556,10 +559,12 @@ Feature backlog:
       Relay admission is limited to active match-owned observed endpoints, the server-recorded
       sender player slot, protocol-v17 packet bounds/types, and per-endpoint packet/byte
       budgets; peer HMAC/replay validation remains end to end, and amplification is one for
-      one to the authenticated opponent endpoint. Cleanup removes endpoint ownership on
-      every result, abort, and disconnect. The isolated runtime test proves initial direct
-      routing, symmetric fallback after a fresh-socket retry, and byte-exact binary packet
-      forwarding. Established mid-game rebinding/resume remains open above.
+      one to the authenticated opponent endpoint. Setup aborts revoke immediately; a
+      successful relayed result retains only the authenticated endpoints for a 15-second
+      native-presentation grace, then revokes them. The isolated runtime test proves initial
+      direct routing, symmetric fallback after a fresh-socket retry, and byte-exact binary
+      forwarding before and after result consensus. Established mid-game rebinding/resume
+      remains open above.
     - State-preserving online-server updater: `online_server/update_server.sh` shallow-clones
       the latest configured branch into a disposable directory, runs Node/static/two-client
       protocol tests before downtime, stages only non-runtime server files, stops systemd for

@@ -17,6 +17,8 @@ const TRACKED_MAX = 2048;
 const PENDING_CREATE_MAX = 4096;
 const DEFAULT_POST_DELAY_MS = 2000;
 const POST_DELAY_MAX_MS = 30000;
+const DEFAULT_MATCH_DELETE_MS = 24 * 60 * 60 * 1000;
+const MATCH_DELETE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 function validateConfig(config) {
   if (!config || config.enabled !== true) return { enabled: false };
@@ -32,6 +34,9 @@ function validateConfig(config) {
     postDelayMs: Number.isInteger(config.postDelayMs)
       ? Math.max(0, Math.min(POST_DELAY_MAX_MS, config.postDelayMs))
       : DEFAULT_POST_DELAY_MS,
+    matchDeleteMs: Number.isInteger(config.matchDeleteMs)
+      ? Math.max(0, Math.min(MATCH_DELETE_MAX_MS, config.matchDeleteMs))
+      : DEFAULT_MATCH_DELETE_MS,
   };
 }
 
@@ -189,6 +194,7 @@ class DiscordLfgBot {
     this.clearTimer = dependencies.clearTimer || clearTimeout;
     this.log = dependencies.log || (() => {});
     this.records = new Map();
+    this.retiredDeleteTimers = new Set();
     this.serial = Promise.resolve();
     this.closed = false;
     this.pendingTasks = 0;
@@ -248,6 +254,32 @@ class DiscordLfgBot {
     return safeJson(response.body);
   }
 
+  scheduleMatchedDelete(messageId) {
+    if (!SNOWFLAKE_RE.test(messageId) || this.config.matchDeleteMs <= 0) return;
+    let timer = null;
+    timer = this.setTimer(() => {
+      this.retiredDeleteTimers.delete(timer);
+      this.enqueue(async () => {
+        await this.api(
+          "DELETE",
+          `/channels/${this.config.channelId}/messages/${messageId}`,
+        );
+        this.log(`Discord matched LFG post deleted after retention (${messageId})`);
+      }, { critical: true });
+    }, this.config.matchDeleteMs);
+    this.retiredDeleteTimers.add(timer);
+    if (timer && typeof timer.unref === "function") timer.unref();
+  }
+
+  async retireMessage(username, queue, reason, messageId) {
+    await this.api(
+      "PATCH",
+      `/channels/${this.config.channelId}/messages/${messageId}`,
+      buildRetiredPayload(username, queue, reason),
+    );
+    if (reason === "matched") this.scheduleMatchedDelete(messageId);
+  }
+
   queueJoined(username, queue) {
     if (!this.enabled || !USERNAME_RE.test(username) ||
         (queue !== "casual" && queue !== "competitive")) {
@@ -283,10 +315,8 @@ class DiscordLfgBot {
       }
       const current = this.records.get(username);
       if (!current || current !== record || !current.active) {
-        await this.api(
-          "PATCH",
-          `/channels/${this.config.channelId}/messages/${messageId}`,
-          buildRetiredPayload(username, queue, record.retireReason || "left"),
+        await this.retireMessage(
+          username, queue, record.retireReason || "left", messageId,
         );
         return;
       }
@@ -324,11 +354,7 @@ class DiscordLfgBot {
     if (this.enabled && SNOWFLAKE_RE.test(record.messageId)) {
       const messageId = record.messageId;
       this.enqueue(async () => {
-        await this.api(
-          "PATCH",
-          `/channels/${this.config.channelId}/messages/${messageId}`,
-          buildRetiredPayload(username, record.queue, reason),
-        );
+        await this.retireMessage(username, record.queue, reason, messageId);
         this.log(`Discord LFG post updated for ${username} (${reason})`);
       }, { critical: true });
     }
@@ -349,6 +375,8 @@ class DiscordLfgBot {
       await this.flush();
     }
     this.closed = true;
+    for (const timer of this.retiredDeleteTimers) this.clearTimer(timer);
+    this.retiredDeleteTimers.clear();
     for (const record of this.records.values()) record.active = false;
     this.records.clear();
   }
@@ -363,6 +391,9 @@ function createDiscordLfgBotFromEnv(env = process.env, dependencies = {}) {
     postDelayMs: env.DISCORD_LFG_POST_DELAY_MS === undefined
       ? DEFAULT_POST_DELAY_MS
       : Number.parseInt(String(env.DISCORD_LFG_POST_DELAY_MS), 10),
+    matchDeleteMs: env.DISCORD_LFG_MATCH_DELETE_MS === undefined
+      ? DEFAULT_MATCH_DELETE_MS
+      : Number.parseInt(String(env.DISCORD_LFG_MATCH_DELETE_MS), 10),
   }, dependencies);
 }
 

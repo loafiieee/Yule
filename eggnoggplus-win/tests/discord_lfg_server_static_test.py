@@ -42,8 +42,11 @@ assert 'removeFromQueues(client, "disconnected")' in SERVER
 assert "allowed_mentions: { parse: [], users: [], roles: [], replied_user: false }" in BOT
 assert "retry_after" in BOT and "response.status === 429" in BOT
 assert "DEFAULT_POST_DELAY_MS = 2000" in BOT
+assert "DEFAULT_MATCH_DELETE_MS = 24 * 60 * 60 * 1000" in BOT
 assert '"PATCH"' in BOT
-assert '"DELETE"' not in BOT
+assert '"DELETE"' in BOT
+assert 'if (reason === "matched") this.scheduleMatchedDelete(messageId)' in BOT
+assert "DISCORD_LFG_MATCH_DELETE_MS" in BOT
 assert "PENDING_CREATE_MAX = 4096" in BOT
 assert "pending-request limit reached" in BOT
 assert "Authorization" in BOT and "`Bot ${token}`" in BOT

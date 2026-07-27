@@ -130,8 +130,15 @@ register_endpoint = function_body("function registerP2pEndpoint")
 assert "generation >= 2" in register_endpoint
 assert "match.force_relay = true" in register_endpoint
 assert "match.p2p_notified = {}" in register_endpoint
-assert "clearRelayEndpoints(match)" in finish
+assert "retainTerminalRelay(match)" in finish
 assert "clearRelayEndpoints(match)" in cancel
+retain_relay = function_body("function retainTerminalRelay")
+assert "RELAY_FINISH_GRACE_MS" in retain_relay
+assert "terminalRelayMatches.set(match.id, match)" in retain_relay
+assert "clearTerminalRelay(match)" in retain_relay
+relay_lookup = function_body("function relayMatch")
+assert "terminalRelayMatches.get(matchId)" in relay_lookup
+assert "relay_finish_expires_at <= now()" in relay_lookup
 
 # The periodic TTL applies only to pending setup. A legitimate committed match
 # is governed by result/disconnect handling and cannot be canceled at ten minutes.

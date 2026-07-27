@@ -65,6 +65,13 @@ const GGPO_PACKET_MIN_BYTES = 44;
 const GGPO_PACKET_MAX_BYTES = 2048;
 const RELAY_PACKET_RATE_MAX = 600;
 const RELAY_BYTE_RATE_MAX = 768 * 1024;
+const RELAY_FINISH_GRACE_CONFIG = Number.parseInt(
+  process.env.RELAY_FINISH_GRACE_MS || "15000",
+  10,
+);
+const RELAY_FINISH_GRACE_MS = Number.isFinite(RELAY_FINISH_GRACE_CONFIG)
+  ? Math.max(1000, Math.min(30000, RELAY_FINISH_GRACE_CONFIG))
+  : 15000;
 const lfgBot = createDiscordLfgBotFromEnv(process.env, {
   log: (line) => console.log(`[lfg] ${line}`),
 });
@@ -904,6 +911,47 @@ function clearRelayEndpoints(match) {
   }
 }
 
+function clearTerminalRelay(match) {
+  if (!match) return;
+  if (match.relay_finish_timer) {
+    clearTimeout(match.relay_finish_timer);
+    match.relay_finish_timer = null;
+  }
+  terminalRelayMatches.delete(match.id);
+  clearRelayEndpoints(match);
+}
+
+function retainTerminalRelay(match) {
+  if (!match || !match.force_relay || !match.p2p_endpoints ||
+      match.p2p_endpoints.size !== 2) {
+    clearRelayEndpoints(match);
+    return;
+  }
+  match.relay_finish_expires_at = now() + RELAY_FINISH_GRACE_MS;
+  terminalRelayMatches.set(match.id, match);
+  match.relay_finish_timer = setTimeout(() => {
+    clearTerminalRelay(match);
+  }, RELAY_FINISH_GRACE_MS);
+  if (typeof match.relay_finish_timer.unref === "function") {
+    match.relay_finish_timer.unref();
+  }
+  console.log(
+    `[relay#${match.id}] retaining terminal route for ${RELAY_FINISH_GRACE_MS}ms native presentation grace`,
+  );
+}
+
+function relayMatch(matchId) {
+  const active = activeMatches.get(matchId);
+  if (active && !active.finished) return active;
+  const terminal = terminalRelayMatches.get(matchId);
+  if (!terminal) return null;
+  if (terminal.relay_finish_expires_at <= now()) {
+    clearTerminalRelay(terminal);
+    return null;
+  }
+  return terminal;
+}
+
 function relayRateAllowed(endpoint, byteLength) {
   const current = now();
   if (!endpoint.relay_window_at ||
@@ -936,8 +984,8 @@ function handleRelayPacket(buf, rinfo) {
   const port = sanitizePort(rinfo.port, 0);
   const owner = relayEndpointIndex.get(`${host}:${port}`);
   if (!owner) return true;
-  const match = activeMatches.get(owner.matchId);
-  if (!match || match.finished || !match.force_relay ||
+  const match = relayMatch(owner.matchId);
+  if (!match || !match.force_relay ||
       !matchHasUser(match, owner.username) ||
       !Array.isArray(match.player_by_index) ||
       match.player_by_index[senderPlayer] !== owner.username) {
@@ -1501,8 +1549,8 @@ function finishMatch(match, winner, reason = "") {
       send(c, terminal);
     }
   }
-  clearRelayEndpoints(match);
   activeMatches.delete(match.id);
+  retainTerminalRelay(match);
   refreshFriendsForUsers([match.a, match.b]);
 }
 
@@ -1804,6 +1852,7 @@ const competitiveQueue = [];
 const challenges = new Map();
 const activeMatches = new Map();
 const relayEndpointIndex = new Map();
+const terminalRelayMatches = new Map();
 const rematches = new Map();
 
 const matchSweepTimer = setInterval(() => {
@@ -1952,6 +2001,9 @@ async function orderlyShutdown(signal) {
   shuttingDown = true;
   console.log(`Received ${signal}; retiring queue posts and shutting down.`);
   clearInterval(matchSweepTimer);
+  for (const match of [...terminalRelayMatches.values()]) {
+    clearTerminalRelay(match);
+  }
   for (const client of [...clients]) destroyClient(client);
 
   const cleanup = Promise.allSettled([

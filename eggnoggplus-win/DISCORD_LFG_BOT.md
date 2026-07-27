@@ -19,7 +19,9 @@ listener. Each player owns at most one tracked post:
 - a duplicate join does not create a second message;
 - direct friend challenges never create an LFG message;
 - leaving, matching, disconnecting, changing queue, or shutdown edits the exact message
-  into an inactive state and removes both buttons instead of deleting it;
+  into an inactive state and removes both buttons;
+- a **Match found** edit remains visible for 24 hours and is then deleted. Other
+  inactive reasons remain as history;
 - leaving during the two-second delay creates nothing, while a leave racing an in-flight
   Discord create edits the late-created message immediately;
 - requests are serialized, bounded, and honor Discord's returned `retry_after`.
@@ -94,6 +96,7 @@ DISCORD_LFG_BOT_TOKEN=replace_with_the_secret_bot_token
 DISCORD_LFG_CHANNEL_ID=123456789012345678
 DISCORD_LFG_PUBLIC_BASE_URL=https://loafiieee.com/yule
 DISCORD_LFG_POST_DELAY_MS=2000
+DISCORD_LFG_MATCH_DELETE_MS=86400000
 LFG_REDIRECT_HOST=127.0.0.1
 LFG_REDIRECT_PORT=47880
 ```
@@ -210,6 +213,7 @@ For live acceptance:
    client must finish the queue action even if login is required first. When matchmaking
    succeeds, the waiting post must change to **Match found**. If browser policy permits,
    the handoff tab closes itself; otherwise its fallback explicitly says it can be closed.
+   The matched post is retained for one day and then deleted by the bot.
 4. Make the two game accounts accepted friends, leave A available in a queue, and click
    **Challenge A** on B's computer. The client should resume the target challenge after
    authentication and open the ordinary compatible-map challenge flow.
@@ -239,5 +243,5 @@ restores the exact previous application files. Overrides are available through
 
 Inspect the Discord payload and service logs to confirm the bot token and all private
 match IDs, endpoints, credentials, ratings, and control/P2P tokens are absent. A hard kill
-can leave a harmless stale post because in-memory message ownership is lost; delete that
-post manually.
+or service restart loses in-memory retirement timers and can leave a harmless stale
+matched post; delete that post manually.

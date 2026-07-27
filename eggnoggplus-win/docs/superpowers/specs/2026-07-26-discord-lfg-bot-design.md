@@ -31,6 +31,10 @@ Queue change, leave, match assignment, disconnect, or orderly process shutdown P
 the exact recorded message into a reason-specific inactive embed and removes its buttons.
 If leave races an already in-flight create, the newly returned message ID is immediately
 PATCHed by that stale generation rather than deleted or left actionable.
+A matched embed is retained for a configurable 24-hour default, then the bot DELETEs that
+exact bot-owned message. Other inactive states remain as queue history. The timer is
+unreferenced and bounded to seven days; a process restart can leave an old matched embed
+which is harmless and may be removed manually.
 
 The adapter tracks at most 2,048 users and serializes outbound work. It observes Discord's
 429 `retry_after`, bounds retries and response size, retries transient 5xx failures, and
@@ -71,7 +75,8 @@ ordinary link buttons:
 ## Verification
 
 Node tests cover config rejection, payload privacy, the two-second/no-short-wait boundary,
-duplicate coalescing, exact in-place lifecycle edits, create/leave races, orderly close,
+duplicate coalescing, exact in-place lifecycle edits, matched-only delayed deletion,
+create/leave races, orderly close,
 429 handling, canonical links, self-close fallback markup/CSP, redirect security
 headers/methods, and loopback enforcement. A static integration test pins server call
 ordering, minimum-data handoff, lifecycle removal, and signal cleanup. The guarded core

@@ -1285,6 +1285,8 @@ static void online_handle_server_match_disconnect(const char* reason);
 static void online_cancel_match_from_console(void);
 static void online_match_pump_launch(void);
 static void online_match_poll_completion(void);
+static int online_native_winner_player(void);
+static int online_native_finish_is_presenting(void);
 static void online_abort_connect_timeout(void);
 static void online_abort_prematch_setup(const char* reason);
 static void online_connect_start_attempt(int first);
@@ -9129,9 +9131,42 @@ static void online_result_prepare(OnlineMatchResult result, const char* status) 
     safe_copy(g_online_result.status, sizeof(g_online_result.status), status ? status : "Waiting for server result...");
 }
 
+static int online_native_finish_is_presenting(void) {
+    void* state;
+    if (!g_online_active_match.active ||
+        !g_online_active_match.server_committed) {
+        return 0;
+    }
+    state = p_state_current ? p_state_current() : NULL;
+    if (state != (void*)(uintptr_t)ADDR_GAME_STATE &&
+        !online_state_is_ingame_menu(state)) {
+        return 0;
+    }
+    /* The client result flag can lag the native terminal state by one frame,
+     * and the countdown reaches zero inside the same call which switches GAME
+     * to MAIN. Either retained signal therefore means the presentation still
+     * owns the screen. */
+    return g_online_active_match.awaiting_native_return ||
+           (g_game_end_countdown && *g_game_end_countdown > 0) ||
+           online_native_winner_player() >= 0;
+}
+
 static void online_return_to_hub_after_match(const char* status) {
     void* main_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
     int already_in_hub = is_online_hub_state_active();
+    if (online_native_finish_is_presenting()) {
+        g_online_active_match.awaiting_native_return = 1;
+        if (status && status[0]) {
+            safe_copy(g_online_active_match.completion_status,
+                      sizeof(g_online_active_match.completion_status),
+                      status);
+        }
+        /* A previously queued handoff is just as dangerous as a fresh one:
+         * pre-swap would otherwise cover the native win scene with the hub. */
+        g_online_open_pending = 0;
+        LOG_INFO("online.match: deferred hub handoff until native GAME returns to MAIN");
+        return;
+    }
     g_online_queue_mode = 0;
     g_online_tab = ONLINE_TAB_PLAY;
     online_clear_capture_state();
@@ -9186,6 +9221,9 @@ static void online_finish_active_match(OnlineMatchResult result, const char* sta
         online_hub_set_status((status && status[0]) ? status : "Match setup ended.");
         online_hub_open();
         return;
+    }
+    if (online_native_finish_is_presenting()) {
+        g_online_active_match.awaiting_native_return = 1;
     }
     g_online_active_match.result = result;
     safe_copy(g_online_active_match.completion_status,
@@ -9256,6 +9294,22 @@ static void online_handle_server_match_disconnect(const char* reason) {
                                           : g_online_pending_match.match_id,
              g_online_connect.established,
              status);
+
+    if (online_native_finish_is_presenting()) {
+        g_online_active_match.awaiting_native_return = 1;
+        if (!g_online_active_match.result_reported) {
+            online_match_poll_completion();
+        }
+        /* A malformed terminal state must still never fall through to the
+         * immediate teardown path merely because the control socket vanished. */
+        g_online_active_match.result_reported = 1;
+        safe_copy(g_online_active_match.completion_status,
+                  sizeof(g_online_active_match.completion_status),
+                  status);
+        g_online_pending_connect_fail_status = 2;
+        LOG_INFO("online.match: preserving native finish despite control-server disconnect");
+        return;
+    }
 
     if (ggpo_net_active()) {
         stop_ggpo_net(show_result
@@ -10336,9 +10390,7 @@ static void online_server_handle_line(const char* line) {
         online_hub_set_status("Result reported; waiting for opponent.");
     } else if (_stricmp(type, "match_result") == 0) {
         OnlineMatchResult result;
-        int preserve_native_finish =
-            g_online_active_match.active &&
-            g_online_active_match.awaiting_native_return;
+        int preserve_native_finish = online_native_finish_is_presenting();
         OnlineRematchState prior_rematch_state = g_online_result.active
             ? g_online_result.rematch_state
             : ONLINE_REMATCH_NONE;
@@ -10359,6 +10411,9 @@ static void online_server_handle_line(const char* line) {
             ? g_online_result.competitive
             : g_online_active_match.competitive;
         if (!online_server_message_matches_current_match(line, type)) return;
+        if (preserve_native_finish) {
+            g_online_active_match.awaiting_native_return = 1;
+        }
         if (!g_online_result.active &&
             (!g_online_active_match.active || !g_online_active_match.server_committed)) {
             /* TCP preserves the server's write order, but one recv pump can
@@ -10476,10 +10531,11 @@ static void online_server_handle_line(const char* line) {
         }
     } else if (_stricmp(type, "match_abort") == 0 ||
                _stricmp(type, "match_end") == 0) {
-        int preserve_native_finish =
-            g_online_active_match.active &&
-            g_online_active_match.awaiting_native_return;
+        int preserve_native_finish = online_native_finish_is_presenting();
         if (!online_server_message_matches_current_match(line, type)) return;
+        if (preserve_native_finish) {
+            g_online_active_match.awaiting_native_return = 1;
+        }
         /* A no-contest/abort supersedes any provisional locally reported
          * outcome. Remove both its toast and retained match identity. */
         memset(&g_online_result, 0, sizeof(g_online_result));
@@ -13768,7 +13824,7 @@ void hooks_online_on_pre_swap(void) {
     if (g_online_active_match.active && ggpo_net_active()) {
         online_viewport_poll(NULL, 0);
     }
-    if (g_online_open_pending) {
+    if (g_online_open_pending && !online_native_finish_is_presenting()) {
         g_online_open_pending = 0;
         g_online_return_state = online_hub_sanitize_return_state(g_online_pending_return_state);
         (void)console_capture_background_now();
@@ -18873,9 +18929,14 @@ static void* __cdecl hooked_state_switch(void* target) {
                          target == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL);
     int finish_online_after_switch =
         leaving_game && entering_main &&
-        g_online_active_match.active &&
-        g_online_active_match.awaiting_native_return;
+        online_native_finish_is_presenting();
     void* switched;
+    if (finish_online_after_switch &&
+        !g_online_active_match.result_reported) {
+        /* The zero-countdown branch switches synchronously. Capture and report
+         * the winner before native GAME tears itself down. */
+        online_match_poll_completion();
+    }
     if (leaving_game && entering_main && (g_online_active_match.active || g_online_result.active || ggpo_net_active())) {
         online_reset_native_sound_state("state switch to main");
     }

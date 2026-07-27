@@ -1,3 +1,55 @@
 Eggnogg+ online server listening on 0.0.0.0:47778
 DB: C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\online_server\users.json
 Ratings: C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\online_server\ratings.json
+Eggnogg+ P2P discovery UDP listening on 0.0.0.0:47778
+Eggnogg+ online server listening on 0.0.0.0:47778
+DB: /home/loaf/Yule/eggnoggplus-win/online_server/users.json
+Ratings: /home/loaf/Yule/eggnoggplus-win/online_server/ratings.json
+[auth] login loaf
+[maps] loaf maps=5 p2p=0 lan=26.81.120.46 route_v2
+[auth] login loaf2
+[maps] loaf2 maps=5 p2p=0 lan=26.81.120.46 route_v2
+[match#1] challenge/challenge loaf vs loaf2 map=vanilla:0 host=loaf2 join=loaf udp_punch=required
+[p2p#1] loaf2 udp=174.27.24.161:49967 local=49967
+[p2p#1] loaf udp=174.27.24.161:49968 local=49968
+[p2p#1] sent peer to loaf route=loopback peer=127.0.0.1:49967 public=174.27.24.161:49967 lan=26.81.120.46:49967
+[p2p#1] sent peer to loaf2 route=loopback peer=127.0.0.1:49968 public=174.27.24.161:49968 lan=26.81.120.46:49968
+[match#1] gameplay ready loaf2 (1/2)
+[match#1] gameplay ready loaf (2/2)
+[match#1] gameplay committed
+[auth] login loaf
+[maps] loaf maps=8 p2p=0 lan=26.81.120.46 route_v2
+[auth] login loaf2
+[maps] loaf2 maps=5 p2p=0 lan=26.81.120.46 route_v2
+[match#2] challenge/challenge loaf vs loaf2 map=vanilla:2 host=loaf2 join=loaf udp_punch=required
+[p2p#2] loaf2 udp=174.27.24.161:62638 local=62638
+[p2p#2] loaf udp=174.27.24.161:62639 local=62639
+[p2p#2] sent peer to loaf route=loopback peer=127.0.0.1:62638 public=174.27.24.161:62638 lan=26.81.120.46:62638
+[p2p#2] sent peer to loaf2 route=loopback peer=127.0.0.1:62639 public=174.27.24.161:62639 lan=26.81.120.46:62639
+[match#2] gameplay ready loaf2 (1/2)
+[match#2] gameplay ready loaf (2/2)
+[match#2] gameplay committed
+[auth] login loaf2
+[maps] loaf2 maps=8 p2p=0 lan=26.81.120.46 route_v2
+[match#3] challenge/challenge loaf vs loaf2 map=custom:v2_symbolic_demo:b4a58d72 host=loaf join=loaf2 udp_punch=required
+[p2p#3] loaf udp=174.27.24.161:52307 local=52307
+[p2p#3] loaf2 udp=174.27.24.161:52308 local=52308
+[p2p#3] sent peer to loaf route=loopback peer=127.0.0.1:52308 public=174.27.24.161:52308 lan=26.81.120.46:52308
+[p2p#3] sent peer to loaf2 route=loopback peer=127.0.0.1:52307 public=174.27.24.161:52307 lan=26.81.120.46:52307
+[match#3] gameplay ready loaf2 (1/2)
+[match#3] gameplay ready loaf (2/2)
+[match#3] gameplay committed
+[auth] login loaf2
+[maps] loaf2 maps=5 p2p=0 lan=26.81.120.46 route_v2
+[auth] login loaf2
+[maps] loaf2 maps=8 p2p=0 lan=26.81.120.46 route_v2
+[auth] login loaf
+[maps] loaf maps=8 p2p=0 lan=26.81.120.46 route_v2
+[match#4] challenge/challenge loaf vs loaf2 map=custom:example_map:a27dd3c7 host=loaf join=loaf2 udp_punch=required
+[p2p#4] loaf udp=174.27.24.161:58314 local=58314
+[p2p#4] loaf2 udp=174.27.24.161:58313 local=58313
+[p2p#4] sent peer to loaf route=loopback peer=127.0.0.1:58313 public=174.27.24.161:58313 lan=26.81.120.46:58313
+[p2p#4] sent peer to loaf2 route=loopback peer=127.0.0.1:58314 public=174.27.24.161:58314 lan=26.81.120.46:58314
+[match#4] gameplay ready loaf2 (1/2)
+[match#4] gameplay ready loaf (2/2)
+[match#4] gameplay committed

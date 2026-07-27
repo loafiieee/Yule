@@ -7,7 +7,9 @@
         "loaf2"
       ],
       "friend_requests": [],
-      "created_at": "2026-06-05T00:28:31.184Z"
+      "created_at": "2026-06-05T00:28:31.184Z",
+      "blocked_users": [],
+      "muted_users": []
     },
     "loaf2": {
       "salt": "0fae2e315fd4a17cc53025da5aca9ba5",
@@ -16,7 +18,9 @@
         "loaf"
       ],
       "friend_requests": [],
-      "created_at": "2026-06-05T00:29:00.266Z"
+      "created_at": "2026-06-05T00:29:00.266Z",
+      "blocked_users": [],
+      "muted_users": []
     }
   }
 }

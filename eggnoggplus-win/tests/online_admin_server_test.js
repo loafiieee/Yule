@@ -1,7 +1,9 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const http = require("http");
+const path = require("node:path");
 const test = require("node:test");
 const {
   isPrivateBindHost,
@@ -132,4 +134,13 @@ test("admin UI can be disabled explicitly", () => {
   assert.equal(startAdminServerFromEnv({
     ADMIN_ENABLED: "0",
   }, api, { log: () => {} }), null);
+});
+
+test("direct execution explains that the admin listener belongs to server.js", () => {
+  const result = spawnSync(process.execPath, [
+    path.join(__dirname, "..", "online_server", "admin_server.js"),
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a standalone process/);
+  assert.match(result.stderr, /configure ADMIN_HOST\/ADMIN_PORT/);
 });

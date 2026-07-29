@@ -301,3 +301,9 @@ module.exports = {
   isPrivateBindHost,
   startAdminServerFromEnv,
 };
+
+if (require.main === module) {
+  console.error("admin_server.js is not a standalone process.");
+  console.error("It is started by server.js; configure ADMIN_HOST/ADMIN_PORT on the eggnogg service and restart that service.");
+  process.exitCode = 1;
+}

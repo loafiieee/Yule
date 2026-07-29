@@ -6,9 +6,13 @@ SCRIPT = (ROOT / "online_server" / "update_server.sh").read_text(encoding="utf-8
 
 assert "set -Eeuo pipefail" in SCRIPT
 assert "git clone --quiet --depth 1 --branch" in SCRIPT
-assert '[[ -f "$SOURCE_ROOT/online_server/server.js" ]]' in SCRIPT
-assert '[[ -f "$SOURCE_ROOT/eggnoggplus-win/online_server/server.js" ]]' in SCRIPT
-assert 'SOURCE_PROJECT="$SOURCE_ROOT/eggnoggplus-win"' in SCRIPT
+assert "locate_source_project" in SCRIPT
+assert "-path '*/online_server/server.js'" in SCRIPT
+assert '-f "$project/online_server/package.json"' in SCRIPT
+assert '-d "$project/tests"' in SCRIPT
+assert "clone contained multiple online-server project roots" in SCRIPT
+assert "clone layout (top three directory levels)" in SCRIPT
+assert 'SOURCE_PROJECT="${projects[0]}"' in SCRIPT
 assert 'SOURCE_SERVER="$SOURCE_PROJECT/online_server"' in SCRIPT
 apply_stop = SCRIPT.index(
     'systemctl_yule stop "$SERVICE_NAME"',

@@ -77,6 +77,17 @@ sudo ss -lunp | grep 47778</code></pre>
 <section id="admin"><h2>Optional LAN administration UI</h2>
 <p>The separate maintenance listener provides searchable account status, password reset, ban/unban, force-disconnect, rating reset, and queue/match counts. It is not exposed on the public game port and intentionally has no admin password: private-LAN access is the authorization boundary. Set <code>ADMIN_ENABLED=0</code> to turn it off.</p>
 <p>Keep <code>ADMIN_HOST=127.0.0.1</code> for same-machine or SSH-tunnel access. For direct LAN use, bind the machine's exact private address, for example <code>ADMIN_HOST=192.168.1.50</code>, then allow only the administrator subnet:</p>
+<pre><code>sudo systemctl edit eggnogg
+
+# Add this drop-in:
+[Service]
+Environment=ADMIN_HOST=192.168.1.50
+Environment=ADMIN_PORT=47779
+
+sudo systemctl daemon-reload
+sudo systemctl restart eggnogg
+sudo ss -ltnp | grep 47779</code></pre>
+<p>The listener is part of <code>server.js</code>. Do not run <code>node admin_server.js</code> separately; it has no standalone maintenance API.</p>
 <pre><code>sudo ufw allow from 192.168.1.0/24 to any port 47779 proto tcp</code></pre>
 <div class="callout warning">Never port-forward 47779 or allow it from Anywhere. Wildcard/public binds and non-private client addresses fail closed by default. <code>ADMIN_ALLOW_WILDCARD=1</code> is an unsafe emergency override. Plain HTTP belongs only on a trusted isolated LAN; use an SSH tunnel or authenticated TLS reverse proxy across an untrusted network.</div>
 <p>The first private-client visit automatically receives a random, IP-bound, HttpOnly, SameSite=Strict session, capped and expiring after eight hours. The session owns a CSRF token and every state change is POST-only, so an unrelated webpage cannot silently submit an action. Set <code>ADMIN_COOKIE_SECURE=1</code> when the browser always reaches the UI through HTTPS.</p></section>
@@ -99,8 +110,19 @@ npm test</code></pre>
 chmod +x update_server.sh
 ./update_server.sh</code></pre>
 <p>The script clones the configured repository/ref into a temporary directory, runs server checks before downtime, stops the service, swaps only application files, restarts, waits for readiness, and probes TCP plus UDP. If startup/protocol validation fails, it restores the previous application files.</p>
+<p>If an older deployment reports <code>clone did not contain online_server/server.js</code>, its updater predates nested-layout discovery. Replace only that script, then rerun it:</p>
+<pre><code>cd /home/loaf/Yule
+git fetch origin main
+git show origin/main:eggnoggplus-win/online_server/update_server.sh \
+  &gt; /tmp/yule-update-server.sh
+bash -n /tmp/yule-update-server.sh
+install -m 0755 /tmp/yule-update-server.sh \
+  eggnoggplus-win/online_server/update_server.sh
+cd eggnoggplus-win/online_server
+./update_server.sh</code></pre>
+<p>This bootstrap changes only <code>update_server.sh</code>. The replacement locates a unique project root using the server entry point, package metadata, and test directory, regardless of whether the repository is flat or nested.</p>
 <p>Useful overrides: <code>YULE_REPOSITORY_URL</code>, <code>YULE_REPOSITORY_REF</code>, <code>YULE_SERVICE_NAME</code>, <code>YULE_SERVER_PORT</code>, <code>YULE_TARGET_ROOT</code>, and <code>YULE_READINESS_TIMEOUT_SECONDS</code>.</p>
-<div class="callout warning">Run the updater from the actual <code>online_server</code> checkout. The clone must contain the repository's matching <code>online_server/server.js</code>. A wrong repository/ref or target root is correctly rejected.</div></section>
+<div class="callout warning">Run the updater from the actual <code>online_server</code> checkout. A clone with no complete online-server project—or multiple ambiguous copies—is correctly rejected.</div></section>
 
 <section id="data"><h2>Persistent data that updates must preserve</h2>
 <ul>

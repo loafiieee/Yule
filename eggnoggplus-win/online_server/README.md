@@ -72,6 +72,23 @@ ADMIN_PORT=47779
 For direct LAN access, set `ADMIN_HOST` to the server's exact private LAN address, such
 as `192.168.1.50`, and allow only the administrator subnet:
 
+```ini
+[Service]
+Environment=ADMIN_HOST=192.168.1.50
+Environment=ADMIN_PORT=47779
+```
+
+Add those lines with `sudo systemctl edit eggnogg`, then apply them:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart eggnogg
+sudo ss -ltnp | grep 47779
+```
+
+The admin listener is integrated into `server.js`; do not launch
+`node admin_server.js` as a second process.
+
 ```bash
 sudo ufw allow from 192.168.1.0/24 to any port 47779 proto tcp
 ```
@@ -120,6 +137,27 @@ cd /home/loaf/Yule/eggnoggplus-win/online_server
 chmod +x update_server.sh
 ./update_server.sh
 ```
+
+If a deployment still has the legacy updater and reports
+`clone did not contain online_server/server.js`, bootstrap only the updater from
+the tracked repository copy, validate it, and rerun:
+
+```bash
+cd /home/loaf/Yule
+git fetch origin main
+git show origin/main:eggnoggplus-win/online_server/update_server.sh \
+  > /tmp/yule-update-server.sh
+bash -n /tmp/yule-update-server.sh
+install -m 0755 /tmp/yule-update-server.sh \
+  eggnoggplus-win/online_server/update_server.sh
+cd eggnoggplus-win/online_server
+./update_server.sh
+```
+
+This recovery changes only the updater script. It does not check out or overwrite
+the live server directory. The current updater discovers the project root from
+the checked-out `online_server/server.js`, `package.json`, and `tests/` structure,
+so both flat and nested repository layouts are accepted.
 
 The updater clones and validates the latest `main` in a temporary directory before
 stopping systemd, swaps only server application files, restarts, and runs the local

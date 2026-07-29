@@ -96,6 +96,37 @@ protected_runtime_path() {
   return 1
 }
 
+locate_source_project() {
+  local candidate project
+  local -a projects=()
+
+  while IFS= read -r -d '' candidate; do
+    project="${candidate%/online_server/server.js}"
+    [[ -f "$project/online_server/package.json" && -d "$project/tests" ]] ||
+      continue
+    projects+=("$project")
+  done < <(
+    find "$SOURCE_ROOT" -mindepth 2 -maxdepth 5 -type f \
+      -path '*/online_server/server.js' -print0
+  )
+
+  if (( ${#projects[@]} == 0 )); then
+    printf '%s\n' 'clone layout (top three directory levels):' >&2
+    find "$SOURCE_ROOT" -mindepth 1 -maxdepth 3 -type d -print >&2 || true
+    die "clone did not contain a project with online_server/server.js, online_server/package.json, and tests/"
+  fi
+  if (( ${#projects[@]} > 1 )); then
+    printf '%s\n' 'matching project roots:' >&2
+    printf '  %s\n' "${projects[@]}" >&2
+    die "clone contained multiple online-server project roots"
+  fi
+
+  SOURCE_PROJECT="${projects[0]}"
+  SOURCE_SERVER="$SOURCE_PROJECT/online_server"
+  printf 'using cloned project root: %s\n' \
+    "${SOURCE_PROJECT#"$SOURCE_ROOT"/}"
+}
+
 restore_previous_application() {
   local relative destination saved
   printf '%s\n' 'new server failed validation; restoring the previous application files' >&2
@@ -129,14 +160,7 @@ done
 printf 'cloning %s (%s)...\n' "$REPOSITORY_URL" "$REPOSITORY_REF"
 git clone --quiet --depth 1 --branch "$REPOSITORY_REF" \
   "$REPOSITORY_URL" "$SOURCE_ROOT"
-if [[ -f "$SOURCE_ROOT/online_server/server.js" ]]; then
-  SOURCE_PROJECT="$SOURCE_ROOT"
-elif [[ -f "$SOURCE_ROOT/eggnoggplus-win/online_server/server.js" ]]; then
-  SOURCE_PROJECT="$SOURCE_ROOT/eggnoggplus-win"
-else
-  die "clone did not contain online_server/server.js in a supported project layout"
-fi
-SOURCE_SERVER="$SOURCE_PROJECT/online_server"
+locate_source_project
 
 printf '%s\n' 'validating the cloned server before stopping the live service...'
 (

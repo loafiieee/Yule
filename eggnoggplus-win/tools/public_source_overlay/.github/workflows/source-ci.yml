@@ -35,3 +35,5 @@ jobs:
           python tests/online_server_auth_static_test.py
           python tests/discord_presence_static_test.py
           python tests/window_runtime_static_test.py
+          python tests/repository_updater_static_test.py
+          python tests/repository_updater_integration_test.py

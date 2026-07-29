@@ -39,6 +39,7 @@ $allowedRootFiles = @(
     'MODDING.md',
     'ONLINE_MULTIPLAYER.md',
     'PUBLIC_SOURCE.md',
+    'REPOSITORY_UPDATER.md',
     'SDL2.def',
     'TESTING.md',
     'UPDATER.md',
@@ -75,6 +76,7 @@ $deniedExact = @(
 $deniedPrefixes = @(
     'build/',
     'dist/',
+    'docs/superpowers/',
     'ghidra/',
     '__pycache__/',
     'mods/_official_cosmetics/',
@@ -130,7 +132,14 @@ $selected = @($tracked | ForEach-Object { Normalize-RepoPath $_ } |
 if ($WorkingTree) {
     # These release-control files may be under review before their first commit.
     # Every other working-tree file must already be tracked.
-    foreach ($reviewPath in @('PUBLIC_SOURCE.md', 'tools/export_public_source.ps1')) {
+    foreach ($reviewPath in @(
+        'PUBLIC_SOURCE.md',
+        'REPOSITORY_UPDATER.md',
+        'tests/repository_updater_integration_test.py',
+        'tests/repository_updater_static_test.py',
+        'tools/export_public_source.ps1',
+        'tools/update_repository.sh'
+    )) {
         if ((Test-Path -LiteralPath (Join-Path $sourceRoot $reviewPath)) -and
             $selected -notcontains $reviewPath) {
             $selected += $reviewPath

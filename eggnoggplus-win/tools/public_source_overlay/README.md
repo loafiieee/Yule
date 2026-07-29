@@ -17,7 +17,8 @@ legitimate Eggnogg installation to run the framework.
 - Lua/mod API and examples: `mods/`
 - V1/V2 map examples: `maps/`
 - Online services: `online_server/`
-- Installer/updater: `installer/`, `update_ext.c`, `updater_helper.c`
+- Installer/updater: `installer/`, `update_ext.c`, `updater_helper.c`,
+  `tools/update_repository.sh`
 - Developer reference: `docs-site/`
 - Detailed design/reference documents: root Markdown files and `docs/`
 - Guarded tests: `tests/`
@@ -55,6 +56,11 @@ node server.js
 Production setup, systemd units, the LAN-only admin service, Discord LFG bridge,
 reverse proxy, UDP relay, safe updates, backups, and deployment probes are
 documented in `online_server/README.md` and `DISCORD_LFG_BOT.md`.
+
+For a source checkout deployed alongside a live server,
+`tools/update_repository.sh` fast-forwards the rest of the repository while
+leaving the entire `online_server/` tree and runtime state untouched. See
+`REPOSITORY_UPDATER.md`.
 
 Copy `config/server.env.example` to a root-owned deployment environment file
 outside the repository. Never commit tokens, passwords, server secrets,

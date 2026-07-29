@@ -178,6 +178,7 @@ try {
         'tests\music_console_static_test.py',
         'tests\discord_lfg_server_static_test.py',
         'tests\server_updater_static_test.py',
+        'tests\repository_updater_static_test.py',
         'tests\installer_lifecycle_test.py',
         'tests\net_backpressure_static_test.py',
         'tests\window_runtime_static_test.py'

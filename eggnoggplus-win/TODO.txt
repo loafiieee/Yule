@@ -691,6 +691,13 @@ Feature backlog:
       JSON, ratings, server secrets, logs, environment files, PID/socket files, `node_modules`,
       or caches. Exact overwritten/new application files are tracked for rollback if start or
       health validation fails; the live runtime state remains in place throughout.
+    - State-preserving repository-wide updater: `tools/update_repository.sh` validates a
+      fresh clone, accepts fast-forwards only, replaces/prunes tracked repository files, and
+      advances the real branch/index without touching the complete live `online_server/`
+      tree, runtime configuration/logs/caches/build output, editor settings, extra configured
+      preserve paths, or untracked community content. Staged/non-runtime local edits and
+      untracked collisions fail closed; dry-run output, post-copy comparison, and automatic
+      file/index/ref rollback are covered by isolated throwaway-repository tests.
     - Once-per-frame local-input commit boundary: hook-side physical input remains a
       tentative wall-tick sample until frame-zero, correction, frame-advantage, prediction,
       and checksum-retirement gates all permit simulation. Stalled updates repoll without

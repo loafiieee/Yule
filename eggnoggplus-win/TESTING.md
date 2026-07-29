@@ -258,6 +258,16 @@ TCP/UDP probe succeeds, and compare hashes/content of `users.json`, `ratings.jso
 `server_secret.key` before and after. Force one bad service start in a disposable copy and
 confirm the old application files are restored while those runtime files never move.
 
+For repository-update acceptance, run
+`python tests/repository_updater_static_test.py` and
+`python tests/repository_updater_integration_test.py`. The integration test builds a
+throwaway upstream and deployed checkout, then covers fast-forward replacement, upstream
+file removal, dry-run behavior, refusal of local code edits, extra preserve paths, branch/
+index advancement, and preservation of the complete live `online_server/` directory plus
+untracked maps/operator files. On a disposable real checkout, also run
+`tools/update_repository.sh --dry-run` before the live command and verify the dedicated
+server process is never restarted.
+
 ## What still is not a live-complete feature
 
 The custom-content API is a set of completed foundations, not yet the entire backlog:

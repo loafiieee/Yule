@@ -18,7 +18,7 @@ The exporter:
 - copies only tracked, explicitly allowed source/documentation trees;
 - excludes game/runtime binaries, build products, caches, logs, crash/desync
   dumps, account/rating databases, the server secret, user configuration, and
-  the retired cosmetics package;
+  the retired cosmetics package and internal planning notes;
 - overlays public repository metadata and safe example configuration;
 - scans exported text for private-key material and credential-like assignments;
 - writes `SOURCE_SNAPSHOT.json` with the private source commit used as

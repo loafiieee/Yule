@@ -9,6 +9,8 @@ OVERLAY = PRIVATE_OVERLAY if PRIVATE_OVERLAY.is_dir() else ROOT
 for required in (
     "git -C $sourceRoot ls-files -- .",
     "git -C $sourceRoot archive",
+    "'REPOSITORY_UPDATER.md'",
+    "'tools/update_repository.sh'",
     "source_commit",
     "inherited_history",
     "Potential secret matched in public output",
@@ -18,6 +20,7 @@ for required in (
     assert required in SCRIPT, f"public exporter lost required guard: {required}"
 
 for forbidden in (
+    "docs/superpowers/",
     "mods/_official_cosmetics/",
     "mods/modframework.cfg",
     "mods/online_hub.cfg",
@@ -51,5 +54,11 @@ example_framework = (
 ).read_text(encoding="utf-8")
 assert "discord_presence=1" in example_framework
 assert "discord_application_id=1531027934004117664" in example_framework
+
+workflow = (OVERLAY / ".github" / "workflows" / "source-ci.yml").read_text(
+    encoding="utf-8"
+)
+assert "repository_updater_static_test.py" in workflow
+assert "repository_updater_integration_test.py" in workflow
 
 print("public source exporter/static release guards: OK")

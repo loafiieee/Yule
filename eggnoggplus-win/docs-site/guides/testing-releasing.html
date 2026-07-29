@@ -124,6 +124,12 @@ node check_deployment.py 127.0.0.1 47778</code></pre>
 <p>The script clones the configured repository/ref, locates the project layout, stages application files, preserves configured durable files such as users/ratings, restarts the systemd service, probes the actual TCP/UDP protocol, and restores the previous application if validation fails. Environment overrides include <code>YULE_REPOSITORY_URL</code>, <code>YULE_REPOSITORY_REF</code>, <code>YULE_SERVICE_NAME</code>, <code>YULE_SERVER_PORT</code>, and <code>YULE_TARGET_ROOT</code>.</p>
 <p>After deploy, inspect <code>systemctl status eggnogg</code>, server error/output logs, public firewall/routing, and a real remote two-client match. A listening Node process alone is not a protocol-level readiness check. See <a href="server-deployment.html">Server deployment</a> and <a href="discord.html">Discord/LFG deployment</a>.</p></section>
 
+<section id="repository-refresh"><h2>Refresh a deployed source checkout separately</h2>
+<pre><code>cd /home/loaf/Yule
+bash ./eggnoggplus-win/tools/update_repository.sh --dry-run
+bash ./eggnoggplus-win/tools/update_repository.sh</code></pre>
+<p>This fast-forwards the repository and updates tracked framework, documentation, test, and tooling files while preserving the complete live <code>online_server/</code> directory and runtime/local state. It does not restart the service. Run <code>online_server/update_server.sh</code> afterward only when server deployment is intended.</p></section>
+
 <section id="checklist"><h2>Release sign-off</h2>
 <ul class="checklist">
 <li>All five guarded runners pass from a clean checkout/worktree state.</li>

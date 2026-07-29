@@ -105,7 +105,15 @@ npm test</code></pre>
 <p>The probe checks the flat <code>server_info</code> response and an actual UDP <code>udp_ping</code>/<code>udp_pong</code>. Current deployment must advertise control 3, match 4, P2P 17, packet auth, social controls, private rematch, and relay. Replacing source without restarting does not update the listening process.</p>
 <p>If TCP matchmaking succeeds but server logs never show received P2P probes, trace UDP from public ingress to the Node socket. If direct traversal fails, confirm both clients receive one relay generation and that the server logs relay activation.</p></section>
 
-<section id="update"><h2>6. Update application files safely</h2>
+<section id="repository-update"><h2>6. Refresh the checkout without touching the live server</h2>
+<pre><code>cd /home/loaf/Yule
+bash ./eggnoggplus-win/tools/update_repository.sh --dry-run
+bash ./eggnoggplus-win/tools/update_repository.sh</code></pre>
+<p>The repository-wide updater validates a fresh clone, accepts only a fast-forward, replaces tracked files outside protected live paths, prunes only obsolete tracked files, and advances the real Git branch and index. It preserves untracked files, local runtime configuration, logs, build output, editor settings, and the <em>entire</em> <code>eggnoggplus-win/online_server/</code> tree, so the running service is never interrupted by this operation.</p>
+<p>Non-protected local edits and staged changes fail closed. Add deliberate repository-relative exceptions with the colon-separated <code>YULE_PRESERVE_PATHS</code> variable. If copying or Git metadata advancement fails, the updater restores the previous files, index, branch, and upstream ref automatically. See <a href="../../REPOSITORY_UPDATER.md">REPOSITORY_UPDATER.md</a> for all overrides and guarantees.</p>
+<div class="callout info">Server source changes will remain visible in <code>git status</code> after the branch advances because the live tree intentionally stays on its deployed version. Use the dedicated server updater below when you are ready to validate, restart, and probe that service.</div></section>
+
+<section id="update"><h2>7. Update online-server application files safely</h2>
 <pre><code>cd /home/loaf/Yule/eggnoggplus-win/online_server
 chmod +x update_server.sh
 ./update_server.sh</code></pre>

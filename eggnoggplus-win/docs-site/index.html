@@ -10,23 +10,43 @@
 </head>
 <body data-root="" data-page="home">
 <main id="main"><article>
-  <p class="page-kicker">Source-backed developer documentation</p>
-  <h1>Eggnogg+ framework developer reference</h1>
-  <p class="lead">Contracts for every public Lua callable, complete V1/V2 map formats, deterministic map scripting, configuration, online infrastructure, deployment, and guarded release work.</p>
+  <section class="docs-hero">
+    <div class="hero-copy">
+      <p class="page-kicker">Yule developer documentation</p>
+      <h1>Build on Yule.</h1>
+      <p class="lead">The source-backed reference for every public Lua callable, V1/V2 maps, deterministic map scripting, configuration, online infrastructure, deployment, and releases.</p>
+      <div class="hero-actions">
+        <a class="pixel-button primary" href="api/index.html">Browse the API</a>
+        <a class="pixel-button" href="getting-started/installation.html">Install Yule</a>
+      </div>
+    </div>
+    <aside class="hero-terminal" aria-label="Documentation coverage">
+      <div class="terminal-title"><span></span><span>REFERENCE STATUS</span></div>
+      <dl>
+        <div><dt>API surface</dt><dd>Every public callable</dd></div>
+        <div><dt>Map systems</dt><dd>V1, V2, and Map Lua</dd></div>
+        <div><dt>Operations</dt><dd>Build, test, server, updater</dd></div>
+        <div><dt>Trust model</dt><dd>Explicit boundaries</dd></div>
+      </dl>
+      <p>Use search or follow a task path below.</p>
+    </aside>
+  </section>
 
   <section>
-    <h2>Start by task</h2>
+    <p class="section-chip">Choose a route</p>
+    <h2>Start with what you are making</h2>
     <div class="doc-grid">
-      <a class="doc-card" href="guides/modding.html"><strong>Create an ordinary mod</strong><span>Manifest, entry script, lifecycle, configuration, packaging, and debugging.</span></a>
-      <a class="doc-card" href="guides/maps.html"><strong>Create a V2 map</strong><span>Per-map tilesets, symbolic tiles, collision, behavior scripts, and validation.</span></a>
-      <a class="doc-card" href="api/index.html"><strong>Look up an API function</strong><span>Individual signatures, parameters, returns, failure behavior, constraints, and examples.</span></a>
-      <a class="doc-card" href="reference/console.html"><strong>Find a console command</strong><span>Complete command/alias reference with arguments and safety notes.</span></a>
-      <a class="doc-card" href="guides/online.html"><strong>Test online play</strong><span>Hub configuration, build admission, direct/relay routes, diagnostics, and acceptance checks.</span></a>
-      <a class="doc-card" href="guides/testing-releasing.html"><strong>Build and release safely</strong><span>Supported toolchain, guarded runners, packaging, publishing, and rollback.</span></a>
+      <a class="doc-card" href="guides/modding.html"><em>01</em><strong>Create an ordinary mod</strong><span>Manifest, entry script, lifecycle, configuration, packaging, and debugging.</span><i>Open guide →</i></a>
+      <a class="doc-card" href="guides/maps.html"><em>02</em><strong>Create a V2 map</strong><span>Per-map tilesets, symbolic tiles, collision, behavior scripts, and validation.</span><i>Open guide →</i></a>
+      <a class="doc-card" href="api/index.html"><em>03</em><strong>Look up an API function</strong><span>Signatures, parameters, returns, failure behavior, constraints, and examples.</span><i>Open reference →</i></a>
+      <a class="doc-card" href="reference/console.html"><em>04</em><strong>Find a console command</strong><span>Complete commands and aliases with arguments, output, and safety notes.</span><i>Open reference →</i></a>
+      <a class="doc-card" href="guides/online.html"><em>05</em><strong>Test online play</strong><span>Hub configuration, admission, direct/relay routes, diagnostics, and acceptance.</span><i>Open guide →</i></a>
+      <a class="doc-card" href="guides/testing-releasing.html"><em>06</em><strong>Build and release safely</strong><span>Supported toolchain, guarded runners, packaging, publishing, and rollback.</span><i>Open guide →</i></a>
     </div>
   </section>
 
   <section>
+    <p class="section-chip">Reference map</p>
     <h2>API areas</h2>
     <table>
       <thead><tr><th>Area</th><th>Namespaces</th><th>Use it for</th></tr></thead>
@@ -43,6 +63,7 @@
   </section>
 
   <section>
+    <p class="section-chip">Before you ship</p>
     <h2>Know the boundary</h2>
     <div class="callout"><strong>Ordinary mods are trusted.</strong> They share one Lua VM and can use standard Lua libraries, local dialogs, TCP, and HTTP. Install only reviewed packages.</div>
     <div class="callout warning"><strong>Gameplay mods stop online.</strong> Tick handlers, content registration, bots, and gameplay mutation are classified and suspended while managed rollback owns the match.</div>
@@ -50,6 +71,7 @@
   </section>
 
   <section>
+    <p class="section-chip">Maintainers</p>
     <h2>Framework internals and operations</h2>
     <div class="doc-grid">
       <a class="doc-card" href="framework/architecture.html"><strong>Architecture</strong><span>SDL proxy loading, native hooks, extension modules, Lua ownership, rendering, maps, rollback, and services.</span></a>

@@ -85,23 +85,25 @@ function page(title, body) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${html(title)} · Eggnogg+ Admin</title>
   <style>
-    :root{color-scheme:dark;--bg:#0b1116;--panel:#121b23;--line:#263746;--text:#e7f0f4;--muted:#91a4af;--cyan:#65d4cd;--red:#ff777d;--amber:#f5c269}
-    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
-    a{color:var(--cyan)} main{width:min(1180px,calc(100% - 28px));margin:28px auto 70px}
-    header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
-    h1,h2{margin:0} h1{font-size:22px} h2{font-size:17px;margin-bottom:12px}
-    .muted{color:var(--muted)} .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:16px}
-    .cards{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px;margin-bottom:16px}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:13px}.card b{display:block;font-size:22px;color:var(--cyan)}
-    form{margin:0}.inline{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-    input,button{border:1px solid var(--line);border-radius:5px;background:#0d151c;color:var(--text);padding:7px 9px;font:inherit}
-    input:focus,button:focus{outline:2px solid var(--cyan);outline-offset:1px}button{cursor:pointer;background:#1a2a35}
-    button:hover{border-color:var(--cyan)}button.danger{color:#ffd8da;border-color:#723c42}button.warn{color:#ffe8bd;border-color:#6f5a34}
-    table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:10px 8px}
-    th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}.status{font-weight:600}.online{color:var(--cyan)}.banned{color:var(--red)}
-    details{min-width:310px}summary{cursor:pointer;color:var(--cyan)}.actions{display:grid;gap:8px;margin-top:10px}
-    .notice{border-left:3px solid var(--cyan);padding:9px 12px;background:#102128;margin-bottom:16px}.notice.error{border-color:var(--red);background:#271519}
-    @media(max-width:850px){.cards{grid-template-columns:repeat(2,1fr)}table,thead,tbody,tr,th,td{display:block}thead{display:none}tr{padding:8px 0;border-bottom:1px solid var(--line)}td{border:0;padding:5px 0}details{min-width:0}}
+    :root{color-scheme:dark;--bg:#0e0a0b;--bg2:#150e10;--panel:#1a1214;--panel2:#221819;--ink:#f2e9e6;--muted:#b6a4a0;--faint:#83706c;--line:rgba(255,255,255,.10);--line2:rgba(255,255,255,.20);--ember:#ff5340;--ember-hi:#ff6d54;--ember-dk:#8f2b1e;--good:#78c894;--warn:#f0a879;--danger:#ff7770}
+    *{box-sizing:border-box;border-radius:0}html{scroll-behavior:smooth;scroll-padding-top:88px}body{margin:0;background:radial-gradient(900px 450px at 18% -10%,rgba(143,43,30,.18),transparent 70%),var(--bg);color:var(--ink);font:14px/1.5 "Space Grotesk","Segoe UI",system-ui,sans-serif}
+    a{color:inherit;text-decoration:none}a:hover{color:var(--ember-hi)}main{width:min(1440px,calc(100% - 28px));margin:18px auto 70px}
+    h1,h2,h3,p{margin-top:0}.pixel,.section-label,th,.brand,.metric span,.pill,.mini-label,summary,button{font-family:"Cascadia Code",Consolas,monospace;text-transform:uppercase;letter-spacing:.055em}
+    .admin-header{position:sticky;z-index:20;top:0;display:flex;align-items:center;gap:20px;padding:14px 16px;margin-bottom:16px;border:2px solid #000;background:rgba(26,18,20,.96);box-shadow:inset 0 0 0 2px rgba(255,255,255,.045)}
+    .brand{font-size:12px;font-weight:800;color:var(--ink);white-space:nowrap}.brand b{color:var(--ember)}.admin-nav{display:flex;gap:5px;overflow-x:auto}.admin-nav a,.refresh{display:inline-block;padding:7px 9px;color:var(--muted);border:1px solid var(--line);font:10px "Cascadia Code",Consolas,monospace;text-transform:uppercase;white-space:nowrap}.admin-nav a:hover,.refresh:hover{color:var(--ink);border-color:var(--ember)}
+    .snapshot{margin-left:auto;color:var(--faint);font-size:11px;text-align:right;white-space:nowrap}.refresh{margin-left:0;color:var(--ember)}
+    .notice{padding:11px 13px;margin-bottom:16px;border:2px solid #000;border-left:5px solid var(--ember);background:#261416}.notice.error{border-left-color:var(--danger);background:#2a1114}
+    .metrics{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:8px;margin-bottom:16px}.metric{min-width:0;padding:13px 14px;border:2px solid #000;background:var(--panel);box-shadow:inset 0 0 0 2px rgba(255,255,255,.04)}.metric b{display:block;color:var(--ember);font-size:25px;line-height:1.1}.metric span{display:block;margin-top:5px;color:var(--muted);font-size:9px}
+    .panel{padding:18px;margin-bottom:16px;border:2px solid #000;background:var(--panel);box-shadow:inset 0 0 0 2px rgba(255,255,255,.035)}.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid var(--line)}.panel-head h2{margin:0;font-size:18px}.panel-head p{margin:3px 0 0;color:var(--muted);font-size:12px}.section-label{margin-bottom:5px;color:var(--ember);font-size:9px;font-weight:800}
+    .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.stack{display:grid;gap:16px}.subpanel{min-width:0;padding:14px;border:1px solid var(--line);background:var(--bg2)}.subpanel h3{margin:0 0 10px;font-size:14px}.subpanel .count{color:var(--ember);font-family:monospace}
+    .player-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.player-card{padding:12px;border:1px solid var(--line);background:var(--bg2)}.player-card header{display:flex;justify-content:space-between;gap:8px;margin-bottom:9px}.player-name{font-weight:750;color:var(--ink)}.player-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:0;font-size:12px}.player-card dt{color:var(--faint)}.player-card dd{min-width:0;margin:0;color:var(--muted);overflow-wrap:anywhere}
+    .pill{display:inline-block;padding:3px 6px;color:var(--muted);font-size:9px;border:1px solid var(--line2);background:#100b0c;white-space:nowrap}.pill.online,.pill.playing,.pill.direct{color:var(--good);border-color:rgba(120,200,148,.45)}.pill.queue,.pill.setup,.pill.negotiating{color:var(--warn);border-color:rgba(240,168,121,.45)}.pill.relay,.pill.banned,.pill.error{color:var(--danger);border-color:rgba(255,119,112,.5)}
+    .table-wrap{max-width:100%;overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 8px;vertical-align:top;text-align:left;border-bottom:1px solid var(--line)}th{position:sticky;top:0;color:var(--faint);font-size:9px;background:var(--panel2);white-space:nowrap}tbody tr:hover{background:rgba(255,83,64,.035)}td strong{color:var(--ink)}.muted{color:var(--muted)}.faint{color:var(--faint)}.empty{padding:20px!important;color:var(--faint);text-align:center}.relation-list{display:flex;flex-wrap:wrap;gap:4px;max-width:32rem}.relation-list a,.relation-list span{padding:2px 5px;color:var(--muted);border:1px solid var(--line);font-size:11px}.relation-list a:hover{color:var(--ember);border-color:var(--ember)}
+    .inline{display:flex;align-items:center;gap:7px;flex-wrap:wrap}form{margin:0}input,button{min-height:32px;padding:6px 8px;color:var(--ink);border:1px solid var(--line2);background:#100b0c;font:inherit}input{min-width:12rem}input:focus,button:focus,a:focus{outline:2px solid var(--ember);outline-offset:2px}button{color:var(--ink);font-size:9px;cursor:pointer}button:hover{border-color:var(--ember);background:#211316}button.danger{color:#ffd5d1;border-color:var(--ember-dk)}button.warn{color:#ffd9c6;border-color:#70402c}
+    details{min-width:270px}summary{width:max-content;color:var(--ember);font-size:9px;cursor:pointer}.actions{display:grid;gap:8px;padding-top:10px}.actions form{padding-top:8px;border-top:1px solid var(--line)}
+    .social-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}.social-stat{padding:10px;border:1px solid var(--line);background:var(--bg2)}.social-stat b{display:block;color:var(--ember);font-size:19px}.social-stat span{color:var(--faint);font-size:10px;text-transform:uppercase}
+    @media(max-width:1120px){.metrics{grid-template-columns:repeat(4,1fr)}.player-grid{grid-template-columns:repeat(2,1fr)}.snapshot{display:none}}
+    @media(max-width:820px){main{width:min(100% - 16px,1440px);margin-top:8px}.admin-header{position:static;align-items:flex-start;flex-wrap:wrap}.admin-nav{order:3;width:100%}.split{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.player-grid{grid-template-columns:1fr}.social-summary{grid-template-columns:repeat(2,1fr)}.panel{padding:12px}.panel-head{align-items:stretch;flex-direction:column}input{min-width:0;width:100%}details{min-width:220px}}
   </style>
 </head>
 <body><main>${body}</main></body>
@@ -130,27 +132,181 @@ function redirect(res, target, cookie) {
   res.end();
 }
 
+function values(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function durationLabel(milliseconds) {
+  const seconds = Math.max(0, Math.floor(Number(milliseconds) / 1000) || 0);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+function ageLabel(timestamp) {
+  const value = Number(timestamp);
+  return value > 0 ? durationLabel(Date.now() - value) : "unknown";
+}
+
+function playerLink(username) {
+  const value = String(username || "");
+  return value
+    ? `<a class="player-name" href="#account-${html(value)}">${html(value)}</a>`
+    : `<span class="faint">unknown</span>`;
+}
+
+function relationList(usernames, empty = "none") {
+  const items = values(usernames);
+  return items.length
+    ? `<div class="relation-list">${items.map(playerLink).join("")}</div>`
+    : `<span class="faint">${html(empty)}</span>`;
+}
+
+function presencePill(user) {
+  if (user.banned) return `<span class="pill banned">banned</span>`;
+  const presence = String(user.presence || (user.online ? "online" : "offline"));
+  const labels = {
+    in_match: ["playing", "playing"],
+    match_setup: ["match setup", "setup"],
+    queue_competitive: ["ranked queue", "queue"],
+    queue_casual: ["casual queue", "queue"],
+    online: ["online", "online"],
+    offline: ["offline", ""],
+  };
+  const [label, className] = labels[presence] || [presence, ""];
+  return `<span class="pill ${className}">${html(label)}</span>`;
+}
+
+function emptyRow(columns, message) {
+  return `<tr><td class="empty" colspan="${columns}">${html(message)}</td></tr>`;
+}
+
 function dashboardPage(snapshot, session, query) {
-  const users = Array.isArray(snapshot.users) ? snapshot.users : [];
+  const users = values(snapshot.users);
+  const matches = values(snapshot.matches);
+  const challenges = values(snapshot.challenges);
+  const rematches = values(snapshot.rematches);
+  const friendships = values(snapshot.friendships);
+  const friendRequests = values(snapshot.friend_requests);
+  const blocks = values(snapshot.blocks);
+  const mutes = values(snapshot.mutes);
+  const casualQueue = values(snapshot.queues && snapshot.queues.casual);
+  const competitiveQueue = values(snapshot.queues && snapshot.queues.competitive);
+  const userIndex = new Map(users.map((user) => [String(user.username), user]));
   const search = String(query.get("q") || "").trim().toLowerCase();
   const filtered = search
     ? users.filter((user) => String(user.username).toLowerCase().includes(search))
     : users;
   const notice = query.get("ok") || query.get("error") || "";
   const noticeClass = query.has("error") ? "notice error" : "notice";
-  const rows = filtered.map((user) => {
+  const onlineUsers = users.filter((user) => user.online);
+
+  const playerCards = onlineUsers.map((user) => {
+    const context = user.opponent
+      ? `vs ${html(user.opponent)} · match #${html(user.match_id)}`
+      : user.queue
+        ? `${html(user.queue)} queue`
+        : "online hub";
+    return `<article class="player-card">
+      <header>${playerLink(user.username)}${presencePill(user)}</header>
+      <dl>
+        <dt>Activity</dt><dd>${context}</dd>
+        <dt>Rating</dt><dd>${html(user.elo)} Elo / ${html(user.mmr)} MMR</dd>
+        <dt>Client</dt><dd>${html(user.framework_version || "unknown")} · protocols ${html(user.protocols || "unknown")}</dd>
+        <dt>Build</dt><dd>${html(user.build_id || "unknown")} · ${html(user.map_count || 0)} maps</dd>
+        <dt>Connected</dt><dd>${html(ageLabel(user.connected_at))}</dd>
+      </dl>
+    </article>`;
+  }).join("");
+
+  const matchRows = matches.map((match) => {
+    const state = match.committed ? "playing" : "setup";
+    const mode = match.competitive
+      ? "ranked"
+      : (match.source === "challenge" ? "challenge" : (match.queue || match.source || "casual"));
+    return `<tr>
+      <td><strong>#${html(match.id)}</strong><br><span class="pill ${state}">${state}</span></td>
+      <td>${playerLink(match.a)} <span class="faint">vs</span> ${playerLink(match.b)}</td>
+      <td><strong>${html(match.map_label || match.map_key || "unknown")}</strong><br><span class="faint">${html(match.map_key || "")}</span></td>
+      <td>${html(mode)}<br><span class="faint">${html(match.source || "")}</span></td>
+      <td><span class="pill ${html(match.route)}">${html(match.route)}</span><br><span class="faint">${html(match.rendezvous_players || 0)}/2 rendezvous · ${html(match.started_players || 0)}/2 started · ${html(match.reported_players || 0)}/2 reports</span></td>
+      <td>${html(ageLabel(match.created_at))}<br><span class="faint">protocols ${html(match.protocols || "unknown")} · build ${html(match.build_id || "unknown")}</span></td>
+    </tr>`;
+  }).join("");
+
+  const queueRows = (queueName, entries) => entries.map((entry) => `<tr>
+    <td><span class="pill queue">${html(queueName)}</span></td>
+    <td>${playerLink(entry.username)}</td>
+    <td>${html(entry.elo)}${entry.rating_range ? ` <span class="faint">±${html(entry.rating_range)}</span>` : ""}</td>
+    <td>${html(durationLabel(entry.wait_ms))}</td>
+    <td>${html(entry.map_count || 0)} maps</td>
+    <td>${html(entry.framework_version || "unknown")}<br><span class="faint">${html(entry.build_id || "unknown")}</span></td>
+  </tr>`).join("");
+  const allQueueRows = queueRows("casual", casualQueue) +
+    queueRows("ranked", competitiveQueue);
+
+  const challengeRows = challenges.map((challenge) => `<tr>
+    <td>#${html(challenge.id)}</td>
+    <td>${playerLink(challenge.from)} <span class="faint">→</span> ${playerLink(challenge.to)}</td>
+    <td>${html(challenge.map_label || challenge.map_key || "unknown")}<br><span class="faint">${html(challenge.map_key || "")}</span></td>
+    <td>${html(ageLabel(challenge.created_at))}</td>
+    <td>${html(durationLabel(Number(challenge.expires_at) - Date.now()))}</td>
+  </tr>`).join("");
+
+  const rematchRows = rematches.map((rematch) => `<tr>
+    <td>#${html(rematch.match_id)}</td>
+    <td>${playerLink(rematch.a)} <span class="faint">vs</span> ${playerLink(rematch.b)}</td>
+    <td>${html(rematch.map_label || rematch.map_key || "unknown")}</td>
+    <td>${relationList(rematch.accepted_by, "waiting for both")}</td>
+    <td>${html(durationLabel(Number(rematch.expires_at) - Date.now()))}</td>
+  </tr>`).join("");
+
+  const friendshipRows = friendships.map((friendship) => {
+    const left = userIndex.get(String(friendship.a)) || {};
+    const right = userIndex.get(String(friendship.b)) || {};
+    return `<tr>
+      <td>${playerLink(friendship.a)} ${presencePill(left)}</td>
+      <td>${playerLink(friendship.b)} ${presencePill(right)}</td>
+      <td>${friendship.mutual
+        ? `<span class="pill online">mutual</span>`
+        : `<span class="pill error">one-sided data</span>`}</td>
+    </tr>`;
+  }).join("");
+  const requestRows = friendRequests.map((request) => `<tr>
+    <td>${playerLink(request.from)}</td>
+    <td>${playerLink(request.to)}</td>
+  </tr>`).join("");
+  const blockRows = blocks.map((block) => `<tr><td>${playerLink(block.from)}</td><td>${playerLink(block.to)}</td></tr>`).join("");
+  const muteRows = mutes.map((mute) => `<tr><td>${playerLink(mute.from)}</td><td>${playerLink(mute.to)}</td></tr>`).join("");
+
+  const accountRows = filtered.map((user) => {
     const username = String(user.username || "");
     const hidden = `<input type="hidden" name="csrf" value="${html(session.csrf)}"><input type="hidden" name="username" value="${html(username)}">`;
-    const ban = user.banned
-      ? `<span class="status banned">Banned</span><br><span class="muted">${html(user.ban_reason || "No reason")}</span>`
-      : user.online
-        ? `<span class="status online">Online</span>`
-        : `<span class="status muted">Offline</span>`;
-    return `<tr>
-      <td><strong>${html(username)}</strong><br><span class="muted">created ${html(user.created_at || "unknown")}</span></td>
-      <td>${ban}</td>
+    const activity = user.opponent
+      ? `<br><span class="muted">vs ${html(user.opponent)} · match #${html(user.match_id)}</span>`
+      : user.queue
+        ? `<br><span class="muted">${html(user.queue)} queue</span>`
+        : "";
+    const banReason = user.banned
+      ? `<br><span class="muted">${html(user.ban_reason || "No reason")}</span>`
+      : "";
+    const clientDetails = user.online
+      ? `${html(user.framework_version || "unknown")} · ${html(user.protocols || "unknown")}<br>
+        <span class="faint">build ${html(user.build_id || "unknown")} · route v${html(user.route_version || 0)} · ${html(user.map_count || 0)} maps · connected ${html(ageLabel(user.connected_at))}</span>`
+      : `<span class="faint">not connected</span>`;
+    return `<tr id="account-${html(username)}">
+      <td>${playerLink(username)}<br><span class="faint">created ${html(user.created_at || "unknown")}</span></td>
+      <td>${presencePill(user)}${activity}${banReason}</td>
       <td>${html(user.elo)} / ${html(user.mmr)}</td>
-      <td>${html(user.friends)} friends</td>
+      <td>
+        <span class="mini-label">Friends</span>${relationList(user.friends)}
+        ${values(user.friend_requests).length ? `<br><span class="mini-label">Requests</span>${relationList(user.friend_requests)}` : ""}
+        ${values(user.blocked_users).length ? `<br><span class="mini-label">Blocked</span>${relationList(user.blocked_users)}` : ""}
+        ${values(user.muted_users).length ? `<br><span class="mini-label">Muted</span>${relationList(user.muted_users)}` : ""}
+      </td>
+      <td>${clientDetails}</td>
       <td><details><summary>Maintenance</summary><div class="actions">
         <form class="inline" method="post" action="/action">${hidden}<input type="hidden" name="action" value="reset_password"><input name="password" type="password" minlength="4" maxlength="256" required placeholder="New password"><button class="warn" type="submit">Reset password</button></form>
         ${user.banned
@@ -161,23 +317,79 @@ function dashboardPage(snapshot, session, query) {
       </div></details></td>
     </tr>`;
   }).join("");
-  return page("Dashboard", `<header>
-    <div><h1>Eggnogg+ server admin</h1><div class="muted">Private LAN maintenance listener</div></div>
+
+  return page("Dashboard", `<header class="admin-header">
+    <div class="brand"><b>YULE</b> // SERVER</div>
+    <nav class="admin-nav" aria-label="Dashboard sections">
+      <a href="#players">Players</a><a href="#matches">Matches</a><a href="#queues">Queues</a><a href="#social">Social</a><a href="#accounts">Accounts</a>
+    </nav>
+    <div class="snapshot">Private LAN snapshot<br>${html(snapshot.generated_at || "just now")}</div>
+    <a class="refresh" href="/">Refresh</a>
   </header>
   ${notice ? `<div class="${noticeClass}">${html(notice)}</div>` : ""}
-  <section class="cards">
-    <div class="card"><b>${html(snapshot.online || 0)}</b>online</div>
-    <div class="card"><b>${html(users.length)}</b>accounts</div>
-    <div class="card"><b>${html(snapshot.casual_queue || 0)}</b>casual queue</div>
-    <div class="card"><b>${html(snapshot.competitive_queue || 0)}</b>ranked queue</div>
-    <div class="card"><b>${html(snapshot.matches || 0)}</b>active matches</div>
+  <section class="metrics" aria-label="Server totals">
+    <div class="metric"><b>${html(snapshot.online || 0)}</b><span>authenticated</span></div>
+    <div class="metric"><b>${html(snapshot.connections || snapshot.online || 0)}</b><span>connections</span></div>
+    <div class="metric"><b>${html(users.length)}</b><span>accounts</span></div>
+    <div class="metric"><b>${html(matches.length)}</b><span>active matches</span></div>
+    <div class="metric"><b>${html(casualQueue.length)}</b><span>casual queue</span></div>
+    <div class="metric"><b>${html(competitiveQueue.length)}</b><span>ranked queue</span></div>
+    <div class="metric"><b>${html(challenges.length)}</b><span>challenges</span></div>
   </section>
-  <section class="panel">
-    <div class="inline" style="justify-content:space-between;margin-bottom:12px">
-      <h2>Accounts</h2>
-      <form class="inline" method="get" action="/"><input name="q" value="${html(search)}" placeholder="Search username"><button type="submit">Search</button></form>
+
+  <section class="panel" id="players">
+    <div class="panel-head"><div><div class="section-label">Live presence</div><h2>Connected players</h2><p>Current activity, opponent, client compatibility, and connection age.</p></div></div>
+    <div class="player-grid">${playerCards || `<div class="empty">Nobody is authenticated right now.</div>`}</div>
+  </section>
+
+  <section class="panel" id="matches">
+    <div class="panel-head"><div><div class="section-label">Gameplay</div><h2>Active matches</h2><p>Authoritative server phase and transport negotiation. No authentication tokens or raw endpoints are shown.</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Match</th><th>Players</th><th>Map</th><th>Mode</th><th>Network</th><th>Runtime</th></tr></thead><tbody>${matchRows || emptyRow(6, "No active matches.")}</tbody></table></div>
+  </section>
+
+  <div class="split" id="queues">
+    <section class="panel">
+      <div class="panel-head"><div><div class="section-label">Matchmaking</div><h2>Queues</h2><p>Order, rating window, wait, content pool, and client build.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Queue</th><th>Player</th><th>Elo / range</th><th>Wait</th><th>Content</th><th>Client</th></tr></thead><tbody>${allQueueRows || emptyRow(6, "Both queues are empty.")}</tbody></table></div>
+    </section>
+    <div class="stack">
+      <section class="panel">
+        <div class="panel-head"><div><div class="section-label">Direct invites</div><h2>Challenges</h2></div></div>
+        <div class="table-wrap"><table><thead><tr><th>ID</th><th>Players</th><th>Map</th><th>Age</th><th>Expires</th></tr></thead><tbody>${challengeRows || emptyRow(5, "No pending challenges.")}</tbody></table></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><div class="section-label">Post-match</div><h2>Rematch windows</h2></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Match</th><th>Players</th><th>Map</th><th>Accepted</th><th>Expires</th></tr></thead><tbody>${rematchRows || emptyRow(5, "No open rematch windows.")}</tbody></table></div>
+      </section>
     </div>
-    <div style="overflow-x:auto"><table><thead><tr><th>User</th><th>Status</th><th>Elo / MMR</th><th>Social</th><th>Actions</th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="muted">No matching accounts.</td></tr>`}</tbody></table></div>
+  </div>
+
+  <section class="panel" id="social">
+    <div class="panel-head"><div><div class="section-label">Social graph</div><h2>Player relationships</h2><p>Friendships are deduplicated into pairs; one-sided rows flag inconsistent stored data.</p></div></div>
+    <div class="social-summary">
+      <div class="social-stat"><b>${html(friendships.length)}</b><span>friendships</span></div>
+      <div class="social-stat"><b>${html(friendRequests.length)}</b><span>pending requests</span></div>
+      <div class="social-stat"><b>${html(blocks.length)}</b><span>blocks</span></div>
+      <div class="social-stat"><b>${html(mutes.length)}</b><span>mutes</span></div>
+    </div>
+    <div class="split">
+      <div class="subpanel"><h3>Friend pairs <span class="count">${html(friendships.length)}</span></h3><div class="table-wrap"><table><thead><tr><th>Player</th><th>Friend</th><th>Integrity</th></tr></thead><tbody>${friendshipRows || emptyRow(3, "No friendships stored.")}</tbody></table></div></div>
+      <div class="stack">
+        <div class="subpanel"><h3>Pending requests <span class="count">${html(friendRequests.length)}</span></h3><div class="table-wrap"><table><thead><tr><th>From</th><th>To</th></tr></thead><tbody>${requestRows || emptyRow(2, "No pending requests.")}</tbody></table></div></div>
+        <div class="split">
+          <div class="subpanel"><h3>Blocks <span class="count">${html(blocks.length)}</span></h3><div class="table-wrap"><table><thead><tr><th>Player</th><th>Blocked</th></tr></thead><tbody>${blockRows || emptyRow(2, "No blocks.")}</tbody></table></div></div>
+          <div class="subpanel"><h3>Mutes <span class="count">${html(mutes.length)}</span></h3><div class="table-wrap"><table><thead><tr><th>Player</th><th>Muted</th></tr></thead><tbody>${muteRows || emptyRow(2, "No mutes.")}</tbody></table></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="accounts">
+    <div class="panel-head">
+      <div><div class="section-label">Accounts</div><h2>Directory and maintenance</h2><p>Ratings, complete social lists, live build details, bans, and existing maintenance actions.</p></div>
+      <form class="inline" method="get" action="/"><input name="q" value="${html(search)}" placeholder="Search username"><button type="submit">Search</button>${search ? `<a class="refresh" href="/#accounts">Clear</a>` : ""}</form>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>User</th><th>Status</th><th>Elo / MMR</th><th>Relationships</th><th>Client</th><th>Actions</th></tr></thead><tbody>${accountRows || emptyRow(6, "No matching accounts.")}</tbody></table></div>
   </section>`);
 }
 

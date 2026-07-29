@@ -1176,6 +1176,7 @@ function tryMatchmaking() {
 
 function authOk(client, username) {
   client.username = username;
+  client.authenticated_at = now();
   client.maps = defaultManifest();
   client.mapIndex = mapIndex(client.maps);
   onlineByUser.set(username, client);
@@ -2027,25 +2028,159 @@ function requireAdminUser(rawUsername) {
 }
 
 function adminSnapshot() {
-  const users = Object.keys(db.users).sort().map((username) => {
+  const capturedAt = now();
+  const usernames = Object.keys(db.users).sort();
+  const friendships = [];
+  const friendRequests = [];
+  const blocks = [];
+  const mutes = [];
+  const friendshipKeys = new Set();
+
+  const users = usernames.map((username) => {
     const rec = ensureUserShape(username);
     const rating = ensureRating(username);
+    const client = connectedClient(username);
+    const match = client && client.match_id
+      ? activeMatches.get(client.match_id)
+      : null;
+    const opponent = match
+      ? (match.a === username ? match.b : match.a)
+      : "";
+
+    for (const friend of rec ? rec.friends : []) {
+      const pair = [username, friend].sort();
+      const key = pair.join("\0");
+      if (friendshipKeys.has(key)) continue;
+      friendshipKeys.add(key);
+      const other = ensureUserShape(friend);
+      friendships.push({
+        a: pair[0],
+        b: pair[1],
+        mutual: Boolean(other && other.friends.includes(username)),
+      });
+    }
+    for (const from of rec ? rec.friend_requests : []) {
+      friendRequests.push({ from, to: username });
+    }
+    for (const target of rec ? rec.blocked_users : []) {
+      blocks.push({ from: username, to: target });
+    }
+    for (const target of rec ? rec.muted_users : []) {
+      mutes.push({ from: username, to: target });
+    }
+
     return {
       username,
-      online: Boolean(connectedClient(username)),
+      online: Boolean(client),
+      presence: friendPresence(username),
+      opponent,
+      match_id: match ? match.id : 0,
+      queue: client ? client.queue : "",
       banned: Boolean(rec && rec.ban),
       ban_reason: rec && rec.ban ? rec.ban.reason : "",
       elo: rating ? rating.elo : DEFAULT_ELO,
       mmr: rating ? rating.mmr : DEFAULT_MMR,
-      friends: rec ? rec.friends.length : 0,
+      friends: rec ? [...rec.friends].sort() : [],
+      friend_requests: rec ? [...rec.friend_requests].sort() : [],
+      blocked_users: rec ? [...rec.blocked_users].sort() : [],
+      muted_users: rec ? [...rec.muted_users].sort() : [],
       created_at: rec ? rec.created_at : "",
+      connected_at: client ? client.connected_at : 0,
+      authenticated_at: client ? client.authenticated_at : 0,
+      framework_version: client ? client.framework_version : "",
+      protocols: client
+        ? `${client.control_protocol}/${client.match_protocol}/${client.p2p_protocol}`
+        : "",
+      build_id: client && client.build_id
+        ? client.build_id.toString(16).padStart(8, "0")
+        : "",
+      map_count: client && Array.isArray(client.maps) ? client.maps.length : 0,
+      route_version: client ? client.route_version : 0,
     };
   });
+
+  const queueEntry = (client) => ({
+    username: client.username,
+    elo: publicElo(client.username),
+    joined_at: client.queue_joined_at,
+    wait_ms: Math.max(0, capturedAt - client.queue_joined_at),
+    map_count: Array.isArray(client.maps) ? client.maps.length : 0,
+    framework_version: client.framework_version,
+    build_id: client.build_id
+      ? client.build_id.toString(16).padStart(8, "0")
+      : "",
+    rating_range: client.queue === "competitive"
+      ? Math.round(competitiveRange(client))
+      : 0,
+  });
+
   return {
+    generated_at: new Date(capturedAt).toISOString(),
+    connections: clients.size,
     online: onlineByUser.size,
-    casual_queue: casualQueue.length,
-    competitive_queue: competitiveQueue.length,
-    matches: activeMatches.size,
+    queues: {
+      casual: casualQueue.map(queueEntry),
+      competitive: competitiveQueue.map(queueEntry),
+    },
+    matches: [...activeMatches.values()]
+      .sort((a, b) => a.id - b.id)
+      .map((match) => ({
+        id: match.id,
+        a: match.a,
+        b: match.b,
+        source: match.source,
+        queue: match.queue,
+        competitive: Boolean(match.competitive),
+        challenge_id: match.challenge_id || 0,
+        map_key: match.map ? match.map.key : "",
+        map_label: match.map ? match.map.label : "",
+        created_at: match.created_at,
+        committed: Boolean(match.committed),
+        committed_at: match.committed_at || 0,
+        started_players: match.started_by ? match.started_by.size : 0,
+        reported_players: match.results ? match.results.size : 0,
+        rendezvous_players: match.p2p_endpoints ? match.p2p_endpoints.size : 0,
+        route: match.force_relay
+          ? "relay"
+          : (match.p2p_endpoints && match.p2p_endpoints.size === 2
+            ? "direct"
+            : "negotiating"),
+        protocols: `${match.control_protocol}/${match.match_protocol}/${match.p2p_protocol}`,
+        build_id: match.build_id
+          ? match.build_id.toString(16).padStart(8, "0")
+          : "",
+      })),
+    challenges: [...challenges.values()]
+      .sort((a, b) => a.created_at - b.created_at)
+      .map((challenge) => ({
+        id: challenge.id,
+        from: challenge.from,
+        to: challenge.to,
+        map_key: challenge.map_key,
+        map_label: challenge.map_label,
+        created_at: challenge.created_at,
+        expires_at: challenge.expires_at,
+      })),
+    rematches: [...rematches.values()]
+      .sort((a, b) => a.created_at - b.created_at)
+      .map((rematch) => ({
+        match_id: rematch.match_id,
+        a: rematch.a,
+        b: rematch.b,
+        map_key: rematch.map_key,
+        map_label: rematch.map_label,
+        created_at: rematch.created_at,
+        expires_at: rematch.expires_at,
+        accepted_by: [...rematch.accepted_by].sort(),
+      })),
+    friendships: friendships.sort((a, b) =>
+      a.a.localeCompare(b.a) || a.b.localeCompare(b.b)),
+    friend_requests: friendRequests.sort((a, b) =>
+      a.to.localeCompare(b.to) || a.from.localeCompare(b.from)),
+    blocks: blocks.sort((a, b) =>
+      a.from.localeCompare(b.from) || a.to.localeCompare(b.to)),
+    mutes: mutes.sort((a, b) =>
+      a.from.localeCompare(b.from) || a.to.localeCompare(b.to)),
     users,
   };
 }
@@ -2160,6 +2295,8 @@ const server = net.createServer((socket) => {
     socket,
     buf: "",
     username: "",
+    connected_at: now(),
+    authenticated_at: 0,
     maps: defaultManifest(),
     mapIndex: mapIndex(defaultManifest()),
     framework_version: "unknown",

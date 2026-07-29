@@ -39,6 +39,7 @@ shape = function_body(SERVER, "function ensureUserShape")
 password = function_body(SERVER, "function adminResetPassword")
 ban = function_body(SERVER, "function adminSetBan")
 rating = function_body(SERVER, "function adminResetRating")
+snapshot = function_body(SERVER, "function adminSnapshot")
 shutdown = function_body(SERVER, "async function orderlyShutdown")
 
 assert 'require("./admin_server")' in SERVER
@@ -55,6 +56,22 @@ assert "destroyClient(client)" in ban
 assert "setRating(username, DEFAULT_ELO, DEFAULT_MMR)" in rating
 assert "saveRatings()" in rating
 assert "closeListener(adminServer)" in shutdown
+for live_surface in (
+    "activeMatches.values()",
+    "challenges.values()",
+    "rematches.values()",
+    "casualQueue.map(queueEntry)",
+    "competitiveQueue.map(queueEntry)",
+    "friendships",
+    "friend_requests",
+    "blocked_users",
+    "muted_users",
+    "force_relay",
+    "p2p_endpoints.size",
+):
+    assert live_surface in snapshot
+for secret in ("p2p_auth_token", "p2p_tokens", "salt", "hash"):
+    assert secret not in snapshot
 
 for requirement in (
     "ADMIN_ENABLED",

@@ -1,8 +1,8 @@
 # Online Server LAN Admin UI Design
 
 **Date:** 2026-07-28  
-**Status:** Initial maintenance surface and automated HTTP coverage complete; production
-LAN deployment acceptance remains required  
+**Status:** Live operations dashboard and automated HTTP coverage complete; production
+LAN deployment acceptance remains required
 **Primary code:** `online_server/admin_server.js`, `online_server/server.js`,
 `tests/online_admin_server_test.js`
 
@@ -33,8 +33,21 @@ frame-denial headers.
 
 ## Maintenance surface
 
-The dashboard shows online/account/queue/match counts and searchable account rows. It
-supports:
+The dashboard provides an authoritative, generated-on-request operations snapshot:
+
+- authenticated and total TCP connection counts;
+- connected-player activity, opponents, connection age, framework version, protocol
+  tuple, build fingerprint, map count, and routing-generation support;
+- ordered casual/competitive queues with wait time, Elo/range, maps, and client build;
+- match ID, participants, setup/committed phase, source/mode, selected map, elapsed
+  time, rendezvous/start/report progress, and direct/relay/negotiating route;
+- pending challenges and rematch windows;
+- deduplicated friendship pairs with one-sided-data integrity warnings, pending friend
+  requests, blocks, and mutes;
+- searchable account rows with complete social lists, live state, ratings, and client
+  compatibility details.
+
+It supports:
 
 - reset password, with a fresh salt and immediate session disconnect;
 - ban with a persisted bounded reason, immediate queue/match cleanup through normal
@@ -43,17 +56,19 @@ supports:
 - force disconnect;
 - reset Elo and MMR to configured defaults.
 
-No credential hashes, salts, server secrets, match tokens, P2P endpoints, or raw JSON
-records are rendered. Operations use the server's existing normalization, persistence,
-rating-signature, messaging, and disconnect paths rather than editing files in the UI
-module.
+No credential hashes, salts, server secrets, match/rendezvous tokens, raw P2P
+endpoints, or raw JSON records are rendered. Only the coarse negotiated route and
+endpoint-readiness count leave the match state. Operations use the server's existing
+normalization, persistence, rating-signature, messaging, and disconnect paths rather
+than editing files in the UI module.
 
 ## Operations and follow-up
 
 `update_server.sh` stages the new application module while continuing to preserve JSON,
 keys, environment files, and logs. The listener participates in orderly SIGINT/SIGTERM
 shutdown. Automated tests cover bind restrictions, disabled startup, security headers,
-automatic private-client sessions, CSRF rejection, and action dispatch.
+automatic private-client sessions, CSRF rejection, action dispatch, and rendering of
+match, route, friendship, request, and account data.
 
 Account deletion, append-only audit records, granular administrator roles, backup/
 restore controls, TLS termination, and durable transactional database storage remain

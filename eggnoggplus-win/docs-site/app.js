@@ -109,17 +109,15 @@
         <button class="nav-toggle" id="nav-toggle" type="button"
                 aria-label="Open documentation navigation" aria-controls="global-nav"
                 aria-expanded="false"><span></span><span></span><span></span></button>
-        <a class="wordmark" href="${root}index.html" aria-label="Eggnogg+ developer documentation home">
-          <span class="wordmark-mark">E+</span>
-          <span>Developer Docs</span>
+        <a class="wordmark" href="${root}index.html" aria-label="Yule developer documentation home">
+          <span class="wordmark-mark">Y</span>
+          <span class="wordmark-copy"><b>YULE</b><small>developer docs</small></span>
         </a>
         <button class="search-trigger" id="search-trigger" type="button"
                 aria-haspopup="dialog" aria-controls="search-dialog">
           <span>Search documentation</span><kbd>/</kbd>
         </button>
-        <a class="header-api-link" href="${root}api/index.html">API reference</a>
-        <button class="theme-toggle" id="theme-toggle" type="button"
-                aria-label="Switch color theme"><span aria-hidden="true">◐</span></button>
+        <a class="header-api-link" href="${root}api/index.html">API index <span aria-hidden="true">→</span></a>
       </div>`;
 
     const nav = document.createElement("aside");
@@ -128,6 +126,10 @@
     nav.setAttribute("aria-label", "Documentation");
     nav.innerHTML = `
       <div class="nav-scroll">
+        <div class="nav-intro">
+          <span>Documentation directory</span>
+          <p>Framework contracts, examples, formats, and operations.</p>
+        </div>
         ${pageGroups.map(group => `
           <section class="nav-group">
             <h2>${escapeHtml(group.label)}</h2>
@@ -154,8 +156,8 @@
 
     const footer = document.createElement("footer");
     footer.className = "site-footer";
-    footer.innerHTML = `<p>Eggnogg+ Developer Docs · API behavior is source-backed and version-specific.</p>
-      <a href="${root}reference/security.html">Security and trust boundaries</a>`;
+    footer.innerHTML = `<p><b>YULE</b> developer docs · Source-backed, version-specific framework contracts.</p>
+      <span><a href="${root}reference/security.html">Security boundaries</a><a href="${root}framework/file-layout.html">Source map</a></span>`;
 
     const search = document.createElement("dialog");
     search.className = "search-dialog";
@@ -198,18 +200,6 @@
     backdrop?.addEventListener("click", closeNav);
     nav?.addEventListener("click", event => {
       if (event.target.closest("a")) closeNav();
-    });
-
-    const storedTheme = localStorage.getItem("eggnogg-docs-theme");
-    if (storedTheme === "dark" || storedTheme === "light") {
-      document.documentElement.dataset.theme = storedTheme;
-    }
-    document.querySelector("#theme-toggle")?.addEventListener("click", () => {
-      const current = document.documentElement.dataset.theme ||
-        (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-      const next = current === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      localStorage.setItem("eggnogg-docs-theme", next);
     });
 
     const dialog = document.querySelector("#search-dialog");

@@ -190,6 +190,30 @@ for (const file of ["app.js", "api-data.js", "styles.css", "index.html", "README
   if (!fs.existsSync(path.join(siteRoot, file))) fail(`missing site asset: ${file}`);
 }
 
+const styleSource = fs.readFileSync(path.join(siteRoot, "styles.css"), "utf8");
+const appSource = fs.readFileSync(path.join(siteRoot, "app.js"), "utf8");
+const homeSource = fs.readFileSync(path.join(siteRoot, "index.html"), "utf8");
+for (const token of [
+  "--bg: #0e0a0b",
+  "--panel: #1a1214",
+  "--ember: #ff5340",
+  '"Press Start 2P"',
+  '"Space Grotesk"',
+  ".docs-hero",
+  ".hero-terminal",
+]) {
+  if (!styleSource.includes(token)) fail(`Yule documentation design token missing: ${token}`);
+}
+if (/(--teal|--cyan|--blue|--gold)\s*:/.test(styleSource)) {
+  fail("legacy blue/gold documentation palette token remains");
+}
+if (appSource.includes("theme-toggle") || appSource.includes("eggnogg-docs-theme")) {
+  fail("legacy generic theme switch remains in the Yule documentation shell");
+}
+for (const marker of ["docs-hero", "hero-terminal", "pixel-button", "section-chip"]) {
+  if (!homeSource.includes(marker)) fail(`task-first documentation home marker missing: ${marker}`);
+}
+
 if (errors.length) {
   console.error(errors.map(error => `- ${error}`).join("\n"));
   process.exit(1);

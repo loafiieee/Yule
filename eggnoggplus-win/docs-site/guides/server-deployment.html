@@ -75,7 +75,7 @@ sudo ss -lunp | grep 47778</code></pre>
 <p>A DNS record is not enough; the router/security group must direct both protocols to the host, and the Node process must own both sockets.</p></section>
 
 <section id="admin"><h2>Optional LAN administration UI</h2>
-<p>The separate maintenance listener provides searchable account status, password reset, ban/unban, force-disconnect, rating reset, and queue/match counts. It is not exposed on the public game port and intentionally has no admin password: private-LAN access is the authorization boundary. Set <code>ADMIN_ENABLED=0</code> to turn it off.</p>
+<p>The separate maintenance listener provides searchable accounts and password, ban, disconnect, and rating controls. Its live dashboard identifies connected-player activity and builds, queue order and wait/rating windows, active match participants, maps, phase, and direct/relay route, pending challenges and rematches, friendship pairs and requests, blocks, and mutes. Credentials, match tokens, and raw P2P endpoints are never rendered. It is not exposed on the public game port and intentionally has no admin password: private-LAN access is the authorization boundary. Set <code>ADMIN_ENABLED=0</code> to turn it off.</p>
 <p>Keep <code>ADMIN_HOST=127.0.0.1</code> for same-machine or SSH-tunnel access. For direct LAN use, bind the machine's exact private address, for example <code>ADMIN_HOST=192.168.1.50</code>, then allow only the administrator subnet:</p>
 <pre><code>sudo systemctl edit eggnogg
 

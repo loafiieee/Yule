@@ -57,10 +57,16 @@ behavior, and live acceptance.
 ## Optional LAN administration UI
 
 The server includes a separate dependency-free maintenance UI for account lookup,
-password resets, bans/unbans, forced disconnects, rating resets, and live
-account/queue/match counts. It has no login screen or admin password: access is granted
-only to clients arriving from a private LAN address on a private-address listener. Set
-`ADMIN_ENABLED=0` to disable it completely.
+password resets, bans/unbans, forced disconnects, and rating resets. Its live dashboard
+shows authenticated and pre-auth connection counts, player activity and compatible
+client builds, both matchmaking queues and wait/rating windows, match participants,
+phase/map/direct-or-relay state, pending challenges and rematches, complete friendship
+pairs and friend requests, blocks, mutes, and searchable account details. It never
+renders credential material, match authentication tokens, or raw P2P endpoints.
+
+There is no login screen or admin password: access is granted only to clients arriving
+from a private LAN address on a private-address listener. Set `ADMIN_ENABLED=0` to
+disable it completely.
 
 For same-machine access, keep the default loopback bind:
 

@@ -14,9 +14,10 @@ Release/security blockers:
       content policy and stronger integrity/anti-cheat boundary.
     - Harden match-result validation and production persistence/operations. The
       private-LAN-only dashboard now covers lookup, password reset, ban/unban,
-      disconnect, rating reset, and live counts; add account deletion, append-only audit
-      logs, granular least-privilege roles, durable transactional storage, and backup/
-      restore operations.
+      disconnect, rating reset, connected-player/build presence, queue order and wait,
+      match participants/map/phase/direct-or-relay state, challenges, rematches, and the
+      friendship/request/block/mute graph; add account deletion, append-only audit logs,
+      durable transactional storage, and backup/restore operations.
     - Replace the custom rollback UDP harness with the production GGPO library/session
       wrapper after the repaired deterministic callbacks/input protocol and seeded chaos
       suite are accepted.
@@ -284,10 +285,13 @@ Feature backlog:
     - Private-LAN online-server administration baseline: a separate default-loopback,
       dependency-free listener has no password/login page, refuses public/wildcard binds,
       rejects non-private clients, and uses automatic random IP-bound HttpOnly/SameSite
-      sessions plus CSRF-protected POST actions. The dashboard provides live counts,
-      account search, password reset, ban/unban, force disconnect, and rating reset
-      through existing server persistence/lifecycle paths. It shuts down with the service
-      and has real HTTP private-session/CSRF/action tests plus deployment docs.
+      sessions plus CSRF-protected POST actions. The Yule-styled dashboard provides live
+      player/client presence, ordered queues, match participants and network phase,
+      challenges/rematches, the full social graph, account search, password reset,
+      ban/unban, force disconnect, and rating reset through existing server
+      persistence/lifecycle paths without exposing credentials, match tokens, or raw P2P
+      endpoints. It shuts down with the service and has real HTTP
+      private-session/CSRF/action/rendering tests plus deployment docs.
 
     - Abandoned public cosmetics transport API removal: `mod.online` now exposes only its
       useful read-only status table. Compile-disabled profile/asset setters, readers,

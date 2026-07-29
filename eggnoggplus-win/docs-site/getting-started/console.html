@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Learn the Yule in-game developer console.">
+  <title>Console basics · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="console">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout"><aside class="sidebar" id="site-nav" aria-label="Documentation"></aside><button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+  <main class="docs-main" id="main-content"><article class="article">
+    <p class="breadcrumb"><a href="../index.html">Docs</a> / Getting started / Console basics</p>
+    <p class="eyebrow">Getting started</p><h1>Console basics</h1>
+    <p class="lead">The in-game console is the quickest way to inspect Yule, manage mods, and collect useful diagnostics without editing files.</p>
+
+    <h2 id="open-and-edit">Open and edit</h2>
+    <p>Press backtick (<code>`</code>) to open or close the console. <code>Esc</code>, <code>exit</code>, and <code>quit</code> also close it.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>Enter</code></td><td>Run the current line.</td></tr>
+        <tr><td><code>Up</code> / <code>Down</code></td><td>Browse persistent command history.</td></tr>
+        <tr><td><code>Tab</code></td><td>Complete commands and supported arguments such as mod IDs and config keys.</td></tr>
+        <tr><td><code>Page Up</code> / <code>Page Down</code> or wheel</td><td>Scroll output.</td></tr>
+        <tr><td><code>Ctrl+L</code></td><td>Clear displayed output.</td></tr>
+        <tr><td><code>Ctrl+C</code></td><td>Copy input, or all console output when input is empty.</td></tr>
+        <tr><td><code>Ctrl+V</code> or right click</td><td>Paste into the input line.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="discover-commands">Discover commands</h2>
+    <pre><code>help
+help mods
+commands
+find error</code></pre>
+    <p><code>help</code> is the authoritative runtime list. <code>find</code> searches lines already printed in the console. Command history is saved to <code>mods/console_history.txt</code>.</p>
+
+    <h2 id="safe-everyday-commands">Safe everyday commands</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Command</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td><code>framework.api</code></td><td>Show the current framework API version.</td></tr>
+        <tr><td><code>sys.info</code></td><td>Show bounded runtime/system information.</td></tr>
+        <tr><td><code>state</code></td><td>Name the current game/framework state.</td></tr>
+        <tr><td><code>mods.list</code></td><td>List discovered mods and their status.</td></tr>
+        <tr><td><code>mods.info &lt;id&gt;</code></td><td>Show one mod’s metadata, state, performance, and memory diagnostics.</td></tr>
+        <tr><td><code>log.tail 40</code></td><td>Print recent framework log lines.</td></tr>
+        <tr><td><code>console.copy output</code></td><td>Copy console output for a bug report.</td></tr>
+        <tr><td><code>online.troubleshoot</code></td><td>Actively test configured server TCP/UDP and report route evidence.</td></tr>
+        <tr><td><code>net.diag</code></td><td>Print a secret-free online session and packet snapshot.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="command-index">Complete command index</h2>
+    <p>Arguments in square brackets are optional. Aliases behave identically to the command beside them.</p>
+
+    <h3>Console, runtime, and media</h3>
+    <pre><code>help [topic]                     commands
+clear                            history [count]
+echo &lt;text&gt;                      find &lt;text&gt; / console.find
+console.stats                    console.copy [output|input]
+state                            state.last
+state.return [state]             state.switch &lt;state&gt; *
+sys.info                         ui.size
+time.scale [value|auto]          framework.api
+discord.app [application_id]
+music.status                     music.scan
+music.rescan                     music.play &lt;index|random&gt;
+music.output_rate [hz]
+log.level [debug|info|warn|error]
+log.tail [lines] *</code></pre>
+    <p><code>state.return</code> accepts <code>main</code>, <code>main_initial</code>, <code>options</code>, <code>options_paused</code>, <code>mods</code>, or <code>mods_entry</code>. <code>state.switch</code> additionally accepts <code>online</code>, <code>console</code>, and <code>return</code>, but it is a developer command.</p>
+
+    <h3>Mods, config, and bindings</h3>
+    <pre><code>mods.count
+mods.list
+mods.find &lt;text&gt;
+mods.info &lt;id&gt;
+mods.trace &lt;id|all&gt; [on|off]
+mods.enable &lt;id|all&gt;
+mods.disable &lt;id|all&gt;
+mods.toggle &lt;id|all&gt;
+mods.config &lt;id&gt;                alias: mods.cfg
+mods.config.find &lt;text&gt;         alias: mods.cfg.find
+mods.config.get &lt;id&gt; &lt;key&gt;      alias: mods.cfg.get
+mods.config.set &lt;id&gt; &lt;key&gt; &lt;value&gt;
+mods.config.action &lt;id&gt; &lt;key&gt;
+binds.list [id]
+binds.find &lt;text&gt;
+binds.set &lt;id&gt; &lt;key&gt; &lt;value&gt;
+binds.clear &lt;id&gt; &lt;key&gt;
+reload.mods                     alias: mods.reload
+reload.assets</code></pre>
+
+    <h3>Online and rollback</h3>
+    <pre><code>online.hub
+online.troubleshoot              alias: net.trouble
+net.diag
+ggpo.loopback [toggle|on|off|status]
+ggpo.local [toggle|on|off|status] *
+ggpo.net key
+ggpo.net key clear
+ggpo.net host [port] *
+ggpo.net join &lt;host&gt; [port] [local_port] *
+ggpo.net delay [frames] *
+ggpo.net advantage [frames] *
+ggpo.net predict [frames] *
+ggpo.net highping [frames] *
+ggpo.net smoothping [frames] *
+ggpo.net correction [on|off] *
+ggpo.net sim [loss_pct] [min_delay] [max_delay] *
+ggpo.net rngtrace [on|off] *
+ggpo.net status *
+ggpo.net off *
+ggpo.selftest [frames] *
+ggpo.roundtrip *</code></pre>
+    <p>Direct <code>ggpo.net</code> host/join is a diagnostic protocol, not normal matchmaking. It requires the same one-shot 64-hex shared key on both machines: copy it, run <code>ggpo.net key</code>, and the framework clears the clipboard after reading it.</p>
+
+    <h3>Input and arbitrary Lua</h3>
+    <pre><code>input.show [player] *
+input.override &lt;player&gt; &lt;mask&gt; [frames] [replace] *
+input.clear &lt;player&gt; *
+lua &lt;code&gt;                       alias: eval *
+lua.mod &lt;id&gt; &lt;code&gt;              alias: eval.mod *
+lua.file &lt;path&gt; *</code></pre>
+    <p>Commands marked <code>*</code> require <code>dev on</code>. The current runtime’s <code>help</code> output remains authoritative if a development build adds or removes a command.</p>
+
+    <h2 id="manage-mods">Manage mods</h2>
+    <pre><code>mods.find speed
+mods.info speedhack
+mods.disable speedhack
+mods.enable speedhack
+mods.config speedhack
+mods.config.set speedhack speed 1.5
+reload.mods</code></pre>
+    <p>Disabling a mod also disables enabled dependents that require it. Enabling succeeds only when dependencies and conflicts permit. A reload recreates mod runtimes, so unsaved Lua state is lost; persistent values belong in the storage API.</p>
+
+    <h2 id="lua-execution">Lua execution</h2>
+    <pre><code>lua return 2 + 2
+lua.mod options_demo return config.get("difficulty")
+lua.file mods\my_mod\test.lua</code></pre>
+    <p><code>lua.mod</code> evaluates inside the named mod’s environment. Treat downloaded snippets like code: read them before running them.</p>
+
+    <h2 id="developer-mode">Developer mode</h2>
+    <p>Some invasive commands stay hidden until <code>dev on</code>. They are for controlled testing and may alter timing, input, game state, or rollback diagnostics. Turn developer mode back off when finished:</p>
+    <pre><code>dev on
+# run the documented test
+dev off</code></pre>
+    <div class="callout warning"><strong>Do not experiment with state-changing commands in an online match.</strong> Online code guards several unsafe paths, but developer tools are not a substitute for matched content and supported matchmaking.</div>
+
+    <h2 id="sharing-output">Share useful output</h2>
+    <p>Reproduce the problem, run the smallest relevant diagnostic, then use <code>console.copy output</code>. Pair it with the matching section of <code>mods/modframework.log</code>. Review copied text before posting it; diagnostics are designed to omit secrets, but unrelated Lua mods may print their own data.</p>
+
+    <div class="page-links"><a href="configuration.html">← Configuration</a><a class="next" href="mods.html">Next: Mods basics →</a></div>
+    <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+  </article></main></div>
+</body>
+</html>

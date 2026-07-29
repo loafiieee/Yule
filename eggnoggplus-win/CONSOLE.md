@@ -107,13 +107,16 @@ the formula's separate `sample_rate`.
 - `input.clear <player>`
 
 ### Rollback netplay
-- `net.diag` (alias: `net.trouble`)
+- `online.troubleshoot` (alias: `net.trouble`) - run active TCP/UDP reachability
+  and Windows adapter/VPN/NAT/CGNAT evidence checks against the configured server
+- `net.diag` - print the current secret-free server/match/route/packet snapshot
 - `ggpo.loopback [toggle|on|off|status]`
 - `ggpo.local [toggle|on|off|status]`
 - `ggpo.net key` (arm a one-shot v17 shared key from the clipboard and clear the clipboard)
 - `ggpo.net key clear`
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
+- `ggpo.net hud [on|off]` (persist the small in-match ping/delay/rollback overlay)
 - `ggpo.net delay [frames]`
 - `ggpo.net advantage [frames]`
 - `ggpo.net predict [frames]`
@@ -164,6 +167,7 @@ the formula's separate `sample_rate`.
 - `music.output_rate`
 - `music.output_rate 48000`
 - `ggpo.net delay 2`
+- `ggpo.net hud on`
 - `ggpo.net advantage 20`
 - `ggpo.net predict 24`
 - `ggpo.net highping 140`

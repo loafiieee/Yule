@@ -154,6 +154,22 @@ the win exactly once. On an ordinary win, the native win animation/countdown mus
 visible; only after Eggnogg returns to main should the online hub open. Both clients must
 agree on the winner without `conflicting match reports`.
 
+First verify deployment/version behavior:
+
+1. Update and rebuild both clients from the same source, deploy the matching
+   `online_server`, and reconnect both clients. The server log's `[maps]` line for each
+   account must show `protocols=3/3/17` plus identical nonzero `build=`, `exe=`, and
+   `dll=` fingerprints; a created match must log that checked build and `p2p=17`.
+2. Try one deliberately older or unadvertised client. It must receive a clear
+   `Update Eggnogg+` incompatibility error before it enters a queue or challenge. It must
+   never receive `match_found` against the current client.
+3. Replace only one client's framework DLL with a different valid build that still speaks
+   P2P v17. Both clients may enter the same queue, but the server must report the exact
+   game/framework build mismatch and must not send either client `match_found`.
+4. Do not use the displayed release label alone to decide compatibility. Both sides need
+   the same control/match/P2P tuple and identical build/executable/DLL fingerprints; P2P
+   v16 and v17 packet authentication and layouts are intentionally incompatible.
+
 Test one pair across restrictive/mobile/CGNAT networks. The first log route may be
 `public`; after the fresh-socket retry both clients must log the same `route=relay` and
 finish prematch/gameplay. The server log should show
@@ -161,7 +177,21 @@ finish prematch/gameplay. The server log should show
 match it should also log the 15-second native-presentation grace, and packets must
 continue through the visible win animation.
 
-During a match run:
+Before matchmaking, run the active connectivity check and leave the console open for up
+to five seconds:
+
+```text
+online.troubleshoot
+```
+
+It must complete without freezing the game. A healthy setup reports PASS for both TCP
+control and UDP rendezvous, including the public address/port observed by the server.
+The target must match the configured `server_host:server_port`, even if Online was never
+opened in this process. The named `Server-route adapter` must match Windows' route to that
+host; an unrelated Radmin/overlay adapter may be noted as active but must not be called
+the server route. VPN detection is explicitly heuristic. A private LAN address proves ordinary NAT but
+does not prove CGNAT; compare the router's WAN IPv4 with the server-observed address as
+instructed. Then, during a stuck or failed peer connection, run:
 
 ```text
 net.diag
@@ -201,7 +231,8 @@ and the public HTTPS redirect. A queue stay shorter than two seconds and any dir
 friend challenge must create no message. Cover both queues, duplicate joins, queue changes,
 manual leave, immediate match, disconnect, a Discord 429 response, and clean service
 restart. Each posted message must be edited in place to its matched/left/changed/offline
-state with no buttons, not deleted. Challenge and queue buttons must open the registered `yule://` client route;
+state with no buttons, not deleted. The queue button must be on the left and the challenge
+button on the right; both must open the registered `yule://` client route;
 messages and logs must contain no match IDs, endpoints, credentials, ratings, tokens,
 or mentions.
 

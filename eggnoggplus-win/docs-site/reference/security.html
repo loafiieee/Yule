@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Yule trust boundaries, authentication, updater integrity, privacy, and deployment security reference."><title>Security and trust boundaries · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a href="../guides/modding.html">Guides</a><a href="../api/lua.html">API</a><a aria-current="page" href="security.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Security</h2><a href="#model">Threat model</a><a href="#mods">Mods</a><a href="#maps">Maps</a><a href="#online">Online</a><a href="#credentials">Credentials</a><a href="#updates">Updater</a><a href="#links">Deep links</a><a href="#services">Services</a><a href="#privacy">Privacy</a><a href="#gaps">Production gaps</a></nav></aside>
+<main id="main" class="content" data-doc-title="Security and trust boundaries"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Security</nav><article>
+<h1>Security and trust boundaries</h1>
+<p class="lead">Yule combines injected native code, trusted Lua mods, sandboxed map scripts, Internet services, authenticated UDP gameplay, and a transactional updater. These components do not all provide the same isolation or guarantees.</p>
+<div class="callout warning"><strong>This is a compatibility framework, not an anti-cheat or hostile-mod sandbox.</strong> Only install framework binaries and ordinary mods from publishers you trust.</div>
+
+<section id="model"><h2>At-a-glance trust model</h2>
+<table><thead><tr><th>Component</th><th>Boundary</th><th>What it does not promise</th></tr></thead><tbody>
+<tr><td>Framework proxy DLL</td><td>Native code in the game process, with the game's privileges.</td><td>No isolation from the game, files accessible to the user, or other loaded native code.</td></tr>
+<tr><td>Ordinary Lua mod</td><td>Separate Lua globals and framework ownership bookkeeping.</td><td>Not a security sandbox; mods share one VM and retain standard Lua libraries.</td></tr>
+<tr><td>V2 <code>map.lua</code></td><td>Restricted deterministic VM, bounded callbacks/state, map-scoped API.</td><td>Not a proof that every authored behavior is fun, fair, or bug-free.</td></tr>
+<tr><td>Online control server</td><td>Account/session validation, queues, challenges, match coordination and reporting.</td><td>The raw TCP protocol is not transport-encrypted by the prototype server.</td></tr>
+<tr><td>P2P/relay gameplay</td><td>Protocol-v17 authenticated packet envelope and per-match key.</td><td>Authentication is not confidentiality; observers may still see traffic patterns/content.</td></tr>
+<tr><td>Updater</td><td>HTTPS policy, manifest parsing, SHA-256 payload checks, path/reparse checks, journaled replacement/recovery.</td><td>A hash supplied by a compromised unsigned channel is not independent publisher authenticity.</td></tr>
+</tbody></table></section>
+
+<section id="mods"><h2>Installed mods are trusted code</h2>
+<p>A mod's environment prevents accidental global-name collisions and attributes callbacks/assets/content to an owner. It is not intended to contain a malicious package. <code>mod.dofile</code>, standard Lua facilities, developer-console <code>lua.file</code>, filesystem pickers, and native framework APIs are powerful enough that a hostile package should be treated like any other program.</p>
+<ul>
+<li>Review <code>mod.json</code>, entry scripts, and bundled binaries before installation.</li>
+<li>Use <code>mod.fs</code> pickers rather than accepting arbitrary unvalidated paths from users.</li>
+<li>Restrict <code>mod.net</code>/<code>mod.http</code> to known endpoints and bounded, expected responses. Native HTTP owner-scopes handles, cleans up on unload, and caps bodies at 8 MiB; set a lower application-level limit when your format needs less.</li>
+<li>Do not place account passwords, bearer tokens, update keys, or shared netplay keys in config/storage/logs.</li>
+<li>Content declared by gameplay-affecting mods participates in compatibility policy; cosmetic-only labeling is not a security guarantee.</li>
+</ul>
+<p>See <a href="../api/lua.html">Lua mod API</a> for exact filesystem/network limits and <a href="configuration.html">Configuration</a> for persistence.</p></section>
+
+<section id="maps"><h2>Map packages and deterministic scripts</h2>
+<p>V2 packages are scanned from direct, non-reparse subdirectories under <code>maps/</code>. Paths must remain package-relative; traversal, absolute paths, oversized assets, unsupported PNGs, and malformed JSON/map/script data fail closed. Package identity includes normalized gameplay-relevant metadata, layout/content and script/asset hashes so both online clients can require the same content fingerprint.</p>
+<p><code>map.lua</code> runs in a separate restricted environment: no ordinary mod I/O, no wall clock, no OS/process access, deterministic RNG only, bounded persistent state, bounded instruction work, and validated entity/tile/contact operations. Online entry fails closed if the deterministic script is not ready. A hot-reload error retains the last known-good package rather than installing half-parsed state.</p>
+<div class="callout note"><strong>Why tileset SHA-256 appears in identity:</strong> visual bytes can affect what a player can perceive, and a map-wide replacement must resolve identically between peers. It is content identity, not proof of a trusted author.</div>
+<p>Full constraints are in <a href="map-format.html">Map package format</a> and <a href="../api/map-lua.html">Map Lua API</a>.</p></section>
+
+<section id="online"><h2>Online protocol security</h2>
+<h3>Control connection</h3>
+<p>The server validates message shape, state transitions, account/session ownership, queue/challenge ownership, protocol tuples, exact game/framework build fingerprints, match membership, result-report eligibility, and timeouts. Keep the server and both clients on the advertised control/match/P2P tuple and identical game/framework binaries; a release label alone is not a compatibility proof.</p>
+<p>The present Node service uses a raw TCP control protocol. Unless it is placed behind a deliberately compatible secure transport, messages are not protected by TLS. Do not transmit a plaintext password repeatedly; the client uses a login flow and saved credential mechanism described below. The optional admin UI is a separate passwordless default-loopback listener: private bind/source addresses are its authorization boundary, while automatic session cookies, CSRF tokens, and POST-only changes prevent cross-site browser actions. Keep it on the operator's trusted LAN or SSH tunnel and never expose its port publicly.</p>
+<h3>Gameplay transport</h3>
+<p>P2P v17 consumes a server-issued or manually armed per-match key and authenticates packet envelopes. Direct debug host/join accepts the key only through a one-shot clipboard operation, clears the clipboard before arming, never logs/persists it, and consumes it on successful start. Relay packets retain the match boundary; the relay is a fallback route, not a globally open UDP forwarder.</p>
+<p>Packet authentication prevents unauthenticated modification/forgery within its design. It does not encrypt inputs, endpoints, or metadata. Netplay remains peer-to-peer when direct routing works, so each peer can learn the other's public endpoint.</p>
+<h3>Fairness and cheating</h3>
+<p>Checksums, deterministic content fingerprints, build/protocol checks, and host-authoritative correction detect or recover classes of accidental divergence. A client running arbitrary native code can still cheat, lie about presentation, or inspect local memory. Ranked operation needs server-side policy, abuse controls, monitoring, and an explicit enforcement design beyond rollback synchronization.</p></section>
+
+<section id="credentials"><h2>Accounts and local credentials</h2>
+<p>“Remember me” stores the reusable online secret using Windows Credential Manager, not <code>mods/online_hub.cfg</code>. With a valid saved login, startup/deep-link flow can authenticate in the background and proceed directly to the intended hub route. The config contains non-secret endpoint/preferences only.</p>
+<ul>
+<li>Never copy credential blobs into support reports or commit them.</li>
+<li>Do not log passwords, session tokens, match keys, reset tokens, or complete private endpoints.</li>
+<li>Remove the saved credential through the application's account flow or Windows credential UI when rotating access.</li>
+<li>Protect <code>online_server/users.json</code> and <code>ratings.json</code>; deployment updates must preserve them and backups must have restrictive permissions.</li>
+</ul></section>
+
+<section id="updates"><h2>Updater integrity and recovery</h2>
+<p>The update client requires HTTPS except explicit loopback development URLs, validates strict channel metadata, downloads to staging, checks every declared SHA-256 and size, and refuses unsafe relative paths, replacement outside the install root, reparse-point traversal, unexpected/missing files, and malformed transactions. Replacement happens in a small one-shot <code>YuleUpdater.exe</code> after the exact game process exits.</p>
+<p>A journal records the whole replacement set. On interruption, the helper completes or restores the set rather than mixing versions; committed cleanup is retried on a later handoff. A same-install process guard prevents two instances from replacing mapped DLLs concurrently. Relaunch arguments are forwarded as arguments, not reconstructed shell text.</p>
+<div class="callout warning"><strong>Publish payloads first and <code>latest.json</code> last.</strong> Upload the channel pointer atomically only after every versioned file is reachable and its hash/size matches. Never test recovery on the only copy of an installation.</div>
+<p>Current integrity ultimately trusts the HTTPS channel and hashes it declares. For stronger publisher authenticity, sign the manifest with an offline key and pin the verification public key in the client. See <a href="../guides/updater-release.html">Updater and release publishing</a>.</p></section>
+
+<section id="links"><h2><code>yule://</code> deep links and single instance</h2>
+<p>The protocol handler normalizes the process working directory to the executable directory and accepts only known, bounded routes such as hub, requests, queue, and challenge intents. Malformed/unknown routes fail closed. A secondary launch forwards a validated intent to the existing game instance; it should not blindly pass arbitrary command lines, paths, or script content.</p>
+<ul>
+<li>Treat every web-originated route as untrusted input even when it comes through your own redirect page.</li>
+<li>Require login and state validation again inside the receiving game; a link is navigation intent, never authorization.</li>
+<li>Challenge identifiers/usernames must be encoded, length-limited, and resolved by the server rather than interpreted as executable content.</li>
+<li>A redirect page may attempt to close itself after launching the protocol, but browsers can refuse to close tabs they did not open via script.</li>
+</ul></section>
+
+<section id="services"><h2>Discord LFG, Rich Presence, and server deployment</h2>
+<p>Rich Presence intentionally publishes only coarse activity. It must not expose account names, opponents, maps, match ids, ratings, endpoints, tokens, or private queue/challenge details. The Discord application id is public; bot tokens are secret.</p>
+<p>The LFG bridge must keep its Discord bot token and server bridge credential in service environment variables, scope posting to configured channels, avoid mentions by default, obey rate limits, and redact match/account network data. Queue messages are delayed to avoid transient spam and edited in place; a direct challenge must not create a public queue post.</p>
+<p>Run Node services as an unprivileged dedicated user, keep secrets/data outside replacement sets, validate all environment variables at startup, set firewall rules only for required ports, rotate logs, and back up durable account/rating data. The provided JSON-file server is a small deployment, not a horizontally scalable durable database. See <a href="../guides/server-deployment.html">Server deployment</a> and <a href="../guides/discord.html">Discord integration</a>.</p></section>
+
+<section id="privacy"><h2>Logs, diagnostics, and disclosure</h2>
+<table><thead><tr><th>Artifact</th><th>Review before sharing</th></tr></thead><tbody>
+<tr><td><code>mods/modframework.log</code></td><td>Paths/usernames, server host, mod/package names; secrets are designed to be omitted, but inspect anyway.</td></tr>
+<tr><td><code>mods/desync_dump.log</code> and repros</td><td>Gameplay state, content/build fingerprints, packet timing and peer diagnostics.</td></tr>
+<tr><td><code>online_server/server.log</code></td><td>Account identifiers, operational events, addresses depending on logging configuration.</td></tr>
+<tr><td><code>mods/updater.log</code></td><td>Installed paths, versions, recovery state. It must not contain credentials/private online values.</td></tr>
+<tr><td><code>mods/console_history.txt</code></td><td>Everything typed into the console; never enter secrets there.</td></tr>
+</tbody></table>
+<p>Prefer <code>net.diag</code> for a secret-free snapshot. Redact public IP addresses if the recipient does not need them, and never publish <code>users.json</code>, Credential Manager exports, service environment files, bot tokens, or match keys.</p></section>
+
+<section id="gaps"><h2>Implemented defenses and remaining production work</h2>
+<table><thead><tr><th>Implemented now</th><th>Still a production hardening item</th></tr></thead><tbody>
+<tr><td>Strict map/package validation and deterministic map VM</td><td>Ongoing fuzzing and review of every native hook/API boundary</td></tr>
+<tr><td>Authenticated v17 gameplay envelope</td><td>Transport confidentiality where the threat model requires it</td></tr>
+<tr><td>Credential Manager-backed saved login</td><td>Documented rotation/revocation and incident response</td></tr>
+<tr><td>Updater HTTPS policy, hashes, path checks, journal/recovery</td><td>Cryptographically signed release manifests with a pinned publisher key</td></tr>
+<tr><td>Protocol/build/content compatibility checks</td><td>A real anti-cheat/enforcement model for competitive play</td></tr>
+<tr><td>Bounded service protocols and queue/match state</td><td>Durable database, migrations, backups, rate/abuse protection, observability</td></tr>
+<tr><td>Passwordless private-LAN maintenance UI with CSRF and bind/source restrictions</td><td>TLS termination for untrusted networks, append-only audit logs, account deletion, and granular administrator roles</td></tr>
+</tbody></table></section>
+
+<nav class="page-nav" aria-label="More documentation"><a href="configuration.html">← Configuration</a><a href="../guides/testing-releasing.html">Testing and releasing →</a></nav>
+</article></main></div></body></html>

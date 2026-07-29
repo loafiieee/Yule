@@ -65,14 +65,14 @@ function buildQueuePayload(username, queue, baseUrl) {
         {
           type: 2,
           style: 5,
-          label: `Challenge ${username}`,
-          url: publicLfgLink(baseUrl, "challenge", username),
+          label: `Join ${queueLabel} Queue`,
+          url: publicLfgLink(baseUrl, "queue", queue),
         },
         {
           type: 2,
           style: 5,
-          label: `Join ${queueLabel} Queue`,
-          url: publicLfgLink(baseUrl, "queue", queue),
+          label: `Challenge ${username}`,
+          url: publicLfgLink(baseUrl, "challenge", username),
         },
       ],
     }],

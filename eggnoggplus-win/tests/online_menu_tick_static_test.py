@@ -74,6 +74,16 @@ assert button_update.index("real_update(arg0)") < button_update.index(
     "online_advance_net_gameplay_tick(arg0)"
 )
 assert "online_state_ticks_via_button_update(after_update)" in button_update
+assert "#define ADDR_MAIN_CURSORS_DISABLED    0x549124u" in SOURCE
+save_disabled_0 = button_update.index(
+    "cursor_disabled[0] = g_main_cursors_disabled[0]"
+)
+advance_tick = button_update.index("online_advance_net_gameplay_tick(arg0)")
+restore_disabled_0 = button_update.index(
+    "g_main_cursors_disabled[0] = cursor_disabled[0]"
+)
+assert save_disabled_0 < advance_tick < restore_disabled_0
+assert "g_main_cursors_disabled[1] = cursor_disabled[1]" in button_update
 
 # Console deliberately does not use the native button updater and therefore has
 # one independent owner. MODS explicitly delegates to the common hook and must

@@ -133,6 +133,7 @@ extern void SDL_free(void* mem);
 #define ADDR_GAME_START               0x42F760u
 #define ADDR_MAIN_CURSORS_RESET       0x431200u
 #define ADDR_MAIN_CURSOR_SPIN        0x4311E0u
+#define ADDR_MAIN_CURSORS_DISABLED    0x549124u
 #define ADDR_MAIN_CURSOR_DATA        0x549140u
 #define ADDR_MAIN_SPRITE_BATCHES_DRAW 0x431890u
 #define ADDR_SPRITE_BATCH_PLOT        0x405890u
@@ -517,6 +518,7 @@ typedef enum OnlineHubSetting {
     ONLINE_SETTING_SIM_MIN_DELAY,
     ONLINE_SETTING_SIM_MAX_DELAY,
     ONLINE_SETTING_CHALLENGE_NOTIFICATIONS,
+    ONLINE_SETTING_MATCH_HUD,
     ONLINE_SETTING_DISCORD_PRESENCE,
 } OnlineHubSetting;
 
@@ -628,6 +630,7 @@ typedef struct OnlineHubConfig {
     int sim_min_delay;
     int sim_max_delay;
     int challenge_notifications;
+    int match_hud;
 } OnlineHubConfig;
 
 typedef struct OnlineLayout {
@@ -1109,6 +1112,8 @@ typedef struct MainCursor {
 } MainCursor;
 
 static volatile MainCursor* g_main_cursors = (volatile MainCursor*)(uintptr_t)ADDR_MAIN_CURSOR_DATA;
+static volatile uint32_t* g_main_cursors_disabled =
+    (volatile uint32_t*)(uintptr_t)ADDR_MAIN_CURSORS_DISABLED;
 static float g_cursor_x[2] = { 0.0f, 0.0f };
 static float g_cursor_y[2] = { 0.0f, 0.0f };
 static float g_cursor_tx[2] = { 0.0f, 0.0f };
@@ -1271,6 +1276,7 @@ static int __cdecl menu_mode_arrow_down_filter_proxy(void* btn, int event_code);
 static void* online_find_button_by_action(uintptr_t action_ptr);
 static void online_hub_load(void);
 static void online_hub_save(void);
+static void online_hub_clamp_config(void);
 static void online_hub_apply_net_settings(void);
 static void online_hub_rebuild_rows(void);
 static void online_adjust_selected(int delta);
@@ -1279,6 +1285,7 @@ static int online_advance_net_gameplay_tick(int arg0);
 static int online_state_ticks_via_button_update(void* st);
 static int online_state_is_ingame_menu(void* st);
 static void online_server_update(void);
+static void online_troubleshooter_pump(void);
 static void online_server_disconnect(const char* reason);
 static void online_challenge_map_picker_clear(void);
 static void online_handle_server_match_disconnect(const char* reason);
@@ -1497,6 +1504,25 @@ static OnlinePendingMatch g_online_pending_match;
 static OnlineActiveMatch g_online_active_match;
 static OnlineConnectRetry g_online_connect;
 static OnlineResultToast g_online_result;
+
+typedef struct OnlineTroubleshooter {
+    int active;
+    int tcp_slot;
+    int tcp_done;
+    int tcp_ok;
+    int udp_done;
+    int udp_ok;
+    DWORD tcp_deadline_ms;
+    NetNetworkProfile profile;
+    int profile_valid;
+    NetUdpProbeResult udp_result;
+    char tcp_error[160];
+    char udp_error[160];
+} OnlineTroubleshooter;
+
+static OnlineTroubleshooter g_online_troubleshooter = {
+    .tcp_slot = -1
+};
 
 enum {
     ONLINE_LAUNCH_TIMEOUT_MS = 120000
@@ -3768,8 +3794,8 @@ static const char* k_console_commands[] = {
     "mods.config", "mods.config.find", "mods.config.get", "mods.config.set", "mods.config.action",
     "binds.list", "binds.find", "binds.set", "binds.clear",
     "reload.mods", "mods.reload", "reload.assets",
-    "online.hub",
-    "net.diag",
+    "online.hub", "online.troubleshoot",
+    "net.diag", "net.trouble",
     "ggpo.net",
     "log.level", "log.tail", "input.show", "input.override", "input.clear",
     "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
@@ -4501,7 +4527,7 @@ static void console_show_help(const char* topic) {
             console_push_line_rgb("  ggpo.roundtrip", 0.87f, 0.87f, 0.87f);
             console_push_line_rgb("  ggpo.selftest [frames]", 0.87f, 0.87f, 0.87f);
             console_push_line_rgb("  ggpo.local [toggle|on|off|status]", 0.87f, 0.87f, 0.87f);
-            console_push_line_rgb("  ggpo.net <host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.87f, 0.87f, 0.87f);
+            console_push_line_rgb("  ggpo.net <host|join|off|status|hud|delay|advantage|predict|highping|smoothping|correction|sim>", 0.87f, 0.87f, 0.87f);
         }
         console_push_line_rgb("  log.level [debug|info|warn|error]", 0.87f, 0.87f, 0.87f);
         if (g_developer_mode) {
@@ -4622,10 +4648,16 @@ static void console_show_help(const char* topic) {
         console_push_line_rgb("Play uses server login plus casual/competitive queues; Friends handles requests and challenges.", 0.72f, 0.90f, 1.00f);
         return;
     }
-    if (_stricmp(t, "net.diag") == 0 || _stricmp(t, "net.trouble") == 0) {
-        console_push_line_rgb("net.diag: P2P connection troubleshooter. Run it during a stuck/failing", 0.72f, 0.90f, 1.00f);
-        console_push_line_rgb("connect to see candidates, packets sent/received, and a plain verdict on", 0.72f, 0.90f, 1.00f);
-        console_push_line_rgb("what's blocking the link (NAT/firewall vs version mismatch, etc.).", 0.72f, 0.90f, 1.00f);
+    if (_stricmp(t, "net.diag") == 0) {
+        console_push_line_rgb("net.diag: print the current secret-free server, match, route, packet,", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("candidate, version, and rollback diagnostic snapshot.", 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(t, "online.troubleshoot") == 0 ||
+        _stricmp(t, "net.trouble") == 0) {
+        console_push_line_rgb("online.troubleshoot (alias net.trouble): actively test the configured", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("server over TCP and UDP and inspect Windows adapters for VPN/NAT/CGNAT", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("evidence. The test runs in the background and ends with net.diag.", 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(t, "reload.mods") == 0) {
@@ -6100,12 +6132,14 @@ static void online_build_net_diag(char* out, size_t cap) {
     n = snprintf(out, cap,
                  "=== P2P connection troubleshooter ===\n"
                  "server:  %s:%u (%s) slot=%d\n"
-                 "match:   active=%s id=%d\n"
+                 "match:   active=%s id=%d route=%s attempts=%d\n"
                  "your LAN ip: %s\n"
                  "%s",
                  g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port, server_state,
                  g_online_server_slot,
                  g_online_active_match.active ? "yes" : "no", g_online_active_match.match_id,
+                 g_online_connect.peer_route[0] ? g_online_connect.peer_route : "(none)",
+                 g_online_connect.attempts,
                  lan, net);
     if (n < 0 || (size_t)n >= cap) out[cap - 1] = '\0';
 }
@@ -6121,6 +6155,225 @@ static void console_run_net_diag(void) {
         if (*p) console_push_line_rgb(p, 0.80f, 0.90f, 1.00f);
         if (!nl) break;
         p = nl + 1;
+    }
+}
+
+static void online_troubleshooter_reset(void) {
+    if (g_online_troubleshooter.tcp_slot >= 0) {
+        net_close(g_online_troubleshooter.tcp_slot);
+    }
+    net_udp_probe_cancel();
+    memset(&g_online_troubleshooter, 0, sizeof(g_online_troubleshooter));
+    g_online_troubleshooter.tcp_slot = -1;
+}
+
+static void online_troubleshooter_finish(void) {
+    char line[CONSOLE_LINE_TEXT];
+    OnlineTroubleshooter* test = &g_online_troubleshooter;
+    if (!test->active) return;
+
+    if (test->tcp_slot >= 0) {
+        net_close(test->tcp_slot);
+        test->tcp_slot = -1;
+    }
+    if (net_udp_probe_active()) net_udp_probe_cancel();
+
+    if (test->tcp_ok) {
+        snprintf(line, sizeof(line), "TCP control connection: PASS (%s:%u is reachable)",
+                 g_online_cfg.server_host,
+                 (unsigned int)g_online_cfg.server_port);
+        console_push_line_rgb(line, 0.64f, 0.92f, 0.66f);
+    } else {
+        snprintf(line, sizeof(line), "TCP control connection: FAIL (%s)",
+                 test->tcp_error[0] ? test->tcp_error : "connection failed");
+        console_push_line_rgb(line, 0.98f, 0.45f, 0.45f);
+    }
+
+    if (test->udp_ok) {
+        snprintf(line, sizeof(line),
+                 "UDP rendezvous: PASS (%lu ms; server sees %s:%u)",
+                 (unsigned long)test->udp_result.round_trip_ms,
+                 test->udp_result.observed_host,
+                 (unsigned int)test->udp_result.observed_port);
+        console_push_line_rgb(line, 0.64f, 0.92f, 0.66f);
+    } else {
+        snprintf(line, sizeof(line), "UDP rendezvous: FAIL (%s)",
+                 test->udp_error[0] ? test->udp_error : "probe failed");
+        console_push_line_rgb(line, 0.98f, 0.45f, 0.45f);
+        console_push_line_rgb("Check Windows Firewall, VPN kill-switch/split tunneling, router filtering, and security software.",
+                              0.98f, 0.76f, 0.40f);
+    }
+
+    if (test->profile_valid) {
+        snprintf(line, sizeof(line), "%s adapter: %s (%s); active IPv4 adapters: %d",
+                 test->profile.route_matched ? "Server-route" : "Primary",
+                 test->profile.primary_adapter[0]
+                     ? test->profile.primary_adapter : "(unnamed)",
+                 test->profile.primary_ipv4,
+                 test->profile.active_ipv4_adapters);
+        console_push_line_rgb(line, 0.80f, 0.90f, 1.00f);
+        if (test->profile.vpn_suspected) {
+            if (test->profile.primary_vpn_suspected) {
+                console_push_line_rgb("VPN evidence: Windows routes this server through a VPN/tunnel-like adapter (heuristic).",
+                                      0.98f, 0.76f, 0.40f);
+                console_push_line_rgb("Retry with that VPN disabled, or allow Eggnogg and UDP through split tunneling.",
+                                      0.98f, 0.76f, 0.40f);
+            } else {
+                console_push_line_rgb("VPN evidence: a virtual VPN adapter is active, but it is not the route Windows chose for this server.",
+                                      0.80f, 0.90f, 1.00f);
+            }
+        } else {
+            console_push_line_rgb("VPN evidence: no active adapter looked like a known VPN/tunnel (not conclusive).",
+                                  0.80f, 0.90f, 1.00f);
+        }
+
+        if (test->profile.primary_is_cgnat) {
+            console_push_line_rgb("CGNAT evidence: LIKELY - the primary Windows address is inside 100.64.0.0/10.",
+                                  0.98f, 0.76f, 0.40f);
+        } else if (test->profile.primary_is_private) {
+            console_push_line_rgb("NAT evidence: present (private LAN address). CGNAT cannot be proven from this PC alone.",
+                                  0.80f, 0.90f, 1.00f);
+            if (test->udp_ok) {
+                snprintf(line, sizeof(line),
+                         "Compare your router's WAN IPv4 with %s; if they differ, CGNAT/upstream NAT is likely.",
+                         test->udp_result.observed_host);
+                console_push_line_rgb(line, 0.80f, 0.90f, 1.00f);
+            }
+        } else if (test->udp_ok &&
+                   _stricmp(test->profile.primary_ipv4,
+                            test->udp_result.observed_host) == 0) {
+            console_push_line_rgb("NAT evidence: no IPv4 address translation is visible.",
+                                  0.64f, 0.92f, 0.66f);
+        } else if (test->udp_ok) {
+            console_push_line_rgb("NAT/VPN evidence: the server-observed public address differs from the primary adapter.",
+                                  0.98f, 0.76f, 0.40f);
+        }
+    } else {
+        console_push_line_rgb("Adapter/VPN/CGNAT evidence: unavailable from Windows.",
+                              0.98f, 0.76f, 0.40f);
+    }
+
+    if (test->tcp_ok && test->udp_ok) {
+        console_push_line_rgb("Basic server connectivity is healthy. If only matches fail, run net.diag during the failed peer connection.",
+                              0.64f, 0.92f, 0.66f);
+    } else if (test->tcp_ok) {
+        console_push_line_rgb("The login path works but UDP does not; this can prevent direct and rendezvous connectivity.",
+                              0.98f, 0.76f, 0.40f);
+    } else if (test->udp_ok) {
+        console_push_line_rgb("UDP reaches the server, but the TCP login/control port is blocked or unavailable.",
+                              0.98f, 0.76f, 0.40f);
+    }
+
+    console_push_line_rgb("--- current online transport snapshot ---",
+                          0.72f, 0.90f, 1.00f);
+    test->active = 0;
+    console_run_net_diag();
+}
+
+static void console_run_online_troubleshooter(void) {
+    OnlineTroubleshooter* test = &g_online_troubleshooter;
+    char error[160];
+    uint32_t now = (uint32_t)GetTickCount();
+    uint32_t sequence = now ^ UINT32_C(0x796c6575);
+
+    /* The console is usable before Online has ever been opened. Load the same
+     * persisted/default config as the hub before reading its target; otherwise
+     * a fresh process would accidentally probe the zero-initialized 0:0. */
+    online_hub_load();
+    online_hub_clamp_config();
+    if (!g_online_cfg.server_host[0] || g_online_cfg.server_port == 0) {
+        console_push_line_rgb("online.troubleshoot: no valid online server is configured.",
+                              0.98f, 0.45f, 0.45f);
+        return;
+    }
+
+    if (test->active) {
+        online_troubleshooter_reset();
+        console_push_line_rgb("online.troubleshoot: restarted the active test.",
+                              0.98f, 0.76f, 0.40f);
+    } else {
+        online_troubleshooter_reset();
+    }
+    test->active = 1;
+    test->profile_valid = net_network_profile(g_online_cfg.server_host,
+                                              &test->profile);
+    console_push_line_rgb("=== active online connectivity troubleshooter ===",
+                          0.72f, 0.90f, 1.00f);
+    snprintf(error, sizeof(error), "Testing %s:%u over TCP and UDP without pausing the game...",
+             g_online_cfg.server_host,
+             (unsigned int)g_online_cfg.server_port);
+    console_push_line_rgb(error, 0.80f, 0.90f, 1.00f);
+
+    test->tcp_slot =
+        net_connect(g_online_cfg.server_host, g_online_cfg.server_port);
+    if (test->tcp_slot < 0) {
+        test->tcp_done = 1;
+        safe_copy(test->tcp_error, sizeof(test->tcp_error),
+                  "could not resolve the server or allocate a socket");
+    } else {
+        test->tcp_deadline_ms = (DWORD)online_control_deadline_after(now, 5000u);
+    }
+
+    error[0] = '\0';
+    if (!net_udp_probe_start(g_online_cfg.server_host,
+                             (uint16_t)g_online_cfg.server_port,
+                             sequence, 5000u, error, sizeof(error))) {
+        test->udp_done = 1;
+        safe_copy(test->udp_error, sizeof(test->udp_error),
+                  error[0] ? error : "could not start the probe");
+    }
+
+    if (test->tcp_done && test->udp_done) {
+        online_troubleshooter_finish();
+    }
+}
+
+static void online_troubleshooter_pump(void) {
+    OnlineTroubleshooter* test = &g_online_troubleshooter;
+    uint32_t now;
+    if (!test->active) return;
+    now = (uint32_t)GetTickCount();
+
+    if (!test->tcp_done) {
+        int status = net_check_connect(test->tcp_slot);
+        if (status > 0) {
+            test->tcp_done = 1;
+            test->tcp_ok = 1;
+            net_close(test->tcp_slot);
+            test->tcp_slot = -1;
+        } else if (status < 0) {
+            test->tcp_done = 1;
+            safe_copy(test->tcp_error, sizeof(test->tcp_error),
+                      "connection was refused or could not be completed");
+            test->tcp_slot = -1;
+        } else if (online_control_deadline_reached(
+                       now, (uint32_t)test->tcp_deadline_ms)) {
+            test->tcp_done = 1;
+            safe_copy(test->tcp_error, sizeof(test->tcp_error),
+                      "connection timed out");
+            net_close(test->tcp_slot);
+            test->tcp_slot = -1;
+        }
+    }
+
+    if (!test->udp_done) {
+        char error[160];
+        int status;
+        error[0] = '\0';
+        status = net_udp_probe_poll(&test->udp_result,
+                                    error, sizeof(error));
+        if (status > 0) {
+            test->udp_done = 1;
+            test->udp_ok = 1;
+        } else if (status < 0) {
+            test->udp_done = 1;
+            safe_copy(test->udp_error, sizeof(test->udp_error),
+                      error[0] ? error : "probe failed");
+        }
+    }
+
+    if (test->tcp_done && test->udp_done) {
+        online_troubleshooter_finish();
     }
 }
 
@@ -6144,6 +6397,23 @@ static void console_run_ggpo_net(const char* arg) {
     if (_stricmp(action, "off") == 0 || _stricmp(action, "stop") == 0 || _stricmp(action, "disable") == 0) {
         online_cancel_match_from_console();
         console_close();
+        return;
+    }
+    if (_stricmp(action, "hud") == 0 || _stricmp(action, "overlay") == 0) {
+        char out[CONSOLE_LINE_TEXT];
+        char* tok = console_parse_token(&cursor);
+        if (tok && tok[0]) {
+            int enabled = 0;
+            if (!console_try_parse_bool(tok, &enabled)) {
+                console_push_line_rgb("Usage: ggpo.net hud [on|off]", 0.98f, 0.76f, 0.40f);
+                return;
+            }
+            g_online_cfg.match_hud = enabled ? 1 : 0;
+            online_hub_save();
+        }
+        snprintf(out, sizeof(out), "ggpo.net: match network HUD %s",
+                 g_online_cfg.match_hud ? "enabled" : "disabled");
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
         return;
     }
     if (_stricmp(action, "key") == 0 || _stricmp(action, "auth") == 0) {
@@ -6545,7 +6815,7 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
 
-    console_push_line_rgb("Usage: ggpo.net <key|host|join|off|status|delay|advantage|predict|highping|smoothping|correction|sim>", 0.98f, 0.76f, 0.40f);
+    console_push_line_rgb("Usage: ggpo.net <key|host|join|off|status|hud|delay|advantage|predict|highping|smoothping|correction|sim>", 0.98f, 0.76f, 0.40f);
 }
 
 static void console_run_ggpo_selftest(const char* arg) {
@@ -8106,8 +8376,11 @@ static void console_execute_input(void) {
         console_run_ggpo_selftest(arg);
     } else if (_stricmp(cmd, "ggpo.local") == 0) {
         console_run_ggpo_local(arg);
-    } else if (_stricmp(cmd, "net.diag") == 0 || _stricmp(cmd, "net.trouble") == 0) {
+    } else if (_stricmp(cmd, "net.diag") == 0) {
         console_run_net_diag();
+    } else if (_stricmp(cmd, "online.troubleshoot") == 0 ||
+               _stricmp(cmd, "net.trouble") == 0) {
+        console_run_online_troubleshooter();
     } else if (_stricmp(cmd, "ggpo.net") == 0) {
         console_run_ggpo_net(arg);
     } else if (_stricmp(cmd, "log.level") == 0) {
@@ -8199,6 +8472,7 @@ static void online_hub_defaults(void) {
     g_online_cfg.sim_min_delay = 0;
     g_online_cfg.sim_max_delay = 0;
     g_online_cfg.challenge_notifications = 1;
+    g_online_cfg.match_hud = 0;
 }
 
 static int online_parse_long_range(const char* s, long lo, long hi, long* out) {
@@ -8238,6 +8512,7 @@ static void online_hub_clamp_config(void) {
     g_online_cfg.sim_min_delay = 0;
     g_online_cfg.sim_max_delay = 0;
     g_online_cfg.challenge_notifications = g_online_cfg.challenge_notifications ? 1 : 0;
+    g_online_cfg.match_hud = g_online_cfg.match_hud ? 1 : 0;
     g_online_cfg.remember_me = g_online_cfg.remember_me ? 1 : 0;
     if (!g_online_cfg.server_host[0]) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
     if (!g_online_cfg.peer_host[0]) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
@@ -8465,6 +8740,7 @@ static void online_hub_load(void) {
         else if (_stricmp(key, "peer_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.peer_port = (uint16_t)parsed;
         else if (_stricmp(key, "local_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.local_port = (uint16_t)parsed;
         else if (_stricmp(key, "challenge_notifications") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.challenge_notifications = (int)parsed;
+        else if (_stricmp(key, "match_hud") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.match_hud = (int)parsed;
         else if (_stricmp(key, "friend") == 0) {
             /* v1 local peer-address friends are ignored; friends now live on the server. */
 #if 0
@@ -8517,6 +8793,7 @@ static void online_hub_save(void) {
     fprintf(f, "server_port=%u\n", (unsigned int)g_online_cfg.server_port);
     fprintf(f, "local_port=%u\n", (unsigned int)g_online_cfg.local_port);
     fprintf(f, "challenge_notifications=%d\n", g_online_cfg.challenge_notifications ? 1 : 0);
+    fprintf(f, "match_hud=%d\n", g_online_cfg.match_hud ? 1 : 0);
     fclose(f);
 }
 
@@ -8581,6 +8858,7 @@ static int online_server_protocol_compatible(const char* json) {
     int social_controls = 0;
     int private_rematch = 0;
     int p2p_relay = 0;
+    int client_build_gate = 0;
     return online_json_get_int(json, "control_protocol", &control_protocol) &&
            online_json_get_int(json, "match_protocol", &match_protocol) &&
            online_json_get_int(json, "p2p_protocol", &p2p_protocol) &&
@@ -8588,13 +8866,15 @@ static int online_server_protocol_compatible(const char* json) {
            online_json_get_int(json, "cap_social_controls", &social_controls) &&
            online_json_get_int(json, "cap_private_rematch", &private_rematch) &&
            online_json_get_int(json, "cap_p2p_relay", &p2p_relay) &&
+           online_json_get_int(json, "cap_client_build_gate", &client_build_gate) &&
            control_protocol == ONLINE_CONTROL_PROTOCOL_VERSION &&
            match_protocol == ONLINE_MATCH_PROTOCOL_VERSION &&
            p2p_protocol == (int)GGPO_NET_PROTOCOL_VERSION &&
            packet_auth == 1 &&
            social_controls == 1 &&
            private_rematch == 1 &&
-           p2p_relay == 1;
+           p2p_relay == 1 &&
+           client_build_gate == 1;
 }
 
 static int online_match_protocol_compatible(const char* json) {
@@ -8707,7 +8987,17 @@ static int online_server_send_map_manifest(void) {
     }
     formatted = snprintf(line,
                          line_cap,
-                         "{\"type\":\"map_manifest\",\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
+                         "{\"type\":\"map_manifest\",\"framework_version\":\"%s\","
+                         "\"control_protocol\":%d,\"match_protocol\":%d,\"p2p_protocol\":%u,"
+                         "\"build_id\":%lu,\"game_exe_id\":%lu,\"framework_dll_id\":%lu,"
+                         "\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
+                         FRAMEWORK_VERSION,
+                         ONLINE_CONTROL_PROTOCOL_VERSION,
+                         ONLINE_MATCH_PROTOCOL_VERSION,
+                         (unsigned int)GGPO_NET_PROTOCOL_VERSION,
+                         (unsigned long)ggpo_net_local_build_id(),
+                         (unsigned long)ggpo_net_local_exe_id(),
+                         (unsigned long)ggpo_net_local_dll_id(),
                          (unsigned int)g_online_cfg.local_port,
                          lan_json,
                          maps_json);
@@ -10796,6 +11086,7 @@ static void online_format_setting_value(OnlineHubSetting setting, char* out, siz
         case ONLINE_SETTING_SIM_MIN_DELAY: snprintf(out, out_sz, "%d", g_online_cfg.sim_min_delay); break;
         case ONLINE_SETTING_SIM_MAX_DELAY: snprintf(out, out_sz, "%d", g_online_cfg.sim_max_delay); break;
         case ONLINE_SETTING_CHALLENGE_NOTIFICATIONS: online_format_bool(out, out_sz, g_online_cfg.challenge_notifications); break;
+        case ONLINE_SETTING_MATCH_HUD: online_format_bool(out, out_sz, g_online_cfg.match_hud); break;
         case ONLINE_SETTING_DISCORD_PRESENCE:
             safe_copy(out, out_sz, discord_rpc_ext_setting_label());
             break;
@@ -11026,6 +11317,7 @@ static void online_hub_rebuild_rows(void) {
             { ONLINE_SETTING_SERVER_HOST, "Server Address" },
             { ONLINE_SETTING_LOCAL_PORT, "P2P UDP Port" },
             { ONLINE_SETTING_CHALLENGE_NOTIFICATIONS, "Challenge Notifications" },
+            { ONLINE_SETTING_MATCH_HUD, "Match Network HUD" },
             { ONLINE_SETTING_DISCORD_PRESENCE, "Discord Rich Presence" },
         };
         online_rows_add(ONLINE_ROW_INFO, 0, 0, 0, "Settings", "online and privacy");
@@ -11331,6 +11623,9 @@ static void online_adjust_setting(OnlineHubSetting setting, int delta) {
             if (!g_online_cfg.challenge_notifications) {
                 memset(&g_online_challenge_toast, 0, sizeof(g_online_challenge_toast));
             }
+            break;
+        case ONLINE_SETTING_MATCH_HUD:
+            g_online_cfg.match_hud = g_online_cfg.match_hud ? 0 : 1;
             break;
         case ONLINE_SETTING_DISCORD_PRESENCE: {
             int enabled;
@@ -13791,6 +14086,49 @@ static void online_draw_nametag(float cx, float cy, const char* text, int oppone
                            text);
 }
 
+static void online_draw_match_network_hud(void) {
+    char text[96];
+    uint32_t rtt_ticks = ggpo_net_rtt_ticks();
+    uint32_t rollbacks = ggpo_net_rollback_count();
+    float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
+    float s = clampf(0.70f * online_hub_ui_scale(), 0.76f, 0.94f);
+    float pad_x = 8.0f * s;
+    float pad_y = 5.0f * s;
+    float text_w;
+    float box_w;
+    float box_h;
+    float x;
+    float y = 8.0f * s;
+
+    if (!g_online_cfg.match_hud) return;
+    if (rtt_ticks) {
+        unsigned int rtt_ms =
+            (unsigned int)(((uint64_t)rtt_ticks * UINT64_C(1000) + 30u) / 60u);
+        snprintf(text, sizeof(text), "PING %ums   D %uf   RB %u",
+                 rtt_ms,
+                 (unsigned int)ggpo_net_input_delay(),
+                 (unsigned int)rollbacks);
+    } else {
+        snprintf(text, sizeof(text), "PING --   D %uf   RB %u",
+                 (unsigned int)ggpo_net_input_delay(),
+                 (unsigned int)rollbacks);
+    }
+
+    text_w = approx_text_width(text, s);
+    box_w = text_w + pad_x * 2.0f;
+    box_h = 12.0f * s + pad_y * 2.0f;
+    x = sw - box_w - 8.0f * s;
+    if (x < 4.0f) x = 4.0f;
+
+    mods_restore_render_state();
+    online_hub_draw_rect(x, y, box_w, box_h,
+                         0.018f, 0.025f, 0.032f, 0.62f);
+    online_hub_draw_border(x, y, box_w, box_h, 1.0f,
+                           0.30f, 0.56f, 0.62f, 0.52f);
+    online_hub_text_alpha(x + pad_x, y + pad_y - 1.0f * s, s,
+                          0.72f, 0.88f, 0.90f, 0.92f, text);
+}
+
 static void menu_mode_accent(float* r, float* g, float* b) {
     if (g_menu_mode == MENU_MODE_ONLINE) {
         *r = 0.36f; *g = 0.92f; *b = 0.82f;   /* hub cyan (selected-tab accent) */
@@ -13858,6 +14196,7 @@ void hooks_online_on_pre_swap(void) {
         state_ptr != (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED) {
         return;
     }
+    online_draw_match_network_hud();
     local_player = ggpo_net_local_player();
     if (local_player < 0 || local_player > 1) local_player = clampi(g_online_active_match.local_player, 0, 1);
     remote_player = local_player ^ 1;
@@ -13903,7 +14242,11 @@ static int online_cursor_over_active_overlay(float x, float y) {
 
 void hooks_online_cursor_on_pre_swap(void) {
     void* state_ptr = p_state_current ? p_state_current() : NULL;
+    int live_online_menu = ggpo_net_active() &&
+                           g_online_active_match.active &&
+                           online_state_ticks_via_button_update(state_ptr);
     int draw_online_cursor = state_ptr == (void*)&g_online_hub_state ||
+                             live_online_menu ||
                              online_cursor_over_active_overlay(g_online_mouse_x,
                                                                g_online_mouse_y);
     if (!draw_online_cursor) {
@@ -18061,6 +18404,7 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
         lua_manager_on_tick();
     }
     online_server_update();
+    online_troubleshooter_pump();
     discord_rpc_ext_pump(online_discord_activity());
     {
         int result = real_update ? real_update(arg0) : 0;
@@ -18085,10 +18429,29 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
             if (ggpo_net_active() &&
                 !g_online_pending_match.active &&
                 online_state_ticks_via_button_update(after_update)) {
+                uint32_t cursor_disabled[2] = { 0u, 0u };
+                int restore_cursor_flags =
+                    g_main_cursors_disabled &&
+                    !IsBadReadPtr((const void*)g_main_cursors_disabled,
+                                  sizeof(cursor_disabled)) &&
+                    !IsBadWritePtr((void*)g_main_cursors_disabled,
+                                   sizeof(cursor_disabled));
+                if (restore_cursor_flags) {
+                    cursor_disabled[0] = g_main_cursors_disabled[0];
+                    cursor_disabled[1] = g_main_cursors_disabled[1];
+                }
                 net_tick_attempted = 1;
                 g_allow_paused_game_tick++;
                 net_tick_result = online_advance_net_gameplay_tick(arg0);
                 g_allow_paused_game_tick--;
+                /* game_update(1) disables both native menu cursors because it
+                 * normally runs only behind the pause screen. Online menus
+                 * deliberately advance gameplay, so preserve the surrounding
+                 * menu's exact cursor state across that hidden sim tick. */
+                if (restore_cursor_flags) {
+                    g_main_cursors_disabled[0] = cursor_disabled[0];
+                    g_main_cursors_disabled[1] = cursor_disabled[1];
+                }
             }
             lua_manager_on_tick_post();
             if (!net_tick_attempted || net_tick_result <= 0) {
@@ -18100,6 +18463,7 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 }
 
 void hooks_runtime_shutdown(void) {
+    online_troubleshooter_reset();
     framework_tune_shutdown();
     discord_rpc_ext_shutdown();
     update_ext_shutdown();

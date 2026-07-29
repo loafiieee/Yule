@@ -6,8 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check discord_lfg_bot.js && node --check lfg_redirect.js",
-    "test": "node --test ../tests/discord_lfg_bot_test.js ../tests/lfg_redirect_test.js"
+    "check": "node --check server.js && node --check admin_server.js && node --check discord_lfg_bot.js && node --check lfg_redirect.js",
+    "test": "node --test ../tests/online_admin_server_test.js ../tests/discord_lfg_bot_test.js ../tests/lfg_redirect_test.js"
   },
   "engines": {
     "node": ">=18"

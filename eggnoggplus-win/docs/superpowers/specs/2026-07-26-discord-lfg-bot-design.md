@@ -69,8 +69,8 @@ The integration is outbound REST only: no Gateway session, intents, slash comman
 interactions endpoint, or inbound bot listener. A queue message contains one embed and two
 ordinary link buttons:
 
-1. challenge the named player through normal friend/map/presence policy;
-2. join the same casual or competitive public queue.
+1. left: join the same casual or competitive public queue;
+2. right: challenge the named player through normal friend/map/presence policy.
 
 ## Verification
 
@@ -84,5 +84,5 @@ runner owns the full test invocation.
 
 Deployment QA still requires a real bot/channel, public HTTPS proxy, registered Windows
 URI handler, remembered and manual-login continuation into the requested action, both
-queues/buttons, immediate match, disconnect, clean restart, an unaffected updater release
+queues/buttons in queue-left/challenge-right order, immediate match, disconnect, clean restart, an unaffected updater release
 URL, and rate-limit observation.

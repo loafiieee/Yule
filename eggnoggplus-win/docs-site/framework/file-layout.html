@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Yule runtime and source file layout.">
+  <title>File layout · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="file-layout">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout"><aside class="sidebar" id="site-nav" aria-label="Documentation"></aside><button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+  <main class="docs-main" id="main-content"><article class="article">
+    <p class="breadcrumb"><a href="../index.html">Docs</a> / Framework / File layout</p>
+    <p class="eyebrow">Framework internals</p><h1>File layout</h1>
+    <p class="lead">The repository is also a runnable development game folder. Keep source, generated build output, runtime state, and release artifacts conceptually separate even though they live nearby.</p>
+
+    <h2 id="runtime-root">Runtime root</h2>
+    <pre><code>eggnoggplus-win/
+├─ eggnoggplus.exe          game executable
+├─ SDL2.dll                 Yule proxy
+├─ SDL2_real.dll            original SDL implementation
+├─ lua51.dll                LuaJIT runtime
+├─ libgcc_s_dw2-1.dll       MinGW runtime
+├─ libwinpthread-1.dll      MinGW thread runtime
+├─ SDL2_mixer.dll           optional/native audio backend
+├─ YuleUpdater.exe          one-shot updater helper
+├─ data/                    base-game data and tune files
+├─ maps/                    custom map packages
+└─ mods/                    mods, configuration, logs, runtime data</code></pre>
+    <p>Launch the executable from this root so relative <code>data/</code>, <code>maps/</code>, and <code>mods/</code> paths resolve to the intended installation. Yule’s deep-link handoff also roots work to the installed executable instead of the caller’s current directory.</p>
+
+    <h2 id="mods-folder">The mods folder</h2>
+    <pre><code>mods/
+├─ modframework.cfg         framework-wide preferences
+├─ online_hub.cfg           non-secret online preferences
+├─ modframework.log         main runtime log
+├─ updater.log              updater/recovery status
+├─ crash.log                crash handler output
+├─ desync_dump.log          rollback mismatch evidence
+├─ console_history.txt      developer-console history
+└─ my_mod/
+   ├─ mod.json              strict manifest
+   ├─ main.lua              entry named by the manifest
+   ├─ config.cfg            optional user settings
+   ├─ storage.cfg           optional/default persistent state
+   ├─ binds.cfg             optional/default named binds
+   ├─ lib/                  mod-owned Lua modules
+   └─ assets/               mod-owned images/audio/data</code></pre>
+    <p>Folders beginning with <code>_</code> are ignored by normal mod discovery. Bundled examples include <code>options_demo</code>, <code>speedhack</code>, and <code>ai_opponent</code>.</p>
+
+    <h2 id="maps-folder">The maps folder</h2>
+    <p>A map folder normally contains map data and may contain V2 metadata, a map-wide tileset, and bounded map-local Lua:</p>
+    <pre><code>maps/my_map/
+├─ data.map                 room/tile data
+├─ data.json                V2 declarations and metadata
+├─ tiles.png                optional map-wide tileset
+└─ map.lua                  optional bounded behavior</code></pre>
+    <p>Refer to the source <code>MAP_FORMAT.md</code> before authoring: accepted cell sizes, symbolic tile declarations, script APIs, fingerprints, and hot-reload behavior are more precise than filename convention alone.</p>
+
+    <h2 id="source-modules">Source modules</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Path</th><th>Responsibility</th></tr></thead>
+      <tbody>
+        <tr><td><code>dllmain.c</code>, <code>stubs.c</code>, <code>SDL2.def</code></td><td>DLL entry and SDL export proxy boundary.</td></tr>
+        <tr><td><code>hooks.c/.h</code></td><td>Native hooks, framework states, console, menus, and high-level orchestration.</td></tr>
+        <tr><td><code>lua_manager.c/.h</code></td><td>Manifest loading, dependency lifecycle, isolated Lua environments, and most mod APIs.</td></tr>
+        <tr><td><code>custom_maps</code>, <code>content_*</code>, <code>map_script</code></td><td>Map formats, content registration/bridges, programmable tiles, and bounded map Lua.</td></tr>
+        <tr><td><code>ggpo_*</code>, <code>online_control</code>, <code>net_ext</code></td><td>Rollback sessions, authenticated gameplay transport, server protocol, and sockets.</td></tr>
+        <tr><td><code>rollback_schema</code>, <code>fp_control</code></td><td>Authoritative state serialization and deterministic floating-point setup.</td></tr>
+        <tr><td><code>update_ext</code>, <code>updater_helper.c</code></td><td>Channel checking, verified staging, transactional recovery, and closed-process file replacement.</td></tr>
+        <tr><td><code>bytebeat_*</code></td><td>Bounded formulas, JavaScript compatibility runtime, PCM producer, cache, and stream integration.</td></tr>
+        <tr><td><code>credential_ext</code>, <code>launch_*</code>, <code>discord_rpc_ext</code></td><td>Windows credentials, single-instance deep-link delivery, and Discord desktop IPC.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="development-folders">Development folders</h2>
+    <ul>
+      <li><code>tests/</code> — native, Python/static, Node, and guarded integration tests.</li>
+      <li><code>tools/</code> — release builder and diagnostic utilities.</li>
+      <li><code>installer/</code> — installer/uninstaller templates and artwork.</li>
+      <li><code>online_server/</code> — matchmaking/control server, Discord LFG bot, deployment tests, and update script.</li>
+      <li><code>third_party/</code> — vendored source such as QuickJS-NG.</li>
+      <li><code>ghidra/</code> and <code>eggnogg.gpr</code> — reverse-engineering references; not runtime payloads.</li>
+      <li><code>docs/</code> — internal design specifications and plans.</li>
+      <li><code>docs-site/</code> — this hostable static documentation website.</li>
+    </ul>
+
+    <h2 id="generated-output">Generated output</h2>
+    <ul>
+      <li><code>build/</code> holds compile/test intermediates, including <code>SDL2_test.dll</code>. Do not run its executables directly.</li>
+      <li><code>dist/</code> holds generated release channels and installer packages.</li>
+      <li>The root <code>SDL2.dll</code> and <code>YuleUpdater.exe</code> are installed development artifacts copied only after successful linking.</li>
+    </ul>
+    <div class="callout warning"><strong>Dirty-worktree rule:</strong> runtime logs, configs, map edits, and local mods may be intentional user data. Do not bulk-delete or reset them while changing source.</div>
+
+    <div class="page-links"><a href="architecture.html">← Architecture</a><a class="next" href="building.html">Next: Building from source →</a></div>
+    <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+  </article></main></div>
+</body>
+</html>
+

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Eggnogg+ sound, bytebeat, Dollchan JavaScript, and music playlist reference."><title>Audio &amp; music · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a href="../guides/modding.html">Guides</a><a href="../api/lua.html">API</a><a aria-current="page" href="audio.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Audio &amp; music</h2><a href="#mod-audio">Mod audio</a><a href="#generated">Generated PCM</a><a href="#language">Expression language</a><a href="#playlist">Playlist</a><a href="#dollchan">Dollchan engine</a><a href="#rates">Sample vs output rate</a><a href="#limits">Limits</a><a href="#commands">Commands &amp; testing</a></nav></aside>
+<main id="main" class="content" data-doc-title="Audio &amp; music"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Audio &amp; music</nav><article>
+<h1>Audio and music</h1>
+<p class="lead">The framework supports native synth effects, mod-owned files, bounded bytebeat/floatbeat PCM, the native postfix playlist, and explicitly marked Dollchan-compatible JavaScript tracks.</p>
+
+<section id="mod-audio"><h2>Mod audio API</h2>
+<pre><code>mod.audio.play_sfx("assets/click.wav", {volume=.8})
+mod.audio.play_sfx("pip", {pitch=1.2, duration=80})
+mod.audio.play_music("assets/loop.ogg", {loops=-1})
+mod.audio.set_sfx_volume(.8)
+mod.audio.set_music_volume(.6)
+mod.audio.stop_music()</code></pre>
+<p>File SFX options are <code>volume</code>, <code>loops</code>, and maximum <code>ticks</code> in milliseconds. Music is one global channel and ownership is tracked; one mod cannot stop another mod's current music. File codecs depend on the installed <code>SDL2_mixer</code>.</p>
+<p>Built-in ids: <code>pip</code>, <code>noise</code>, <code>thump</code>, <code>shred</code>, <code>fm</code>, <code>ringmod</code>, <code>warble</code>, <code>creepy</code>, <code>pulse</code>, and <code>sword_ching</code>/<code>ching</code>.</p></section>
+
+<section id="generated"><h2>Bounded bytebeat and floatbeat</h2>
+<pre><code>local ok, info = mod.audio.play_bytebeat(
+  "t*((t&gt;&gt;12|t&gt;&gt;8)&amp;63&amp;t&gt;&gt;4)",
+  {mode="bytebeat", sample_rate=8000, duration=8, fade_ms=8,
+   gain=.7, volume=.8, loops=0, ticks=-1}
+)</code></pre>
+<p><code>bytebeat_info(expression,opts)</code> validates without rendering or initializing audio. <code>stop_sfx()</code> stops this mod's voices; <code>clear_generated()</code> also frees its generated cache; <code>status()</code> reports backend, voices, chunks, bytes, limits, and volume.</p>
+<p>Generated PCM does not need <code>SDL2_mixer.dll</code>. It uses a bounded native voice pool in Eggnogg's already-open callback. Exact expression/options pairs reuse an owned cache entry.</p></section>
+
+<section id="language"><h2>Bounded expression language</h2>
+<p>Variables: <code>t</code>, <code>sr</code>/<code>sampleRate</code>/<code>sample_rate</code>, <code>time</code>/<code>seconds</code>, <code>pi</code>/<code>PI</code>/<code>Math.PI</code>, and <code>e</code>/<code>E</code>.</p>
+<p>Operators follow JS-like numeric precedence: unary <code>+ - ~ !</code>; power <code>**</code>; arithmetic; shifts; comparison/equality; bitwise <code>&amp; ^ |</code>; short-circuit <code>&amp;&amp; ||</code>; and conditional <code>?:</code>. Functions (with optional <code>Math.</code>) include trig, abs/floor/ceil/round/trunc/int/fract/sign, sqrt/log/exp/pow, min/max/clamp, and deterministic <code>noise(value)</code>.</p>
+<p>This is not JavaScript: no strings, arrays, assignment, properties beyond fixed Math aliases, callbacks, allocation, filesystem, network, global state, or ambient random source.</p></section>
+
+<section id="playlist"><h2>Native playlist files</h2>
+<p>The playlist is contiguous: <code>data/tune.txt</code>, <code>data/tune1.txt</code>, and so on. A numbering gap hides later tracks until it is filled. Existing unmarked files use Eggnogg's native postfix stack language.</p>
+<p>A bounded bytebeat track uses a marker followed by one expression:</p>
+<pre><code>$"Track title"
+( yule:bytebeat sample_rate=44100 volume=0.25 )
+t*((t&gt;&gt;12|t&gt;&gt;8)&amp;63&amp;t&gt;&gt;4)</code></pre>
+<p>Bounded playlist formulas allow more evaluation work per source second than short mod SFX but keep the same deliberately small expression surface.</p></section>
+
+<section id="dollchan"><h2>Dollchan-compatible JavaScript tracks</h2>
+<pre><code>$"Track title"
+( yule:bytebeat engine=dollchan mode=bytebeat sample_rate=44100 volume=0.25 )
+M=T=&gt;(/* original Dollchan expression */),M(t/5000)</code></pre>
+<p>Modes: <code>bytebeat</code>, <code>signed-bytebeat</code>, <code>floatbeat</code>, and <code>funcbeat</code>. Scalar results are mono; <code>[left,right]</code> is stereo. Short Math names, assignment, arrow functions, arrays, and private <code>random()</code> follow the Dollchan execution shape. Funcbeat receives <code>(time,sampleRate)</code>.</p>
+<p>The isolated runtime uses system Chakra where supported and a vendored core-only QuickJS-NG fallback. It receives no DOM, host objects, modules, filesystem, process, shell, or network. A producer thread fills eight 4,096-frame stereo blocks before playback; JavaScript never runs in the real-time audio callback.</p>
+<p>Unmarked general JavaScript is intentionally rejected because rate and playback mode would be ambiguous.</p></section>
+
+<section id="rates"><h2>Source sample rate versus mixer output rate</h2>
+<div class="callout note"><strong><code>sample_rate</code></strong> controls the formula's <code>t</code>, tempo, and pitch. <strong><code>output_rate</code></strong> controls only the SDL device. They are independent.</div>
+<ul>
+  <li><code>sample_rate</code>: 4,000..48,000 Hz, default 8,000.</li>
+  <li>Global <code>music_output_rate</code>: 8,000..192,000 Hz, normally 48,000 to avoid destructive downsampling of 32–48 kHz formulas.</li>
+  <li>A track may set <code>output_rate=44100</code> in its marker without changing global configuration.</li>
+</ul>
+<p>Changing output rate reopens the SDL mixer synchronously on the main thread but does not alter track tempo.</p></section>
+
+<section id="limits"><h2>Generated-audio limits</h2>
+<table><thead><tr><th>Resource</th><th>Limit</th></tr></thead><tbody>
+  <tr><td>Bounded mod expression</td><td>1,024 bytes, 512 AST nodes, depth 48</td></tr>
+  <tr><td>One mod render</td><td>262,144 samples and 8,388,608 estimated node evaluations</td></tr>
+  <tr><td>Generated cache</td><td>16 chunks / 4 MiB PCM per mod</td></tr>
+  <tr><td>Voices</td><td>8 per mod, 32 process-wide</td></tr>
+  <tr><td>Dollchan source / heap</td><td>8 MiB source; private 64 MiB heap</td></tr>
+  <tr><td>Dollchan work</td><td>Adaptive bounded compile/validation and interruptible producer deadlines</td></tr>
+</tbody></table>
+<p>Generated audio is presentation-only: it never enters game state, checksums, map/content identity, rollback snapshots, or gameplay RNG.</p></section>
+
+<section id="commands"><h2>Commands and acceptance</h2>
+<pre><code>music.status
+music.scan
+music.rescan
+music.play 8
+music.play random
+music.output_rate
+music.output_rate 48000</code></pre>
+<p><code>music.scan</code> labels native-postfix, bounded-bytebeat, Dollchan JS, unsupported JS, and tracks hidden by numbering gaps. <code>music.rescan</code> discovers files added while the game runs.</p>
+<p>For regressions, run <code>tests/run_core_native_tests.ps1</code>. Live-test tempo, stereo, output rate, hot reload, cache reuse, stop/clear ownership, long-track continuity, and compare Dollchan-marked tracks against the same source in Dollchan. A <code>PCM producer underrun</code> means the machine could not render a heavy formula in real time.</p></section>
+</article></main></div>
+</body></html>

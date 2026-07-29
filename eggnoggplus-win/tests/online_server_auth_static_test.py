@@ -46,8 +46,8 @@ auth_ok = function_body("function authOk")
 assert 'crypto.randomBytes(32).toString("hex")' in token_factory
 assert "p2p_auth_token: makeP2pAuthToken()" in match_factory
 assert match_factory.count("p2p_auth_token: match.p2p_auth_token") == 2
-assert match_factory.count("match_protocol: MATCH_PROTOCOL_VERSION") == 2
-assert match_factory.count("p2p_protocol: P2P_PROTOCOL_VERSION") == 2
+assert match_factory.count("match_protocol: match.match_protocol") == 2
+assert match_factory.count("p2p_protocol: match.p2p_protocol") == 2
 
 # Deployment compatibility is observable without an account and repeated in
 # auth_ok. All fields stay scalar for the strict flat client JSON parser.
@@ -57,8 +57,27 @@ for body in (server_info, auth_ok):
     assert "p2p_protocol: P2P_PROTOCOL_VERSION" in body
     assert "cap_p2p_auth: 1" in body
     assert "cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0" in body
+    assert "cap_client_build_gate: 1" in body
 assert 'case "server_info": sendServerInfo(client); break;' in SOURCE
 assert "sendServerInfo(client);" in SOURCE[SOURCE.index("const server = net.createServer") :]
+assert "clientProtocolReady" in SOURCE
+assert "clientBuildReady" in SOURCE
+assert "clientsProtocolCompatible" in SOURCE
+assert "rejectUnsupportedClient(client)" in SOURCE
+assert "clientsCanQueueMatch(casualQueue[i], casualQueue[j])" in SOURCE
+assert "clientsCanQueueMatch(competitiveQueue[i], competitiveQueue[j])" in SOURCE
+assert "client.control_protocol = sanitizeProtocolVersion(msg.control_protocol)" in SOURCE
+assert "client.match_protocol = sanitizeProtocolVersion(msg.match_protocol)" in SOURCE
+assert "client.p2p_protocol = sanitizeProtocolVersion(msg.p2p_protocol)" in SOURCE
+assert "client.build_id = sanitizeFingerprint(msg.build_id)" in SOURCE
+assert "client.game_exe_id = sanitizeFingerprint(msg.game_exe_id)" in SOURCE
+assert "client.framework_dll_id = sanitizeFingerprint(msg.framework_dll_id)" in SOURCE
+protocol_sanitizer = function_body("function sanitizeProtocolVersion")
+assert "Number.isInteger(value)" in protocol_sanitizer
+assert "value > 0" in protocol_sanitizer
+fingerprint_sanitizer = function_body("function sanitizeFingerprint")
+assert "Number.isInteger(value)" in fingerprint_sanitizer
+assert "value <= 0xffffffff" in fingerprint_sanitizer
 
 # Rendezvous authorization remains per-user and distinct from the shared peer
 # packet key. Both roles must still receive their own p2p_token entry.

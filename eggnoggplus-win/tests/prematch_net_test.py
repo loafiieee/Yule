@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +87,80 @@ def reserve_port() -> int:
         return sock.getsockname()[1]
     finally:
         sock.close()
+
+
+class UdpPairRelay:
+    """Small symmetric relay used to exercise the production relay topology."""
+
+    def __init__(self, port: int, host_port: int, join_port: int) -> None:
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("127.0.0.1", port))
+        self.sock.settimeout(0.1)
+        self.host_port = host_port
+        self.join_port = join_port
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.host_packets = 0
+        self.join_packets = 0
+        self.forwarded_packets = 0
+        self.packet_types: dict[int, int] = {}
+        self.socket_errors: list[str] = []
+        self.unknown_sources: dict[int, int] = {}
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop_event.set()
+        self.thread.join(timeout=2.0)
+        self.sock.close()
+
+    def _run(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                payload, source = self.sock.recvfrom(2048)
+            except TimeoutError:
+                continue
+            except OSError as exc:
+                if self.stop_event.is_set():
+                    return
+                # Windows reports an ICMP "port unreachable" from an early
+                # pre-bind datagram as WSAECONNRESET on a later recvfrom().
+                # A long-lived UDP relay must survive that asynchronous error.
+                self.socket_errors.append(str(exc))
+                continue
+            if source[0] != "127.0.0.1":
+                continue
+            destination = (
+                self.join_port
+                if source[1] == self.host_port
+                else self.host_port
+                if source[1] == self.join_port
+                else 0
+            )
+            if destination:
+                if source[1] == self.host_port:
+                    self.host_packets += 1
+                else:
+                    self.join_packets += 1
+                if len(payload) >= 8:
+                    packet_type = struct.unpack_from("<H", payload, 6)[0]
+                    self.packet_types[packet_type] = (
+                        self.packet_types.get(packet_type, 0) + 1
+                    )
+                self.sock.sendto(payload, ("127.0.0.1", destination))
+                self.forwarded_packets += 1
+            else:
+                self.unknown_sources[source[1]] = (
+                    self.unknown_sources.get(source[1], 0) + 1
+                )
+
+    def summary(self) -> str:
+        return (
+            f"host_packets={self.host_packets} join_packets={self.join_packets} "
+            f"forwarded={self.forwarded_packets} types={self.packet_types} "
+            f"unknown={self.unknown_sources} socket_errors={self.socket_errors}"
+        )
 
 
 def valid_chaos_metadata(fields: dict[str, str]) -> bool:
@@ -175,6 +250,7 @@ def run_pair(
     input_sampling: bool = False,
     tick_failure: bool = False,
     prematch_skew: bool = False,
+    via_relay: bool = False,
 ) -> None:
     chaos_case = gameplay_chaos or gameplay_wrap_chaos
     correction_case = gameplay_correction or gameplay_long_correction
@@ -192,6 +268,17 @@ def run_pair(
     while restart_requested and restart_port in (host_port, join_port):
         restart_port = reserve_port()
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    relay: UdpPairRelay | None = None
+    peer_port_for_host = join_port
+    peer_port_for_join = host_port
+    if via_relay:
+        relay_port = reserve_port()
+        while relay_port in (host_port, join_port, restart_port):
+            relay_port = reserve_port()
+        relay = UdpPairRelay(relay_port, host_port, join_port)
+        relay.start()
+        peer_port_for_host = relay_port
+        peer_port_for_join = relay_port
     host_child_env = child_env
     join_child_env = child_env
     trace_paths: list[Path] = []
@@ -251,13 +338,13 @@ def run_pair(
         mode = "layout"
     else:
         mode = "reject" if expect_rejection else "normal"
-    host_args = [str(EXE), "host", str(host_port), str(join_port), host_token, mode]
+    host_args = [str(EXE), "host", str(host_port), str(peer_port_for_host), host_token, mode]
     if tamper_host:
         host_args.append("tamper")
     elif replay_host:
         host_args.append("replay")
     join_mode = ("layoutrestart" if final_layout else "restart") if restart_join else mode
-    join_args = [str(EXE), join_role, str(join_port), str(host_port), join_token, join_mode]
+    join_args = [str(EXE), join_role, str(join_port), str(peer_port_for_join), join_token, join_mode]
     if restart_join:
         host_args[5] = "layoutwatchrestart" if final_layout else "watchrestart"
         host_args.append(str(restart_port))
@@ -287,6 +374,7 @@ def run_pair(
     )
     host_trace_data = b""
     join_trace_data = b""
+    executor: ThreadPoolExecutor | None = None
     try:
         if gameplay_long_correction:
             pair_timeout = 60
@@ -298,21 +386,56 @@ def run_pair(
         # enough diagnostic output to fill a Windows pipe; waiting for the host
         # to finish before reading the join pipe can block the join inside its
         # logger and manufacture a peer timeout.
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            host_result = executor.submit(host.communicate, timeout=pair_timeout)
-            join_result = executor.submit(join.communicate, timeout=pair_timeout)
-            host_out, host_err = host_result.result()
-            join_out, join_err = join_result.result()
-    except BaseException:
+        executor = ThreadPoolExecutor(max_workers=2)
+        host_result = executor.submit(host.communicate, timeout=pair_timeout)
+        join_result = executor.submit(join.communicate, timeout=pair_timeout)
+        host_out, host_err = host_result.result()
+        join_out, join_err = join_result.result()
+    except BaseException as exc:
         host.kill()
         join.kill()
         host.wait()
         join.wait()
+        if executor is not None:
+            # A `with ThreadPoolExecutor` waits for communicate() before the
+            # exception handler can kill its children. On Windows that turns a
+            # useful bounded timeout into a permanent test-runner hang.
+            executor.shutdown(wait=True, cancel_futures=True)
+        child_details: list[str] = []
+        for label, future in (("host", host_result), ("join", join_result)):
+            try:
+                child_out, child_err = future.result()
+                child_details.append(
+                    f"{label} return output:\n{child_out}\n{label} error:\n{child_err}"
+                )
+            except subprocess.TimeoutExpired as child_timeout:
+                child_details.append(
+                    f"{label} timed out; output:\n{child_timeout.output or ''}\n"
+                    f"{label} error:\n{child_timeout.stderr or ''}"
+                )
+            except BaseException as child_exc:
+                child_details.append(f"{label} communicate failed: {child_exc}")
         for trace_path in trace_paths:
             trace_path.unlink(missing_ok=True)
         for repro_dir in repro_dirs:
             shutil.rmtree(repro_dir, ignore_errors=True)
+        relay_summary = relay.summary() if relay is not None else "direct"
+        if relay is not None:
+            relay.close()
+        if isinstance(exc, subprocess.TimeoutExpired):
+            partial_out = exc.output or ""
+            partial_err = exc.stderr or ""
+            raise AssertionError(
+                f"{mode} pair timed out after {pair_timeout}s ({relay_summary})\n"
+                f"partial output:\n{partial_out}\npartial error:\n{partial_err}\n" +
+                "\n".join(child_details)
+            ) from exc
         raise
+    else:
+        if executor is not None:
+            executor.shutdown(wait=True)
+        if relay is not None:
+            relay.close()
     if chaos_case:
         try:
             host_trace_data = trace_paths[0].read_bytes()
@@ -1041,6 +1164,19 @@ def main() -> int:
         if "--frame-ring-only" in sys.argv[1:]:
             print("prematch_net_test: frame-ring checks passed")
             return 0
+        if "--basic-only" in sys.argv[1:]:
+            run_pair("join", expect_recovery=False, child_env=child_env)
+            print("prematch_net_test: basic authenticated handshake checks passed")
+            return 0
+        if "--relay-only" in sys.argv[1:]:
+            run_pair(
+                "join",
+                expect_recovery=False,
+                child_env=child_env,
+                via_relay=True,
+            )
+            print("prematch_net_test: symmetric-relay handshake checks passed")
+            return 0
         if "--skew-only" in sys.argv[1:]:
             run_pair(
                 "join",
@@ -1193,6 +1329,12 @@ def main() -> int:
             )
         print(no_key.stdout.strip())
         run_pair("join", expect_recovery=False, child_env=child_env)
+        run_pair(
+            "join",
+            expect_recovery=False,
+            child_env=child_env,
+            via_relay=True,
+        )
         run_pair(
             "join",
             expect_recovery=False,

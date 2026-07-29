@@ -1,0 +1,180 @@
+Building credential lifecycle tests...
+Credential Manager live roundtrip skipped (set EGGNOGGPLUS_CREDENTIAL_TEST_LIVE=1 to enable).
+credential_ext tests passed
+Building nonblocking TCP transport tests...
+ALL OK
+Building online control parser/lifecycle tests...
+online_control tests passed
+Building safe launch request parser tests...
+launch_request_test: all checks passed
+Building existing-process launch IPC tests...
+launch IPC tests passed
+Building window policy tests...
+window policy tests: OK
+Building canonical floating-point tick tests...
+fp control tests: ALL OK
+Building canonical rollback envelope codec tests...
+PASS: canonical rollback envelope codec tests
+Building privacy-bounded Discord Rich Presence tests...
+discord Rich Presence tests: OK
+Building bounded bytebeat expression/render tests...
+bytebeat expression/render tests: OK
+Building sandboxed Dollchan JavaScript compatibility tests...
+tune9 mode=0 rate=44100 block render: 0/15 ms (budget 211 ms)
+tune10 mode=2 rate=44100 block render: 94/78 ms (budget 211 ms)
+sandboxed Dollchan JavaScript tests: OK
+Building ahead-of-time Dollchan PCM stream tests...
+bytebeat producer stream tests: OK
+Building native rollback serializer tests...
+state serializer tests: ALL OK
+TAP version 13
+# Subtest: configuration fails closed
+ok 1 - configuration fails closed
+  ---
+  duration_ms: 1.516
+  type: 'test'
+  ...
+# Subtest: queue payload contains only public identity, queue, and HTTPS handoffs
+ok 2 - queue payload contains only public identity, queue, and HTTPS handoffs
+  ---
+  duration_ms: 1.1581
+  type: 'test'
+  ...
+# Subtest: join posts once and leave edits the exact owned message
+ok 3 - join posts once and leave edits the exact owned message
+  ---
+  duration_ms: 0.9923
+  type: 'test'
+  ...
+# Subtest: matched post is edited now and deleted after one-day retention
+ok 4 - matched post is edited now and deleted after one-day retention
+  ---
+  duration_ms: 0.5099
+  type: 'test'
+  ...
+# Subtest: leave racing create edits the late message
+ok 5 - leave racing create edits the late message
+  ---
+  duration_ms: 0.4135
+  type: 'test'
+  ...
+# Subtest: a sub-two-second queue stay never creates a Discord message
+ok 6 - a sub-two-second queue stay never creates a Discord message
+  ---
+  duration_ms: 0.6807
+  type: 'test'
+  ...
+# Subtest: the delayed post is created once only after its timer fires
+ok 7 - the delayed post is created once only after its timer fires
+  ---
+  duration_ms: 0.2476
+  type: 'test'
+  ...
+# Subtest: 429 response uses server retry_after instead of hardcoded route rates
+ok 8 - 429 response uses server retry_after instead of hardcoded route rates
+  ---
+  duration_ms: 0.2718
+  type: 'test'
+  ...
+# Subtest: invalid lifecycle values never reach Discord
+ok 9 - invalid lifecycle values never reach Discord
+  ---
+  duration_ms: 0.2776
+  type: 'test'
+  ...
+# Subtest: orderly close retires active owned posts
+ok 10 - orderly close retires active owned posts
+  ---
+  duration_ms: 0.5025
+  type: 'test'
+  ...
+# Subtest: pending create work is bounded without dropping owned cleanup
+ok 11 - pending create work is bounded without dropping owned cleanup
+  ---
+  duration_ms: 6.035
+  type: 'test'
+  ...
+# Subtest: public base and generated links are strict HTTPS routes
+ok 12 - public base and generated links are strict HTTPS routes
+  ---
+  duration_ms: 1.2358
+  type: 'test'
+  ...
+# Subtest: redirect parser exposes only completed canonical yule intents
+ok 13 - redirect parser exposes only completed canonical yule intents
+  ---
+  duration_ms: 0.2626
+  type: 'test'
+  ...
+# Subtest: HTTP handoff is no-store and method bounded
+ok 14 - HTTP handoff is no-store and method bounded
+  ---
+  duration_ms: 0.4477
+  type: 'test'
+  ...
+# Subtest: redirect server refuses an accidental public bind
+ok 15 - redirect server refuses an accidental public bind
+  ---
+  duration_ms: 0.2639
+  type: 'test'
+  ...
+# Subtest: admin bind validation accepts only loopback/private literals by default
+ok 16 - admin bind validation accepts only loopback/private literals by default
+  ---
+  duration_ms: 5.0441
+  type: 'test'
+  ...
+# Subtest: admin UI authenticates, requires CSRF, and dispatches maintenance actions
+ok 17 - admin UI authenticates, requires CSRF, and dispatches maintenance actions
+  ---
+  duration_ms: 24.5784
+  type: 'test'
+  ...
+# Subtest: admin UI stays disabled without a strong password
+ok 18 - admin UI stays disabled without a strong password
+  ---
+  duration_ms: 0.1831
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 112.2025
+compile source list checks: OK (30 implementation files)
+release packaging fail-closed static checks: OK
+credential_hooks_static_test: all checks passed
+online_control_hooks_static_test: all checks passed
+online flow integration static checks: OK
+online native cursor static checks: OK
+online match network HUD static checks: OK
+online menu tick static checks: OK
+online active troubleshooter static checks: OK
+online LAN admin integration static checks: OK
+friend challenge map picker static checks: OK
+social controls static checks: OK
+private rematch static checks: OK
+online launch/deep-link static checks: OK
+one-shot updater handoff static checks: OK
+single frame-boundary capture static checks: OK
+desync_repro_static_test: all checks passed
+peer trace diff tests: OK
+fp_control_hooks_static_test: all checks passed
+simulation_geometry_static_test: all checks passed
+player colour static checks: OK
+Discord Rich Presence privacy/runtime wiring checks: OK
+bytebeat Lua/cache/resource wiring checks: OK
+Lua HTTP owner/cancellation/body-bound static checks: OK
+public mod.online cosmetics-surface removal checks: OK
+sandboxed Dollchan JavaScript build/security wiring checks: OK
+native/bounded/Dollchan music playlist and authoring controls: OK
+Discord LFG server/bot privacy lifecycle checks: OK
+state-preserving online-server updater checks: OK
+installer lifecycle checks: OK
+net_backpressure_static_test: all checks passed
+window runtime static checks: OK
+PASS: guarded credential, TCP/control, FP, rollback envelope, serializer, and window native/static tests completed.

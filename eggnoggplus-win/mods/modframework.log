@@ -1,110 +1,83 @@
-[00:02:13] [INFO] Mod framework initializing...
-[00:02:13] [INFO] Mod framework API version: 1
-[00:02:13] [INFO] Scanning mods/ folder...
-[00:02:13] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
-[00:02:13] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
-[00:02:13] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
-[00:02:13] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
-[00:02:13] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
-[00:02:13] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
-[00:02:13] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
-[00:02:13] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
-[00:02:13] [INFO] Loaded mod: ai_opponent
-[00:02:13] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
-[00:02:13] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
-[00:02:13] [INFO] [mod:options_demo] Loaded options demo
-[00:02:13] [INFO] [mod:options_demo] difficulty=normal greeting=hello
-[00:02:13] [INFO] Loaded mod: options_demo
-[00:02:13] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
-[00:02:13] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[00:02:13] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
-[00:02:13] [INFO] [mod:speedhack] speed=1
-[00:02:13] [INFO] Loaded mod: speedhack
-[00:02:13] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[00:02:13] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[00:02:13] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[00:02:13] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[00:02:13] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[00:02:13] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[00:02:13] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[00:02:13] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[00:02:13] [INFO] Loaded mod: texture_pack_test
-[00:02:13] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[00:02:13] [INFO] [maps] scanning maps/ for custom maps
-[00:02:13] [INFO] [maps][example_map] scanning folder: maps\example_map
-[00:02:13] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[00:02:13] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[00:02:13] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[00:02:13] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[00:02:13] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[00:02:13] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[00:02:13] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
-[00:02:13] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[00:02:13] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[00:02:13] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[00:02:13] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
-[00:02:13] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
-[00:02:13] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
-[00:02:13] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
-[00:02:13] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
-[00:02:13] [INFO] [maps] registry ready: 3 custom maps (was 0)
-[00:02:14] [INFO] hooks_init: custom MODS menu ready
-[00:02:14] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
-[00:02:14] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
-[00:02:14] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[00:02:14] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
-[00:02:14] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
-[00:02:14] [INFO] [discord] Rich Presence connected
-[00:02:14] [INFO] update: boot local=1.2 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
-[00:02:14] [INFO] update: current (local=1.2 channel=1.0)
-[00:02:15] [INFO] ONLINE HUB: enter
-[00:02:17] [INFO] online.hub: Settings saved.
-[00:02:18] [INFO] online.hub: Connecting to online server...
-[00:02:18] [INFO] online.hub: Checking online server...
-[00:02:18] [INFO] online.hub: Signing in...
-[00:02:18] [INFO] online.credentials: updated remembered login server=eggnogg.loafiieee.com:47778 user=loaf
-[00:02:18] [INFO] online.hub: Logged in.
-[00:02:22] [INFO] online.hub: Joining casual queue...
-[00:02:23] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[00:02:23] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000006 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[00:02:31] [INFO] Online mod safety: gameplay-affecting Lua mods suspended; cosmetic mods remain active
-[00:02:31] [INFO] [mod:ai_opponent] suspended for online rollback safety (mod.game.register_menu_mode)
-[00:02:31] [INFO] online.hub: Match found: loaf2 on Vanilla 4
-[00:02:31] [INFO] ggpo.net: local build fingerprint build=B9471409 exe=632C561E dll=C2376938 correction=on
-[00:02:31] [INFO] ggpo.net: hosting held udp port=58853; rollback layout deferred
-[00:02:31] [INFO] ggpo.net: hosting from online server match udp=58853 player=0 delay=1 adv=20 predcap=24 corr=on state_size=0
-[00:02:31] [INFO] online.p2p: connect attempt 1/3 local_udp=58853 configured socket
-[00:02:31] [INFO] online.p2p: sent UDP discovery probe match=1 server=eggnogg.loafiieee.com:47778 local_udp=58853
-[00:02:31] [INFO] online.p2p: server selected route=loopback peer=127.0.0.1:58854 match=1
-[00:02:31] [INFO] ggpo.net: set peer endpoint 127.0.0.1:58854 mode=host local_port=58853 candidates=1
-[00:02:31] [INFO] ggpo.net: peer traffic received mode=host local_player=0 peer_port=58854; confirming bidirectional link
-[00:02:31] [INFO] ggpo.net: bidirectional link confirmed mode=host local_player=0 remote_player=1 peer_port=58854
-[00:02:31] [WARN] ggpo.net: peer build fingerprint differs local build=B9471409 exe=632C561E dll=C2376938 remote build=FDD137E1 exe=632C561E dll=01407570
-[00:02:31] [INFO] ggpo.net: peer prematch hold engaged hold_epoch=1 state_epoch=0
-[00:02:31] [INFO] online.p2p: connected during countdown on attempt 1/3 local_udp=58853
-[00:02:31] [ERROR] online.prematch: setup failed match=1 (opponent is using a different game or framework build)
-[00:02:31] [WARN] net.diag: === P2P connection troubleshooter ===
-[00:02:31] [WARN] net.diag: server:  eggnogg.loafiieee.com:47778 (connected) slot=0
-[00:02:31] [WARN] net.diag: match:   active=no id=0
-[00:02:31] [WARN] net.diag: your LAN ip: 26.81.120.46
-[00:02:31] [WARN] net.diag: session: connected=YES mode=host local_player=0
-[00:02:31] [WARN] net.diag: auth:    HMAC-SHA-256/128 replay_window=4096 rejected=0
-[00:02:31] [WARN] net.diag: local:   udp_port=58853
-[00:02:31] [WARN] net.diag: prematch: local=HELD peer=HELD hold_epoch=1/1 state_epoch=1 seen=0 floor=0
-[00:02:31] [WARN] net.diag: palette: local=7/13 remote=none/0/0 entries=45 ack=no conflict=no
-[00:02:31] [WARN] net.diag: peer:    127.0.0.1:58854
-[00:02:31] [WARN] net.diag: inputs:  local_frame=0 remote_frame=0 rx_contiguous=none/0 peer_acked=none/0 checksum_horizon=none/0 rollback=clean
-[00:02:31] [WARN] net.diag: candidates: 1
-[00:02:31] [WARN] net.diag:   -> 127.0.0.1:58854
-[00:02:31] [WARN] net.diag: traffic: sent=28 recv=26 last_recv=0t ago alt_endpoint=0
-[00:02:31] [WARN] net.diag: tx pressure: would_block=0 send_error=0 deferred=0 last_error=0 sim_drop=0 queue_drop=0 pending=0
-[00:02:31] [WARN] net.diag: VERDICT: connected - the P2P link is up.
-[00:02:31] [INFO] ggpo.net: stopped from prematch setup failed after 0 frame(s), checksum=0 tx=28 rx=26 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
-[00:02:31] [INFO] Online mod safety: gameplay-affecting Lua mods resumed
-[00:02:31] [INFO] online.hub: Online match setup failed: opponent is using a different game or framework build
-[00:02:31] [WARN] online.server: ignored stale match_abort match=1 current=0
-[00:02:36] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[00:02:36] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[00:02:41] [INFO] ONLINE HUB: leave
-[00:02:42] [INFO] [mod:speedhack] Unloaded
-[00:02:42] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[18:24:01] [INFO] Mod framework initializing...
+[18:24:01] [INFO] Mod framework API version: 1
+[18:24:01] [INFO] Scanning mods/ folder...
+[18:24:01] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
+[18:24:02] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
+[18:24:02] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
+[18:24:02] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
+[18:24:02] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
+[18:24:02] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
+[18:24:02] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
+[18:24:02] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
+[18:24:02] [INFO] Loaded mod: ai_opponent
+[18:24:02] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[18:24:02] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[18:24:02] [INFO] [mod:options_demo] Loaded options demo
+[18:24:02] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[18:24:02] [INFO] Loaded mod: options_demo
+[18:24:02] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[18:24:02] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[18:24:02] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[18:24:02] [INFO] [mod:speedhack] speed=1
+[18:24:02] [INFO] Loaded mod: speedhack
+[18:24:02] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[18:24:02] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[18:24:02] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[18:24:02] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[18:24:02] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[18:24:02] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[18:24:02] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[18:24:02] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[18:24:02] [INFO] Loaded mod: texture_pack_test
+[18:24:02] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[18:24:02] [INFO] [maps] scanning maps/ for custom maps
+[18:24:02] [INFO] [maps][example_map] scanning folder: maps\example_map
+[18:24:02] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[18:24:02] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[18:24:02] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[18:24:02] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[18:24:02] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[18:24:02] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[18:24:02] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[18:24:02] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[18:24:02] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[18:24:02] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[18:24:02] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[18:24:02] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[18:24:02] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[18:24:02] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[18:24:02] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[18:24:02] [INFO] [maps] registry ready: 3 custom maps (was 0)
+[18:24:02] [INFO] hooks_init: custom MODS menu ready
+[18:24:02] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
+[18:24:02] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
+[18:24:02] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:02] [INFO] update: boot local=1.2 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[18:24:03] [INFO] update: current (local=1.2 channel=1.0)
+[18:24:03] [INFO] [discord] Rich Presence connected
+[18:24:06] [INFO] online.credentials: loaded remembered login server=eggnogg.loafiieee.com:47778 user=loaf
+[18:24:06] [INFO] online.hub: Connecting to online server...
+[18:24:06] [INFO] ONLINE HUB: enter
+[18:24:06] [INFO] online.hub: Checking online server...
+[18:24:06] [INFO] online.hub: Signing in...
+[18:24:06] [INFO] online.credentials: updated remembered login server=eggnogg.loafiieee.com:47778 user=loaf
+[18:24:06] [INFO] online.hub: Logged in.
+[18:24:07] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:08] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000006 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:16] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000406 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:17] [INFO] window[pre-swap]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:17] [INFO] ONLINE HUB: leave
+[18:24:19] [INFO] [music][tune10] Dollchan JavaScript active: SUNRISE ON MARS (44100 Hz, 0.25 volume)
+[18:24:21] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
+[18:24:21] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
+[18:24:22] [INFO] [music] mixer output changed from 16000 Hz to 48000 Hz
+[18:24:22] [INFO] [music][tune8] Dollchan JavaScript active: STEADY ON TIM, IT'S ONLY A BUDGET GAME (44100 Hz, 0.25 volume)
+[18:24:41] [INFO] MODS: entering mods menu
+[18:24:52] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:52] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:52] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:53] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:53] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:24:55] [INFO] [music][tune8] Dollchan JavaScript active: STEADY ON TIM, IT'S ONLY A BUDGET GAME (44100 Hz, 0.25 volume)
+[18:24:55] [INFO] [mod:speedhack] Unloaded
+[18:24:55] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

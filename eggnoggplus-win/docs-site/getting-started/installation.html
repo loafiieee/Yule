@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install, update, and remove the Yule Eggnogg+ framework.">
+  <title>Installation · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="installation">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout">
+    <aside class="sidebar" id="site-nav" aria-label="Documentation"></aside>
+    <button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+    <main class="docs-main" id="main-content"><article class="article">
+      <p class="breadcrumb"><a href="../index.html">Docs</a> / Getting started / Installation</p>
+      <p class="eyebrow">Getting started</p>
+      <h1>Installation</h1>
+      <p class="lead">The supported installer keeps the original SDL library, installs the framework as a proxy, and records what it owns so it can update or uninstall safely.</p>
+
+      <h2 id="requirements">Requirements</h2>
+      <ul>
+        <li>Windows and a working copy of <code>eggnoggplus.exe</code>.</li>
+        <li>The Yule installer ZIP for the release you want to install.</li>
+        <li>Internet access while the installer retrieves and verifies release files.</li>
+        <li>Permission to write to the chosen game folder and to register optional shortcuts and <code>yule://</code> links.</li>
+      </ul>
+      <div class="callout warning"><strong>Before changing a valued copy:</strong> close every Eggnogg+ process and keep a clean backup of the original game folder. Do not install over a half-repaired DLL set.</div>
+
+      <h2 id="install">Install</h2>
+      <ol class="steps">
+        <li><strong>Extract the complete installer ZIP.</strong> Do not run the scripts from inside the ZIP preview.</li>
+        <li><strong>Run <code>INSTALL.bat</code>.</strong> The script first looks beside itself and in a previous install receipt. If it cannot find the game, it asks you to locate <code>eggnoggplus.exe</code>.</li>
+        <li><strong>Review the detected folder.</strong> Follow the prompts for the install location, shortcuts, and Steam integration. You can decline optional integration without disabling the framework.</li>
+        <li><strong>Let verification finish.</strong> On a vanilla copy, the installer renames the original <code>SDL2.dll</code> to <code>SDL2_real.dll</code>, then installs the verified proxy and its required runtime files.</li>
+        <li><strong>Launch <code>eggnoggplus.exe</code>.</strong> The updater helper is not a launcher; the game executable remains the normal entry point.</li>
+      </ol>
+
+      <h2 id="verify">Verify the install</h2>
+      <p>A healthy root contains these roles:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>File or folder</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>eggnoggplus.exe</code></td><td>The game and only normal launch target.</td></tr>
+          <tr><td><code>SDL2.dll</code></td><td>The Yule proxy loaded by the game.</td></tr>
+          <tr><td><code>SDL2_real.dll</code></td><td>The preserved original SDL library that the proxy forwards to.</td></tr>
+          <tr><td><code>lua51.dll</code> and MinGW runtime DLLs</td><td>Runtime dependencies used by the framework.</td></tr>
+          <tr><td><code>YuleUpdater.exe</code></td><td>A one-shot helper used only when replacing files mapped by a running game.</td></tr>
+          <tr><td><code>mods/</code></td><td>Framework configuration, installed mods, logs, and runtime data.</td></tr>
+        </tbody>
+      </table></div>
+      <p>After one launch, check <code>mods/modframework.log</code>. It should show framework and mod initialization rather than a missing-original-SDL error.</p>
+
+      <h2 id="updates">Updates</h2>
+      <p>The framework checks its configured HTTPS channel after rendering begins, so a failed check does not block startup. Open <strong>Options → Mods → Framework</strong> to see the version and update state or change automatic updates. When a verified update is ready, return to a safe menu. The game starts <code>YuleUpdater.exe</code>, closes normally, swaps the complete verified set, and relaunches.</p>
+      <div class="callout"><strong>Do not launch the updater helper yourself.</strong> It expects a staged, journaled transaction and an exact game process handoff.</div>
+
+      <h2 id="uninstall">Uninstall safely</h2>
+      <ol>
+        <li>Close Eggnogg+ and the update helper.</li>
+        <li>Run <code>UNINSTALL.bat</code> from the installer package.</li>
+        <li>Confirm the recorded target. The uninstaller removes installer-owned integration and restores the original <code>SDL2.dll</code> from <code>SDL2_real.dll</code>.</li>
+      </ol>
+      <p>If the framework proxy exists but <code>SDL2_real.dll</code> is missing, the uninstaller deliberately stops. Restore an original SDL DLL from a clean copy as <code>SDL2_real.dll</code>, then retry. Guessing or deleting the proxy would leave the game unbootable.</p>
+
+      <h2 id="manual-copy-warning">Why not copy only SDL2.dll?</h2>
+      <p>The proxy depends on the original SDL library and additional runtime DLLs. A current release may also add or update supporting files. Use the release installer or a complete release payload; copying one DLL is a common cause of “code execution cannot proceed” dialogs.</p>
+
+      <div class="page-links">
+        <a href="../index.html">← Documentation home</a>
+        <a class="next" href="first-launch.html">Next: First launch →</a>
+      </div>
+      <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+    </article></main>
+  </div>
+</body>
+</html>
+

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Complete Eggnogg+ V1/V2 custom map schema and native glyph reference."><title>Map format reference · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a href="../guides/maps.html">Guides</a><a href="../api/map-lua.html">API</a><a aria-current="page" href="map-format.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Map format</h2><a href="#package">Package &amp; limits</a><a href="#json">V1 JSON</a><a href="#rooms">Rooms &amp; appearance</a><a href="#map-text">data.map</a><a href="#glyphs">Native glyphs</a><a href="#v2">V2 tileset</a><a href="#tile-fields">Tile fields</a><a href="#assets">Asset rules</a><a href="#identity">Identity &amp; reload</a><a href="#validation">Validation</a></nav></aside>
+<main id="main" class="content" data-doc-title="Map format reference"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Map format</nav><article>
+<h1>Custom map format</h1>
+<p class="lead">V1 is an engine-native room package. V2 is backward-compatible and adds namespaced symbolic tiles, one true per-map sheet, external sheet exceptions, and optional deterministic map Lua. Both preserve fixed native room generation.</p>
+
+<section id="package"><h2>Package and engine limits</h2>
+<pre><code>maps/map_id/
+  data.json
+  data.map
+  tiles.png   # V2 optional
+  map.lua     # V2 optional</code></pre>
+<table><tbody>
+  <tr><th>Source room</th><td>Exactly 33 columns × 12 rows</td></tr>
+  <tr><th>Source rooms</th><td>1..9, ordered center outward</td></tr>
+  <tr><th>Final layout</th><td>Center plus mirrored outer copies: <code>2n − 1</code> rooms</td></tr>
+  <tr><th><code>data.json</code> / <code>data.map</code></th><td>4 MiB each</td></tr>
+  <tr><th><code>map.lua</code></th><td>Direct non-reparse file, 256 KiB</td></tr>
+  <tr><th>Package safety</th><td>Folders beginning with <code>_</code> ignored; map folder and package files may not be reparse points</td></tr>
+</tbody></table>
+<p>V1 does not support variable room dimensions, asymmetric final layouts, custom glyph definitions, or room callbacks. Those constraints cannot be relaxed without a new format/native generator contract.</p></section>
+
+<section id="json"><h2>V1 <code>data.json</code> schema</h2>
+<pre><code>{
+  "format": "eggnogg-map/v1",
+  "id": "combat_caverns_plus",
+  "name": "Combat Caverns+",
+  "author": "potato",
+  "description": "Optional text",
+  "sort_order": 0,
+  "rules": {
+    "mode": "swords",
+    "round_end_rooms": "inner_only",
+    "score_target": null,
+    "armed_respawn_limit": 4
+  },
+  "layout": {
+    "kind": "mirrored_source_rooms",
+    "room_format": "vanilla_33x12",
+    "order": ["center", "outer"]
+  },
+  "defaults": {"room": {"ambient": "none", "appearance": {}}},
+  "rooms": {"center": {"ambient": "dust", "hook": null}}
+}</code></pre>
+<table><thead><tr><th>Field</th><th>Contract</th></tr></thead><tbody>
+  <tr><td><code>format</code></td><td>Required: <code>eggnogg-map/v1</code> or <code>eggnogg-map/v2</code>.</td></tr>
+  <tr><td><code>id</code></td><td>Optional V1 stable id (folder fallback); required namespace-compatible id for V2.</td></tr>
+  <tr><td><code>name</code>, <code>author</code></td><td>Required selector metadata.</td></tr>
+  <tr><td><code>description</code></td><td>Optional free text.</td></tr>
+  <tr><td><code>sort_order</code></td><td>Optional integer, default 0. Custom sort is order, name, folder id.</td></tr>
+  <tr><td><code>rules.mode</code></td><td><code>swords</code> or <code>karate</code>; changes natural spawn loadout only. Map-authored <code>*</code> pickups remain.</td></tr>
+  <tr><td><code>rules.round_end_rooms</code></td><td><code>inner_only</code> (default) or <code>any</code>.</td></tr>
+  <tr><td><code>rules.score_target</code></td><td>Positive integer or null.</td></tr>
+  <tr><td><code>rules.armed_respawn_limit</code></td><td>Integer, default 4.</td></tr>
+  <tr><td><code>layout.kind</code></td><td>Required <code>mirrored_source_rooms</code>.</td></tr>
+  <tr><td><code>layout.room_format</code></td><td>Required <code>vanilla_33x12</code>.</td></tr>
+  <tr><td><code>layout.order</code></td><td>Nonempty unique room ids from center outward; each must exist in <code>data.map</code>.</td></tr>
+  <tr><td><code>rooms.*.hook</code></td><td>Reserved; omitted or null. Non-null is an error.</td></tr>
+</tbody></table></section>
+
+<section id="rooms"><h2>Room ambience and appearance</h2>
+<p>Ambience accepts integer 0..9 or: <code>none</code> (0), <code>bugs</code>, <code>clouds</code>, <code>art</code>, <code>flies</code>, <code>drips</code>, <code>dust</code>, <code>bats</code>, <code>bubbles</code>, and <code>boil</code>/<code>fumes</code> (9).</p>
+<pre><code>"appearance": {
+  "primary": {
+    "fg1": [1,1,1], "fg2": [1,1,1],
+    "bg1": [0,0,0], "bg2": [0,0,0],
+    "water": [0,.2,.4], "water_hi": [.5,.8,1],
+    "special": [1,1,1], "special2": [1,1,1]
+  },
+  "mirror": {"bg1": [.1,0,.2]}
+}</code></pre>
+<p>Each color is exactly three finite channels in 0..1. Per-room fields inherit field-by-field from <code>defaults.room</code>; omitted mirror values inherit the fully resolved primary bank. These values are presentation-only. Water placement/hazard behavior comes from <code>data.map</code>.</p></section>
+
+<section id="map-text"><h2><code>data.map</code> grammar</h2>
+<pre><code>; comments outside rows begin with ; or //
+[center]
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"                                 "
+... exactly 10 more quoted rows ...</code></pre>
+<ul>
+  <li>A header <code>[room_id]</code> starts each room.</li>
+  <li>Exactly 12 quoted rows follow; exactly 33 bytes appear inside each pair of quotes.</li>
+  <li>Leading/trailing spaces inside quotes are cells and must be retained.</li>
+  <li>Blank and comment lines are allowed only outside quoted rows.</li>
+  <li>V1 rejects unknown characters rather than silently treating them as empty.</li>
+</ul>
+<p>Allowed V1 glyphs:</p>
+<pre><code>space ! # ( ) * + - . 1 2 : = ? @
+A C E F G H I K L N O P Q S T W X Y Z
+^ _ ` c e f i l m q s t u v w x | ~</code></pre></section>
+
+<section id="glyphs"><h2>Native glyph reference</h2>
+<table><thead><tr><th>Glyph</th><th>Native output / behavior</th></tr></thead><tbody>
+  <tr><td>space, <code>.</code></td><td>Empty/open filler: tile <code>0x14</code>, coloring action.</td></tr>
+  <tr><td><code>!</code></td><td>Floor/platform variant; tile <code>0x03</code>, random arg.</td></tr>
+  <tr><td><code>#</code></td><td>Decorative coloring, tile <code>0x15</code>, frame <code>0x2D</code>.</td></tr>
+  <tr><td><code>(</code>, <code>)</code></td><td>Side-aware decorative frames <code>0x6A</code>/<code>0x6B</code>.</td></tr>
+  <tr><td><code>*</code></td><td>Sword pickup/reset spawner: tile <code>0x1C</code>, arg 2.</td></tr>
+  <tr><td><code>+</code></td><td>Random decorative frames <code>0x5D..0x5F</code>.</td></tr>
+  <tr><td><code>-</code>, <code>:</code>, <code>=</code></td><td>Decorative frames <code>0x3C</code>, <code>0x3D</code>, <code>0x1F</code> (last random arg).</td></tr>
+  <tr><td><code>1</code>, <code>2</code></td><td>Team/score target tiles for side 1/2.</td></tr>
+  <tr><td><code>?</code></td><td>Explicit recognized no-op; places no tile.</td></tr>
+  <tr><td><code>@</code></td><td>Auto terrain. Becomes floor if the already-plotted tile above is non-solid, otherwise wall/fill.</td></tr>
+  <tr><td><code>A</code></td><td>Spinny special tile.</td></tr>
+  <tr><td><code>C</code>, <code>c</code></td><td>Chandelier variants (args <code>0x1E</code> and <code>0x05</code>).</td></tr>
+  <tr><td><code>E</code></td><td>EGGNOGG tile, default action.</td></tr>
+  <tr><td><code>F</code>, <code>H</code>, <code>I</code></td><td>Decorative coloring frames <code>0x59</code>, <code>0x06</code>, <code>0x1E</code>.</td></tr>
+  <tr><td><code>G</code></td><td>Expands into a 3×3 decal anchored above. Needs three rows headroom and cannot touch side edges.</td></tr>
+  <tr><td><code>K</code></td><td>Reset marker spawning a separate native type-3 point hazard (gravity/bounce, sprite 109, 10px player damage). Subject to room spawn budget.</td></tr>
+  <tr><td><code>L</code>, <code>N</code>, <code>Y</code></td><td>Each expands upward into a 2×3 art block; needs three rows headroom and no side edge.</td></tr>
+  <tr><td><code>O</code></td><td>Side-aware sky glow/backdrop light, frame <code>0x21</code>.</td></tr>
+  <tr><td><code>P</code></td><td>Puzzle-style prop.</td></tr>
+  <tr><td><code>Q</code>, <code>q</code></td><td>Decorative frames <code>0x46/0x47</code> or <code>0x6F</code>.</td></tr>
+  <tr><td><code>S</code></td><td>Decorative frame <code>0x07</code>.</td></tr>
+  <tr><td><code>T</code>, <code>s</code>, <code>t</code></td><td>Tentacle column generator family.</td></tr>
+  <tr><td><code>W</code></td><td>High/deep water.</td></tr>
+  <tr><td><code>X</code>, <code>v</code></td><td>Spike hazard variants; <code>v</code> is commonly ceiling/hanging.</td></tr>
+  <tr><td><code>Z</code></td><td>Decorative frame <code>0x05</code>.</td></tr>
+  <tr><td><code>^</code></td><td>Eggnogg special tile.</td></tr>
+  <tr><td><code>_</code></td><td>Ceiling tile.</td></tr>
+  <tr><td><code>`</code></td><td>Decorative frame <code>0x56</code> with random arg.</td></tr>
+  <tr><td><code>e</code></td><td>Decorative frame <code>0x40</code>.</td></tr>
+  <tr><td><code>f</code></td><td>Scroll/moving-surface tile.</td></tr>
+  <tr><td><code>i</code></td><td>Crowd/backdrop tile.</td></tr>
+  <tr><td><code>l</code></td><td>Score light / scoreboard indicator.</td></tr>
+  <tr><td><code>m</code></td><td>Mine tile/reset spawner.</td></tr>
+  <tr><td><code>u</code></td><td>Decorative frame <code>0x6C</code>.</td></tr>
+  <tr><td><code>w</code></td><td>Regular/shallow water.</td></tr>
+  <tr><td><code>x</code></td><td>Pass-through decorative tile, safe preset fallback.</td></tr>
+  <tr><td><code>|</code></td><td>Decorative vertical column/pipe frame <code>0x26</code>.</td></tr>
+  <tr><td><code>~</code></td><td>Waterfall; row-parity frame and may back-fill the tile above.</td></tr>
+</tbody></table>
+<p>Rooms may contain no more than 13 combined <code>K</code>, <code>*</code>, and <code>m</code> reset spawners. The native pool contains 16 records minus reserved/player occupancy, and <code>K</code>'s native handler does not safely handle allocation failure.</p></section>
+
+<section id="v2"><h2>V2 map-level <code>tileset</code></h2>
+<pre><code>"tileset": {
+  "sprite_sheet": "tiles.png",
+  "asset_sha256": null,
+  "cell_w": 16,
+  "cell_h": 16,
+  "padding": 0,
+  "native_layout": true,
+  "tiles": []
+}</code></pre>
+<dl>
+  <dt><code>sprite_sheet</code></dt><dd>A direct external PNG filename or <code>builtin:sprites|tiles|misc|glyphs</code>. Entries inherit it.</dd>
+  <dt><code>asset_sha256</code></dt><dd>Optional 64-hex external asset pin. The loader always computes the hash; omit this for normal authoring and all built-ins.</dd>
+  <dt><code>cell_w</code>, <code>cell_h</code></dt><dd>External grid cell dimensions, default 16, each 1..512.</dd>
+  <dt><code>padding</code></dt><dd>Inter-cell spacing removed during packing, default 0, range 0..64.</dd>
+  <dt><code>native_layout</code></dt><dd>External sheet only. When true, its first 128 row-major cells replace the native tile prefix for all unlisted ordinary glyph rendering. Extra cells are custom. Grid/image shape is otherwise unrestricted.</dd>
+  <dt><code>tiles</code></dt><dd>Zero to 64 symbolic definition objects. A native-layout-only package may leave it empty.</dd>
+</dl>
+<p>V2 requires a namespace-safe id: ASCII letters/numbers/<code>._-</code>, not beginning with dot/hyphen, maximum 43 characters (the runtime owner is <code>map.&lt;id&gt;</code>). Qualified tiles are <code>map.&lt;id&gt;:&lt;tile-id&gt;</code>.</p></section>
+
+<section id="tile-fields"><h2>V2 <code>tileset.tiles[]</code></h2>
+<table><thead><tr><th>Field</th><th>Type/default/limit</th></tr></thead><tbody>
+  <tr><td><code>id</code></td><td>Required unique namespace-safe local id, ≤47 chars.</td></tr>
+  <tr><td><code>symbol</code></td><td>Required unique one-byte printable ASCII <code>0x20..0x7E</code>, including space/native glyphs.</td></tr>
+  <tr><td><code>name</code></td><td>Display/debug name, default id.</td></tr>
+  <tr><td><code>collision</code></td><td><code>native</code> (default), <code>solid</code>, <code>pass_through</code>, <code>hazard</code>.</td></tr>
+  <tr><td><code>native_glyph</code></td><td>Safe single-cell fallback for native collision; omitted for presets. Presets resolve to <code>@</code>, <code>x</code>, <code>X</code>.</td></tr>
+  <tr><td><code>force_mode</code></td><td><code>add</code> (default) or <code>set</code>; needs a force axis.</td></tr>
+  <tr><td><code>force_x</code>, <code>force_y</code></td><td>Each present axis opts in, finite -64..64.</td></tr>
+  <tr><td><code>max_speed_x/y</code></td><td>Matching post-force absolute clamp 0..64; zero means unclamped.</td></tr>
+  <tr><td><code>sprite_sheet</code>, <code>asset_sha256</code>, <code>cell_w/h</code>, <code>padding</code></td><td>Optional per-tile sheet/grid exception; same constraints as map default.</td></tr>
+  <tr><td><code>sprite_index</code></td><td>Default 0, range 0..1,000,000; final range must fit the actual grid.</td></tr>
+  <tr><td><code>frame_count</code></td><td>Default 1, range 1..256.</td></tr>
+  <tr><td><code>frame_ticks</code></td><td>Default 1, range 1..3,600 deterministic ticks.</td></tr>
+  <tr><td><code>animation</code></td><td><code>loop</code>, <code>ping_pong</code>, or <code>once</code>.</td></tr>
+  <tr><td><code>layer</code></td><td>Native batch bank 0 or 1.</td></tr>
+  <tr><td><code>mirror_with_room</code></td><td>Default false; visual flip and declarative horizontal-force reversal.</td></tr>
+  <tr><td><code>random_phase</code></td><td>Default false; deterministic per-cell animation phase.</td></tr>
+  <tr><td><code>native_visual</code></td><td><code>replace</code> or <code>underlay</code>; underlay draws resolved native terrain first.</td></tr>
+  <tr><td><code>offset_x/y</code></td><td>Finite -4096..4096, default 0.</td></tr>
+  <tr><td><code>scale_x/y</code></td><td>Finite nonzero -64..64, default 1.</td></tr>
+  <tr><td><code>angle_degrees</code></td><td>Finite -360000..360000, default 0.</td></tr>
+  <tr><td><code>tint</code></td><td>Exactly four finite RGBA channels in 0..1, default <code>[1,1,1,1]</code>.</td></tr>
+</tbody></table>
+<p>At most 16 unique external sheet/grid configurations may appear in one package. Safe fallbacks exclude multi-cell generators, no-op/blank, waterfalls/back-fillers, and generic <code>K</code>. A custom symbol may itself be any printable byte because alias binding occurs before native generation.</p>
+<p>Special behavior belongs in auto-discovered <code>map.lua</code>, not JSON. See the exhaustive <a href="../api/map-lua.html">map Lua API</a>.</p></section>
+
+<section id="assets"><h2>External asset rules</h2>
+<ul>
+  <li>Direct filename in the package only: no slash, drive, absolute path, <code>..</code>, ADS, or reparse file.</li>
+  <li>Valid PNG signature/IHDR, nonempty, ≤64 MiB, dimensions 1..4096 each.</li>
+  <li>Declared grid must divide exactly after padding, contain at most 8,192 cells, and cover every frame range.</li>
+  <li>The bridge rechecks path/header/full SHA-256 immediately before decode/pack, strips padding into a tight grid, and refuses global native atlas overflow.</li>
+  <li>Missing/changed/invalid/unpacked assets remain unresolved and use the declared native fallback.</li>
+</ul></section>
+
+<section id="identity"><h2>Online identity and atomic reload</h2>
+<p>A custom map advertises <code>custom:&lt;normalized-id&gt;:&lt;sig&gt;</code>. Signature input includes JSON, room text, loader-computed hashes of every external V2 sheet, and exact optional script bytes/bindings. Authors do not copy digests manually. Vanilla keys are <code>vanilla:&lt;index&gt;</code>.</p>
+<p>Numeric selector positions are local and can change when packages are installed/reordered. The server matches stable keys and sends each client its own selector.</p>
+<p>A successful scan atomically replaces the affected map/content owner set. A bad edit preserves the previous installed generation; a newly invalid package is skipped without blocking others. Active native pointers/script bind to a pinned generation until another map generation replaces them. Online rollback freezes reload.</p></section>
+
+<section id="validation"><h2>Validation and conformance</h2>
+<ul>
+  <li>Collect and log all recoverable issues with package/file/field location, offending value, expected rule, and final skip reason.</li>
+  <li>Hard parse failures still stop safely and never partially register a package.</li>
+  <li>V1 compatibility keys may warn when unknown; V2 tileset/definition keys reject unknown fields.</li>
+  <li>Native collision must remain valid even if custom visuals/script fail.</li>
+  <li>Optional behavior is one bounded direct <code>map.lua</code>, never JSON code.</li>
+  <li>Run <code>tests/run_v2_map_test.ps1</code> and <code>tests/run_map_script_test.ps1</code>, then complete the fixed-address live test in the <a href="../guides/maps.html#test">map guide</a>.</li>
+</ul></section>
+</article></main></div>
+</body></html>

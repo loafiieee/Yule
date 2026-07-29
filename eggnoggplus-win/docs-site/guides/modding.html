@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Create, configure, debug, and package an Eggnogg+ Lua mod."><title>Build a Lua mod · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="modding.html">Guides</a><a href="../api/lua.html">API</a><a href="../reference/configuration.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Build a mod</h2><a href="#first">First mod</a><a href="#manifest">Manifest</a><a href="#settings">Settings</a><a href="#structure">Architecture</a><a href="#ui">UI</a><a href="#media">Media</a><a href="#debug">Debug</a><a href="#online">Online-safe design</a><a href="#ship">Ship it</a></nav></aside>
+<main id="main" class="content" data-doc-title="Build a Lua mod"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Build a Lua mod</nav><article>
+<h1>Build a Lua mod</h1>
+<p class="lead">Mods live in one folder under <code>mods/</code>, declare metadata in strict JSON, and run Lua through the framework proxy. This guide takes a small mod from an empty directory to a package players can configure and debug.</p>
+
+<section id="first"><h2>1. Create the smallest working package</h2>
+<pre><code>mods/
+  hello_yule/
+    mod.json
+    main.lua</code></pre>
+<pre><code>{
+  "id": "hello_yule",
+  "name": "Hello Yule",
+  "version": "1.0.0",
+  "author": "you",
+  "description": "A tiny overlay example",
+  "api_version": 1,
+  "entry": "main.lua",
+  "config": "config.cfg",
+  "storage": "storage.cfg",
+  "binds": "binds.cfg"
+}</code></pre>
+<pre><code>mod.on_load(function()
+  mod.log("loaded")
+  mod.input.bind("toggle", "h", "Toggle greeting")
+end)
+
+local visible = true
+mod.on_frame(function()
+  if mod.input.pressed("toggle") then visible = not visible end
+  if visible then
+    mod.ui.begin_overlay()
+    mod.ui.text_at("Hello from Lua", 32, 32, 1, 1, .9, .4)
+    mod.ui.end_overlay()
+  end
+end)</code></pre>
+<p>Start the game and inspect <code>mods/modframework.log</code>. Folders beginning with <code>_</code> are ignored, which is useful for templates and disabled copies.</p></section>
+
+<section id="manifest"><h2>2. Describe dependencies and load order</h2>
+<p>Required manifest fields are <code>id</code>, <code>name</code>, <code>version</code>, <code>author</code>, and <code>entry</code>. Set <code>api_version</code> for released mods; mismatches fail by default instead of running uncertain code.</p>
+<pre><code>{
+  "priority": 10,
+  "depends": ["shared_lib@&gt;=1.2.0 &lt;2.0.0"],
+  "optional_deps": ["ui_pack@^1.3.0"],
+  "load_after": ["ui_pack"],
+  "load_before": ["late_overlay"],
+  "conflicts": ["incompatible_mod"]
+}</code></pre>
+<p>Supported comparisons are <code>=</code>, <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>^</code>, and <code>~</code>. Hard dependencies block a load; optional dependencies only influence ordering. Use <code>allow_api_mismatch</code> only during deliberate local compatibility work.</p></section>
+
+<section id="settings"><h2>3. Add in-game settings, binds, and storage</h2>
+<pre><code># config.cfg
+enabled: bool, true
+lives: int[1,9], 3
+gravity: float[0.2,2.5], 1.0
+player_name: str, "Loaf"
+difficulty: options[easy, normal, hard], normal
+reset_stats: action, "Reset Everything"</code></pre>
+<p>These rows appear in Options → Mods. Boolean toggles, bounded numbers, editable strings, option cycles, and action buttons are built in. Read them with <code>config.get</code>, update them with <code>config.set</code>, and register action handlers with <code>config.on_action</code>.</p>
+<pre><code>local runs = storage.get("runs", 0)
+storage.set("runs", runs + 1)
+
+if storage.schema() &lt; 2 then
+  assert(storage.migrate(2, function(from, target)
+    if from &lt; 1 then storage.set("coins", 0) end
+    if from &lt; 2 then storage.set("xp", 0) end
+    return true
+  end))
+end</code></pre>
+<p>Register input names with <code>mod.input.bind</code>. Players can capture keys in the Mods options screen; you can also inspect them through <code>binds.list</code> in the console.</p></section>
+
+<section id="structure"><h2>4. Keep the mod maintainable</h2>
+<pre><code>mods/my_mod/
+  mod.json
+  main.lua
+  config.cfg
+  lib/
+    model.lua
+    view.lua
+  assets/
+    icons.png
+    click.wav</code></pre>
+<ul>
+  <li>Load files with <code>mod.dofile("lib/model.lua")</code> so they share the mod's isolated environment.</li>
+  <li>Put persistent data in <code>storage</code>, not arbitrary files, when the value fits bool/number/string.</li>
+  <li>Expose small versioned services through <code>mod.interop.provide</code>; prefix the namespace with your mod id.</li>
+  <li>Keep <code>on_frame</code> presentation-only when possible. Use <code>on_tick</code> for deterministic gameplay work.</li>
+  <li>Preload reusable assets/audio instead of allocating unique work every frame.</li>
+</ul></section>
+
+<section id="ui"><h2>5. Draw overlays or a complete screen</h2>
+<p>For a HUD, wrap draw calls in <code>begin_overlay</code>/<code>end_overlay</code> so the engine flushes its sprite batch around your layer. Use measured/wrapped text and <code>readable_scale</code> instead of hard-coding around one window size.</p>
+<p>For a full screen, use <code>mod.ui.define_state</code> with enter/update/render/event/leave callbacks. Framework states provide the native mouse cursor by default and can disable or customize it. Engine-backed native buttons support sword selectors and controller navigation; the immediate-mode widgets are better for fully custom layouts.</p>
+<div class="callout note">Pointer-based vanilla button edits are fixed-address integration. Re-apply changes on frame/state recreation and test against the supported executable.</div></section>
+
+<section id="media"><h2>6. Load sprites, fonts, textures, and sound</h2>
+<ul>
+  <li><strong>Mod sprites:</strong> <code>mod.assets.load_spritesheet</code>, then <code>sprite_id</code> and <code>mod.ui.draw_sprite</code>. Batch several sheets to rebuild the native atlas once.</li>
+  <li><strong>Font icons:</strong> allocate or register exact 8×8 PNG glyphs with <code>mod.font</code>.</li>
+  <li><strong>Texture packs:</strong> use <code>mod.texture</code> for exact-dimension replacements of native <code>data/*.png</code> atlases.</li>
+  <li><strong>Audio files:</strong> <code>play_sfx</code> and <code>play_music</code>; file-format support depends on the installed mixer.</li>
+  <li><strong>Procedural sound:</strong> bounded bytebeat/floatbeat is mixed through the game's existing device and does not require <code>SDL2_mixer.dll</code>. See <a href="../reference/audio.html">audio &amp; music</a>.</li>
+</ul></section>
+
+<section id="debug"><h2>7. Debug without guessing</h2>
+<ol>
+  <li>Open the console with backtick.</li>
+  <li>Run <code>mods.info hello_yule</code>, <code>mods.trace hello_yule on</code>, and <code>log.tail 60</code>.</li>
+  <li>Inspect live values with <code>lua.mod hello_yule return config.get("enabled")</code>.</li>
+  <li>Use <code>reload.mods</code> after code edits and <code>reload.assets</code> after art edits.</li>
+  <li>Use <code>mods.disable</code>/<code>mods.enable</code> to verify unload/load cleanup.</li>
+</ol>
+<p>Do not retain engine button pointers or volatile atlas base ids indefinitely. Query again after state/atlas rebuilds. Handle <code>nil,error</code> from asset operations when graphics are not ready.</p></section>
+
+<section id="online"><h2>8. Design for online safety</h2>
+<p>Gameplay-affecting packages are automatically suspended for matchmaking, countdown, gameplay, and cleanup. A package is classified after tick registration, bot/game mode registration, content transaction work, delta-time changes, or a mutating <code>mod.game</code> call.</p>
+<p>If your mod contains both a gameplay feature and a useful HUD, split them. A read-only/cosmetic package can keep drawing online; a mixed package is suspended as one unit. Never treat framework suspension as anti-cheat—it protects the supported runtime path, not a malicious native client.</p></section>
+
+<section id="ship"><h2>9. Package and test</h2>
+<ul>
+  <li>Use a stable lowercase id and semantic version.</li>
+  <li>Set the current <code>api_version</code>; run <code>framework.api</code> to inspect it.</li>
+  <li>Remove secrets, generated logs, console history, and user storage from the archive.</li>
+  <li>Test clean install, enable/disable, hot reload, missing optional dependency, dependency mismatch, and configuration migration.</li>
+  <li>Test every supported window size/input method and confirm unload stops owned audio and removes owned UI/content.</li>
+</ul>
+<p>Use the <a href="../api/lua.html">complete Lua API reference</a> while implementing and the <a href="testing-releasing.html">testing guide</a> before publishing.</p></section>
+</article></main></div>
+</body></html>

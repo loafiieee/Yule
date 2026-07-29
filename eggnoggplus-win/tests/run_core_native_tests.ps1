@@ -60,7 +60,7 @@ try {
     Invoke-NativeTest 'nonblocking TCP transport tests' '.\build\net_ext_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         '-D_WIN32_WINNT=0x0601', 'tests\net_ext_test.c', 'net_ext.c',
-        '-o', 'build\net_ext_test.exe', '-lws2_32'
+        '-o', 'build\net_ext_test.exe', '-lws2_32', '-liphlpapi'
     )
     Invoke-NativeTest 'online control parser/lifecycle tests' '.\build\online_control_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
@@ -138,11 +138,11 @@ try {
         '-o', 'build\state_serializer_test.exe',
         '-Wl,--gc-sections',
         '-lkernel32', '-luser32', '-ladvapi32', '-lopengl32',
-        '-lluajit-5.1', '-lws2_32', '-lwinhttp', '-lbcrypt',
+        '-lluajit-5.1', '-lws2_32', '-liphlpapi', '-lwinhttp', '-lbcrypt',
         '-lcomdlg32', '-lshell32', '-lole32', '-lm'
     )
 
-    & node --test 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
+    & node --test 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
     if ($LASTEXITCODE -ne 0) {
         throw "Discord LFG bot/redirect tests failed with exit code $LASTEXITCODE."
     }
@@ -153,6 +153,11 @@ try {
         'tests\credential_hooks_static_test.py',
         'tests\online_control_hooks_static_test.py',
         'tests\online_flow_integration_static_test.py',
+        'tests\online_cursor_static_test.py',
+        'tests\online_match_hud_static_test.py',
+        'tests\online_menu_tick_static_test.py',
+        'tests\online_troubleshooter_static_test.py',
+        'tests\online_admin_integration_static_test.py',
         'tests\friend_challenge_map_picker_static_test.py',
         'tests\social_controls_static_test.py',
         'tests\private_rematch_static_test.py',
@@ -166,6 +171,8 @@ try {
         'tests\player_colour_static_test.py',
         'tests\discord_presence_static_test.py',
         'tests\bytebeat_lua_static_test.py',
+        'tests\lua_http_lifecycle_static_test.py',
+        'tests\lua_online_api_static_test.py',
         'tests\bytebeat_js_static_test.py',
         'tests\music_console_static_test.py',
         'tests\discord_lfg_server_static_test.py',

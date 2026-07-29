@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Build and test the Yule Eggnogg+ framework from source.">
+  <title>Building from source · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="building">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout"><aside class="sidebar" id="site-nav" aria-label="Documentation"></aside><button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+  <main class="docs-main" id="main-content"><article class="article">
+    <p class="breadcrumb"><a href="../index.html">Docs</a> / Framework / Building from source</p>
+    <p class="eyebrow">Framework internals</p><h1>Building from source</h1>
+    <p class="lead">The supported build is a 32-bit Windows DLL produced with MinGW. The script links a temporary proxy first and only copies verified artifacts into the runnable root after success.</p>
+
+    <h2 id="prerequisites">Prerequisites</h2>
+    <ul>
+      <li>A working repository checkout containing the supported <code>eggnoggplus.exe</code> and original <code>SDL2_real.dll</code>.</li>
+      <li>MSYS2 with the 32-bit MinGW toolchain at <code>C:\msys64\mingw32\bin</code>.</li>
+      <li>32-bit LuaJIT headers/import library available to MinGW; the script includes <code>/mingw32/include</code> and links <code>-lluajit-5.1</code>.</li>
+      <li>PowerShell, Python, and Node.js for the full mixed-language test suite.</li>
+    </ul>
+    <p>The code links Windows system libraries for sockets, adapter inspection, HTTP, cryptography, credentials, dialogs, shell integration, and OpenGL. Third-party QuickJS-NG source is compiled into the DLL.</p>
+
+    <h2 id="compile">Compile</h2>
+    <ol class="steps">
+      <li><strong>Close Eggnogg+ and the updater.</strong> Windows cannot replace a DLL mapped by a running process.</li>
+      <li><strong>Open an MSYS2 shell in the repository root</strong>, or call Bash with the 32-bit MinGW tools available.</li>
+      <li><strong>Run the build:</strong>
+        <pre><code>bash compile.sh</code></pre>
+      </li>
+      <li><strong>Confirm output.</strong> The script builds <code>build/YuleUpdater.exe</code>, rejects unsafe runtime imports, copies it to the root, links <code>build/SDL2_test.dll</code>, then copies that exact artifact to root <code>SDL2.dll</code>.</li>
+    </ol>
+    <p><code>compile.sh</code> uses strict shell behavior and a complete source list. If a new <code>.c</code> module is added, add it to the script’s <code>sources</code> or <code>vendor_sources</code> list and add every required link library.</p>
+
+    <h2 id="test">Use guarded test runners</h2>
+    <div class="callout danger"><strong>Never launch a MinGW test executable from <code>build/</code> by hand.</strong> The guarded runners prepare the 32-bit runtime DLL search path and preflight dependencies, avoiding a storm of missing-DLL dialogs.</div>
+    <p>With the game closed, run from the repository root:</p>
+    <pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_core_native_tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_v2_map_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_map_script_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_updater_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_update_helper_test.ps1</code></pre>
+    <p>These runners prepend the repository root, <code>C:\msys64\mingw32\bin</code>, and <code>C:\msys64\usr\bin</code> to child <code>PATH</code> as needed. They do not launch the game. A new native runner must provide the same safety boundary.</p>
+
+    <h2 id="what-tests-cover">What the baseline covers</h2>
+    <p>The guarded suites cover parser limits, content/tiles/maps, map Lua, state serialization, rollback and network envelopes, control protocol, credentials, deep links and IPC, updater staging/recovery, Discord IPC, bytebeat/JavaScript audio, and supporting static integration contracts. Live game acceptance still matters for hooks, visuals, audio devices, production Discord, real peers, and production HTTPS.</p>
+
+    <h2 id="common-build-failures">Common build failures</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Failure</th><th>Resolution</th></tr></thead>
+      <tbody>
+        <tr><td>32-bit GCC not found</td><td>Install/repair MSYS2 MinGW32 or put <code>C:\msys64\mingw32\bin</code> on <code>PATH</code>.</td></tr>
+        <tr><td>LuaJIT header/library missing</td><td>Install the matching 32-bit development package; do not mix 64-bit libraries into this build.</td></tr>
+        <tr><td>Copy to root <code>SDL2.dll</code> fails</td><td>Close every game instance using that exact installation, then retry. The linked test DLL remains in <code>build/</code>.</td></tr>
+        <tr><td>Undefined reference</td><td>Add the implementation source or appropriate library in <code>compile.sh</code>; keep ordering/32-bit architecture consistent.</td></tr>
+        <tr><td>Test executable shows missing-DLL dialogs</td><td>Stop launching it directly and use its guarded PowerShell runner.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="release">Build a release</h2>
+    <p>Release publication has stricter version and hash checks. After changing <code>FRAMEWORK_VERSION</code>, closing the game, compiling, and passing tests:</p>
+    <pre><code>powershell -ExecutionPolicy Bypass -File .\tools\build_release.ps1 `
+  -Version 1.2 `
+  -Notes "Short release notes"</code></pre>
+    <p>The version argument, compiled marker, source version, root DLL, and verified build artifact must agree. Upload the complete versioned payload directory first and publish <code>latest.json</code> atomically last. Follow <code>UPDATER.md</code> rather than reusing a retired version or hand-editing the channel around a mismatch.</p>
+
+    <h2 id="live-verification">Live verification</h2>
+    <p>Automated tests intentionally do not launch <code>eggnoggplus.exe</code>. Use the checklist in source <code>TESTING.md</code> for an explicit manual pass: framework menus, mods, maps and map Lua, music, online matchmaking/routes/results, deep links, Discord, update UI, and recovery in a disposable release copy.</p>
+
+    <div class="page-links"><a href="file-layout.html">← File layout</a><a class="next" href="../index.html">Documentation home →</a></div>
+    <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+  </article></main></div>
+</body>
+</html>
+

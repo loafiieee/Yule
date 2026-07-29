@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Author V1 and V2 Eggnogg+ maps, custom tilesets, and map Lua behavior."><title>Create custom maps · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="maps.html">Guides</a><a href="../api/map-lua.html">API</a><a href="../reference/map-format.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Create maps</h2><a href="#choose">Choose V1 or V2</a><a href="#folder">Package</a><a href="#rooms">Rooms</a><a href="#metadata">Metadata</a><a href="#tileset">Per-map tileset</a><a href="#tiles">Custom tiles</a><a href="#script">Map Lua</a><a href="#reload">Hot reload</a><a href="#test">Test</a></nav></aside>
+<main id="main" class="content" data-doc-title="Create custom maps"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Create custom maps</nav><article>
+<h1>Create custom maps</h1>
+<p class="lead">A map package is a folder containing strict room text and metadata. V1 uses native glyphs. V2 adds a genuine map-wide tileset, symbolic tile definitions, and an optional deterministic <code>map.lua</code>.</p>
+
+<section id="choose"><h2>1. Choose the format</h2>
+<table><thead><tr><th>Need</th><th>Use</th></tr></thead><tbody>
+  <tr><td>Vanilla glyph behavior, custom room order/colors/ambience</td><td><code>eggnogg-map/v1</code></td></tr>
+  <tr><td>Reskin every normal map tile from one sheet</td><td>V2 with <code>tileset.native_layout=true</code></td></tr>
+  <tr><td>New symbolic sprites/collision/animation</td><td>V2 <code>tileset.tiles[]</code></td></tr>
+  <tr><td>Programmable springs, fans, or bounded contact logic</td><td>V2 plus <code>map.lua</code></td></tr>
+</tbody></table>
+<p>Both versions retain the engine's fixed 33×12 source rooms, at most nine source rooms, and center-out mirroring. Final visible rooms are <code>2 × source rooms − 1</code>.</p></section>
+
+<section id="folder"><h2>2. Make the package</h2>
+<pre><code>maps/
+  mossy_caverns/
+    data.json
+    data.map
+    tiles.png   # V2, optional
+    map.lua     # V2, optional</code></pre>
+<p>Folders beginning with <code>_</code> are ignored. Package files must be direct non-reparse files. <code>data.json</code> and <code>data.map</code> are each limited to 4 MiB; map Lua is limited to 256 KiB.</p></section>
+
+<section id="rooms"><h2>3. Draw source rooms</h2>
+<pre><code>; comments are allowed outside rows
+[center]
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"                                 "
+"       #                 #       "
+"                                 "
+"   *                         *   "
+"@@@@@@                     @@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"</code></pre>
+<p>Every room has exactly 12 quoted rows and every row contains exactly 33 bytes. Spaces inside quotes matter. List source rooms from center outward; the engine mirrors every room after the first. Use only the native glyph set in V1. V2 may bind any printable ASCII byte to a custom tile.</p>
+<div class="callout warning">Some native glyphs expand into neighboring cells. <code>G</code> is 3×3; <code>L</code>, <code>N</code>, and <code>Y</code> are 2×3; tentacles and waterfalls also have nonlocal behavior. Check the <a href="../reference/map-format.html#glyphs">glyph table</a> before placing them at an edge.</div></section>
+
+<section id="metadata"><h2>4. Add metadata and rules</h2>
+<pre><code>{
+  "format": "eggnogg-map/v1",
+  "id": "mossy_caverns",
+  "name": "Mossy Caverns",
+  "author": "you",
+  "description": "A compact duel",
+  "sort_order": 10,
+  "rules": {
+    "mode": "swords",
+    "round_end_rooms": "inner_only",
+    "score_target": null,
+    "armed_respawn_limit": 4
+  },
+  "layout": {
+    "kind": "mirrored_source_rooms",
+    "room_format": "vanilla_33x12",
+    "order": ["center", "outer"]
+  },
+  "defaults": {"room": {"ambient": "none"}},
+  "rooms": {
+    "center": {"ambient": "dust"},
+    "outer": {"ambient": "bubbles"}
+  }
+}</code></pre>
+<p>Room appearance banks are <code>primary</code> and <code>mirror</code>. Each may override <code>fg1</code>, <code>fg2</code>, <code>bg1</code>, <code>bg2</code>, <code>water</code>, <code>water_hi</code>, <code>special</code>, and <code>special2</code> with RGB triples in 0..1. Appearance is visual; actual water and hazards still come from glyphs.</p></section>
+
+<section id="tileset"><h2>5. Give the whole map a tileset</h2>
+<pre><code>{
+  "format": "eggnogg-map/v2",
+  "...": "...",
+  "tileset": {
+    "sprite_sheet": "tiles.png",
+    "cell_w": 16,
+    "cell_h": 16,
+    "padding": 0,
+    "native_layout": true,
+    "tiles": []
+  }
+}</code></pre>
+<p>This is map-level customization, not per-tile duplication. With <code>native_layout=true</code>, the first 128 row-major cells replace the native <code>data/tiles.png</code> prefix for all ordinary unlisted glyphs. Extra cells are available to explicit definitions. The image is <em>not</em> required to be 128×256 or to use a fixed grid shape: it only needs a valid declared grid containing at least 128 cells.</p>
+<p>With <code>native_layout=false</code>, the top-level sheet is simply inherited by each explicit tile and unlisted glyphs keep native visuals. External sheets may be 1×1 through 4096×4096, up to 64 MiB and 8,192 cells. The runtime computes SHA-256 automatically; <code>asset_sha256</code> is an optional pin, not author homework.</p></section>
+
+<section id="tiles"><h2>6. Define simple symbolic tiles</h2>
+<pre><code>"tiles": [
+  {
+    "id": "moss_floor",
+    "symbol": "$",
+    "name": "Moss Floor",
+    "collision": "solid",
+    "sprite_index": 128,
+    "frame_count": 4,
+    "frame_ticks": 6,
+    "animation": "ping_pong",
+    "native_visual": "underlay",
+    "random_phase": true,
+    "tint": [0.4, 1, 0.5, 1]
+  }
+]</code></pre>
+<p>Collision presets are <code>solid</code>, <code>pass_through</code>, and <code>hazard</code>; they map to verified native behavior. For <code>collision:"native"</code>, provide a safe single-cell <code>native_glyph</code> unless the symbol itself is safe. Use <code>native_visual:"underlay"</code> when a prop should draw over ordinary terrain rather than replacing the surface.</p>
+<p>Definitions can choose an exceptional <code>sprite_sheet</code>, animation, batch <code>layer</code> 0/1, mirror, deterministic phase, offset, scale, rotation, and tint. Keep unique behavior out of JSON: declarative <code>force_x/y</code> remains for small cases, but map Lua is clearer and more programmable.</p></section>
+
+<section id="script"><h2>7. Program contact behavior</h2>
+<pre><code>map.sensor("&gt;", {
+  tile_box={left=0, top=0, right=1, bottom=.375},
+  object_box={left=-.375, top=0, right=.375, bottom=.375},
+  objects={"alive_player", "sword"},
+  contact_scope="binding",
+})
+
+map.on_enter("&gt;", function(object, tile)
+  local launch = object.kind == "player" and -4 or -2.8
+  object.vy = launch
+  object:set_velocity_limits({min_vy=launch}, 8)
+  tile:set_sprite(129, 16, {offset_y=8})
+end)</code></pre>
+<p>Use a sensor to tune the contact region and object profiles. Binding scope makes adjacent tiles behave as one pad. Temporary sprite offsets can lift an active frame without moving the collision tile. Persistent behavior state belongs in <code>map.state</code>; randomness must use <code>map.random</code>.</p>
+<p>Read the <a href="../api/map-lua.html">map Lua reference</a> for all geometry, lifecycle, rollback, and sandbox limits.</p></section>
+
+<section id="reload"><h2>8. Understand reload and fallback</h2>
+<p>The scanner validates a complete package before atomically replacing the live registry. Invalid edits keep the last valid generation. New definitions remain unresolved safely if the atlas cannot rebuild; native fallback collision/rendering runs instead.</p>
+<p>JSON/art changes can rebuild live outside online rollback. A generated map pins its room/script generation; script source changes are used on the next generation. External PNG bytes and script bytes automatically affect the stable online map key, so two peers with different assets/scripts will not silently use the same package identity.</p></section>
+
+<section id="test"><h2>9. Validate and test</h2>
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_v2_map_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_map_script_test.ps1</code></pre>
+<ol>
+  <li>Start the game and select the custom map in the normal picker.</li>
+  <li>Check every native glyph, full-map atlas cell, explicit symbol, animation, layer, mirrored copy, palette, and missing-asset fallback.</li>
+  <li>For scripts, test each object profile, sensor edge and seam, enter/contact/leave, death/respawn, temporary sprite expiry, and room reset.</li>
+  <li>Edit tint and save; confirm atomic hot reload. Introduce invalid Lua; confirm the prior valid package remains.</li>
+  <li>Run two online clients with the exact package. Confirm matching map/content fingerprints and rollback behavior.</li>
+  <li>Return to a vanilla map and verify the native atlas/palette are restored.</li>
+</ol>
+<p>The checked-in <code>maps/v2_symbolic_demo</code> is the acceptance fixture for full-map art, custom tiles, spring/fan logic, fallback, mirroring, and hot reload.</p></section>
+</article></main></div>
+</body></html>

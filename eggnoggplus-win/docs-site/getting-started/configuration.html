@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Configure the Yule Eggnogg+ framework.">
+  <title>Configuration · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="configuration">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout"><aside class="sidebar" id="site-nav" aria-label="Documentation"></aside><button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+  <main class="docs-main" id="main-content"><article class="article">
+    <p class="breadcrumb"><a href="../index.html">Docs</a> / Getting started / Configuration</p>
+    <p class="eyebrow">Getting started</p><h1>Configuration</h1>
+    <p class="lead">Yule separates framework-wide preferences, online-account settings, and each mod’s own settings. Most everyday changes can be made in-game.</p>
+
+    <h2 id="in-game-settings">Prefer in-game settings</h2>
+    <p>Open <strong>Options → Mods</strong>. The Framework section owns general toggles and updater actions. Each enabled mod with a <code>config</code> entry in its manifest gets its own settings section. The online hub has a separate Settings tab for online-specific choices.</p>
+    <p>In-game changes update live state and use the framework’s persistence helpers. Close the game before hand-editing files so an in-game save cannot overwrite your edit.</p>
+
+    <h2 id="framework-config">Framework configuration</h2>
+    <p><code>mods/modframework.cfg</code> is a simple <code>key=value</code> file. Unknown lines and comments are preserved by framework setting updates.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>show_log_console=0|1</code></td><td>Show or hide the separate Windows log console. File logging remains active.</td></tr>
+        <tr><td><code>main_menu_mode=play|online|&lt;mod id&gt;</code></td><td>Remember the mode selected on the main PLAY button. Mods may register additional stable IDs.</td></tr>
+        <tr><td><code>auto_update=0|1</code></td><td>Allow automatic update checks and installation prompts. If absent, automatic updates are enabled.</td></tr>
+        <tr><td><code>update_channel_url=https://…</code></td><td>Override the release channel. Ordinary players should keep the release default.</td></tr>
+        <tr><td><code>music_output_rate=48000</code></td><td>Set the SDL mixer device rate from 8,000 through 192,000 Hz. A track may temporarily override it.</td></tr>
+        <tr><td><code>discord_presence=0|1</code></td><td>Enable or disable the dependency-free Discord desktop Rich Presence client.</td></tr>
+        <tr><td><code>discord_application_id=&lt;digits&gt;</code></td><td>Public Discord Application ID. This is not a client secret.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout warning"><strong>Do not paste secrets here.</strong> This file is ordinary text. Online credentials are handled separately and should never be placed in framework config or logs.</div>
+
+    <h2 id="online-config">Online hub configuration</h2>
+    <p><code>mods/online_hub.cfg</code> contains non-secret online preferences:</p>
+    <pre><code># Example only
+username=your_name
+remember_me=1
+server_host=example.com
+server_port=47778
+local_port=0
+challenge_notifications=1</code></pre>
+    <ul>
+      <li><code>server_host</code> and <code>server_port</code> select the matchmaking/control server.</li>
+      <li><code>local_port=0</code> lets Windows choose an available local port and is the usual choice.</li>
+      <li><code>remember_me</code> controls whether the supported credential store is used.</li>
+      <li><code>challenge_notifications</code> controls incoming challenge notifications.</li>
+    </ul>
+    <p>The active connectivity command reads this target:</p>
+    <pre><code>online.troubleshoot</code></pre>
+
+    <h2 id="mod-config">Per-mod configuration</h2>
+    <p>A manifest can name a line-based configuration file such as <code>config.cfg</code>. Supported values are booleans, integers, floats, strings, fixed options, and action buttons:</p>
+    <pre><code>enabled: bool, true
+lives: int[1,9], 3
+speed: float[0.25,3.0], 1.0
+player_name: str, "Loaf"
+difficulty: options[easy, normal, hard], normal
+reset_stats: action, "Reset Everything"</code></pre>
+    <p>Use the Mods menu, or inspect and change values from the console:</p>
+    <pre><code>mods.config my_mod
+mods.config.get my_mod difficulty
+mods.config.set my_mod difficulty hard
+mods.config.action my_mod reset_stats</code></pre>
+
+    <h2 id="storage-and-binds">Storage and bindings are different</h2>
+    <p><code>storage.cfg</code> is mod-owned persistent data, not a user options file. <code>binds.cfg</code> holds named input overrides. Use the Mods menu or <code>binds.*</code> console commands for bindings, and let the mod’s storage API manage storage.</p>
+
+    <h2 id="invalid-values">If a value is invalid</h2>
+    <p>Check <code>mods/modframework.log</code>. Parsers either fall back, clamp where documented, or reject the setting; they do not make every string meaningful. Restore a known valid value, then restart or use the feature’s live command. For example, <code>music.output_rate 48000</code> validates, applies, and persists a mixer rate.</p>
+
+    <div class="page-links"><a href="first-launch.html">← First launch</a><a class="next" href="console.html">Next: Console basics →</a></div>
+    <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+  </article></main></div>
+</body>
+</html>
+

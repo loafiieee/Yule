@@ -12,9 +12,11 @@ Release/security blockers:
       compatibility manifest covering game/framework/protocol versions, gameplay mods,
       content-registry state, maps/assets, rules, and relevant config. Define the public
       content policy and stronger integrity/anti-cheat boundary.
-    - Harden match-result validation and production persistence/operations; add a secure
-      server dashboard for password resets, account deletion, moderation, audit logs, and
-      least-privilege administration.
+    - Harden match-result validation and production persistence/operations. The
+      private-LAN-only dashboard now covers lookup, password reset, ban/unban,
+      disconnect, rating reset, and live counts; add account deletion, append-only audit
+      logs, granular least-privilege roles, durable transactional storage, and backup/
+      restore operations.
     - Replace the custom rollback UDP harness with the production GGPO library/session
       wrapper after the repaired deterministic callbacks/input protocol and seeded chaos
       suite are accepted.
@@ -77,9 +79,10 @@ desync and recovery failure modes):
       RTT/jitter/loss measurements, safe-boundary adaptive input delay, and GGPO-style time
       sync with bounded replay/catch-up work instead of freeze-then-ignore behavior.
     - P2: Add established-match reconnect/resume, authenticated NAT rebinding, coordinated
-      direct-to-relay failover, MTU discovery, congestion/pacing, and player-visible ping,
-      jitter, loss, rollback, stall, and route health. Gate production GGPO integration on
-      the deterministic schema/input protocol and seeded chaos suite above.
+      direct-to-relay failover, MTU discovery, congestion/pacing, and richer player-visible
+      jitter, loss, stall, and route health. The default-off small HUD now supplies the
+      existing smoothed ping, input delay, and rollback count. Gate production GGPO
+      integration on the deterministic schema/input protocol and seeded chaos suite above.
 
 Runtime acceptance still required:
     - Soak room transitions and mine explosions through ordinary rollback and coordinated
@@ -90,7 +93,14 @@ Runtime acceptance still required:
     - Restart with the installed verified DLL and compare every online-screen cursor
       directly with the vanilla main menu. Verify identical global scale, black shadow,
       red/yellow pulse, hotspot, and topmost ordering at every F1/window/fullscreen/DPI
-      combination; source/static coverage is complete, but live visual acceptance is not.
+      combination. During a live match also open pause Options, both input-remapping
+      pages, and Mods; verify both player-selection cursors and the mouse stay visible and
+      usable while the neutral-input background simulation advances. Source/static
+      coverage is complete, but live visual acceptance is not.
+    - Toggle the small Match Network HUD from Online Settings and `ggpo.net hud` during a
+      two-client match. Verify default-off persistence, immediate on/off behavior, readable
+      top-right layout across F1/fullscreen/DPI sizes, no display outside active gameplay/
+      paused Options, and plausible ping under controlled added latency.
     - Verify the login's compact square `Remember me` checkbox at the smallest window,
       including mouse/keyboard/controller hitboxes, direct remembered sign-in to the hub
       menus, cancellation/failure recovery, and a live remembered-login lifecycle.
@@ -106,8 +116,9 @@ Runtime acceptance still required:
       Test loopback (two clients on one PC), LAN, and public routes; no source-only test
       replaces this live game round.
     - Soak pause/options, both players' input-remapping pages, console, and Mods during a
-      match and verify simulation continues with neutral menu input; audit any additional
-      native screens before supporting them.
+      match and verify simulation continues with neutral menu input and that the native
+      selection cursors plus mouse remain visible/usable; audit any additional native
+      screens before supporting them.
     - Test both local control sets under both server player assignments, including mixed
       keyboard/controller input, and confirm they control only the assigned fighter.
       Select visibly different skin/clothing colors on each client and confirm the choices
@@ -177,8 +188,38 @@ Runtime acceptance still required:
       Discord 429 recovery, and both buttons on a registered Windows client. Inspect the
       Discord message and service logs for the documented absence of credentials, ratings,
       match IDs, endpoints, rendezvous data, tokens, and mentions. Source lifecycle/privacy
-      tests, strict handoff tests, graceful cleanup, deployment docs, and guarded test
-      integration are complete.
+      tests, strict handoff tests, queue-left/challenge-right button ordering, graceful
+      cleanup, deployment docs, and guarded test integration are complete.
+
+Framework API release gate:
+    - P0: Freeze a coherent public API compatibility policy before community mods target
+      API 1. The loader currently requires exact integer `api_version` equality, which
+      cannot distinguish additive capability growth from a breaking change. Define major
+      compatibility, feature discovery, deprecation/removal rules, and a machine-readable
+      capability surface; then pin the reference and add manifest/load regressions.
+    - P1: Extend the now owner-scoped, cancellation-safe, 8-MiB-bounded `mod.http` GET
+      surface with explicit redirect/status/header metadata and live concurrent
+      cancel/unload/reuse tests. Preserve its opaque owner-bound handles, eight-worker
+      ceiling, ten-second phase timeouts, and deferred canceled-worker cleanup.
+    - P0: Replace the remaining character-specific file picker with a general owner-safe
+      `mod.fs.pick_file({ title, filters })` contract before the API freeze. The abandoned
+      `mod.online` profile/asset calls and revision fields are no longer exported or
+      documented; ordinary presentation-only classification remains independent of any
+      official cosmetics mod.
+    - P1: Add owner-scoped console command registration with namespaced commands, help/
+      usage metadata, typed or raw arguments, duplicate detection, online suspension
+      guards, unregister handles, unload cleanup, and console/help documentation.
+    - P1: Add bounded JSON encode/decode helpers. HTTP and interop consumers currently need
+      to bundle handwritten parsers even though manifests, maps, server payloads, and most
+      community web APIs are JSON. Define finite depth/size/number/string limits and useful
+      path-aware diagnostics.
+    - P1: Return removable subscription handles from append-only lifecycle/event/config
+      registrations, with idempotent `remove()` and automatic unload cleanup. This avoids
+      duplicate handlers when a mod dynamically reconfigures itself without requiring a
+      full hot reload.
+    - P1: Finish explicit asset ownership/removal and repeated hot-reload memory tests for
+      mod spritesheets, texture/font replacements, and retired atlases before promising
+      long-running live authoring.
 
 Feature backlog:
     - Finish the broad custom-content API as a coherent, polished system: additional
@@ -207,10 +248,51 @@ Feature backlog:
       focus/navigation, scrolling, theming, accessibility, and robust hitbox scaling.
     - Build a custom map creator/editor around the documented V2 format and content
       registry.
-    - add linux support.
+    - add linux and mac support.
 
 
 # Completed (source implementation and focused automated coverage)
+
+    - Hostable developer documentation site: `docs-site/` contains 31 dependency-free
+      HTML pages covering installation, framework architecture/building, content/map-Lua
+      APIs, V1/V2 maps, configuration, console, audio/Dollchan tracks,
+      online/server/LFG/deep links, updater/releases, testing, and security. Its
+      developer-oriented second-generation format now uses
+      task-based global navigation, per-page contents, page/member search, individual API
+      deep links, namespace filters, responsive three-pane layout, and light/dark modes.
+      Every public ordinary-mod registration, global/mod alias, exported compatibility
+      bridge, higher-level UI/animation method, content transaction, map callback/object/
+      tile method, metadata property, and command constant has an individual signature,
+      description, parameter/return/failure contract, constraints, and example. A
+      dependency-free source/API coverage checker pins 19 namespaces and 256 documented
+      members while auditing all 31 pages for structure, links, and fragments.
+
+    - Small toggleable online-match network HUD: Online Settings and
+      `ggpo.net hud [on|off]` share a default-off persisted `match_hud` preference. Active
+      gameplay/paused Options renders one muted top-right line using the existing smoothed
+      peer RTT, local input delay, and rollback count without adding protocol traffic.
+      State/config/console/render wiring has focused static coverage; live visual and
+      controlled-latency acceptance remains listed above.
+
+    - Owner-safe bounded `mod.http`: opaque handles belong to their creating mod,
+      outstanding work is canceled on unload, canceled slots cannot be freed/reused until
+      their WinHTTP worker actually publishes completion, worker response buffers remain
+      private until publication, and both declared and streaming bodies are capped at
+      8 MiB. Ten-second phase timeouts and the eight-worker process ceiling remain; focused
+      lifecycle static coverage pins the race fix and bounds.
+
+    - Private-LAN online-server administration baseline: a separate default-loopback,
+      dependency-free listener has no password/login page, refuses public/wildcard binds,
+      rejects non-private clients, and uses automatic random IP-bound HttpOnly/SameSite
+      sessions plus CSRF-protected POST actions. The dashboard provides live counts,
+      account search, password reset, ban/unban, force disconnect, and rating reset
+      through existing server persistence/lifecycle paths. It shuts down with the service
+      and has real HTTP private-session/CSRF/action tests plus deployment docs.
+
+    - Abandoned public cosmetics transport API removal: `mod.online` now exposes only its
+      useful read-only status table. Compile-disabled profile/asset setters, readers,
+      applied-revision calls, and cosmetic revision status fields are no longer exported
+      or documented, avoiding a dead API-1 compatibility promise.
 
     - Bounded and Dollchan-compatible tracks in the native music playlist: a marked
       contiguous `data/tune*.txt` file can use the allocation-free bounded numeric grammar
@@ -713,10 +795,23 @@ Feature backlog:
       capability handshake before login, rechecks auth/match version fields, and fails
       before queue/P2P setup on incompatibility. A public TCP+UDP preflight and isolated
       two-client runtime test prove that both peers receive one shared 64-hex match key
-      and distinct probe keys. The public service now passes control-v3/match-v3/P2P-v17
-      TCP+UDP discovery preflight. The new relay capability deliberately makes the next
-      client require deployment of this server revision; the real two-game direct/relay
-      round remains in Runtime acceptance. Legacy
+      and distinct probe keys. The pre-gate public service passed the
+      control-v3/match-v3/P2P-v17 TCP+UDP discovery preflight; the new build-gate
+      capability deliberately requires another matching server deployment and public
+      preflight before the next client can sign in. The real two-game direct/relay round
+      remains in Runtime acceptance. Each authenticated map manifest now also sends
+      the client's framework label, exact control/match/P2P tuple, and deterministic
+      build/game-EXE/framework-DLL fingerprints. The client requires the server's explicit
+      build-gate capability before login. The server records and logs the manifest,
+      rejects missing/old fields before queue or challenge entry, filters pairing by exact
+      supported protocol and build tuples, rechecks at match creation, and sends the
+      checked versions/build diagnostic in `match_found`. This closes both the silent
+      v16/v17 mixed-client stall and same-protocol/different-binary late abort without
+      pretending incompatible authenticated layouts are safe. Runtime coverage includes
+      unadvertised-client and exact-build mismatch rejection, while the
+      guarded native transport runner now separately proves current direct and symmetric-
+      relay prematch handshakes and cannot hang forever behind its own Windows timeout
+      cleanup. Legacy
       unauthenticated fallback remains forbidden.
     - Bounded P2P connection retry: three fresh sockets/mappings, one deterministic
       server-selected loopback/LAN/public route per attempt, authenticated fresh-session
@@ -825,7 +920,24 @@ Feature backlog:
       white/custom-scale approximation were removed. Online UI, automatic custom-state
       cursors, and no-option `mod.ui.draw_cursor()` now share the game's actual two-pass
       renderer with native global scale, shadow, pulse color, hotspot, and state restore;
-      online still queues it only once/topmost. Live acceptance remains listed above.
+      online still queues it only once/topmost. Live online Options, both remap pages, and
+      Mods now preserve both native player-cursor enable flags across the hidden gameplay
+      tick and receive a final real native mouse pass, so advancing the peer cannot make
+      the menu unusable. Live acceptance remains listed above.
+    - Active online connectivity troubleshooter: `online.troubleshoot`/`net.trouble`
+      independently tests the configured server's TCP control and UDP rendezvous paths
+      without blocking the frame loop, validates the exact UDP source/sequence, reports
+      RTT plus the server-observed public endpoint, and inspects active Windows IPv4
+      adapters for carefully labeled VPN/NAT/CGNAT evidence. Console-first use loads the
+      persisted/default target before probing; Windows route selection identifies the
+      actual server interface, while fallback prefers a physical adapter so an unrelated
+      active Radmin/VPN interface is reported without being mistaken for Eggnogg's route.
+      It explicitly distinguishes
+      likely 100.64/10 CGNAT from ordinary private-address NAT that requires comparing the
+      router WAN address, then appends the secret-free `net.diag` route/attempt/packet
+      snapshot. Native loopback/parser/profile smoke tests, static command/privacy/pump
+      coverage, build linkage, console docs, testing instructions, and design spec are
+      complete; live network-matrix acceptance remains above.
     - Framework version checking: asynchronous launch check, live Mods-menu
       status/retry/install actions, and a bounded dismissible update notification.
     - Automatic transactional framework updates: default-on, SHA-256/size verification,

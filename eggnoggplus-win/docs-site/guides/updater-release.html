@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Install, publish, apply, and recover Eggnogg+ framework updates."><title>Installer &amp; updater · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="updater-release.html">Guides</a><a href="../api/lua.html">API</a><a href="../reference/configuration.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Installer &amp; updater</h2><a href="#install">Install/uninstall</a><a href="#runtime">Runtime flow</a><a href="#channel">Channel</a><a href="#publish">Publish</a><a href="#helper">Helper</a><a href="#recovery">Recovery</a><a href="#test">Test</a></nav></aside>
+<main id="main" class="content" data-doc-title="Installer & updater"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Installer &amp; updater</nav><article>
+<h1>Installer, updater, and recovery</h1>
+<p class="lead">The installer preserves the vanilla SDL library as <code>SDL2_real.dll</code> and installs the framework proxy as <code>SDL2.dll</code>. The updater downloads asynchronously, verifies a whole release, and hands file replacement to a tiny one-shot helper after the game closes safely.</p>
+
+<section id="install"><h2>Install and uninstall</h2>
+<p>Use the packaged <code>INSTALL.bat</code>/<code>install.ps1</code> beside or pointed at a valid Eggnogg+ copy. The installer can locate a prior receipt, move/install the game, preserve the original SDL library, install framework/runtime files, optionally register per-user <code>yule://</code>, create shortcuts/Steam entry, and write <code>install.json</code> for maintenance.</p>
+<p>Use the packaged uninstaller rather than deleting files. It restores the original <code>SDL2.dll</code>, removes only installer-owned files/protocol/shortcuts, and preserves externally modified or externally owned registrations. Uninstall refuses to guess if the proxy exists but <code>SDL2_real.dll</code> is missing.</p></section>
+
+<section id="runtime"><h2>How in-game updates work</h2>
+<ol>
+  <li>After the first rendered frame, a worker checks the channel without blocking startup.</li>
+  <li>Mods → Framework shows checking/up-to-date/update-available/error plus Check/Retry/Install and automatic update toggle.</li>
+  <li>Every payload downloads into staging and is checked for exact size and SHA-256.</li>
+  <li>A durable Journal V3 transaction records replacement and original identities. Status becomes <strong>verified update ready - restart</strong>.</li>
+  <li>The framework waits for a safe menu—not gameplay, countdown, or an online match—then starts <code>YuleUpdater.exe</code> with the exact process id.</li>
+  <li>The helper asks the game to close normally, verifies no second process from the same install is running, applies/reconciles the transaction, relaunches the game with ordinary arguments, and exits.</li>
+</ol>
+<p>Consumed deep-link intents are not replayed. If the helper is missing/unsafe or another same-install game is running, the current game/files remain untouched and the staged transaction is retained.</p></section>
+
+<section id="channel"><h2>Release channel schema</h2>
+<pre><code>{
+  "channel_version": 1,
+  "version": "1.2",
+  "base": "https://example.com/yule/releases/1.2/",
+  "files": [{
+    "path": "SDL2.dll",
+    "sha256": "64-lowercase-hex-characters...",
+    "size": 3000116,
+    "overwrite": true
+  }]
+}</code></pre>
+<p>Each path is install-relative and restricted. Absolute/traversal/ADS/device/reparse escape, duplicate/colliding paths, updater recovery suffixes, and unsafe URL names are rejected. Maximum: 32 files, 128 MiB each, 256 MiB total.</p>
+<p><code>mods/modframework.cfg</code> owns <code>auto_update</code> (default on) and <code>update_channel_url</code>. HTTPS is required except explicit loopback test channels.</p></section>
+
+<section id="publish"><h2>Publish a release safely</h2>
+<ol>
+  <li>Choose a new never-reused version and change <code>FRAMEWORK_VERSION</code> in <code>update_ext.h</code>.</li>
+  <li>Close the game and updater helper. Run <code>bash compile.sh</code>.</li>
+  <li>Build artifacts: <pre><code>powershell -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version 1.2 -Notes "Short release notes"</code></pre></li>
+  <li>Upload the complete <code>dist/releases/1.2/</code> payload to a temporary server directory.</li>
+  <li>Compare every public/staged file's exact size and SHA-256 with the generated manifest; atomically rename the payload directory into place.</li>
+  <li>Upload the new channel as <code>latest.json.new</code>, validate it, then atomically rename it to <code>latest.json</code> <strong>last</strong>.</li>
+  <li>Fetch public <code>latest.json</code> and every public payload once and independently verify version, size, and digest.</li>
+</ol>
+<div class="callout warning">Never repair a release by editing only <code>latest.json</code>. The build tool requires its version, source version, embedded deployed DLL marker, verified test DLL hash, and updater helper to match. Restore the prior valid manifest first if a bad version was advertised.</div></section>
+
+<section id="helper"><h2>Why <code>YuleUpdater.exe</code> exists</h2>
+<p>Windows cannot replace a DLL mapped by the running game. The helper exists only to close the exact process, replace files, recover an interrupted transaction, and relaunch. It is not a launcher and is excluded from update manifests.</p>
+<p>Release packaging requires it to be self-contained and rejects imports of replaceable runtime DLLs such as Lua, MinGW runtimes, and <code>SDL2_mixer</code>. It opens the process before sending <code>WM_CLOSE</code>, waits up to two minutes, and never force-terminates the game.</p>
+<p>Argument boundaries are forwarded directly without a shell; install root becomes the working directory. Updater logs contain bounded status, never command-line values.</p></section>
+
+<section id="recovery"><h2>Recovery behavior</h2>
+<p>Journal V3 records expected replacement and original size/SHA-256 (or absence) for every file. Before moving, the helper rehashes both sides and rejects changed originals/reparse paths. It uses write-through target-to-<code>.old</code> and staged-to-target moves, then validates the whole installed set before commit/backup deletion.</p>
+<p>A partial swap rolls the <em>whole set</em> back. Complete interrupted sets can finish forward. Ambiguous/corrupt/missing evidence is retained and blocks launch rather than guessing. Legacy journal and adjacent <code>.old</code> recovery remain supported.</p>
+<div class="callout danger">If a recovery dialog appears, do not delete <code>.old</code>, <code>.update-recovery</code>, or <code>mods/update_staging</code>. Preserve <code>mods/updater.log</code> and transaction evidence, then repair from a complete matching release package.</div></section>
+
+<section id="test"><h2>Safe verification</h2>
+<pre><code>powershell -ExecutionPolicy Bypass -File .\tests\run_updater_test.ps1
+powershell -ExecutionPolicy Bypass -File .\tests\run_update_helper_test.ps1</code></pre>
+<p>These guarded runners use disposable roots/loopback services, prepare required runtimes, and never replace the live DLL or launch the game. They cover manifest/hash/download, atomic apply, rollback/roll-forward, power-cut states, mapped-DLL handoff, changed originals, corrupt staging/journal, multiple instances, helper imports, cleanup, and exact argument forwarding.</p>
+<p>For manual release acceptance, use a disposable installation and test no update, valid update, corrupt hash, interrupted download, interrupted apply, two instances, safe-menu wait, normal close/relaunch, and exact ordinary arguments. Inspect <code>mods/updater.log</code> for both recovery clarity and secret absence.</p></section>
+</article></main></div>
+</body></html>

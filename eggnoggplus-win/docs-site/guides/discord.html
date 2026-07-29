@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Configure Eggnogg+ Discord LFG, yule links, and Rich Presence."><title>Discord, LFG &amp; deep links · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="discord.html">Guides</a><a href="../api/lua.html">API</a><a href="../reference/security.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Discord &amp; links</h2><a href="#links">yule:// links</a><a href="#instance">Single instance</a><a href="#lfg">LFG behavior</a><a href="#bot">Bot setup</a><a href="#proxy">HTTPS proxy</a><a href="#verify">LFG verification</a><a href="#presence">Rich Presence</a><a href="#privacy">Privacy</a></nav></aside>
+<main id="main" class="content" data-doc-title="Discord, LFG & deep links"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Discord, LFG &amp; deep links</nav><article>
+<h1>Discord, LFG, and <code>yule://</code> links</h1>
+<p class="lead">Two separate integrations share the public Yule identity: the server can post privacy-minimal queue messages, while the game can publish coarse local Rich Presence. Both are optional.</p>
+
+<section id="links"><h2>Safe deep-link routes</h2>
+<pre><code>yule://hub
+yule://requests
+yule://queue/casual
+yule://queue/competitive
+yule://challenge/player_1</code></pre>
+<p>Equivalent arguments are <code>--online</code>, <code>--requests</code>, <code>--queue=casual</code>, <code>--queue=competitive</code>, and <code>--challenge=player_1</code>. Challenge targets are canonical lowercase account names.</p>
+<p>The installer may register the protocol per Windows user. Routes reject unknown/doubled/encoded paths, queries, fragments, userinfo, credentials, endpoints, match ids, and tokens. Queue/request/challenge intent waits for authentication and resumes after remembered or manual login. Pending intent expires after two minutes or when the hub closes.</p></section>
+
+<section id="instance"><h2>Existing-process delivery</h2>
+<p>Only protocol activations are single-instance. The first game owns a per-login-session Windows message broker. A later valid protocol launch forwards its already parsed intent, foregrounds the existing game, and exits before SDL video creates another window. Normal executable launches may still open a second instance for local testing.</p>
+<p>A link received during setup/gameplay stays pending and cannot force a forfeit. Every launch normalizes the working directory to the installed executable, so browser/shell callers do not create stray <code>data</code>, <code>mods</code>, logs, or dumps elsewhere.</p></section>
+
+<section id="lfg"><h2>LFG message lifecycle</h2>
+<ul>
+  <li>Only an authenticated player who remains in a public Casual/Competitive queue for two seconds gets a post.</li>
+  <li>Direct friend challenges never post. Duplicate joins never duplicate a post.</li>
+  <li>The <strong>Join queue</strong> button is left; <strong>Challenge player</strong> is right.</li>
+  <li>Leave, queue change, match, disconnect, and orderly shutdown edit the exact message in place and remove both buttons.</li>
+  <li>A “Match found” edit remains for 24 hours by default, then is deleted. Other inactive history remains.</li>
+  <li>An uncatchable machine/process kill can leave a harmless stale public post; remove it manually after recovery.</li>
+</ul>
+<p>The integration uses outbound Discord REST only: no Gateway, intents, slash commands, incoming bot port, or additional matchmaking authority.</p></section>
+
+<section id="bot"><h2>Discord bot and service setup</h2>
+<ol>
+  <li>Create/select the application, open its Bot page, and obtain the <em>bot token</em>.</li>
+  <li>Copy the LFG channel id with Discord Developer Mode.</li>
+  <li>Install only the <code>bot</code> scope with permission integer <code>19456</code>: View Channel, Send Messages, Embed Links.</li>
+  <li>Create a root-owned mode-0600 file such as <code>/etc/eggnogg/lfg.env</code>.</li>
+</ol>
+<pre><code>DISCORD_LFG_ENABLED=1
+DISCORD_LFG_BOT_TOKEN=replace_with_secret
+DISCORD_LFG_CHANNEL_ID=123456789012345678
+DISCORD_LFG_PUBLIC_BASE_URL=https://example.com/yule
+DISCORD_LFG_POST_DELAY_MS=2000
+DISCORD_LFG_MATCH_DELETE_MS=86400000
+LFG_REDIRECT_HOST=127.0.0.1
+LFG_REDIRECT_PORT=47880</code></pre>
+<p>Add <code>EnvironmentFile=/etc/eggnogg/lfg.env</code> in a systemd drop-in for the existing online service, daemon-reload, and restart. The LFG bridge and redirect run inside that same Node process; do not create a separate daemon.</p>
+<div class="callout warning">Never run <code>systemctl show ... -p Environment</code> while sharing troubleshooting output—it prints the bot token. Rotate the token immediately if it enters chat, source control, logs, screenshots, or shell history.</div></section>
+
+<section id="proxy"><h2>Expose only strict HTTPS handoff routes</h2>
+<p>Keep port 47880 loopback-only. Proxy exact completed routes without swallowing the existing updater subtree:</p>
+<pre><code>location ~ "^/yule/(?:hub|requests|queue/(?:casual|competitive)|challenge/[a-z0-9_]{1,24})$" {
+    proxy_pass http://127.0.0.1:47880;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+}</code></pre>
+<p>If a broad <code>location ^~ /yule/</code> exists, narrow it to <code>/yule/releases/</code> or use exact LFG route locations. The redirect accepts only GET/HEAD. Browser GET launches the safe protocol, waits, attempts <code>window.close()</code>, then shows a manual-close/link fallback when policy prevents closing. HEAD is a no-store 302 for probes.</p></section>
+
+<section id="verify"><h2>Verify LFG end to end</h2>
+<pre><code>curl -I http://127.0.0.1:47880/yule/hub
+curl -I https://example.com/yule/hub
+curl -I https://example.com/yule/queue/casual
+curl -I https://example.com/yule/releases/latest.json
+sudo ss -ltnp | grep 47880</code></pre>
+<p>Expect exact <code>Location: yule://...</code>, <code>Cache-Control: no-store</code>, a still-working updater manifest, and a listener on <code>127.0.0.1</code> only. Then test sub-two-second leave, both queue types, duplicate join, queue switch, direct challenge (no post), disconnect, immediate match, 429 retry, clean restart, both buttons, login-resume, existing-instance delivery, and one-day matched deletion.</p></section>
+
+<section id="presence"><h2>Configure Discord Rich Presence</h2>
+<pre><code># mods/modframework.cfg
+discord_application_id=1531027934004117664
+discord_presence=1</code></pre>
+<pre><code>discord.app
+discord.app 1531027934004117664</code></pre>
+<p>The public numeric application id is not a secret. The command validates/persists it and reconnects without restarting. Toggle presence from Mods → Framework or Online Settings.</p>
+<p>Published classes are fixed: menus, local match, hub, signing in, friends/challenges, casual queue, competitive queue, prematch, and casual/competitive/friend online match. No usernames, opponents, maps, ratings, ids, endpoints, tokens, buttons, parties, or join secrets are included.</p>
+<p>The dependency-free client talks only to Discord's local Windows named pipe using overlapped bounded I/O. It rate-limits/coalesces updates, reconnects every 15 seconds, and never waits for Discord or performs network access. An offline-looking bot presence is normal for the outbound-REST LFG bot and unrelated to local Rich Presence.</p></section>
+
+<section id="privacy"><h2>Privacy boundary</h2>
+<p>The LFG bot receives only canonical public username and queue name. Mentions are disabled. It must never receive ratings, match ids, server/control/P2P endpoints, credentials, rendezvous data, session tokens, packet-auth tokens, or direct-match links. Rich Presence receives only a closed local activity enum.</p>
+<p>Inspect Discord payload tests and service logs before every release. The HTTPS bridge is a user-confirmed handoff, not a private authentication channel.</p></section>
+</article></main></div>
+</body></html>

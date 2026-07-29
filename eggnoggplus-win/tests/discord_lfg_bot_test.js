@@ -36,6 +36,16 @@ test("queue payload contains only public identity, queue, and HTTPS handoffs", (
   assert.match(serialized, /Competitive/);
   assert.match(serialized, /https:\/\/example\.test\/yule\/challenge\/player_1/);
   assert.match(serialized, /https:\/\/example\.test\/yule\/queue\/competitive/);
+  assert.equal(payload.components[0].components[0].label, "Join Competitive Queue");
+  assert.equal(
+    payload.components[0].components[0].url,
+    "https://example.test/yule/queue/competitive",
+  );
+  assert.equal(payload.components[0].components[1].label, "Challenge player_1");
+  assert.equal(
+    payload.components[0].components[1].url,
+    "https://example.test/yule/challenge/player_1",
+  );
   for (const forbidden of [
     "match_id", "endpoint", "p2p", "auth_token", "rendezvous",
     "password", "server_secret", "peer_host", "peer_port",

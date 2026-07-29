@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Complete deterministic Eggnogg+ V2 map Lua API reference.">
+  <title>Map Lua API · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script defer src="../api-data.js"></script>
+  <script defer src="../app.js"></script>
+</head>
+<body data-root="../" data-page="api-map-lua">
+<main id="main"><article>
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / <a href="index.html">API</a> / Map Lua</nav>
+  <h1>Deterministic <code>map.lua</code></h1>
+  <p class="lead">A V2 package may place one <code>map.lua</code> beside <code>data.json</code> and <code>data.map</code>. The restricted VM adds bounded tile contact behavior without filesystem, network, OS, UI, audio, dynamic code, modules, FFI, debug, or process access.</p>
+
+  <section>
+    <h2>Execution model</h2>
+    <ul>
+      <li>The loader discovers one direct non-reparse <code>map.lua</code>; JSON does not name it.</li>
+      <li>The retained source and canonical tile bindings are part of map identity and online compatibility.</li>
+      <li>Callbacks cannot capture upvalues. Persist simulation values in <code>map.state</code>.</li>
+      <li>Contact order is deterministic: top-to-bottom, left-to-right map order over one immutable pre-callback physics sample.</li>
+      <li>A callback fault restores its partial object/tile/state changes, disables script behavior, and leaves native collision/render fallback active.</li>
+      <li>Script state, private RNG, tick clock, contacts, velocity limits, and sprite overrides participate in rollback.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Sensor options</h2>
+    <table>
+      <thead><tr><th>Option</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td><code>tile_box</code></td><td><code>{left,top,right,bottom}</code> in tile-local coordinates. Quantized to 1/256 cell; edges -2..3; positive size. Default full cell.</td></tr>
+        <tr><td><code>object_box</code></td><td><code>center</code>, <code>body</code>, <code>feet</code>, or relative edge table in -2..2. Body uses the verified native contact radius.</td></tr>
+        <tr><td><code>objects</code></td><td>Dense non-empty list from <code>player</code>, <code>alive_player</code>, <code>dead_body</code>, <code>sword</code>, and opt-in <code>hazard</code>. Legacy player includes living and dead records.</td></tr>
+        <tr><td><code>contact_scope</code></td><td><code>cell</code> or <code>binding</code>. Binding unions touching cells of the same definition to avoid seam re-entry and multiplied callbacks.</td></tr>
+        <tr><td><code>mirror_with_room</code></td><td>Mirrors the tile box horizontally on the mirrored side.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Object kinds</h2>
+    <table>
+      <thead><tr><th>Kind</th><th>Verified contact radius</th><th>Native gravity</th></tr></thead>
+      <tbody>
+        <tr><td><code>player</code> / <code>dead_body</code></td><td>6 px</td><td>0.15</td></tr>
+        <tr><td><code>sword</code></td><td>4 px</td><td>0.075</td></tr>
+        <tr><td><code>hazard</code></td><td>0 px point</td><td>0.075</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warning"><strong>Filter intentionally.</strong> Repeatedly launching a corpse can prevent the native grounded-respawn gate. Different gravity also means one velocity does not create the same arc for players, swords, and hazards.</div>
+  </section>
+
+  <section>
+    <h2>Complete spring and fan</h2>
+    <pre><code>map.sensor(">", {
+  tile_box={left=0, top=0, right=1, bottom=.375},
+  object_box={left=-.375, top=0, right=.375, bottom=.375},
+  objects={"alive_player", "sword"},
+  contact_scope="binding"
+})
+
+map.on_enter(">", function(object, tile)
+  local launch = object.kind == "player" and -4.0 or -2.8
+  object:set_velocity(object.vx, launch)
+  object:set_velocity_limits({min_vy=launch}, 8)
+  tile:set_sprite(129, 16, {offset_y=8})
+  map.state.spring_hits = (map.state.spring_hits or 0) + 1
+end)
+
+map.sensor("}", {
+  object_box="body",
+  objects={"alive_player", "sword"},
+  contact_scope="binding",
+  mirror_with_room=true
+})
+
+map.on_contact("}", function(object, tile)
+  local push = tile.mirrored and -0.25 or 0.25
+  object:add_velocity(push, 0)
+end)</code></pre>
+  </section>
+
+  <section>
+    <h2>Sandbox limits</h2>
+    <table><tbody>
+      <tr><th>Source</th><td>One direct file, maximum 256 KiB</td></tr>
+      <tr><th>VM memory</th><td>2 MiB default cap</td></tr>
+      <tr><th>Execution</th><td>100,000-instruction load/callback budget</td></tr>
+      <tr><th>State</th><td>64 entries; keys 1–31 bytes; string values at most 63 bytes</td></tr>
+      <tr><th>Rejected</th><td>Power operator <code>^</code>; platform libm power is not a rollback-stable primitive</td></tr>
+    </tbody></table>
+  </section>
+
+  <div id="api-browser" data-groups="map"></div>
+</article></main>
+</body>
+</html>

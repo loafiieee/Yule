@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Architecture of the Yule Eggnogg+ framework.">
+  <title>Architecture · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="architecture">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout"><aside class="sidebar" id="site-nav" aria-label="Documentation"></aside><button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+  <main class="docs-main" id="main-content"><article class="article">
+    <p class="breadcrumb"><a href="../index.html">Docs</a> / Framework / Architecture</p>
+    <p class="eyebrow">Framework internals</p><h1>Architecture</h1>
+    <p class="lead">Yule is a 32-bit native DLL proxy around a fixed Eggnogg+ executable. It forwards SDL, installs narrowly scoped hooks, and exposes safer high-level services to isolated Lua mods.</p>
+
+    <h2 id="startup-flow">Startup flow</h2>
+    <pre><code>eggnoggplus.exe
+  └─ loads local SDL2.dll (Yule proxy)
+       ├─ loads SDL2_real.dll (original SDL implementation)
+       ├─ forwards the exported SDL API
+       └─ initializes framework code after loader-safe startup
+            ├─ native hooks and state adapters
+            ├─ Lua mod manager
+            ├─ custom content and assets
+            ├─ console and framework menus
+            ├─ online control + rollback transport
+            └─ updater, Discord, audio, logging, and launch IPC</code></pre>
+    <p><code>dllmain.c</code> is the proxy entry boundary, while <code>stubs.c</code> and <code>SDL2.def</code> provide export forwarding. Expensive initialization, worker shutdown, and updater waits must not occur under the Windows loader lock.</p>
+
+    <h2 id="native-hooks">Native hooks</h2>
+    <p><code>hooks.c</code> bridges known functions and state addresses in the supported executable: events, game ticks, rendering swaps, menus, player commands, maps, presentation, and online lifecycle. The addresses come from reverse engineering and are version-specific.</p>
+    <p>Small modules keep platform or subsystem responsibilities separate:</p>
+    <ul>
+      <li><code>cursor_ext</code>, <code>font_ext</code>, and <code>texture_ext</code> wrap presentation integration.</li>
+      <li><code>net_ext</code> supplies bounded sockets, DNS, adapter routing, and probes.</li>
+      <li><code>credential_ext</code>, <code>launch_request</code>, and <code>launch_ipc</code> isolate Windows credential/deep-link boundaries.</li>
+      <li><code>fp_control</code> normalizes floating-point state for deterministic simulation.</li>
+      <li><code>rollback_schema</code> describes and hashes the authoritative game-state regions.</li>
+    </ul>
+    <div class="callout warning"><strong>Compatibility consequence:</strong> a different Eggnogg+ executable can move code or data. “It launches” is not proof that every hook is safe; ports need address and schema verification.</div>
+
+    <h2 id="lua-runtime">Lua runtime</h2>
+    <p><code>lua_manager.c</code> discovers manifests, resolves dependency order, creates one environment per mod, and owns callbacks and APIs. Environments fall back to standard Lua globals but do not share ordinary globals with each other.</p>
+    <p>The manager also tracks which capabilities a mod uses. Presentation-only callbacks can remain active where safe, while gameplay-affecting mods are suspended for online rollback. Cross-mod services use versioned <code>mod.interop</code> snapshots rather than accidental shared globals.</p>
+
+    <h2 id="content">Custom content</h2>
+    <ul>
+      <li><code>custom_maps</code> parses legacy and V2 map packages.</li>
+      <li><code>content_registry</code> validates stable content declarations and fingerprints.</li>
+      <li><code>content_tiles</code> and <code>content_bridge</code> connect symbolic/custom tiles to native rendering and physics behavior.</li>
+      <li><code>map_script</code> runs bounded map-local Lua behavior.</li>
+    </ul>
+    <p>Asset packing respects the engine’s fixed global sprite capacity. Map and content fingerprints are part of online compatibility; both peers must agree.</p>
+
+    <h2 id="online">Online layers</h2>
+    <pre><code>Online hub UI
+  └─ online_control: framed TCP account/matchmaking protocol
+       └─ server rendezvous and match assignment
+            └─ ggpo_net: authenticated UDP peer/relay transport
+                 └─ ggpo_ext + rollback schema: predict, save, load, resimulate</code></pre>
+    <p>The control connection and gameplay transport are distinct. Matchmaking exchanges bounded connection material; gameplay runs through authenticated UDP with direct candidates and server relay fallback. Input prediction and rollback use serialized authoritative state, while cosmetic state is excluded or repaired separately.</p>
+
+    <h2 id="threading">Threading and nonblocking work</h2>
+    <p>The game/render thread owns native state and Lua callbacks. Network clients, update checks, audio producers, and Discord IPC are designed to pump or work asynchronously without waiting inside gameplay. Results cross bounded state machines and queues. A subsystem must not call unsafe game code from a worker or block <code>DllMain</code>.</p>
+
+    <h2 id="failure-policy">Failure policy</h2>
+    <ul>
+      <li>Parsers use explicit size and count limits.</li>
+      <li>Online and update data fail closed when authentication, hashes, paths, versions, or state transitions are invalid.</li>
+      <li>Updates journal the whole file set and prefer retaining evidence over guessing through ambiguous recovery.</li>
+      <li>Optional services such as Discord and update checks degrade without stopping gameplay.</li>
+      <li>Logs identify a subsystem and avoid credentials or private match material by design.</li>
+    </ul>
+
+    <div class="page-links"><a href="../getting-started/troubleshooting.html">← Troubleshooting</a><a class="next" href="file-layout.html">Next: File layout →</a></div>
+    <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+  </article></main></div>
+</body>
+</html>
+

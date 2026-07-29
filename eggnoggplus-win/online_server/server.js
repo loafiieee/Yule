@@ -5,6 +5,7 @@ const dgram = require("dgram");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { startAdminServerFromEnv } = require("./admin_server");
 const { createDiscordLfgBotFromEnv } = require("./discord_lfg_bot");
 const { startRedirectServerFromEnv } = require("./lfg_redirect");
 
@@ -263,6 +264,14 @@ function ensureUserShape(username) {
   rec.friend_requests = sanitizeUserList(rec.friend_requests, username);
   rec.blocked_users = sanitizeUserList(rec.blocked_users, username);
   rec.muted_users = sanitizeUserList(rec.muted_users, username);
+  if (rec.ban && typeof rec.ban === "object") {
+    rec.ban = {
+      reason: String(rec.ban.reason || "").slice(0, 160),
+      at: String(rec.ban.at || ""),
+    };
+  } else {
+    delete rec.ban;
+  }
   return rec;
 }
 
@@ -377,6 +386,78 @@ function sendError(client, message) {
   send(client, { type: "error", message });
 }
 
+function clientProtocolReady(client) {
+  return !!client &&
+    client.control_protocol === CONTROL_PROTOCOL_VERSION &&
+    client.match_protocol === MATCH_PROTOCOL_VERSION &&
+    client.p2p_protocol === P2P_PROTOCOL_VERSION;
+}
+
+function clientBuildReady(client) {
+  return !!client &&
+    client.build_id > 0 &&
+    client.game_exe_id > 0 &&
+    client.framework_dll_id > 0;
+}
+
+function clientsProtocolCompatible(a, b) {
+  return clientProtocolReady(a) &&
+    clientProtocolReady(b) &&
+    clientBuildReady(a) &&
+    clientBuildReady(b) &&
+    a.control_protocol === b.control_protocol &&
+    a.match_protocol === b.match_protocol &&
+    a.p2p_protocol === b.p2p_protocol &&
+    a.build_id === b.build_id &&
+    a.game_exe_id === b.game_exe_id &&
+    a.framework_dll_id === b.framework_dll_id;
+}
+
+function rejectUnsupportedClient(client) {
+  if (!clientProtocolReady(client)) {
+    sendError(
+      client,
+      `This build cannot use this server (client control/match/P2P ` +
+        `${client.control_protocol || "unknown"}/${client.match_protocol || "unknown"}/` +
+        `${client.p2p_protocol || "unknown"}; server requires ` +
+        `${CONTROL_PROTOCOL_VERSION}/${MATCH_PROTOCOL_VERSION}/${P2P_PROTOCOL_VERSION}). ` +
+        "Update Eggnogg+ and try again.",
+    );
+    return true;
+  }
+  if (!clientBuildReady(client)) {
+    sendError(
+      client,
+      "This client did not provide a complete game/framework build identity. " +
+        "Restart the updated Eggnogg+ build and try again.",
+    );
+    return true;
+  }
+  return false;
+}
+
+function notifyIncompatibleQueuePair(a, b) {
+  const aKey = `${b.username}:${b.build_id}:${b.game_exe_id}:${b.framework_dll_id}`;
+  const bKey = `${a.username}:${a.build_id}:${a.game_exe_id}:${a.framework_dll_id}`;
+  if (a.last_incompatible_build !== aKey) {
+    a.last_incompatible_build = aKey;
+    sendError(a, "A queued player is using a different game/framework build. Both players must update to the same build.");
+  }
+  if (b.last_incompatible_build !== bKey) {
+    b.last_incompatible_build = bKey;
+    sendError(b, "A queued player is using a different game/framework build. Both players must update to the same build.");
+  }
+}
+
+function clientsCanQueueMatch(a, b) {
+  if (clientsProtocolCompatible(a, b)) return true;
+  if (clientProtocolReady(a) && clientProtocolReady(b) &&
+      clientBuildReady(a) && clientBuildReady(b)) {
+    notifyIncompatibleQueuePair(a, b);
+  }
+  return false;
+}
+
 function sendServerInfo(client) {
   send(client, {
     type: "server_info",
@@ -387,6 +468,7 @@ function sendServerInfo(client) {
     cap_social_controls: 1,
     cap_private_rematch: 1,
     cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0,
+    cap_client_build_gate: 1,
   });
 }
 
@@ -613,6 +695,11 @@ function canCompetitiveMatch(a, b) {
 
 function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") {
   if (usersBlockEachOther(a, b)) return false;
+  if (!clientsProtocolCompatible(a, b)) {
+    sendError(a, "Opponent is using a different or incompatible Eggnogg+ build. Both players must update to the same build.");
+    sendError(b, "Opponent is using a different or incompatible Eggnogg+ build. Both players must update to the same build.");
+    return false;
+  }
   const competitive = queueName === "competitive";
   const forcedKey = String(forcedMapKey || "").trim().toLowerCase();
   const shared = forcedKey
@@ -647,6 +734,12 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     committed_at: 0,
     p2p_tokens: {},
     p2p_auth_token: makeP2pAuthToken(),
+    control_protocol: a.control_protocol,
+    match_protocol: a.match_protocol,
+    p2p_protocol: a.p2p_protocol,
+    build_id: a.build_id,
+    game_exe_id: a.game_exe_id,
+    framework_dll_id: a.framework_dll_id,
     p2p_endpoints: new Map(),
     p2p_notified: {},
     player_by_index: [],
@@ -670,8 +763,10 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
 
   send(hostClient, {
     type: "match_found",
-    match_protocol: MATCH_PROTOCOL_VERSION,
-    p2p_protocol: P2P_PROTOCOL_VERSION,
+    match_protocol: match.match_protocol,
+    p2p_protocol: match.p2p_protocol,
+    opponent_framework_version: joinClient.framework_version,
+    opponent_build_id: joinClient.build_id,
     match_id: match.id,
     source,
     queue: queueName,
@@ -693,8 +788,10 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
   });
   send(joinClient, {
     type: "match_found",
-    match_protocol: MATCH_PROTOCOL_VERSION,
-    p2p_protocol: P2P_PROTOCOL_VERSION,
+    match_protocol: match.match_protocol,
+    p2p_protocol: match.p2p_protocol,
+    opponent_framework_version: hostClient.framework_version,
+    opponent_build_id: hostClient.build_id,
     match_id: match.id,
     source,
     queue: queueName,
@@ -715,7 +812,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     input_delay: DEFAULT_INPUT_DELAY,
   });
 
-  console.log(`[match#${match.id}] ${source}/${queueName || "challenge"} ${a.username} vs ${b.username} map=${shared.key} host=${hostClient.username} join=${joinClient.username} udp_punch=required`);
+  console.log(`[match#${match.id}] ${source}/${queueName || "challenge"} ${a.username}(${a.framework_version} build=${a.build_id.toString(16)} p2p=${a.p2p_protocol}) vs ${b.username}(${b.framework_version} build=${b.build_id.toString(16)} p2p=${b.p2p_protocol}) map=${shared.key} host=${hostClient.username} join=${joinClient.username} udp_punch=required`);
   refreshFriendsForUsers([a.username, b.username]);
   broadcastQueueCounts();
   return true;
@@ -1041,6 +1138,7 @@ function tryCasualMatchmaking() {
     changed = false;
     for (let i = 0; i < casualQueue.length && !changed; i += 1) {
       for (let j = i + 1; j < casualQueue.length; j += 1) {
+        if (!clientsCanQueueMatch(casualQueue[i], casualQueue[j])) continue;
         if (!sharedMapChoices(casualQueue[i], casualQueue[j]).length) continue;
         if (usersBlockEachOther(casualQueue[i], casualQueue[j])) continue;
         if (makeMatch(casualQueue[i], casualQueue[j], "queue", "casual")) {
@@ -1058,6 +1156,7 @@ function tryCompetitiveMatchmaking() {
     changed = false;
     for (let i = 0; i < competitiveQueue.length && !changed; i += 1) {
       for (let j = i + 1; j < competitiveQueue.length; j += 1) {
+        if (!clientsCanQueueMatch(competitiveQueue[i], competitiveQueue[j])) continue;
         if (!canCompetitiveMatch(competitiveQueue[i], competitiveQueue[j])) continue;
         if (!sharedMapChoices(competitiveQueue[i], competitiveQueue[j], { competitive: true }).length) continue;
         makeMatch(competitiveQueue[i], competitiveQueue[j], "queue", "competitive");
@@ -1091,6 +1190,7 @@ function authOk(client, username) {
     cap_social_controls: 1,
     cap_private_rematch: 1,
     cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0,
+    cap_client_build_gate: 1,
   });
   sendFriendSnapshot(client);
   refreshFriendsFor(username);
@@ -1125,6 +1225,10 @@ function handleLogin(client, msg) {
   const password = String(msg.password || "");
   const rec = ensureUserShape(username);
   if (!rec) return send(client, { type: "auth_fail", reason: "unknown user" });
+  if (rec.ban) {
+    const suffix = rec.ban.reason ? `: ${rec.ban.reason}` : "";
+    return send(client, { type: "auth_fail", reason: `account banned${suffix}` });
+  }
   if (hashPassword(password, rec.salt) !== rec.hash) return send(client, { type: "auth_fail", reason: "wrong password" });
   const old = connectedClient(username);
   if (old && old !== client) {
@@ -1139,10 +1243,37 @@ function handleMapManifest(client, msg) {
   client.maps = sanitizeManifest(msg.maps);
   client.mapIndex = mapIndex(client.maps);
   client.map_serial = String(msg.serial || "").slice(0, 4096);
+  if (Object.prototype.hasOwnProperty.call(msg, "control_protocol")) {
+    client.control_protocol = sanitizeProtocolVersion(msg.control_protocol);
+  }
+  if (Object.prototype.hasOwnProperty.call(msg, "match_protocol")) {
+    client.match_protocol = sanitizeProtocolVersion(msg.match_protocol);
+  }
+  if (Object.prototype.hasOwnProperty.call(msg, "p2p_protocol")) {
+    client.p2p_protocol = sanitizeProtocolVersion(msg.p2p_protocol);
+  }
+  if (Object.prototype.hasOwnProperty.call(msg, "build_id")) {
+    client.build_id = sanitizeFingerprint(msg.build_id);
+  }
+  if (Object.prototype.hasOwnProperty.call(msg, "game_exe_id")) {
+    client.game_exe_id = sanitizeFingerprint(msg.game_exe_id);
+  }
+  if (Object.prototype.hasOwnProperty.call(msg, "framework_dll_id")) {
+    client.framework_dll_id = sanitizeFingerprint(msg.framework_dll_id);
+  }
+  if (Object.prototype.hasOwnProperty.call(msg, "framework_version")) {
+    client.framework_version = String(msg.framework_version || "unknown")
+      .replace(/[^0-9A-Za-z._+-]/g, "")
+      .slice(0, 32) || "unknown";
+  }
   client.p2p_port = sanitizePort(msg.p2p_port, 0);
   client.lan_host = sanitizeHostHint(msg.lan_host);
   client.route_version = sanitizePort(msg.route_version, 0);
-  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} p2p=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}${client.route_version ? ` route_v${client.route_version}` : ""}`);
+  console.log(`[maps] ${client.username || "anon"} maps=${client.maps.length} release=${client.framework_version} build=${client.build_id.toString(16)} exe=${client.game_exe_id.toString(16)} dll=${client.framework_dll_id.toString(16)} protocols=${client.control_protocol}/${client.match_protocol}/${client.p2p_protocol} port=${client.p2p_port}${client.lan_host ? ` lan=${client.lan_host}` : ""}${client.route_version ? ` route_v${client.route_version}` : ""}`);
+  if (client.username && (!clientProtocolReady(client) || !clientBuildReady(client))) {
+    removeFromQueues(client, "incompatible build");
+    rejectUnsupportedClient(client);
+  }
 }
 
 function sanitizePort(value, fallback) {
@@ -1151,8 +1282,17 @@ function sanitizePort(value, fallback) {
   return n;
 }
 
+function sanitizeProtocolVersion(value) {
+  return Number.isInteger(value) && value > 0 && value <= 65535 ? value : 0;
+}
+
+function sanitizeFingerprint(value) {
+  return Number.isInteger(value) && value > 0 && value <= 0xffffffff ? value : 0;
+}
+
 function handleJoinQueue(client, msg) {
   if (!client.username) return sendError(client, "not logged in");
+  if (rejectUnsupportedClient(client)) return;
   if (client.match_id && !activeMatches.has(client.match_id)) client.match_id = 0;
   if (client.match_id) return sendError(client, "already in a match");
   cancelRematchesForUser(client.username, "player joined matchmaking");
@@ -1315,6 +1455,7 @@ function handleFriendUnblock(client, msg) {
 
 function handleChallenge(client, msg) {
   if (!client.username) return sendError(client, "not logged in");
+  if (rejectUnsupportedClient(client)) return;
   const target = normalizeUsername(msg.username);
   const mine = ensureUserShape(client.username);
   const other = ensureUserShape(target);
@@ -1325,6 +1466,9 @@ function handleChallenge(client, msg) {
   const targetClient = connectedClient(target);
   if (!targetClient) return sendError(client, "friend is offline");
   if (targetClient.match_id) return sendError(client, "friend is already in a match");
+  if (!clientsProtocolCompatible(client, targetClient)) {
+    return sendError(client, "Friend is using an incompatible Eggnogg+ build. Both players must update.");
+  }
   const existing = [...challenges.values()].find((c) =>
     c.from === client.username && c.to === target && c.expires_at > now());
   if (existing) {
@@ -1368,6 +1512,7 @@ function handleChallenge(client, msg) {
 
 function handleChallengeMaps(client, msg) {
   if (!client.username) return sendError(client, "not logged in");
+  if (rejectUnsupportedClient(client)) return;
   const target = normalizeUsername(msg.username);
   const requestId = Number.isInteger(msg.request_id) && msg.request_id > 0
     ? Math.min(msg.request_id, 0x7fffffff)
@@ -1381,6 +1526,9 @@ function handleChallengeMaps(client, msg) {
   const targetClient = connectedClient(target);
   if (!targetClient) return sendError(client, "friend is offline");
   if (targetClient.match_id) return sendError(client, "friend is already in a match");
+  if (!clientsProtocolCompatible(client, targetClient)) {
+    return sendError(client, "Friend is using an incompatible Eggnogg+ build. Both players must update.");
+  }
 
   const choices = sharedMapChoices(client, targetClient);
   send(client, {
@@ -1418,6 +1566,7 @@ function findChallenge(client, msg) {
 
 function handleChallengeAccept(client, msg) {
   if (!client.username) return sendError(client, "not logged in");
+  if (rejectUnsupportedClient(client)) return;
   const challenge = findChallenge(client, msg);
   if (!challenge || challenge.to !== client.username || challenge.expires_at <= now()) {
     return sendError(client, "challenge expired");
@@ -1432,6 +1581,10 @@ function handleChallengeAccept(client, msg) {
     challenges.delete(challenge.id);
     sendFriendSnapshot(client);
     return sendError(client, "challenger is offline");
+  }
+  if (!clientsProtocolCompatible(client, fromClient)) {
+    sendError(fromClient, "Friend is using an incompatible Eggnogg+ build. Both players must update.");
+    return sendError(client, "Friend is using an incompatible Eggnogg+ build. Both players must update.");
   }
   if (client.match_id || fromClient.match_id) {
     return sendError(client, "challenge players are already in a match");
@@ -1600,6 +1753,7 @@ function replayTerminalMatch(client, msg) {
 
 function handleRematchRequest(client, msg) {
   if (!client.username) return sendError(client, "not logged in");
+  if (rejectUnsupportedClient(client)) return;
   const rematch = findClientRematch(client, msg);
   if (!rematch) {
     send(client, { type: "rematch_unavailable", match_id: msg && msg.match_id || 0 });
@@ -1611,6 +1765,15 @@ function handleRematchRequest(client, msg) {
       client.queue || otherClient.queue ||
       usersBlockEachOther(client.username, otherUsername)) {
     notifyRematchClosed(rematch, client.username, "rematch_unavailable", "rematch unavailable");
+    return;
+  }
+  if (!clientsProtocolCompatible(client, otherClient)) {
+    notifyRematchClosed(
+      rematch,
+      client.username,
+      "rematch_unavailable",
+      "opponent is using an incompatible Eggnogg+ build",
+    );
     return;
   }
 
@@ -1855,6 +2018,104 @@ const relayEndpointIndex = new Map();
 const terminalRelayMatches = new Map();
 const rematches = new Map();
 
+function requireAdminUser(rawUsername) {
+  const username = normalizeUsername(rawUsername);
+  const rec = ensureUserShape(username);
+  if (!validUsername(username) || !rec) throw new Error("user not found");
+  return { username, rec };
+}
+
+function adminSnapshot() {
+  const users = Object.keys(db.users).sort().map((username) => {
+    const rec = ensureUserShape(username);
+    const rating = ensureRating(username);
+    return {
+      username,
+      online: Boolean(connectedClient(username)),
+      banned: Boolean(rec && rec.ban),
+      ban_reason: rec && rec.ban ? rec.ban.reason : "",
+      elo: rating ? rating.elo : DEFAULT_ELO,
+      mmr: rating ? rating.mmr : DEFAULT_MMR,
+      friends: rec ? rec.friends.length : 0,
+      created_at: rec ? rec.created_at : "",
+    };
+  });
+  return {
+    online: onlineByUser.size,
+    casual_queue: casualQueue.length,
+    competitive_queue: competitiveQueue.length,
+    matches: activeMatches.size,
+    users,
+  };
+}
+
+function adminResetPassword(rawUsername, password) {
+  const { username, rec } = requireAdminUser(rawUsername);
+  const nextPassword = String(password || "");
+  if (nextPassword.length < 4 || nextPassword.length > 256) {
+    throw new Error("password must be 4..256 characters");
+  }
+  rec.salt = crypto.randomBytes(16).toString("hex");
+  rec.hash = hashPassword(nextPassword, rec.salt);
+  rec.password_reset_at = new Date().toISOString();
+  saveDB();
+  const client = connectedClient(username);
+  if (client) {
+    sendError(client, "Password reset by server administrator.");
+    destroyClient(client);
+  }
+  return `Password reset for ${username}; existing sessions were disconnected.`;
+}
+
+function adminSetBan(rawUsername, banned, reason) {
+  const { username, rec } = requireAdminUser(rawUsername);
+  if (banned) {
+    rec.ban = {
+      reason: String(reason || "Banned by server administrator").trim().slice(0, 160),
+      at: new Date().toISOString(),
+    };
+  } else {
+    delete rec.ban;
+  }
+  saveDB();
+  const client = connectedClient(username);
+  if (banned && client) {
+    sendError(client, rec.ban.reason || "Account banned.");
+    destroyClient(client);
+  }
+  return banned
+    ? `${username} was banned and disconnected.`
+    : `${username} was unbanned.`;
+}
+
+function adminDisconnect(rawUsername) {
+  const { username } = requireAdminUser(rawUsername);
+  const client = connectedClient(username);
+  if (!client) return `${username} is already offline.`;
+  sendError(client, "Disconnected by server administrator.");
+  destroyClient(client);
+  return `${username} was disconnected.`;
+}
+
+function adminResetRating(rawUsername) {
+  const { username } = requireAdminUser(rawUsername);
+  const rating = setRating(username, DEFAULT_ELO, DEFAULT_MMR);
+  saveRatings();
+  const client = connectedClient(username);
+  if (client) {
+    send(client, { type: "rating_update", elo: rating.elo, elo_before: rating.elo });
+  }
+  return `${username}'s rating was reset to ${rating.elo}.`;
+}
+
+const adminServer = startAdminServerFromEnv(process.env, {
+  snapshot: adminSnapshot,
+  resetPassword: adminResetPassword,
+  setBan: adminSetBan,
+  disconnect: adminDisconnect,
+  resetRating: adminResetRating,
+});
+
 const matchSweepTimer = setInterval(() => {
   const cutoff = now();
   let expired = false;
@@ -1900,6 +2161,14 @@ const server = net.createServer((socket) => {
     username: "",
     maps: defaultManifest(),
     mapIndex: mapIndex(defaultManifest()),
+    framework_version: "unknown",
+    control_protocol: 0,
+    match_protocol: 0,
+    p2p_protocol: 0,
+    build_id: 0,
+    game_exe_id: 0,
+    framework_dll_id: 0,
+    last_incompatible_build: "",
     p2p_port: 0,
     lan_host: "",
     route_version: 0,
@@ -2009,6 +2278,7 @@ async function orderlyShutdown(signal) {
   const cleanup = Promise.allSettled([
     closeListener(server),
     closeListener(udpServer),
+    closeListener(adminServer),
     closeListener(lfgRedirectServer),
     lfgBot.close({ retire: true }),
   ]);

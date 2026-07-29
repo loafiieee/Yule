@@ -12659,99 +12659,12 @@ static int lua_online_status(lua_State* Ls) {
     lua_pushboolean(Ls, ggpo_net_state_synced()); lua_setfield(Ls, -2, "state_synced");
     lua_pushboolean(Ls, ggpo_net_remote_state_synced()); lua_setfield(Ls, -2, "remote_state_synced");
     lua_pushboolean(Ls, ggpo_net_start_state_loaded()); lua_setfield(Ls, -2, "start_state_loaded");
-    lua_pushinteger(Ls, ggpo_net_local_cosmetic_profile_revision()); lua_setfield(Ls, -2, "local_cosmetic_revision");
-    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_profile_revision()); lua_setfield(Ls, -2, "remote_cosmetic_revision");
-    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_profile_applied_revision()); lua_setfield(Ls, -2, "remote_cosmetic_applied_revision");
-    lua_pushinteger(Ls, ggpo_net_local_cosmetic_asset_revision()); lua_setfield(Ls, -2, "local_cosmetic_asset_revision");
-    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_asset_revision()); lua_setfield(Ls, -2, "remote_cosmetic_asset_revision");
-    lua_pushinteger(Ls, ggpo_net_remote_cosmetic_asset_applied_revision()); lua_setfield(Ls, -2, "remote_cosmetic_asset_applied_revision");
-    return 1;
-}
-
-static int lua_online_set_cosmetic_profile(lua_State* Ls) {
-    size_t len = 0;
-    const char* profile = luaL_checklstring(Ls, 1, &len);
-    if (!ggpo_net_set_local_cosmetic_profile(profile, len)) {
-        lua_pushboolean(Ls, 0);
-        lua_pushfstring(Ls, "cosmetic profile must be %d bytes or less", GGPO_NET_COSMETIC_PROFILE_BYTES);
-        return 2;
-    }
-    lua_pushboolean(Ls, 1);
-    return 1;
-}
-
-static int lua_online_remote_cosmetic_profile(lua_State* Ls) {
-    size_t len = 0;
-    uint32_t revision = 0;
-    const char* profile = ggpo_net_remote_cosmetic_profile(&len, &revision);
-    if (!profile || len == 0) {
-        lua_pushnil(Ls);
-        lua_pushinteger(Ls, revision);
-        return 2;
-    }
-    lua_pushlstring(Ls, profile, len);
-    lua_pushinteger(Ls, revision);
-    return 2;
-}
-
-static int lua_online_mark_cosmetic_profile_applied(lua_State* Ls) {
-    uint32_t revision = (uint32_t)luaL_checkinteger(Ls, 1);
-    ggpo_net_mark_remote_cosmetic_profile_applied(revision);
-    lua_pushboolean(Ls, 1);
-    return 1;
-}
-
-static int lua_online_set_cosmetic_asset(lua_State* Ls) {
-    size_t id_len = 0;
-    size_t data_len = 0;
-    const char* asset_id = luaL_optlstring(Ls, 1, "", &id_len);
-    const char* data = luaL_optlstring(Ls, 2, "", &data_len);
-    if (id_len == 0 || data_len == 0) {
-        lua_pushboolean(Ls, ggpo_net_set_local_cosmetic_asset(NULL, NULL, 0));
-        return 1;
-    }
-    if (!ggpo_net_set_local_cosmetic_asset(asset_id, data, data_len)) {
-        lua_pushboolean(Ls, 0);
-        lua_pushfstring(Ls, "cosmetic asset must be %d bytes or less and have a short id", GGPO_NET_COSMETIC_ASSET_MAX_BYTES);
-        return 2;
-    }
-    lua_pushboolean(Ls, 1);
-    return 1;
-}
-
-static int lua_online_remote_cosmetic_asset(lua_State* Ls) {
-    const char* asset_id = NULL;
-    size_t len = 0;
-    uint32_t revision = 0;
-    const void* data = ggpo_net_remote_cosmetic_asset(&asset_id, &len, &revision);
-    if (!data || len == 0) {
-        lua_pushnil(Ls);
-        lua_pushnil(Ls);
-        lua_pushinteger(Ls, revision);
-        return 3;
-    }
-    lua_pushstring(Ls, asset_id ? asset_id : "");
-    lua_pushlstring(Ls, (const char*)data, len);
-    lua_pushinteger(Ls, revision);
-    return 3;
-}
-
-static int lua_online_mark_cosmetic_asset_applied(lua_State* Ls) {
-    uint32_t revision = (uint32_t)luaL_checkinteger(Ls, 1);
-    ggpo_net_mark_remote_cosmetic_asset_applied(revision);
-    lua_pushboolean(Ls, 1);
     return 1;
 }
 
 static void push_online_api_table(lua_State* Ls) {
     lua_newtable(Ls);
     lua_pushcfunction(Ls, lua_online_status); lua_setfield(Ls, -2, "status");
-    lua_pushcfunction(Ls, lua_online_set_cosmetic_profile); lua_setfield(Ls, -2, "set_cosmetic_profile");
-    lua_pushcfunction(Ls, lua_online_remote_cosmetic_profile); lua_setfield(Ls, -2, "remote_cosmetic_profile");
-    lua_pushcfunction(Ls, lua_online_mark_cosmetic_profile_applied); lua_setfield(Ls, -2, "mark_cosmetic_profile_applied");
-    lua_pushcfunction(Ls, lua_online_set_cosmetic_asset); lua_setfield(Ls, -2, "set_cosmetic_asset");
-    lua_pushcfunction(Ls, lua_online_remote_cosmetic_asset); lua_setfield(Ls, -2, "remote_cosmetic_asset");
-    lua_pushcfunction(Ls, lua_online_mark_cosmetic_asset_applied); lua_setfield(Ls, -2, "mark_cosmetic_asset_applied");
 }
 
 static int lua_fs_pick_character_file(lua_State* Ls) {
@@ -12973,11 +12886,15 @@ static void push_net_api_table(lua_State *Ls) {
 /* ---- mod.http: async HTTPS-capable GET via WinHTTP + worker thread ------- */
 
 #define HTTP_MAX_SLOTS 8
+#define HTTP_MAX_BODY_BYTES (8u * 1024u * 1024u)
 
 typedef struct {
     int            in_use;
+    int            handle;
+    LoadedMod     *owner;
     HANDLE         thread;
     volatile LONG  done;      /* 0=pending, 1=ok, -1=error — written by thread */
+    volatile LONG  cancelled; /* cancellation is observed by the worker/reaper */
     char          *body;
     size_t         body_len;
     char           error_msg[256];
@@ -12985,6 +12902,51 @@ typedef struct {
 } HttpSlot;
 
 static HttpSlot g_http_slots[HTTP_MAX_SLOTS];
+static int g_http_next_handle = 1;
+
+static void http_release_slot(HttpSlot *slot) {
+    if (!slot) return;
+    if (slot->thread) {
+        CloseHandle(slot->thread);
+        slot->thread = NULL;
+    }
+    free(slot->body);
+    memset(slot, 0, sizeof(*slot));
+}
+
+static void http_reap_cancelled_slots(void) {
+    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
+        HttpSlot *slot = &g_http_slots[i];
+        if (!slot->in_use ||
+            InterlockedCompareExchange(&slot->cancelled, 0, 0) == 0 ||
+            InterlockedCompareExchange(&slot->done, 0, 0) == 0) {
+            continue;
+        }
+        http_release_slot(slot);
+    }
+}
+
+static HttpSlot *http_find_slot(int handle, LoadedMod *owner) {
+    if (handle <= 0 || !owner) return NULL;
+    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
+        HttpSlot *slot = &g_http_slots[i];
+        if (slot->in_use && slot->handle == handle && slot->owner == owner) {
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+static void http_cancel_owner(LoadedMod *owner) {
+    if (!owner) return;
+    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
+        HttpSlot *slot = &g_http_slots[i];
+        if (slot->in_use && slot->owner == owner) {
+            InterlockedExchange(&slot->cancelled, 1);
+        }
+    }
+    http_reap_cancelled_slots();
+}
 
 static DWORD WINAPI http_worker_thread(LPVOID param) {
     HttpSlot *slot = (HttpSlot *)param;
@@ -13083,17 +13045,58 @@ static DWORD WINAPI http_worker_thread(LPVOID param) {
         return 0;
     }
 
-    /* Read body incrementally */
+    /* Reject declared oversized bodies before allocating them. Some servers
+     * omit Content-Length, so the streaming loop enforces the same ceiling. */
+    {
+        DWORD content_length = 0;
+        DWORD content_length_size = sizeof(content_length);
+        if (WinHttpQueryHeaders(req,
+                                WINHTTP_QUERY_CONTENT_LENGTH |
+                                    WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX,
+                                &content_length,
+                                &content_length_size,
+                                WINHTTP_NO_HEADER_INDEX) &&
+            content_length > HTTP_MAX_BODY_BYTES) {
+            _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+                      "response body exceeds %u bytes",
+                      (unsigned int)HTTP_MAX_BODY_BYTES);
+            WinHttpCloseHandle(req);
+            WinHttpCloseHandle(conn);
+            WinHttpCloseHandle(session);
+            InterlockedExchange(&slot->done, -1);
+            return 0;
+        }
+    }
+
+    /* Read body incrementally. Keep the buffer worker-local until the final
+     * publication so cancel/poll never races realloc or free. */
     size_t cap = 8192, len = 0;
     char  *buf = (char *)malloc(cap);
     int    ok  = (buf != NULL);
+    int    too_large = 0;
 
     while (ok) {
         DWORD avail = 0;
-        if (!WinHttpQueryDataAvailable(req, &avail)) break;
+        if (InterlockedCompareExchange(&slot->cancelled, 0, 0) != 0) {
+            ok = 0;
+            break;
+        }
+        if (!WinHttpQueryDataAvailable(req, &avail)) {
+            ok = 0;
+            break;
+        }
         if (avail == 0) break;
+        if ((size_t)avail > HTTP_MAX_BODY_BYTES - len) {
+            too_large = 1;
+            ok = 0;
+            break;
+        }
         if (len + avail + 1 > cap) {
             size_t newcap = (len + avail + 1) * 2;
+            if (newcap > HTTP_MAX_BODY_BYTES + 1u) {
+                newcap = HTTP_MAX_BODY_BYTES + 1u;
+            }
             char *tmp = (char *)realloc(buf, newcap);
             if (!tmp) { ok = 0; break; }
             buf = tmp;
@@ -13108,15 +13111,22 @@ static DWORD WINAPI http_worker_thread(LPVOID param) {
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(session);
 
-    if (ok && buf) {
+    if (ok && buf &&
+        InterlockedCompareExchange(&slot->cancelled, 0, 0) == 0) {
         buf[len]      = '\0';
         slot->body     = buf;
         slot->body_len = len;
         InterlockedExchange(&slot->done, 1);
     } else {
         free(buf);
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "failed reading response body");
+        if (too_large) {
+            _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+                      "response body exceeds %u bytes",
+                      (unsigned int)HTTP_MAX_BODY_BYTES);
+        } else if (InterlockedCompareExchange(&slot->cancelled, 0, 0) == 0) {
+            _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
+                      "failed reading response body");
+        }
         InterlockedExchange(&slot->done, -1);
     }
     return 0;
@@ -13124,7 +13134,15 @@ static DWORD WINAPI http_worker_thread(LPVOID param) {
 
 /* mod.http.get(url_string) → handle_int  or  nil, errmsg */
 static int lua_http_get(lua_State *L) {
+    LoadedMod *owner = mod_from_upvalue(L);
     const char *url_utf8 = luaL_checkstring(L, 1);
+
+    if (!owner || !owner->enabled) {
+        lua_pushnil(L);
+        lua_pushstring(L, "mod is not active");
+        return 2;
+    }
+    http_reap_cancelled_slots();
 
     int idx = -1;
     for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
@@ -13148,67 +13166,77 @@ static int lua_http_get(lua_State *L) {
     }
 
     slot->in_use = 1;
+    slot->owner = owner;
+    slot->handle = g_http_next_handle;
+    g_http_next_handle =
+        (g_http_next_handle == INT_MAX) ? 1 : g_http_next_handle + 1;
     slot->done   = 0;
+    slot->cancelled = 0;
     slot->thread = CreateThread(NULL, 0, http_worker_thread, slot, 0, NULL);
     if (!slot->thread) {
-        slot->in_use = 0;
+        http_release_slot(slot);
         lua_pushnil(L);
         lua_pushstring(L, "CreateThread failed");
         return 2;
     }
 
-    lua_pushinteger(L, idx);
+    lua_pushinteger(L, slot->handle);
     return 1;
 }
 
 /* mod.http.poll(handle) → "pending"  |  "done", body  |  "error", msg */
 static int lua_http_poll(lua_State *L) {
-    int idx = (int)luaL_checkinteger(L, 1);
-    if (idx < 0 || idx >= HTTP_MAX_SLOTS || !g_http_slots[idx].in_use) {
+    LoadedMod *owner = mod_from_upvalue(L);
+    int handle = (int)luaL_checkinteger(L, 1);
+    HttpSlot *slot;
+    http_reap_cancelled_slots();
+    slot = http_find_slot(handle, owner);
+    if (!slot ||
+        InterlockedCompareExchange(&slot->cancelled, 0, 0) != 0) {
         lua_pushstring(L, "error");
         lua_pushstring(L, "invalid handle");
         return 2;
     }
-    HttpSlot *slot = &g_http_slots[idx];
     LONG d = InterlockedCompareExchange(&slot->done, 0, 0);  /* atomic read */
     if (d == 0) {
         lua_pushstring(L, "pending");
         return 1;
     }
-    if (slot->thread) { CloseHandle(slot->thread); slot->thread = NULL; }
     if (d == 1) {
         lua_pushstring(L, "done");
         lua_pushlstring(L, slot->body ? slot->body : "", slot->body_len);
-        free(slot->body);
-        slot->body   = NULL;
-        slot->in_use = 0;
+        http_release_slot(slot);
         return 2;
     }
     lua_pushstring(L, "error");
-    lua_pushstring(L, slot->error_msg);
-    slot->in_use = 0;
+    lua_pushstring(L, slot->error_msg[0]
+        ? slot->error_msg
+        : "request failed");
+    http_release_slot(slot);
     return 2;
 }
 
 /* mod.http.cancel(handle) */
 static int lua_http_cancel(lua_State *L) {
-    int idx = (int)luaL_checkinteger(L, 1);
-    if (idx >= 0 && idx < HTTP_MAX_SLOTS && g_http_slots[idx].in_use) {
-        HttpSlot *slot = &g_http_slots[idx];
-        /* Thread may still be running — detach it; it will clean up its own
-           WinHTTP handles. We just abandon the result buffer. */
-        if (slot->thread) { CloseHandle(slot->thread); slot->thread = NULL; }
-        if (slot->body)   { free(slot->body); slot->body = NULL; }
-        slot->in_use = 0;
+    LoadedMod *owner = mod_from_upvalue(L);
+    int handle = (int)luaL_checkinteger(L, 1);
+    HttpSlot *slot;
+    http_reap_cancelled_slots();
+    slot = http_find_slot(handle, owner);
+    if (slot) {
+        /* Do not free or reuse the slot until the worker has published done.
+         * Closing the thread HANDLE does not stop the thread. */
+        InterlockedExchange(&slot->cancelled, 1);
+        http_reap_cancelled_slots();
     }
     return 0;
 }
 
-static void push_http_api_table(lua_State *Ls) {
+static void push_http_api_table(lua_State *Ls, LoadedMod *mod) {
     lua_newtable(Ls);
-    lua_pushcfunction(Ls, lua_http_get);    lua_setfield(Ls, -2, "get");
-    lua_pushcfunction(Ls, lua_http_poll);   lua_setfield(Ls, -2, "poll");
-    lua_pushcfunction(Ls, lua_http_cancel); lua_setfield(Ls, -2, "cancel");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_http_get, 1);    lua_setfield(Ls, -2, "get");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_http_poll, 1);   lua_setfield(Ls, -2, "poll");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_http_cancel, 1); lua_setfield(Ls, -2, "cancel");
 }
 
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -13285,7 +13313,7 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_setfield(Ls, -2, "fs");
 
     // HTTPS-capable async HTTP GET (WinHTTP).
-    push_http_api_table(Ls);
+    push_http_api_table(Ls, mod);
     lua_setfield(Ls, -2, "http");
 
     // Fields (convenience)
@@ -14379,6 +14407,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     if (call_on_unload_cb && mod->enabled && !mod_is_gameplay_suspended(mod)) {
         call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
     }
+    http_cancel_owner(mod);
 
     reflist_clear(L, &mod->on_frame);
     reflist_clear(L, &mod->on_tick);
@@ -14447,6 +14476,7 @@ static void unload_all_mods(void) {
 
     if (!L) {
         for (int i = 0; i < g_mod_count; i++) {
+            http_cancel_owner(&g_mods[i]);
             mod_bind_clear(&g_mods[i]);
             mod_storage_clear(&g_mods[i]);
             mod_audio_clear(&g_mods[i]);
@@ -15619,6 +15649,7 @@ void lua_manager_on_tick_post(void) {
 void lua_manager_on_frame() {
     hot_reload_poll();
     hot_reload_apply_pending_menu_state_reset();
+    http_reap_cancelled_slots();
     if (!L) return;
     void* state_ptr = ui_current_state_ptr();
 

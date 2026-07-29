@@ -24,9 +24,18 @@ PROBE_TOKEN_RE = re.compile(r"[0-9a-f]{32}")
 
 
 def reserve_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    """Pick a port that Windows permits for both the TCP and UDP listeners."""
+    for _ in range(64):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp:
+            tcp.bind(("127.0.0.1", 0))
+            port = int(tcp.getsockname()[1])
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                    udp.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("could not reserve a shared TCP/UDP test port")
 
 
 class Client:
@@ -87,6 +96,7 @@ def assert_protocol(message: dict[str, object]) -> None:
     assert message.get("cap_social_controls") == 1
     assert message.get("cap_private_rematch") == 1
     assert message.get("cap_p2p_relay") == 1
+    assert message.get("cap_client_build_gate") == 1
 
 
 def main() -> int:
@@ -157,6 +167,20 @@ def main() -> int:
                     }
                 )
                 assert_protocol(client.receive_type("auth_ok"))
+                client.send(
+                    {
+                        "type": "map_manifest",
+                        "framework_version": "1.2-test",
+                        "control_protocol": 3,
+                        "match_protocol": 3,
+                        "p2p_protocol": 17,
+                        "build_id": 0x1234ABCD,
+                        "game_exe_id": 0x2345BCDE,
+                        "framework_dll_id": 0x3456CDEF,
+                        "p2p_port": 0,
+                        "maps": [],
+                    }
+                )
 
             def make_match(
                 pair: list[Client] | None = None,
@@ -194,6 +218,20 @@ def main() -> int:
                         }
                     )
                     assert_protocol(client.receive_type("auth_ok"))
+                    client.send(
+                        {
+                            "type": "map_manifest",
+                            "framework_version": "1.2-test",
+                            "control_protocol": 3,
+                            "match_protocol": 3,
+                            "p2p_protocol": 17,
+                            "build_id": 0x1234ABCD,
+                            "game_exe_id": 0x2345BCDE,
+                            "framework_dll_id": 0x3456CDEF,
+                            "p2p_port": 0,
+                            "maps": [],
+                        }
+                    )
                 return pair
 
             # Friend challenges use the server-computed map intersection. The
@@ -873,6 +911,58 @@ def main() -> int:
                 and message.get("username") == "protocol_social_0"
                 for message in unblocked_snapshot
             )
+
+            # A pre-v17 or unadvertised client is rejected before matchmaking;
+            # it must never be silently paired with a v17 peer and left hanging.
+            outdated = Client(port)
+            clients.append(outdated)
+            outdated.name = "protocol_outdated"
+            assert_protocol(outdated.receive_type("server_info"))
+            outdated.send(
+                {
+                    "type": "register",
+                    "username": outdated.name,
+                    "password": "test-password",
+                }
+            )
+            assert_protocol(outdated.receive_type("auth_ok"))
+            outdated.send({"type": "join_queue", "queue": "casual"})
+            mismatch = outdated.receive_type("error")
+            assert "Update Eggnogg+" in str(mismatch.get("message", ""))
+            assert "17" in str(mismatch.get("message", ""))
+
+            # Two protocol-v17 clients with different deterministic binaries
+            # remain in queue and receive a clear notice; they never consume a
+            # match merely because their human release labels look compatible.
+            build_pair = new_registered_pair("bm")
+            build_pair[1].send(
+                {
+                    "type": "map_manifest",
+                    "framework_version": "1.2-test",
+                    "control_protocol": 3,
+                    "match_protocol": 3,
+                    "p2p_protocol": 17,
+                    "build_id": 0x1234ABCD,
+                    "game_exe_id": 0x2345BCDE,
+                    "framework_dll_id": 0x3456CDF0,
+                    "p2p_port": 0,
+                    "maps": [],
+                }
+            )
+            build_pair[0].send({"type": "join_queue", "queue": "casual"})
+            build_pair[0].receive_type("queue_joined")
+            build_pair[1].send({"type": "join_queue", "queue": "casual"})
+            build_pair[1].receive_type("queue_joined")
+            build_errors = [
+                participant.receive_type("error") for participant in build_pair
+            ]
+            assert all(
+                "different game/framework build" in str(message.get("message", ""))
+                for message in build_errors
+            )
+            for participant in build_pair:
+                participant.send({"type": "leave_queue"})
+                participant.receive_type("queue_left")
         finally:
             test_failed = sys.exc_info()[0] is not None
             for client in clients:

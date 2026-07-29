@@ -32,7 +32,7 @@ vendor_sources=(
 
 libraries=(
   -lkernel32 -luser32 -ladvapi32 -lopengl32 -lluajit-5.1
-  -lws2_32 -lwinhttp -lbcrypt -lcomdlg32 -lshell32 -lole32
+  -lws2_32 -liphlpapi -lwinhttp -lbcrypt -lcomdlg32 -lshell32 -lole32
   -I/mingw32/include
 )
 

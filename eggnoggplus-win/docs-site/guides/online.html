@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Use and troubleshoot the Eggnogg+ online hub and rollback multiplayer."><title>Online multiplayer · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="online.html">Guides</a><a href="../api/lua.html">API</a><a href="../reference/security.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Online</h2><a href="#requirements">Requirements</a><a href="#hub">Hub</a><a href="#match">Match flow</a><a href="#transport">Transport</a><a href="#compat">Compatibility</a><a href="#trouble">Troubleshoot</a><a href="#diagnostics">Diagnostics</a><a href="#debug">Debug sessions</a><a href="#match-hud">Match HUD</a><a href="#limits">Current limits</a></nav></aside>
+<main id="main" class="content" data-doc-title="Online multiplayer"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Online multiplayer</nav><article>
+<h1>Online multiplayer</h1>
+<p class="lead">The public flow is account → queue or friend challenge → hidden deterministic setup → authenticated direct UDP or relay → rollback match → confirmed result. Players never need to expose host/join details.</p>
+
+<section id="requirements"><h2>Before you connect</h2>
+<ul>
+  <li>Both players need the same compatible game/framework build and required online protocol revision.</li>
+  <li>Both need the server-selected map package, including identical external PNG and optional <code>map.lua</code> bytes.</li>
+  <li>The control server must advertise control protocol 3, match protocol 3, P2P protocol 17, packet authentication, social controls, private rematch, and relay.</li>
+  <li>Allow the game through Windows Firewall. The default server is <code>eggnogg.loafiieee.com:47778</code> using TCP control and UDP rendezvous/relay on the same port.</li>
+  <li>Leave the local P2P port on <strong>Auto</strong> unless you have a deliberate network rule.</li>
+</ul>
+<div class="callout warning">A new client paired only with old clients/server revisions is expected to fail compatibility checks. Test updated client-to-updated client against the matching deployed server before diagnosing NAT.</div></section>
+
+<section id="hub"><h2>Use the online hub</h2>
+<p>Open <strong>ONLINE</strong> from the main menu or run <code>online.hub</code>.</p>
+<dl>
+  <dt>Play</dt><dd>Register/login, optional Remember me, public Elo, Casual Queue, Competitive Queue, and queue leave/status.</dd>
+  <dt>Friends</dt><dd>Add friends, view requests/presence, select a mutually installed map, send/accept/decline five-minute challenges, mute challenge notifications, block/unblock, and unfriend.</dd>
+  <dt>Settings</dt><dd>Server <code>host:port</code>, local UDP port, challenge notifications, and optional Discord Rich Presence.</dd>
+</dl>
+<p>Remembered credentials use Windows Credential Manager. The config file stores only username and preference, not the password.</p></section>
+
+<section id="match"><h2>What happens after “match found”</h2>
+<ol>
+  <li>The server selects a map from the intersection of both complete client manifests, assigns player slots/seed, and supplies fresh rendezvous and packet-auth material.</li>
+  <li>Both clients attempt the same server-selected route generation and exchange authenticated HELLO packets.</li>
+  <li>The native match, exact map/content/script, synchronized reset, rollback layout, initial state, built-in palette tuple, and neutral frame zero are prepared during the countdown.</li>
+  <li>Each client sends READY only after frame zero is restorable and the layout proof matches.</li>
+  <li>The server commits gameplay only after both clients are ready. Pre-commit failure is a no-contest setup abort.</li>
+</ol>
+<p>Normal completion is confirmed only when both clients report the same winner. Leaving a committed match is an explicit forfeit. The native win animation stays visible; the hub opens only after Eggnogg returns to main. A private rematch is an explicit bilateral vote, expires after 45 seconds by default, is unranked, and revalidates the previous map.</p></section>
+
+<section id="transport"><h2>Direct P2P and relay</h2>
+<p>The server selects loopback, LAN, or public candidate routing. Both peers probe symmetrically; host/join assigns player and initial-state authority, not a privileged gameplay host. P2P v17 applies per-match HMAC-SHA-256 authentication (128-bit tag), role/session binding, and a 4,096-packet replay window.</p>
+<p>If direct traversal cannot establish after a fresh socket generation, the server moves <em>both</em> clients to its bounded relay. Relay admission is limited to that active match's observed endpoints, assigned slots, packet types/sizes, and rate budgets. End-to-end peer authentication still applies through the relay.</p>
+<p>P2P packets are authenticated, not encrypted. The relay/control server can observe metadata; the raw TCP account/control channel currently lacks TLS.</p></section>
+
+<section id="compat"><h2>Compatibility and mods</h2>
+<p>Each client <code>map_manifest</code> includes its informational <code>framework_version</code>, strict integer control/match/P2P versions, and deterministic <code>build_id</code>, <code>game_exe_id</code>, and <code>framework_dll_id</code> fingerprints. The client requires <code>cap_client_build_gate: 1</code> before login. The server admits only the exact <code>3/3/17</code> tuple and pairs only clients whose three build fingerprints also match; missing, malformed, old, or mismatched values fail before a match is created. P2P v16 and v17 are intentionally incompatible because both the authentication-key domain and packet layout changed. The release label is logged for diagnosis, but is not itself the compatibility gate. Server registration logs include <code>[maps] ... build=... exe=... dll=... protocols=3/3/17</code>, and match creation logs the checked build plus the selected P2P version.</p>
+<p>Map keys include package metadata, room text, external V2 assets, and optional script bytes. Numeric map selectors are local and must never be compared across installations.</p>
+<p>Gameplay-affecting Lua mods are suspended from match assignment through cleanup. Read-only/cosmetic mods can remain active. The framework build/map/layout identifiers catch ordinary incompatibility but are not cryptographic anti-cheat reports from a trusted authority.</p></section>
+
+<section id="trouble"><h2>Run the active troubleshooter</h2>
+<pre><code>online.troubleshoot</code></pre>
+<p>Leave the console open for up to five seconds. The test runs without pausing the game and checks:</p>
+<ul>
+  <li>TCP reachability to the configured control server;</li>
+  <li>UDP ping/pong plus server-observed public address and port;</li>
+  <li>the Windows adapter actually selected for the route to that server;</li>
+  <li>VPN/tunnel-like adapter evidence and local private/CGNAT address ranges.</li>
+</ul>
+<p>A Radmin, Tailscale, VPN, or tunnel adapter may be listed as active without being the server route. VPN detection is heuristic. A private LAN address proves ordinary NAT, not CGNAT; compare the router's WAN IPv4 to the public IPv4 reported by the UDP test. A local address in <code>100.64.0.0/10</code> is stronger CGNAT evidence.</p>
+<table><thead><tr><th>Result</th><th>Next check</th></tr></thead><tbody>
+  <tr><td>TCP fails</td><td>DNS, configured host/port, server process, firewall, router/public port, or control-server revision.</td></tr>
+  <tr><td>TCP passes, UDP fails</td><td>Windows Firewall, VPN kill switch/split tunneling, router UDP forwarding/filtering, or server UDP listener.</td></tr>
+  <tr><td>Both pass, peer direct fails</td><td>Confirm both clients/server are the matching revision and both switch to the same relay route.</td></tr>
+  <tr><td>Only your new build fails</td><td>Compare version/protocol logs and regression-test network socket lifecycle; do not assume NAT when the previous build works from the same machine.</td></tr>
+</tbody></table></section>
+
+<section id="diagnostics"><h2>Capture a secret-free snapshot</h2>
+<pre><code>net.diag
+console.copy output</code></pre>
+<p>Run it during the failed connection, not only afterward. It prints server state, active match, selected route and attempt, local UDP port, peer/candidate status, packet counters, rollback/prediction/correction state, and a verdict without credentials or tokens.</p>
+<p>Also collect <code>mods/modframework.log</code>, the corresponding server log window, and both peers' timestamps. Look for mismatched route generations, one-sided READY, protocol rejection, layout mismatch, missing UDP probes, relay activation, and premature control disconnect.</p></section>
+
+<section id="debug"><h2>Developer host/join and rollback probes</h2>
+<p>These commands are debugging tools, not the public hub flow:</p>
+<pre><code>ggpo.roundtrip
+ggpo.loopback on
+ggpo.local on
+
+# Copy the same 64-hex key on each machine, then:
+ggpo.net key
+ggpo.net host 47777
+ggpo.net join 192.0.2.10 47777
+
+ggpo.net sim 5 2 8
+ggpo.net status
+ggpo.net off</code></pre>
+<p><code>ggpo.net key</code> consumes and clears the clipboard; it never writes the key into history/logs. F2 runs roundtrip, F3 loopback, F4 local session, and F6/F7 the armed debug host/join path.</p></section>
+
+<section id="match-hud"><h2>Small match network HUD</h2>
+<p>Online &gt; Settings &gt; <strong>Match Network HUD</strong> is off by default. When enabled, active gameplay and paused Options show one muted top-right line with smoothed round-trip ping, local input delay, and cumulative rollbacks. The console controls the same persisted setting with <code>ggpo.net hud [on|off]</code>.</p>
+<p>The ping is the existing service-tick estimate converted at approximately 60 Hz. It is useful for a quick sanity check, but it is not sequence-aware jitter, loss, stall, or route telemetry.</p></section>
+
+<section id="limits"><h2>Current production limitations</h2>
+<ul>
+  <li>The account/control TCP channel has no TLS or certificate validation.</li>
+  <li>Result authority still relies on client reports; ranked-grade authoritative validation is unfinished.</li>
+  <li>The LAN-only maintenance UI covers password reset, ban/unban, disconnect, rating reset, and live counts. Durable database storage, audit logs, account deletion, granular admin roles, monitoring, and key rotation remain incomplete.</li>
+  <li>IPv6, established-match reconnect/rebinding, adaptive mid-match route failover, production GGPO integration, and broad two-machine/NAT soaks remain open.</li>
+  <li>Compatibility reports and Lua suspension are not anti-cheat against a modified native client.</li>
+</ul>
+<p>See <a href="../reference/security.html">security &amp; limitations</a> before operating a public server.</p></section>
+</article></main></div>
+</body></html>

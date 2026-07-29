@@ -1,10 +1,3 @@
-state main
-state
-ls
-help
-state.switch main
-help
-ggpo.net rngtrace on
 dev on
 dev off
 help
@@ -62,3 +55,10 @@ dev off
 dev on lua.mod options_demo local ok,v=mod.audio.play_bytebeat("t*((t>>12|t>>8)&63&t>>4)",{duration=4,loops=1,volume=.6}); return ok,ok and v.backend or v,ok and v.pcm_bytes or 0
 dev on
 lua.mod options_demo local ok,v=mod.audio.play_bytebeat("t*((t>>12|t>>8)&63&t>>4)",{duration=4,loops=1,volume=.6}); return ok,ok and v.backend or v,ok and v.pcm_bytes or 0
+online.troubleshoot
+music.play 0
+clear
+online.troubleshoot
+help
+exit
+net.diag

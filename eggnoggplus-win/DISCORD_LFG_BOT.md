@@ -4,6 +4,7 @@ The optional server-side LFG bridge posts one Discord message while an authentic
 player is waiting in a public casual or competitive queue. The message contains only the
 canonical public username and queue name. Its two link buttons open the existing friend
 challenge flow or the same public queue through the strict HTTPS-to-`yule://` handoff.
+The same-queue action is the left button; challenging the named player is the right.
 
 There is no direct-match link. Match IDs, ratings, control/P2P addresses, credentials,
 rendezvous data, and authentication tokens are never passed to the bot or written to its
@@ -217,6 +218,7 @@ For live acceptance:
 4. Make the two game accounts accepted friends, leave A available in a queue, and click
    **Challenge A** on B's computer. The client should resume the target challenge after
    authentication and open the ordinary compatible-map challenge flow.
+   Confirm the queue button is leftmost and the challenge button is rightmost.
 5. Repeat with Competitive, queue switching, client disconnect, an immediate match where
    another player was already waiting, and a clean `systemctl restart eggnogg`. Also send
    and accept a direct friend challenge while neither account is publicly queued; it must

@@ -77,6 +77,7 @@ Console commands:
 - `ggpo.net key` / `ggpo.net key clear`
 - `ggpo.net host [port]`
 - `ggpo.net join <host> [port] [local_port]`
+- `ggpo.net hud [on|off]`
 - `ggpo.net delay [frames]`
 - `ggpo.net advantage [frames]`
 - `ggpo.net predict [frames]`
@@ -87,7 +88,9 @@ Console commands:
 - `ggpo.net rngtrace [on|off]`
 - `ggpo.net off`
 - `ggpo.net status`
-- `net.diag` (alias: `net.trouble`)
+- `online.troubleshoot` (alias: `net.trouble`) - nonblocking active TCP/UDP and
+  Windows adapter/VPN/NAT/CGNAT evidence test
+- `net.diag` - current secret-free match/route/packet snapshot
 
 ## Rollback Model
 
@@ -295,6 +298,13 @@ MMR-range queue, friends, friend requests, authoritative friend-challenge map se
 5-minute challenges, persistent private block/mute state, bilateral private rematches,
 shared-map selection, and P2P match setup.
 
+Online > Settings includes a default-off **Match Network HUD** toggle, persisted as
+`match_hud=0|1`. During an active gameplay/paused-Options state it draws one small
+top-right line containing smoothed round-trip ping, local input delay, and cumulative
+rollback count. `ggpo.net hud [on|off]` changes the same setting. The ping converts the
+current service-tick RTT estimate at the game's approximately 60 Hz cadence; it is a
+basic indicator, not sequence-aware jitter/loss telemetry.
+
 The current control channel is bounded newline-delimited JSON over nonblocking raw TCP.
 TCP connect and login response each have independent 10-second wall-clock deadlines.
 After authentication, a 30-second JSON ping/pong heartbeat keeps the server's
@@ -309,13 +319,33 @@ attacker.
 After TCP connects, the client requests and validates the server's flat `server_info`
 advertisement before it sends the login/register request. Control protocol 3, match
 protocol 3, P2P protocol 17, packet-auth capability, social-controls capability, and
-private-rematch and UDP-relay capabilities are all required. `auth_ok` repeats the same fields and `match_found` repeats the match/P2P
-versions, so a stale or mixed deployment fails at the handshake (and again at match setup
-as defense in depth) instead of consuming a queue match that cannot start.
+private-rematch, UDP-relay, and client-build-gate capabilities are all required. `auth_ok`
+repeats the same fields and `match_found` repeats the match/P2P versions, so a stale or
+mixed deployment fails at the handshake (and again at match setup as defense in depth)
+instead of consuming a queue match that cannot start.
 
-The current client requires control v3/match v3/P2P v17 plus relay capability. Deploy and
-restart this matching server revision before launching the rebuilt client, then require
-the TCP/UDP deployment preflight to report UDP relay support.
+After authentication, every map manifest also identifies the sending client with its
+framework label, exact control/match/P2P protocol tuple, and deterministic
+build/game-executable/framework-DLL fingerprint tuple. The server stores and logs those
+values without secrets. It admits only control-v3/match-v3/P2P-v17 clients with complete
+build identities, and pairs only clients whose exact build tuples also match. Queue,
+challenge, rematch, and final match creation all use the same check. `match_found` carries
+the checked match/P2P versions and bounded opponent build diagnostics rather than blindly
+substituting the server's own constants. A client with missing or older fields is told to
+update before P2P setup; two supported-protocol clients with different binaries receive a
+clear incompatibility error and are not consumed as a match.
+
+P2P v16 and v17 are deliberately not wire-compatible. V17 changed the authenticated
+direction-key domain and the fixed input/ACK/correction packet layout, so changing a
+version number or accepting the older packet prefix would not be safe compatibility.
+Both players must run a build using the server's advertised tuple. The human-facing
+release label is diagnostic only; safe pairing requires both the numeric protocol tuple
+and exact build fingerprint tuple.
+
+The current client requires control v3/match v3/P2P v17 plus relay and client-build-gate
+capabilities. Deploy and restart this matching server revision before launching the
+rebuilt client, then require the TCP/UDP deployment preflight to report both build gating
+and UDP relay support.
 
 Gameplay uses end-to-end authenticated `ggpo_net` packets over a direct route when
 possible and the bounded server relay after a failed direct generation. The server chooses the map from

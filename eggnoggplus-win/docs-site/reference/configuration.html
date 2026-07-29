@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Eggnogg+ manifest, framework, mod, online, music, updater, and server configuration reference."><title>Configuration reference · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a href="../guides/modding.html">Guides</a><a href="../api/lua.html">API</a><a aria-current="page" href="configuration.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Configuration</h2><a href="#layout">Files</a><a href="#manifest">mod.json</a><a href="#mod-config">Mod config</a><a href="#storage">Storage &amp; binds</a><a href="#framework">Framework config</a><a href="#online">Online client config</a><a href="#music">Music markers</a><a href="#server">Server environment</a><a href="#rules">Persistence rules</a></nav></aside>
+<main id="main" class="content" data-doc-title="Configuration reference"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Configuration</nav><article>
+<h1>Configuration reference</h1>
+<p class="lead">The framework uses strict JSON only where structured schemas are needed and small line-based files for user-editable settings. Paths are rooted in the installed game directory after every normal or deep-link launch.</p>
+
+<section id="layout"><h2>Configuration files</h2>
+<table><thead><tr><th>Path</th><th>Owner</th><th>Format</th></tr></thead><tbody>
+  <tr><td><code>mods/&lt;mod&gt;/mod.json</code></td><td>Mod author</td><td>Strict full-file JSON manifest</td></tr>
+  <tr><td><code>mods/&lt;mod&gt;/config.cfg</code></td><td>Mod + player</td><td>Typed line-based settings; optional custom name</td></tr>
+  <tr><td><code>mods/&lt;mod&gt;/storage.cfg</code></td><td>Mod runtime</td><td>Persistent typed key/value store</td></tr>
+  <tr><td><code>mods/&lt;mod&gt;/binds.cfg</code></td><td>Player</td><td>Named binding overrides</td></tr>
+  <tr><td><code>mods/modframework.cfg</code></td><td>Framework/player</td><td>Global <code>key=value</code></td></tr>
+  <tr><td><code>mods/online_hub.cfg</code></td><td>Online hub/player</td><td>Online <code>key=value</code>; no password</td></tr>
+  <tr><td><code>data/tune*.txt</code></td><td>Music author</td><td>Native postfix or marked bytebeat/Dollchan source</td></tr>
+  <tr><td><code>maps/&lt;map&gt;/data.json</code></td><td>Map author</td><td>V1/V2 strict JSON; see <a href="map-format.html">map schema</a></td></tr>
+</tbody></table></section>
+
+<section id="manifest"><h2><code>mod.json</code></h2>
+<pre><code>{
+  "id": "my_mod",
+  "name": "My Mod",
+  "version": "1.0.0",
+  "author": "you",
+  "description": "Optional text",
+  "api_version": 1,
+  "allow_api_mismatch": false,
+  "entry": "main.lua",
+  "config": "config.cfg",
+  "storage": "storage.cfg",
+  "binds": "binds.cfg",
+  "priority": 10,
+  "depends": ["shared@&gt;=1.0 &lt;2"],
+  "optional_deps": ["ui_pack@^1.3"],
+  "conflicts": ["other_mod"],
+  "load_after": ["ui_pack"],
+  "load_before": ["late_overlay"]
+}</code></pre>
+<table><thead><tr><th>Field</th><th>Required / contract</th></tr></thead><tbody>
+  <tr><td><code>id</code></td><td>Required stable string, 1..63 chars. Content-compatible ids are stricter: ≤47 chars, letters/numbers/<code>._-</code>, no leading dot/hyphen.</td></tr>
+  <tr><td><code>name</code>, <code>author</code></td><td>Required, 1..63 chars.</td></tr>
+  <tr><td><code>version</code></td><td>Required, 1..31 chars; semantic version recommended.</td></tr>
+  <tr><td><code>entry</code></td><td>Required mod-relative Lua path, 1..127 chars.</td></tr>
+  <tr><td><code>description</code></td><td>Optional, up to 255 chars.</td></tr>
+  <tr><td><code>api_version</code></td><td>Recommended integer. Mismatch rejects by default.</td></tr>
+  <tr><td><code>allow_api_mismatch</code></td><td>Optional boolean override; unsafe for released mods. Local environment override: <code>LUNA_ALLOW_API_MISMATCH=1</code>.</td></tr>
+  <tr><td><code>config</code>, <code>storage</code>, <code>binds</code></td><td>Optional relative paths, each ≤127 chars. Storage/binds default to the names above.</td></tr>
+  <tr><td><code>priority</code></td><td>Integer load-order tie breaker; higher loads earlier.</td></tr>
+  <tr><td><code>depends</code>, <code>optional_deps</code></td><td>Up to 32 dependency strings, each ≤159 chars.</td></tr>
+  <tr><td><code>conflicts</code>, <code>load_before</code>, <code>load_after</code></td><td>Up to 32 mod ids per list.</td></tr>
+</tbody></table>
+<p>Dependency forms: <code>other</code>, <code>other@&gt;=1.2 &lt;2</code>, or <code>other&gt;=1.2</code>. Operators are <code>= == != &gt; &gt;= &lt; &lt;= ^ ~</code>. Invalid JSON/types produce a concrete log error rather than partial load.</p></section>
+
+<section id="mod-config"><h2>Typed mod config grammar</h2>
+<pre><code># Comments begin with # or //
+enabled: bool, true
+lives: int[1,9], 3
+gravity: float[0.2, 2.5], 1.0
+player_name: str, "Loaf"
+difficulty: options[easy, normal, hard], normal
+reset_stats: action
+reset_everything: action, "Reset Everything"</code></pre>
+<ul>
+  <li>One row per setting: <code>key: type, value</code>.</li>
+  <li><code>int</code>/<code>float</code> bounds are optional and inclusive in menu editing.</li>
+  <li><code>options[...]</code> always resolves to one declared string. An invalid default falls back to the first option.</li>
+  <li>Quote strings containing spaces or commas.</li>
+  <li>Actions have no stored value; the optional quoted text is the label.</li>
+</ul>
+<p>Menu behavior: bool toggles; number clicks increment; strings enter text edit (Enter saves, Esc cancels); options cycle left/right; actions call the registered handler. Lua surface: <code>config.get</code>, <code>config.set</code>, <code>config.on_action</code>, and <code>config.path</code>.</p></section>
+
+<section id="storage"><h2>Storage and bind files</h2>
+<p>The storage API persists boolean, finite number, string, or nil/delete, with an integer schema version and transactional migration callback. Mods should not assume hand-edited line ordering. Call <code>storage.save()</code> when an immediate durable write matters.</p>
+<p>Binding overrides are keyed by the stable ids passed to <code>mod.input.bind</code>. Supported names include keyboard tokens such as <code>space</code>, <code>a</code>, <code>left</code>, <code>escape</code>, and <code>F1</code>. Let the API/menu/console write <code>binds.cfg</code>; do not store transient down/edge state.</p></section>
+
+<section id="framework"><h2><code>mods/modframework.cfg</code></h2>
+<table><thead><tr><th>Key</th><th>Values / behavior</th></tr></thead><tbody>
+  <tr><td><code>show_log_console</code></td><td><code>0|1</code>; persisted visibility of the separate framework log console, default hidden.</td></tr>
+  <tr><td><code>main_menu_mode</code></td><td>Stable play-mode id such as <code>play</code> or <code>online</code>; unknown/unavailable registrations fall back safely.</td></tr>
+  <tr><td><code>auto_update</code></td><td><code>0|1</code>; missing means enabled.</td></tr>
+  <tr><td><code>update_channel_url</code></td><td>HTTPS release channel override; HTTP allowed only for localhost/127.0.0.1/::1 testing.</td></tr>
+  <tr><td><code>music_output_rate</code></td><td>8,000..192,000 Hz SDL output rate, normally 48,000.</td></tr>
+  <tr><td><code>discord_presence</code></td><td><code>0|1</code>; local Discord Rich Presence toggle.</td></tr>
+  <tr><td><code>discord_application_id</code></td><td>Public 1..20 digit Discord snowflake; configurable live with <code>discord.app</code>.</td></tr>
+</tbody></table>
+<p>Framework writers preserve unrelated lines/comments and use serialized atomic replacement. The internal persistence helper accepts keys 1..63 ASCII letters/digits/<code>._-</code> and values up to 4,096 bytes without CR/LF.</p></section>
+
+<section id="online"><h2><code>mods/online_hub.cfg</code></h2>
+<pre><code># Eggnogg+ built-in online hub config v2
+username=loaf
+remember_me=1
+server_host=eggnogg.loafiieee.com
+server_port=47778
+local_port=0
+challenge_notifications=1
+match_hud=0</code></pre>
+<table><thead><tr><th>Key</th><th>Contract</th></tr></thead><tbody>
+  <tr><td><code>username</code></td><td>Last canonical account name.</td></tr>
+  <tr><td><code>remember_me</code></td><td><code>0|1</code>. The password/token remains in Windows Credential Manager, never this file.</td></tr>
+  <tr><td><code>server_host</code>, <code>server_port</code></td><td>Control/rendezvous target; port 1..65535. Settings UI presents one <code>host:port</code>.</td></tr>
+  <tr><td><code>local_port</code></td><td>0 for Auto, otherwise 1..65535 requested local P2P UDP port. Retries may deliberately bind a fresh automatic port.</td></tr>
+  <tr><td><code>challenge_notifications</code></td><td><code>0|1</code>; visual challenge toast preference. Muted challenges still appear in the inbox.</td></tr>
+  <tr><td><code>match_hud</code></td><td><code>0|1</code>; default-off small active-match ping/input-delay/rollback overlay. Also controlled by <code>ggpo.net hud</code>.</td></tr>
+</tbody></table>
+<p>Deleting or editing this file does not remove a remembered secret from Credential Manager; use the in-game Remember me flow to change that state.</p></section>
+
+<section id="music"><h2>Playlist marker keys</h2>
+<pre><code>( yule:bytebeat engine=dollchan mode=bytebeat
+  sample_rate=44100 output_rate=48000 volume=0.25 )</code></pre>
+<table><thead><tr><th>Key</th><th>Values</th></tr></thead><tbody>
+  <tr><td><code>engine</code></td><td><code>bounded</code> (default) or <code>dollchan</code>.</td></tr>
+  <tr><td><code>mode</code></td><td>Bounded: bytebeat. Dollchan: <code>bytebeat</code>, <code>signed-bytebeat</code>, <code>floatbeat</code>, <code>funcbeat</code>.</td></tr>
+  <tr><td><code>sample_rate</code></td><td>4,000..48,000 Hz, default 8,000; controls formula time/tempo/pitch.</td></tr>
+  <tr><td><code>output_rate</code></td><td>Optional 8,000..192,000 track-specific mixer override.</td></tr>
+  <tr><td><code>volume</code></td><td>0..1, default 0.25.</td></tr>
+</tbody></table>
+<p>See <a href="audio.html">audio &amp; music</a> for syntax and runtime limits.</p></section>
+
+<section id="server"><h2>Online server environment</h2>
+<p>Core bind/data variables:</p>
+<pre><code>HOST=0.0.0.0
+PORT=47778
+UDP_HOST=0.0.0.0
+UDP_PORT=47778
+DB=/path/users.json
+RATINGS=/path/ratings.json
+SECRET_FILE=/path/server_secret.key
+DEFAULT_ELO=1000
+DEFAULT_MMR=1000
+INPUT_DELAY=1</code></pre>
+<p>Lifecycle/match tuning includes <code>REMATCH_TTL_MS</code>, <code>MATCH_REPORT_TIMEOUT_MS</code> (legacy alias <code>MATCH_SINGLE_REPORT_GRACE_MS</code>), <code>MATCH_SETUP_STALE_MS</code>, <code>MATCH_SWEEP_INTERVAL_MS</code>, <code>CLIENT_IDLE_TIMEOUT_MS</code>, <code>COMPETITIVE_BASE_RANGE</code>, <code>COMPETITIVE_RANGE_PER_SEC</code>, and <code>COMPETITIVE_MAX_RANGE</code>. Transport: <code>P2P_RELAY_ENABLED</code>, <code>RELAY_FINISH_GRACE_MS</code>, and <code>UDP_DIAG</code>.</p>
+<p>The optional passwordless maintenance listener uses <code>ADMIN_HOST</code> (default <code>127.0.0.1</code>) and <code>ADMIN_PORT</code> (default <code>47779</code>), and is disabled with <code>ADMIN_ENABLED=0</code>. Set the exact private LAN address for LAN access; wildcard/public binds fail closed unless the unsafe <code>ADMIN_ALLOW_WILDCARD=1</code> override is explicit. Set <code>ADMIN_COOKIE_SECURE=1</code> behind an HTTPS-only proxy.</p>
+<p>Optional Discord LFG variables and safe secret-file setup are documented in <a href="../guides/discord.html">Discord, LFG &amp; deep links</a>. The complete deployment sequence is in <a href="../guides/server-deployment.html">server deployment</a>.</p></section>
+
+<section id="rules"><h2>Editing and persistence rules</h2>
+<ul>
+  <li>Close the game before hand-editing values whose in-memory owner may save later.</li>
+  <li>Keep credentials/tokens out of every config, manifest, log, screenshot, and release archive.</li>
+  <li>Do not repurpose a stable id/key after release; migrations depend on it.</li>
+  <li>Use framework UI/API writers where available so validation and atomic replacement apply.</li>
+  <li>Back up player-owned storage before schema migrations and server-owned JSON before deployment updates.</li>
+  <li>Never solve a release-version mismatch by changing only channel JSON; use the <a href="../guides/updater-release.html">release procedure</a>.</li>
+</ul></section>
+</article></main></div>
+</body></html>

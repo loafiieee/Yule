@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Complete Yule in-game developer console command and control reference."><title>Developer console · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a href="../guides/modding.html">Guides</a><a href="../api/lua.html">API</a><a aria-current="page" href="console.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Console</h2><a href="#controls">Controls</a><a href="#core">Core</a><a href="#runtime">Runtime</a><a href="#mods">Mods</a><a href="#online">Online</a><a href="#netcode">Netcode</a><a href="#developer">Developer mode</a><a href="#examples">Examples</a><a href="#hotkeys">Debug hotkeys</a></nav></aside>
+<main id="main" class="content" data-doc-title="Developer console"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Developer console</nav><article>
+<h1>Developer console</h1>
+<p class="lead">Press backtick (<code>`</code>) to open Yule's in-game console. It provides day-to-day framework administration, diagnostics, live mod configuration, and an explicitly gated set of invasive developer tools.</p>
+<div class="callout warning"><strong>Do not paste secrets into commands.</strong> Command history persists in <code>mods/console_history.txt</code>. The authenticated direct-netplay key path deliberately reads a one-use key from the clipboard and clears it.</div>
+
+<section id="controls"><h2>Input and history</h2>
+<table><thead><tr><th>Control</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>Enter</code></td><td>Run the current command.</td></tr>
+<tr><td><code>Up</code> / <code>Down</code></td><td>Browse persisted command history.</td></tr>
+<tr><td><code>Left</code> / <code>Right</code>, <code>Home</code> / <code>End</code></td><td>Move through the input line.</td></tr>
+<tr><td><code>Backspace</code> / <code>Delete</code></td><td>Edit at the cursor.</td></tr>
+<tr><td><code>Tab</code></td><td>Complete command names and supported arguments: mod ids, config/bind keys and values, states, and log levels. Multiple matches are listed and extended to their common prefix.</td></tr>
+<tr><td><code>PageUp</code> / <code>PageDown</code> or wheel</td><td>Scroll output.</td></tr>
+<tr><td><code>Ctrl+L</code></td><td>Clear visible output.</td></tr>
+<tr><td><code>Ctrl+C</code></td><td>Copy input; with empty input, copy console output.</td></tr>
+<tr><td><code>Ctrl+V</code> or right click</td><td>Paste into input.</td></tr>
+<tr><td>Middle click</td><td>Copy console output.</td></tr>
+<tr><td><code>Esc</code>, <code>exit</code>, <code>quit</code></td><td>Close the console; these do not exit the game.</td></tr>
+</tbody></table></section>
+
+<section id="core"><h2>Core console commands</h2>
+<table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>help [topic]</code>, <code>commands</code></td><td>List available commands or show focused help. Developer-only commands remain hidden until <code>dev on</code>.</td></tr>
+<tr><td><code>clear</code></td><td>Clear output.</td></tr>
+<tr><td><code>history [count]</code></td><td>Print recent command history.</td></tr>
+<tr><td><code>echo &lt;text&gt;</code></td><td>Print text.</td></tr>
+<tr><td><code>find &lt;text&gt;</code>, <code>console.find &lt;text&gt;</code></td><td>Reprint output lines containing the search text.</td></tr>
+<tr><td><code>console.stats</code></td><td>Show console buffer/history statistics.</td></tr>
+<tr><td><code>console.copy [output|input]</code></td><td>Copy the selected console text to the clipboard.</td></tr>
+</tbody></table></section>
+
+<section id="runtime"><h2>Runtime and system</h2>
+<table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>state</code></td><td>Print the current native/framework UI state.</td></tr>
+<tr><td><code>state.last</code></td><td>Print the last state transition.</td></tr>
+<tr><td><code>state.return [main|main_initial|options|options_paused|mods|mods_entry]</code></td><td>Inspect or choose the state used when leaving an overlay/menu.</td></tr>
+<tr><td><code>state.switch &lt;state&gt;</code></td><td>Force a known state. Developer-only because an invalid transition point can break menu flow.</td></tr>
+<tr><td><code>sys.info</code></td><td>Print framework, process, and system diagnostics.</td></tr>
+<tr><td><code>ui.size</code></td><td>Print logical and window dimensions used by framework UI.</td></tr>
+<tr><td><code>time.scale [value|auto]</code></td><td>Inspect or set global time scale. Manual values clamp to <code>0.05..100</code>; <code>auto</code> returns control to mod-driven scaling.</td></tr>
+<tr><td><code>framework.api</code></td><td>Print the active numeric Lua framework API.</td></tr>
+<tr><td><code>discord.app [application_id]</code></td><td>Inspect or replace the public 1–20 digit Discord application id, persist it, and reconnect Rich Presence without restarting.</td></tr>
+<tr><td><code>log.level [debug|info|warn|error]</code></td><td>Inspect or set the live framework log threshold.</td></tr>
+<tr><td><code>music.status</code></td><td>Print the current track/runtime state.</td></tr>
+<tr><td><code>music.scan</code></td><td>List contiguous <code>data/tune*.txt</code> tracks, formats, and numbering gaps.</td></tr>
+<tr><td><code>music.rescan</code></td><td>Rescan tracks added or edited while the game is open.</td></tr>
+<tr><td><code>music.play &lt;index|random&gt;</code></td><td>Force a compatible track, or restore shuffled selection.</td></tr>
+<tr><td><code>music.output_rate [hz]</code></td><td>Inspect configured/active mixer rates or persist and apply <code>8000..192000</code> Hz. A track marker may temporarily override it.</td></tr>
+</tbody></table>
+<p>See <a href="audio.html">Audio and music</a> for tune markers, bytebeat modes, and source-rate versus output-rate behavior.</p></section>
+
+<section id="mods"><h2>Mods, config, binds, and reloads</h2>
+<table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>mods.count</code>, <code>mods.list</code></td><td>Count or list discovered mods and load state.</td></tr>
+<tr><td><code>mods.find &lt;text&gt;</code></td><td>Search ids/names.</td></tr>
+<tr><td><code>mods.info &lt;id&gt;</code></td><td>Show manifest, dependency, status, memory/performance, and gameplay-affecting diagnostics.</td></tr>
+<tr><td><code>mods.trace &lt;id|all&gt; [on|off]</code></td><td>Toggle per-mod event trace logging.</td></tr>
+<tr><td><code>mods.enable|disable|toggle &lt;id|all&gt;</code></td><td>Apply the load/unload lifecycle immediately. Disabling a mod also disables enabled dependents that require it.</td></tr>
+<tr><td><code>mods.config &lt;id&gt;</code></td><td>List the typed config for one mod. Alias: <code>mods.cfg</code>.</td></tr>
+<tr><td><code>mods.config.find &lt;text&gt;</code></td><td>Search all settings. Alias: <code>mods.cfg.find</code>.</td></tr>
+<tr><td><code>mods.config.get &lt;id&gt; &lt;key&gt;</code></td><td>Print one resolved value. Alias: <code>mods.cfg.get</code>.</td></tr>
+<tr><td><code>mods.config.set &lt;id&gt; &lt;key&gt; &lt;value&gt;</code></td><td>Validate and set a bool/int/float/string setting. Quote values containing spaces. Alias: <code>mods.cfg.set</code>.</td></tr>
+<tr><td><code>mods.config.action &lt;id&gt; &lt;key&gt;</code></td><td>Trigger a declared action setting. Alias: <code>mods.cfg.action</code>.</td></tr>
+<tr><td><code>binds.list [id]</code>, <code>binds.find &lt;text&gt;</code></td><td>Inspect declared input bindings.</td></tr>
+<tr><td><code>binds.set &lt;id&gt; &lt;key&gt; &lt;value&gt;</code></td><td>Persist a binding override.</td></tr>
+<tr><td><code>binds.clear &lt;id&gt; &lt;key&gt;</code></td><td>Remove an override and return to the mod default.</td></tr>
+<tr><td><code>reload.mods</code>, <code>mods.reload</code></td><td>Rescan manifests and recreate mod runtimes.</td></tr>
+<tr><td><code>reload.assets</code></td><td>Rebuild registered font/texture assets and engine atlases.</td></tr>
+</tbody></table></section>
+
+<section id="online"><h2>Online hub and connectivity</h2>
+<table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>online.hub</code></td><td>Load and open the online hub. <code>online</code> is accepted as an alias although it is omitted from autocomplete.</td></tr>
+<tr><td><code>online.troubleshoot</code>, <code>net.trouble</code></td><td>Asynchronously test TCP control and UDP rendezvous against the configured server and print Windows route, adapter, NAT/CGNAT, firewall, and VPN evidence. VPN conclusions are heuristic.</td></tr>
+<tr><td><code>net.diag</code></td><td>Print a secret-free snapshot of server state, active match, selected route, attempts, and packet counters.</td></tr>
+</tbody></table>
+<p>The troubleshooter does not pause gameplay. Run it before queueing, and run <code>net.diag</code> while a connection is actually stuck. An unrelated active virtual adapter is evidence, not proof that traffic is routed through it; the named server-route adapter is the important result.</p></section>
+
+<section id="netcode"><h2>Rollback netcode commands</h2>
+<div class="callout note"><strong>Developer gate:</strong> all <code>ggpo.*</code> commands require <code>dev on</code>. Hub matchmaking normally supplies authenticated endpoints and settings automatically; these commands are for controlled tests.</div>
+<table><thead><tr><th>Command</th><th>Contract</th></tr></thead><tbody>
+<tr><td><code>ggpo.net</code>, <code>ggpo.net status</code></td><td>Print connection, frame/ack/checksum, packet, correction, simulation, socket, and build-fingerprint diagnostics.</td></tr>
+<tr><td><code>ggpo.net off</code></td><td>Stop the current direct debug session. Aliases: <code>stop</code>, <code>disable</code>.</td></tr>
+<tr><td><code>ggpo.net key</code></td><td>Read exactly 64 hexadecimal characters from the clipboard, clear the clipboard, and arm the key for one successful v17 host/join. The key is not typed, persisted, or logged.</td></tr>
+<tr><td><code>ggpo.net key clear</code></td><td>Discard an armed one-use key. <code>off</code> is also accepted after <code>key</code>.</td></tr>
+<tr><td><code>ggpo.net host [port]</code></td><td>Host an authenticated UDP rollback session as player 0.</td></tr>
+<tr><td><code>ggpo.net join &lt;host&gt; [port] [local_port]</code></td><td>Join as player 1, optionally binding a chosen local UDP port.</td></tr>
+<tr><td><code>ggpo.net hud [on|off]</code></td><td>Inspect or persist the default-off small active-match ping/input-delay/rollback overlay. Alias: <code>overlay</code>.</td></tr>
+<tr><td><code>ggpo.net delay [0..8]</code></td><td>Inspect or set local input delay. Alias: <code>input_delay</code>.</td></tr>
+<tr><td><code>ggpo.net autodelay [on|off]</code></td><td>Toggle RTT-derived automatic input delay. Alias: <code>auto_delay</code>.</td></tr>
+<tr><td><code>ggpo.net advantage [0..220]</code></td><td>Inspect or set frame-advantage throttling. Aliases: <code>max_advantage</code>, <code>timesync</code>.</td></tr>
+<tr><td><code>ggpo.net predict [1..220]</code></td><td>Inspect or set maximum prediction before stalling. Aliases: <code>prediction</code>, <code>max_prediction</code>.</td></tr>
+<tr><td><code>ggpo.net highping [1..220]</code></td><td>Apply a conservative latency budget that favors bounded pauses over long prediction. Aliases: <code>latency</code>, <code>budget</code>.</td></tr>
+<tr><td><code>ggpo.net smoothping [1..220]</code></td><td>Apply an aggressive profile favoring smoothness at greater correction risk. Aliases: <code>smooth</code>, <code>aggressive</code>.</td></tr>
+<tr><td><code>ggpo.net correction [on|off|status]</code></td><td>Control host-authoritative correction after detected divergence. Aliases: <code>correct</code>, <code>resync</code>.</td></tr>
+<tr><td><code>ggpo.net sim [loss 0..100] [min 0..120] [max 0..120]</code></td><td>Simulate outgoing UDP loss and delay in ticks. <code>sim off</code>, <code>clear</code>, or <code>none</code> removes it. Alias: <code>netem</code>.</td></tr>
+<tr><td><code>ggpo.net rngtrace [on|off]</code></td><td>Log live frames that consume gameplay RNG; use only for a short desync capture.</td></tr>
+<tr><td><code>ggpo.roundtrip</code></td><td>Non-invasive save/load/checksum callback test.</td></tr>
+<tr><td><code>ggpo.selftest [frames]</code></td><td>Invasive hidden-frame replay test; do not use during another rollback session.</td></tr>
+<tr><td><code>ggpo.local [toggle|on|off|status]</code></td><td>Route local gameplay through the GGPO-shaped save/load/advance callback session.</td></tr>
+</tbody></table>
+<p>Only one loopback, local, self-test, or network harness can own rollback at a time. There is no working <code>ggpo.loopback</code> console dispatch in the current source; use <code>F3</code> for the live loopback harness.</p></section>
+
+<section id="developer"><h2>Developer mode and power tools</h2>
+<pre><code>dev on
+# run diagnostic commands
+dev off</code></pre>
+<p>Developer mode controls command visibility, autocomplete, and dispatch. It gates <code>ggpo.net</code>, <code>ggpo.roundtrip</code>, <code>ggpo.selftest</code>, <code>ggpo.local</code>, <code>state.switch</code>, <code>input.*</code>, arbitrary Lua, and <code>log.tail</code>.</p>
+<table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>lua &lt;code&gt;</code>, <code>eval &lt;code&gt;</code></td><td>Execute code in the framework console Lua environment and print returned values.</td></tr>
+<tr><td><code>lua.mod &lt;id&gt; &lt;code&gt;</code>, <code>eval.mod</code></td><td>Execute inside a loaded mod's environment.</td></tr>
+<tr><td><code>lua.file &lt;path&gt;</code></td><td>Execute a Lua file. Treat it exactly like installed trusted code.</td></tr>
+<tr><td><code>log.tail [lines]</code></td><td>Print recent framework log lines in-game.</td></tr>
+<tr><td><code>input.show [player]</code></td><td>Inspect active input override state.</td></tr>
+<tr><td><code>input.override &lt;player&gt; &lt;mask&gt; [frames] [replace]</code></td><td>Inject decimal or <code>0x</code> input mask; negative frames persist until cleared. <code>replace</code> controls replacement versus merge.</td></tr>
+<tr><td><code>input.clear &lt;player&gt;</code></td><td>Remove an injected override.</td></tr>
+</tbody></table>
+<div class="callout warning"><strong>Arbitrary Lua and forced state/input commands can crash or corrupt the current session.</strong> They are test tools, not stable automation interfaces.</div></section>
+
+<section id="examples"><h2>Useful command sequences</h2>
+<h3>Inspect and change a mod setting</h3>
+<pre><code>mods.find speed
+mods.info speedhack
+mods.config speedhack
+mods.config.set speedhack max_speed 3.5</code></pre>
+<h3>Diagnose an online failure</h3>
+<pre><code>online.troubleshoot
+net.diag
+dev on
+ggpo.net status
+ggpo.net rngtrace on</code></pre>
+<h3>Authenticated direct two-client test</h3>
+<pre><code># Copy the same random 64-hex value on each client:
+dev on
+ggpo.net key
+# Client A:
+ggpo.net host 47777
+# Client B, after independently arming the same key:
+ggpo.net join 203.0.113.10 47777</code></pre>
+<h3>Test generated audio from a loaded mod</h3>
+<pre><code>dev on
+lua.mod options_demo return mod.audio.play_bytebeat(
+  "t*((t&gt;&gt;12|t&gt;&gt;8)&amp;63&amp;t&gt;&gt;4)",
+  {duration=4, loops=1, volume=.6}
+)</code></pre></section>
+
+<section id="hotkeys"><h2>Native/debug hotkeys</h2>
+<table><thead><tr><th>Key</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>F1</code> / <code>F11</code></td><td>Framework window/fullscreen controls.</td></tr>
+<tr><td><code>F2</code></td><td>Rollback state roundtrip test.</td></tr>
+<tr><td><code>F3</code></td><td>Toggle the live rollback loopback harness.</td></tr>
+<tr><td><code>F4</code></td><td>Toggle the local callback session.</td></tr>
+<tr><td><code>F6</code> / <code>F7</code></td><td>Debug host/join after arming a v17 clipboard key.</td></tr>
+<tr><td><code>F9</code> / <code>F10</code> / <code>F12</code></td><td>Native game developer controls inherited from the executable; avoid relying on these in user-facing workflows.</td></tr>
+</tbody></table></section>
+
+<nav class="page-nav" aria-label="More documentation"><a href="configuration.html">← Configuration</a><a href="../guides/testing-releasing.html">Testing and releasing →</a></nav>
+</article></main></div></body></html>

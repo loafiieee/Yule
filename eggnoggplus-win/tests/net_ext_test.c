@@ -24,6 +24,11 @@ typedef struct NetTestServer {
     volatile LONG passed;
 } NetTestServer;
 
+typedef struct UdpProbeServer {
+    SOCKET socket;
+    volatile LONG passed;
+} UdpProbeServer;
+
 static DWORD WINAPI receive_server(void *opaque) {
     NetTestServer *server = (NetTestServer*)opaque;
     SOCKET client = accept(server->listener, NULL, NULL);
@@ -73,6 +78,49 @@ static SOCKET make_loopback_socket(unsigned short *port, int listen_now) {
     }
     *port = ntohs(address.sin_port);
     return fd;
+}
+
+static SOCKET make_loopback_udp_socket(unsigned short *port) {
+    SOCKET fd;
+    struct sockaddr_in address;
+    int address_length = (int)sizeof(address);
+    fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd == INVALID_SOCKET) return INVALID_SOCKET;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (bind(fd, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR ||
+        getsockname(fd, (struct sockaddr*)&address, &address_length) == SOCKET_ERROR) {
+        closesocket(fd);
+        return INVALID_SOCKET;
+    }
+    *port = ntohs(address.sin_port);
+    return fd;
+}
+
+static DWORD WINAPI udp_probe_server(void *opaque) {
+    UdpProbeServer *server = (UdpProbeServer*)opaque;
+    struct sockaddr_in source;
+    int source_length = (int)sizeof(source);
+    char request[256];
+    const char reply[] =
+        "{\"type\":\"udp_pong\",\"seq\":12345,"
+        "\"observed_host\":\"203.0.113.7\",\"observed_port\":45678}";
+    int received = recvfrom(server->socket, request, sizeof(request) - 1, 0,
+                            (struct sockaddr*)&source, &source_length);
+    if (received <= 0) return 1;
+    request[received] = '\0';
+    if (!strstr(request, "\"type\":\"udp_ping\"") ||
+        !strstr(request, "\"seq\":12345")) {
+        return 1;
+    }
+    if (sendto(server->socket, reply, (int)strlen(reply), 0,
+               (const struct sockaddr*)&source, source_length) ==
+        (int)strlen(reply)) {
+        InterlockedExchange(&server->passed, 1);
+    }
+    return 0;
 }
 
 static int wait_connected(int slot, int *ever_connected) {
@@ -172,11 +220,64 @@ static void test_refused_connect_never_reports_success(void) {
     closesocket(reserved);
 }
 
+static void test_udp_reachability_probe(void) {
+    unsigned short port = 0;
+    UdpProbeServer server;
+    HANDLE thread = NULL;
+    NetUdpProbeResult result;
+    char error[160];
+    int status = 0;
+    DWORD deadline;
+    memset(&server, 0, sizeof(server));
+    memset(&result, 0, sizeof(result));
+    server.socket = make_loopback_udp_socket(&port);
+    CHECK(server.socket != INVALID_SOCKET);
+    if (server.socket == INVALID_SOCKET) return;
+    thread = CreateThread(NULL, 0, udp_probe_server, &server, 0, NULL);
+    CHECK(thread != NULL);
+    if (!thread) goto cleanup;
+    error[0] = '\0';
+    CHECK(net_udp_probe_start("127.0.0.1", port, 12345u, 2000u,
+                              error, sizeof(error)) == 1);
+    CHECK(net_udp_probe_active() == 1);
+    deadline = GetTickCount() + 3000u;
+    while ((LONG)(GetTickCount() - deadline) < 0) {
+        status = net_udp_probe_poll(&result, error, sizeof(error));
+        if (status != 0) break;
+        Sleep(1);
+    }
+    CHECK(status == 1);
+    CHECK(strcmp(result.observed_host, "203.0.113.7") == 0);
+    CHECK(result.observed_port == 45678u);
+    CHECK(net_udp_probe_active() == 0);
+    CHECK(WaitForSingleObject(thread, 3000) == WAIT_OBJECT_0);
+    CHECK(InterlockedCompareExchange(&server.passed, 0, 0) == 1);
+
+cleanup:
+    net_udp_probe_cancel();
+    if (thread) {
+        WaitForSingleObject(thread, 1000);
+        CloseHandle(thread);
+    }
+    if (server.socket != INVALID_SOCKET) closesocket(server.socket);
+}
+
+static void test_network_profile_smoke(void) {
+    NetNetworkProfile profile;
+    if (net_network_profile(NULL, &profile)) {
+        CHECK(profile.primary_ipv4[0] != '\0');
+        CHECK(profile.primary_adapter[0] != '\0');
+        CHECK(profile.active_ipv4_adapters >= 1);
+    }
+}
+
 int main(void) {
     WSADATA data;
     CHECK(WSAStartup(MAKEWORD(2, 2), &data) == 0);
     test_large_copied_send();
     test_refused_connect_never_reports_success();
+    test_udp_reachability_probe();
+    test_network_profile_smoke();
     WSACleanup();
     if (g_failures) {
         fprintf(stderr, "%d failure(s)\n", g_failures);

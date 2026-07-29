@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Complete Eggnogg+ transactional custom-content registry API and tile-definition reference.">
+  <title>Content registry API · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script defer src="../api-data.js"></script>
+  <script defer src="../app.js"></script>
+</head>
+<body data-root="../" data-page="api-content">
+<main id="main"><article>
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / <a href="index.html">API</a> / Content</nav>
+  <h1>Content registry</h1>
+  <p class="lead">An all-or-nothing registry for owner-qualified symbolic tiles. It provides strict data identity and rendering/collision composition; richer per-map behavior belongs in the restricted <a href="map-lua.html">map Lua API</a>.</p>
+
+  <section>
+    <h2>Complete registration</h2>
+    <pre><code>mod.assets.load_spritesheet("terrain", "assets/terrain.png", {
+  cell_w=16, cell_h=16, padding=0
+})
+
+local tx, err = mod.content.begin()
+assert(tx, err)
+
+assert(tx:register_tile({
+  id="moss_floor",
+  name="Moss Floor",
+  sheet="terrain",
+  sprite_index=0,
+  frame_count=4,
+  frame_ticks=6,
+  animation="loop",
+  collision="solid",
+  native_visual="underlay"
+}))
+
+assert(tx:commit())</code></pre>
+    <p>A commit replaces the owner's entire prior set. Commit an empty transaction to remove it. Validation/allocation failure preserves the previously committed registry.</p>
+  </section>
+
+  <section>
+    <h2>Tile definition fields</h2>
+    <table>
+      <thead><tr><th>Field</th><th>Type and contract</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>Required local id. Letters, numbers, period, underscore, and hyphen; at most 47 characters; cannot begin with period/hyphen.</td></tr>
+        <tr><td><code>name</code></td><td>Optional bounded display/debug name.</td></tr>
+        <tr><td><code>sheet</code> / <code>sprite_sheet</code></td><td>Required mod-owned sheet id or <code>builtin:sprites</code>, <code>builtin:tiles</code>, <code>builtin:misc</code>, or <code>builtin:glyphs</code>.</td></tr>
+        <tr><td><code>sprite_index</code></td><td>Zero-based cell inside the resolved sheet.</td></tr>
+        <tr><td><code>frame_count</code>, <code>frame_ticks</code></td><td>Deterministic contiguous animation range and ticks per frame.</td></tr>
+        <tr><td><code>animation</code></td><td><code>loop</code>, <code>ping_pong</code>/<code>pingpong</code>, or <code>once</code>.</td></tr>
+        <tr><td><code>layer</code></td><td>Native sprite batch 0 or 1.</td></tr>
+        <tr><td><code>collision</code></td><td><code>native</code>, <code>solid</code>, <code>pass_through</code>, or <code>hazard</code>.</td></tr>
+        <tr><td><code>native_glyph</code></td><td>Verified safe native behavior glyph used when collision is native.</td></tr>
+        <tr><td><code>force_mode</code></td><td><code>add</code> or <code>set</code>.</td></tr>
+        <tr><td><code>force_x</code>, <code>force_y</code></td><td>Per-tick axis change in -64..64; presence opts the axis in.</td></tr>
+        <tr><td><code>max_speed_x</code>, <code>max_speed_y</code></td><td>Absolute axis clamp used with a declared force.</td></tr>
+        <tr><td><code>native_visual</code></td><td><code>replace</code> or <code>underlay</code>. Underlay renders native terrain beneath the custom sprite.</td></tr>
+        <tr><td><code>mirror_with_room</code>, <code>random_phase</code></td><td>Boolean mirrored presentation/force and deterministic per-cell animation phase.</td></tr>
+        <tr><td><code>offset_x/y</code>, <code>scale</code>, <code>scale_x/y</code>, <code>angle</code>/<code>angle_degrees</code></td><td>Finite bounded presentation transform.</td></tr>
+        <tr><td><code>tint</code></td><td>Exactly four normalized RGBA numbers.</td></tr>
+        <tr><td><code>asset_sha256</code></td><td>Optional exact pin for a mod-owned sheet. The framework hashes the actual registered bytes.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warning">Unknown keys, fractional integer fields, unsafe glyphs, invalid enums, non-finite values, malformed tint, out-of-range sprites, and duplicate ids are errors. They are not coerced.</div>
+  </section>
+
+  <section>
+    <h2>Collision and behavior boundary</h2>
+    <p>Collision presets map to verified native behavior: solid uses ordinary ground, pass-through uses platform behavior, and hazard uses native lethal terrain. Declarative forces are intentionally small deterministic shortcuts. Use <code>map.lua</code> for contact filters, one-shot springs, sprite response, velocity limits, and state.</p>
+    <p>The registry does not create arbitrary entities, weapons, combat hitboxes, or moving physics bodies. A native <code>K</code> glyph remains a separately spawned fixed native hazard and is not the custom-entity API.</p>
+  </section>
+
+  <section>
+    <h2>Limits</h2>
+    <table><tbody>
+      <tr><th>Definitions per owner</th><td>4,096</td></tr>
+      <tr><th>Definitions process-wide</th><td>65,535</td></tr>
+      <tr><th>Global sprite atlas</th><td>8,192 sprite cells across registered sheets</td></tr>
+      <tr><th>Commit</th><td>All-or-nothing replacement of one owner's set</td></tr>
+      <tr><th>Lifetime</th><td>Removed on disable, unload, or hot reload</td></tr>
+    </tbody></table>
+  </section>
+
+  <div id="api-browser" data-groups="content"></div>
+</article></main>
+</body>
+</html>

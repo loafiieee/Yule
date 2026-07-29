@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Yule framework automated tests, hands-on acceptance matrices, release build, publishing, and deployment workflow."><title>Testing and releasing · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="testing-releasing.html">Guides</a><a href="../api/lua.html">API</a><a href="../reference/configuration.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Test &amp; release</h2><a href="#baseline">Automated baseline</a><a href="#safe-runners">Runner safety</a><a href="#manual">Manual matrix</a><a href="#online">Online acceptance</a><a href="#updater">Updater acceptance</a><a href="#build">Build</a><a href="#publish">Publish release</a><a href="#server">Deploy server</a><a href="#checklist">Release checklist</a></nav></aside>
+<main id="main" class="content" data-doc-title="Testing and releasing"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Testing and releasing</nav><article>
+<h1>Testing and releasing</h1>
+<p class="lead">Use the guarded native runners for regression coverage, then complete the in-game and two-client acceptance matrix. Build a versioned channel only from the verified binaries, publish payloads before the channel pointer, and deploy the matching server protocol.</p>
+
+<section id="baseline"><h2>Automated baseline</h2>
+<p>Close the game and run these from the repository root in PowerShell:</p>
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_core_native_tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_v2_map_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_map_script_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_updater_test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_update_helper_test.ps1</code></pre>
+<table><thead><tr><th>Runner</th><th>Coverage</th></tr></thead><tbody>
+<tr><td><code>run_core_native_tests.ps1</code></td><td>Credential handling, TCP/control protocol, floating-point control, rollback envelope/schema/serializer, window/static integration, Discord IPC, LFG bot and redirect tests.</td></tr>
+<tr><td><code>run_v2_map_test.ps1</code></td><td>V2 parser/package fixture, native-layout atlas safety, registry retirement, collision/force/sensor behavior, native underlay/mirroring, generated-map render bridge, deterministic map script integration, rollback state, and online readiness.</td></tr>
+<tr><td><code>run_map_script_test.ps1</code></td><td>Isolated deterministic VM sandbox, contact phases/sensors, visual offsets, rollback replay, faults, and checked-in spring behavior.</td></tr>
+<tr><td><code>run_updater_test.ps1</code></td><td>Manifest parser, hashes, transactions, recovery, and loopback HTTP download/apply in disposable directories.</td></tr>
+<tr><td><code>run_update_helper_test.ps1</code></td><td>One-shot helper power-cut/recovery matrix, mapped-payload import audit, same-install process guard, privacy-safe recovery log, and exact relaunch argument forwarding.</td></tr>
+</tbody></table>
+<p>A green native baseline is necessary, not sufficient: rendering, sound, state transitions, real NAT behavior, Discord desktop IPC, and process replacement still need hands-on checks.</p></section>
+
+<section id="safe-runners"><h2>Why the guarded runners matter</h2>
+<div class="callout warning"><strong>Do not run generated MinGW test executables directly.</strong> The PowerShell wrappers locate the required 32-bit MinGW/LuaJIT runtime DLLs and temporarily prepare <code>PATH</code>. Direct execution from an unprepared shell causes a cascade of “X.dll was not found” dialogs.</div>
+<ul>
+<li>The test runners compile and execute isolated test binaries; they do not launch <code>eggnoggplus.exe</code>.</li>
+<li>Do not automate launching the game during the native suite. Start it normally yourself for manual tests.</li>
+<li>Updater runners use disposable roots and do not replace the live <code>SDL2.dll</code>.</li>
+<li>If a runner reports that 32-bit MinGW is missing, install MSYS2 MinGW32 or make <code>C:\msys64\mingw32\bin\gcc.exe</code> available. Do not work around it by copying random DLLs into system directories.</li>
+<li>Keep the game closed while compiling/replacing the installed proxy; Windows cannot replace a DLL mapped by a live process.</li>
+</ul></section>
+
+<section id="manual"><h2>Hands-on framework matrix</h2>
+<p>Launch the game normally, open the console with backtick, and keep <code>mods/modframework.log</code visible. Test a clean profile and an existing upgraded profile.</p>
+<table><thead><tr><th>Area</th><th>Acceptance pass</th></tr></thead><tbody>
+<tr><td>Startup/UI</td><td>Main, Mods, Options, paused Options, and custom mod states render; mouse/vanilla cursor scale and color effects work; gameplay advances behind the paused input-config overlay where designed; return paths do not loop.</td></tr>
+<tr><td>Mod lifecycle</td><td><code>mods.list</code>, enable/disable/toggle, dependencies/conflicts, hot reload, config actions, storage migration, binds, asset reload, and an intentional Lua error all produce bounded useful diagnostics.</td></tr>
+<tr><td>Lua APIs</td><td>Exercise <code>mods/options_demo</code>, <code>ui_api_test</code>, asset/texture/font examples, file/folder picker cancel paths, async network handles, content ownership, and cleanup after reload/unload.</td></tr>
+<tr><td>Rich Presence</td><td>Toggle it in Framework/online settings, change <code>discord.app</code>, restart Discord, visit each coarse state, and confirm no account/opponent/map/endpoint/match data is exposed.</td></tr>
+<tr><td>Music/audio</td><td>Run <code>music.scan</code>/<code>rescan</code>/<code>play</code>/<code>output_rate</code>; verify native postfix, bounded bytebeat and Dollchan tracks, stereo modes, per-track source/output rates, generated chunk cache/status/stop/clear, and fallback without SDL2_mixer where supported.</td></tr>
+<tr><td>V2 maps</td><td>Use <code>v2_symbolic_demo</code>: map-wide tileset, ordinary terrain, spring full-cell contact/filter/respawn, fan direction, K hazard exclusion, active-frame visual offset, tint/script hot reload, last-known-good failure, and restoration after leaving.</td></tr>
+<tr><td>Deep links</td><td>From outside the install directory, launch each supported <code>yule://</code> route with the game closed and open. A second invocation must forward to the existing instance, survive login, execute once, and reject malformed routes safely.</td></tr>
+</tbody></table>
+<p>Use <a href="../reference/console.html">Developer console</a>, <a href="../api/lua.html">Lua API</a>, <a href="../reference/audio.html">Audio</a>, and <a href="../reference/map-format.html">Map format</a> for exact contracts.</p></section>
+
+<section id="online"><h2>Two-client online acceptance</h2>
+<p>Update, rebuild, and deploy the server plus both clients from the same source first. Verify <code>cap_client_build_gate: 1</code>, the advertised <code>3/3/17</code> control/match/P2P tuple, and identical nonzero <code>build=</code>, <code>exe=</code>, and <code>dll=</code> values for both clients in the server log. Do not infer compatibility from a display version alone.</p>
+<ol>
+<li>Run <code>online.troubleshoot</code> on both machines before queueing. TCP control and UDP rendezvous should pass without freezing; the server-route adapter must match the route to the configured host.</li>
+<li>Test casual, competitive, friend challenge, request accept/decline, queue leave/change, private rematch, and duplicate actions.</li>
+<li>Cover direct routing and a restrictive/mobile/CGNAT pair that requires bounded server relay. Both clients must select the same route and leave prematch/countdown exactly once.</li>
+<li>Test normal win, loss, opponent leaving during prematch/countdown/gameplay, process close, timeout, and conflicting/stale report attempts. The remaining player gets one valid win when appropriate.</li>
+<li>Keep the native win animation visible. Return to the hub only after the game reaches main; there must be no fullscreen result overlay or hub/result loop.</li>
+<li>Use network simulation for bounded regression: <code>dev on</code>, then <code>ggpo.net sim 5 2 8</code>. Inspect prediction/rollback/correction, and clear with <code>ggpo.net sim off</code>.</li>
+<li>On a failure, capture <code>net.diag</code>, <code>ggpo.net status</code>, both framework logs, server logs, and both desync dumps. Do not include credentials or match keys.</li>
+</ol>
+<p>Also test a deliberately old/unadvertised protocol build: it must get an update/incompatibility error before matchmaking and never be paired. See <a href="online.html">Online multiplayer</a>.</p></section>
+
+<section id="updater"><h2>Updater and recovery acceptance</h2>
+<p>Use a disposable copy of an installation and a test channel with a version newer than its embedded <code>FRAMEWORK_VERSION</code>. Cover:</p>
+<ul>
+<li>no update, valid update, invalid JSON/schema/path, missing payload, wrong size/hash, interrupted download, and retry;</li>
+<li>safe-menu handoff, exact process close, helper start, complete DLL replacement, argument-preserving relaunch, and helper exit;</li>
+<li>power interruption at every replacement cut point, followed by whole-set complete-or-restore recovery;</li>
+<li>committed-but-cleanup-incomplete journal recovery on the next handoff;</li>
+<li>two instances attempting the same-install update;</li>
+<li>ordinary command-line and <code>--yule-uri</code> arguments, including spaces and Unicode;</li>
+<li>an already-current installation, which must not relaunch in a loop.</li>
+</ul>
+<div class="callout warning"><strong>Never change only <code>latest.json</code> to paper over a bad release.</strong> Installed version comes from the binary, not the age of one dependency DLL. Keep the source version, built proxy marker, payload folder, and channel version identical.</div>
+<p>Review <code>mods/updater.log</code> after each case and follow the full <a href="updater-release.html">Updater/release guide</a>.</p></section>
+
+<section id="build"><h2>Build verified Windows artifacts</h2>
+<ol>
+<li>Close every game/updater process.</li>
+<li>Set <code>FRAMEWORK_VERSION</code> in <code>update_ext.h</code> to the new dot-separated version.</li>
+<li>Run the automated baseline.</li>
+<li>Build from the repository root in an MSYS2-capable shell:</li>
+</ol>
+<pre><code>bash compile.sh</code></pre>
+<p>The build compiles <code>YuleUpdater.exe</code> as a standalone static helper and rejects imports of replaceable payload DLLs. It then links the complete proxy to <code>build/SDL2_test.dll</code> before copying that exact verified artifact to <code>SDL2.dll</code>.</p>
+<pre><code>Get-FileHash .\build\SDL2_test.dll -Algorithm SHA256
+Get-FileHash .\SDL2.dll -Algorithm SHA256</code></pre>
+<p>The hashes must match. Launch once manually for smoke testing, then close the game before packaging.</p></section>
+
+<section id="publish"><h2>Build and publish a release channel</h2>
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_release.ps1 `
+  -Version 1.2 `
+  -Notes "Short user-facing release notes"</code></pre>
+<p>The release builder refuses a version that differs from <code>update_ext.h</code> or the marker embedded in the installed/built proxy. It audits required artifacts/imports and produces:</p>
+<pre><code>dist/
+  releases/
+    latest.json
+    1.2/
+      SDL2.dll
+      lua51.dll
+      libgcc_s_dw2-1.dll
+      libwinpthread-1.dll
+      SDL2_mixer.dll
+  installer/
+  EGGNOGG+_framework_installer.zip</code></pre>
+<ol>
+<li>Upload the complete versioned directory (<code>releases/1.2/</code>) to the channel.</li>
+<li>Fetch every public payload URL and independently verify size/SHA-256 against the generated manifest.</li>
+<li>Upload <code>latest.json</code> atomically <em>last</em>.</li>
+<li>Publish the installer zip only after the live channel is valid.</li>
+<li>Test an update from the immediately previous public version and a clean install.</li>
+</ol>
+<p>Do not delete an old version directory while supported clients could still be downloading it. Roll back by publishing a correctly built newer recovery release or a deliberate channel pointer backed by intact payloads; never leave the pointer referencing removed files.</p></section>
+
+<section id="server"><h2>Validate and deploy the online services</h2>
+<pre><code>cd online_server
+npm install
+npm run check
+npm test
+node check_deployment.py 127.0.0.1 47778</code></pre>
+<p>On the production host, back up durable data and use the guarded updater from the existing <code>online_server</code> directory:</p>
+<pre><code>./update_server.sh</code></pre>
+<p>The script clones the configured repository/ref, locates the project layout, stages application files, preserves configured durable files such as users/ratings, restarts the systemd service, probes the actual TCP/UDP protocol, and restores the previous application if validation fails. Environment overrides include <code>YULE_REPOSITORY_URL</code>, <code>YULE_REPOSITORY_REF</code>, <code>YULE_SERVICE_NAME</code>, <code>YULE_SERVER_PORT</code>, and <code>YULE_TARGET_ROOT</code>.</p>
+<p>After deploy, inspect <code>systemctl status eggnogg</code>, server error/output logs, public firewall/routing, and a real remote two-client match. A listening Node process alone is not a protocol-level readiness check. See <a href="server-deployment.html">Server deployment</a> and <a href="discord.html">Discord/LFG deployment</a>.</p></section>
+
+<section id="checklist"><h2>Release sign-off</h2>
+<ul class="checklist">
+<li>All five guarded runners pass from a clean checkout/worktree state.</li>
+<li>Compiler is warning-clean and installed proxy equals the verified artifact.</li>
+<li>Version agrees in source, binary marker, release folder, and channel metadata.</li>
+<li>Manual UI, mod, map, music, deep-link, Discord, updater, and recovery smoke tests pass.</li>
+<li>Two real current clients complete direct and relay matches; old protocol builds fail before matching.</li>
+<li>Normal and disconnect results are accepted once and native win presentation completes.</li>
+<li>Payload URLs/hashes verified before atomic <code>latest.json</code> upload.</li>
+<li>Server application deploy passes syntax/tests and live TCP/UDP probe without changing durable data.</li>
+<li>Logs/release archive contain no credentials, tokens, match keys, journals, user/rating databases, or local config.</li>
+<li>Release notes identify migrations, compatibility breaks, known limitations, and rollback/recovery instructions.</li>
+</ul></section>
+
+<nav class="page-nav" aria-label="More documentation"><a href="updater-release.html">← Updater details</a><a href="../reference/security.html">Security boundaries →</a></nav>
+</article></main></div></body></html>

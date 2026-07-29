@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Troubleshoot Yule framework installation, mods, online play, and updates.">
+  <title>Troubleshooting · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css"><script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="troubleshooting">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout"><aside class="sidebar" id="site-nav" aria-label="Documentation"></aside><button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+  <main class="docs-main" id="main-content"><article class="article">
+    <p class="breadcrumb"><a href="../index.html">Docs</a> / Getting started / Troubleshooting</p>
+    <p class="eyebrow">Getting started</p><h1>Troubleshooting</h1>
+    <p class="lead">Start with the first failing boundary: Windows loading the game, Yule starting, one mod loading, a network route establishing, or the updater committing a verified set.</p>
+
+    <h2 id="collect-evidence">Collect useful evidence</h2>
+    <ol>
+      <li>Note the exact action and the first error, not only the final symptom.</li>
+      <li>Record whether vanilla, an older Yule release, or another machine behaves differently.</li>
+      <li>Open <code>mods/modframework.log</code> and find the matching timestamp.</li>
+      <li>If the in-game console works, run <code>log.tail 40</code> and a subsystem diagnostic.</li>
+      <li>Copy output with <code>console.copy output</code> and remove any unrelated personal data a third-party mod printed.</li>
+    </ol>
+
+    <h2 id="windows-will-not-start">Windows will not start the game</h2>
+    <h3>“X.dll was not found” dialogs</h3>
+    <p>This normally means an incomplete framework copy or an executable launched without its local runtime set. Do not download random DLLs from DLL websites.</p>
+    <ul>
+      <li>Verify <code>SDL2.dll</code>, <code>SDL2_real.dll</code>, <code>lua51.dll</code>, <code>libgcc_s_dw2-1.dll</code>, and <code>libwinpthread-1.dll</code> are beside <code>eggnoggplus.exe</code>.</li>
+      <li>Use the complete installer package rather than copying only the framework proxy.</li>
+      <li>Launch <code>eggnoggplus.exe</code>, not a test executable or update helper.</li>
+    </ul>
+    <h3>Proxy exists but original SDL is missing</h3>
+    <p>The Yule <code>SDL2.dll</code> forwards the original SDL interface to <code>SDL2_real.dll</code>. Restore the original DLL from a clean copy under that exact name, or let the supported installer repair the complete set.</p>
+
+    <h2 id="game-starts-without-framework">The game starts, but Yule seems absent</h2>
+    <ul>
+      <li>Confirm the running executable is from the folder you inspected. Shortcuts can point at another copy.</li>
+      <li>Check that <code>SDL2.dll</code> is the framework proxy rather than the original.</li>
+      <li>Look for <code>mods/modframework.log</code> beside that executable.</li>
+      <li>Press backtick and try <code>framework.api</code>. The separate log window may simply be disabled.</li>
+    </ul>
+
+    <h2 id="mod-will-not-load">A mod will not load</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Log message or symptom</th><th>Check</th></tr></thead>
+      <tbody>
+        <tr><td>Manifest parse/type error</td><td>Use strict JSON: quoted keys and strings, no comments, no trailing comma, and the required fields.</td></tr>
+        <tr><td>API mismatch</td><td>Update the mod for the current API. Avoid <code>allow_api_mismatch</code> for released mods.</td></tr>
+        <tr><td>Missing dependency</td><td>Install and enable a compatible version of the named mod.</td></tr>
+        <tr><td>Conflict or load cycle</td><td>Inspect <code>mods.info &lt;id&gt;</code> and adjust manifests rather than forcing load order at runtime.</td></tr>
+        <tr><td>Lua file/line error</td><td>Open the named file and line. Fix the first error, then run <code>reload.mods</code>.</td></tr>
+        <tr><td>Folder never discovered</td><td>Put <code>mod.json</code> one folder below <code>mods/</code> and remove a leading underscore from the folder name.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="online">Online connection fails</h2>
+    <p>Before queuing, run:</p>
+    <pre><code>online.troubleshoot</code></pre>
+    <p>Leave the console open for up to five seconds. The command tests TCP control and UDP rendezvous against <em>the server in <code>mods/online_hub.cfg</code></em>, then reports which Windows adapter routes to it. VPN detection is heuristic: an active Radmin, tunnel, or overlay adapter may be noted without being the route used for the server.</p>
+    <ul>
+      <li><strong>TCP fails:</strong> verify the server hostname/port, DNS, service status, firewall, and HTTPS/TCP filtering.</li>
+      <li><strong>TCP passes but UDP fails:</strong> check Windows Firewall, router/security filtering, and VPN kill-switch or split-tunnel rules.</li>
+      <li><strong>Both pass but a peer match stalls:</strong> queue with another client on the same build, then run <code>net.diag</code> during the failure. Retain both client logs and server logs.</li>
+      <li><strong>CGNAT:</strong> a private LAN address alone does not prove it. Compare the router WAN IPv4 with the public address observed by the server.</li>
+    </ul>
+    <div class="callout"><strong>Version isolation is valuable.</strong> If release 1.0 works and the current build fails on the same machine and network, report that exact A/B result. It sharply narrows the fault to framework protocol or state changes.</div>
+
+    <h2 id="updater">Updater or recovery problem</h2>
+    <p>Read <code>mods/updater.log</code>. If recovery says a committed cleanup is incomplete, retain the journal, <code>.old</code>, <code>.update-recovery</code>, and <code>mods/update_staging</code> evidence. Do not delete pieces until the installed and backup hashes are understood.</p>
+    <ul>
+      <li>Close every process running the same installed <code>eggnoggplus.exe</code>.</li>
+      <li>Verify the folder is writable and security software is not holding a payload.</li>
+      <li>Use a complete release package for repair. Do not advertise a release before every manifest payload is publicly available and hash-correct.</li>
+      <li>Never test destructive recovery against your only copy.</li>
+    </ul>
+
+    <h2 id="crash">Crash with no dump</h2>
+    <p>A failure can happen before Yule installs its crash handling or in a loader/runtime boundary that cannot safely write. Capture the Windows event details, the last <code>modframework.log</code> lines, exact launch method, current DLL hashes, and whether a clean or previous-release folder starts. Disable third-party overlays and mods one group at a time only after preserving the original evidence.</p>
+
+    <h2 id="report">A good bug report</h2>
+    <pre><code>Framework version:
+Windows version:
+Exact reproduction steps:
+Expected / actual:
+Does vanilla work?
+Does the previous Yule release work?
+Console diagnostic:
+Relevant modframework.log lines:
+Any custom mods/maps:
+Network route (if relevant):</code></pre>
+
+    <div class="page-links"><a href="mods.html">← Mods basics</a><a class="next" href="../framework/architecture.html">Next: Architecture →</a></div>
+    <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+  </article></main></div>
+</body>
+</html>
+

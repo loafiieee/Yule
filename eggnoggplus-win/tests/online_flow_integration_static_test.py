@@ -92,6 +92,7 @@ assert '"p2p_protocol"' in protocol
 assert '"cap_p2p_auth"' in protocol
 assert '"cap_private_rematch"' in protocol
 assert '"cap_p2p_relay"' in protocol
+assert '"cap_client_build_gate"' in protocol
 assert "GGPO_NET_PROTOCOL_VERSION" in protocol
 
 attempt = function_body("online_connect_start_attempt")
@@ -224,6 +225,20 @@ manifest = function_body("online_server_send_map_manifest")
 assert "ONLINE_MAP_MANIFEST_MAX_BYTES" in SOURCE
 assert "custom_maps_build_manifest_json(NULL, 0)" in manifest
 assert "malloc" in manifest and "free" in manifest
+assert "framework_version" in manifest
+assert "FRAMEWORK_VERSION" in manifest
+assert "control_protocol" in manifest
+assert "ONLINE_CONTROL_PROTOCOL_VERSION" in manifest
+assert "match_protocol" in manifest
+assert "ONLINE_MATCH_PROTOCOL_VERSION" in manifest
+assert "p2p_protocol" in manifest
+assert "GGPO_NET_PROTOCOL_VERSION" in manifest
+assert "build_id" in manifest
+assert "ggpo_net_local_build_id()" in manifest
+assert "game_exe_id" in manifest
+assert "ggpo_net_local_exe_id()" in manifest
+assert "framework_dll_id" in manifest
+assert "ggpo_net_local_dll_id()" in manifest
 assert "only part was sent" not in manifest
 assert "static char maps_json" not in manifest
 

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Verify your first Yule framework launch.">
+  <title>First launch · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../app.js" defer></script>
+</head>
+<body data-root="../" data-page="first-launch">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <header class="site-header"><div class="header-inner">
+    <button class="menu-button" id="menu-button" type="button" aria-label="Open documentation menu" aria-controls="site-nav" aria-expanded="false">☰</button>
+    <a class="site-title" href="../index.html"><span class="site-title-mark">Eggnogg+</span><small>Developer Docs</small></a>
+    <div class="header-search" role="search"><label class="skip-link" for="doc-search">Search documentation</label><input id="doc-search" type="search" placeholder="Search docs…" autocomplete="off" aria-controls="search-results" aria-expanded="false"><div class="search-results" id="search-results" role="listbox"></div></div>
+  </div></header>
+  <div class="docs-layout">
+    <aside class="sidebar" id="site-nav" aria-label="Documentation"></aside>
+    <button class="backdrop" id="menu-backdrop" type="button" aria-label="Close documentation menu"></button>
+    <main class="docs-main" id="main-content"><article class="article">
+      <p class="breadcrumb"><a href="../index.html">Docs</a> / Getting started / First launch</p>
+      <p class="eyebrow">Getting started</p>
+      <h1>First launch</h1>
+      <p class="lead">Use this two-minute check to confirm that the proxy, Lua runtime, menus, and logs are all working before adding your own content.</p>
+
+      <h2 id="launch">1. Start the game normally</h2>
+      <p>Run <code>eggnoggplus.exe</code> from the installed folder, a shortcut made by the installer, or its Steam entry. Do not start <code>YuleUpdater.exe</code>. The game should reach a menu without a Windows missing-DLL dialog.</p>
+      <p>The first start may create the <code>mods/</code> log and settings files and begin a background update check. Network failure during that check should not stop the menu.</p>
+
+      <h2 id="framework-menu">2. Open framework settings</h2>
+      <p>Open <strong>Options → Mods</strong>. The list contains the framework section and every discovered mod with a valid manifest. The framework section is where you can inspect its version, update status, log-console visibility, and Discord Rich Presence setting.</p>
+      <div class="callout"><strong>The separate log window is optional.</strong> Release installs default it to hidden. This does not disable file logging or the in-game developer console.</div>
+
+      <h2 id="console-check">3. Check the developer console</h2>
+      <p>Press backtick (<code>`</code>) to open the in-game console and enter:</p>
+      <pre><code>framework.api
+mods.list
+state
+log.tail 20</code></pre>
+      <p>You should see an API version, discovered mods, the current state name, and recent log lines. Press <code>Esc</code> or backtick again to close it. If your keyboard layout does not expose backtick conveniently, the complete console guide still applies once the console is opened.</p>
+
+      <h2 id="log-check">4. Check the file log</h2>
+      <p>Open <code>mods/modframework.log</code> in a text editor. Errors are labeled with <code>[ERROR]</code> and a subsystem or mod ID. A mod failing to load does not necessarily mean the entire framework failed.</p>
+      <p>Useful neighboring files include:</p>
+      <ul>
+        <li><code>mods/crash.log</code> — framework crash records when the handler can write one.</li>
+        <li><code>mods/desync_dump.log</code> — rollback diagnostics generated after an online mismatch.</li>
+        <li><code>mods/console_history.txt</code> — persisted developer-console commands.</li>
+        <li><code>mods/updater.log</code> — bounded updater/recovery status.</li>
+      </ul>
+
+      <h2 id="safe-defaults">Safe first choices</h2>
+      <ul>
+        <li>Leave developer mode off. Commands hidden behind <code>dev on</code> can intentionally alter state.</li>
+        <li>Try bundled demonstration mods offline before changing their files.</li>
+        <li>Use the Mods menu to disable unwanted mods instead of deleting folders while the game runs.</li>
+        <li>Before online play, keep both players on the same framework/content versions.</li>
+      </ul>
+
+      <h2 id="basic-game-controls">Original game controls</h2>
+      <p>The framework does not replace Eggnogg+’s normal controls. Defaults are WASD plus Left Control/Shift for player one and arrow keys plus Period/Comma for player two. The gear menu can remap controls. <code>F1</code> cycles window sizes, <code>F11</code> toggles fullscreen, and <code>F5</code> restarts an ordinary offline game. Function keys are guarded differently during online matches.</p>
+
+      <h2 id="next">What next?</h2>
+      <div class="card-grid">
+        <a class="card" href="configuration.html"><strong>Configure Yule</strong><span>Learn which file owns each setting.</span></a>
+        <a class="card" href="console.html"><strong>Learn the console</strong><span>Use history, completion, logs, and mod commands.</span></a>
+        <a class="card" href="mods.html"><strong>Install a mod</strong><span>Understand manifests, config files, and reloads.</span></a>
+      </div>
+
+      <div class="page-links">
+        <a href="installation.html">← Installation</a>
+        <a class="next" href="configuration.html">Next: Configuration →</a>
+      </div>
+      <footer class="site-footer">Eggnogg+ Developer Docs · <span data-year></span></footer>
+    </article></main>
+  </div>
+</body>
+</html>
+

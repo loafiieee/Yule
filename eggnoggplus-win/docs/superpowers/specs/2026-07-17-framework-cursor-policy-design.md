@@ -2,7 +2,9 @@
 
 **Date:** 2026-07-17  
 **Status:** Exact native online/default-custom-state renderer implemented and statically guarded; live visual acceptance still required  
-**Primary code:** `cursor_ext.c`, `cursor_ext.h`, online integration in `hooks.c`, custom-state API in `lua_manager.c`, and `tests/online_cursor_static_test.py`
+**Primary code:** `cursor_ext.c`, `cursor_ext.h`, online integration in `hooks.c`,
+custom-state API in `lua_manager.c`, `tests/online_cursor_static_test.py`, and
+`tests/online_menu_tick_static_test.py`
 
 ## Problem and correction
 
@@ -84,10 +86,17 @@ from drawing a cursor underneath the final framework cursor.
 ## Built-in online ordering
 
 Online drawing is centralized in `hooks_online_cursor_on_pre_swap`. Its predicate covers
-the online hub state and the portion of an active result/challenge overlay under
-the mouse. Native menus and Lua custom states already drew a cursor earlier in the frame;
+the online hub state, every supported native/framework menu over a live online match,
+and the portion of an active result/challenge overlay under the mouse. Native menus and
+Lua custom states ordinarily draw a cursor earlier in the frame;
 outside a late overlay that cursor remains visible, so drawing it again would only darken
-the native shadow/antialiased edge. When the mouse overlaps a late panel, the final pass
+the native shadow/antialiased edge. Live online menu simulation is a special case:
+`game_update(1)` calls the native two-player cursor disable routine even though it is only
+being run invisibly to keep the peer synchronized. The common menu update hook therefore
+saves both disable flags at `0x549124`, advances the online frame, and restores their exact
+values. It also requests one final native mouse pass for supported live options, both
+input-remapping screens, and Mods states, ensuring mouse operation remains available
+above the hidden gameplay render. When the mouse overlaps a late panel, the final pass
 places the cursor above the panel that covered the earlier draw. `dllmain.c` calls
 this renderer after the game's pass, Lua `on_frame`, online cards/toasts/nametags, console,
 and updater notification, immediately before the real buffer swap. It queues the native
@@ -130,6 +139,8 @@ be resolved; that fallback is a mod-authoring API behavior, not a built-in onlin
 - The rectangle/ASCII cursor data and old white one-pass renderer must not exist in
   `hooks.c`.
 - Online calls its cursor renderer from exactly one final pre-swap location.
+- A hidden live online gameplay tick restores both native player-cursor disable flags.
+- Supported in-game online menus include one topmost native mouse pass.
 - Overlay-only final drawing is bounded to the overlay under the mouse, preventing an
   unnecessary duplicate over unobscured native/Lua cursors.
 - Native background fallback suppresses/restores only its mouse pass, and a rendered-panel
@@ -148,6 +159,8 @@ be resolved; that fallback is a mod-authoring API behavior, not a built-in onlin
 - removal of the old scale, white tint, manual offset, and direct online sprite plot;
 - shared native behavior for online, automatic custom-state, and no-option Lua cursors;
 - one online call covering the hub state and mouse-over result/challenge overlays;
+- live-menu classification, exact two-flag save/restore around the background game tick,
+  and final native mouse coverage for supported in-game menus;
 - native-background mouse suppression and last-rendered-overlay latches; and
 - final ordering after all other framework pre-swap renderers.
 
@@ -160,6 +173,9 @@ cursor in the same build:
 - leave the mouse idle and confirm framework screens retain an always-visible cursor;
 - inspect login, Settings, Friends, queue/match cards, and challenge/result
   toasts for one topmost cursor with no stale frame;
+- during a live online match, open pause Options, both input-remapping pages, and Mods;
+  confirm both controller/keyboard selection cursors and the mouse remain visible and
+  usable while gameplay continues behind the menu;
 - test a `data/misc.png` replacement pack; and
 - test Lua custom states with automatic, no-option explicit, disabled, and configured
   cursor policies.

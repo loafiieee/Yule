@@ -54,6 +54,37 @@ with the exact `/yule` path; proxy `/yule/` to the loopback redirect port. See
 `../DISCORD_LFG_BOT.md` for permissions, proxy configuration, privacy rules, failure
 behavior, and live acceptance.
 
+## Optional LAN administration UI
+
+The server includes a separate dependency-free maintenance UI for account lookup,
+password resets, bans/unbans, forced disconnects, rating resets, and live
+account/queue/match counts. It has no login screen or admin password: access is granted
+only to clients arriving from a private LAN address on a private-address listener. Set
+`ADMIN_ENABLED=0` to disable it completely.
+
+For same-machine access, keep the default loopback bind:
+
+```ini
+ADMIN_HOST=127.0.0.1
+ADMIN_PORT=47779
+```
+
+For direct LAN access, set `ADMIN_HOST` to the server's exact private LAN address, such
+as `192.168.1.50`, and allow only the administrator subnet:
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 47779 proto tcp
+```
+
+Open `http://192.168.1.50:47779/` from that LAN. The listener rejects wildcard/public
+binds and non-private client addresses by default. Do not port-forward this port or add
+an `Anywhere` firewall rule. Plain HTTP is suitable only for a trusted isolated LAN; use
+an SSH tunnel or an authenticated TLS reverse proxy across any untrusted network.
+`ADMIN_ALLOW_WILDCARD=1` is an explicit unsafe override, not a normal deployment
+setting. The UI still uses an automatic private-client session and CSRF token so an
+unrelated webpage cannot submit maintenance actions. Set `ADMIN_COOKIE_SECURE=1` when
+the browser always reaches the UI through HTTPS.
+
 Default bind is `0.0.0.0:47778` for TCP and UDP. For public internet play, the
 host must allow inbound TCP `47778` and inbound UDP `47778`; set `UDP_PORT` or
 `UDP_HOST` only if the discovery socket needs a different bind.
@@ -110,7 +141,7 @@ protocol 3 adds the counted friend-challenge map-intersection stream and
 server-revalidated selected map. Match protocol 3 advertises:
 
 ```json
-{"type":"server_info","control_protocol":3,"match_protocol":3,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1}
+{"type":"server_info","control_protocol":3,"match_protocol":3,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1,"cap_client_build_gate":1}
 ```
 
 The same scalar version/capability fields are repeated in `auth_ok`, and each
@@ -122,6 +153,12 @@ The game client explicitly requests `server_info` after TCP completion and does 
 its login/register message until every required capability matches. It validates the
 repeated `auth_ok` and `match_found` fields as well, so an old or partially restarted
 deployment is rejected before queueing and again before peer setup.
+
+`cap_client_build_gate:1` means the server requires each authenticated map manifest to
+include its exact protocol tuple plus deterministic `build_id`, `game_exe_id`, and
+`framework_dll_id` fingerprints. It will not pair clients unless all three fingerprints
+match. The display-oriented framework version is logged for diagnosis but never replaces
+this exact comparison.
 
 `cap_p2p_relay:1` is required by the current client so an old discovery-only deployment
 cannot silently strand strict-NAT players. A server started with
@@ -218,7 +255,8 @@ python ..\tests\discord_lfg_server_static_test.py
 npm test
 ```
 
-The probe validates both the TCP protocol/capability response and the UDP
+The probe validates the TCP protocol/capability response, including the client-build gate,
+and the UDP
 discovery `udp_pong`. It fails clearly if the listening process is older than
 the checked-out source or UDP is unavailable. Updating `server.js` on disk is
 not sufficient: the running Node process must be restarted.
@@ -226,13 +264,13 @@ not sufficient: the running Node process must be restarted.
 Safe server-only deployment sequence:
 
 1. Confirm or drain active TCP clients.
-2. Run `node --check server.js` locally.
-3. Copy only `server.js` to a temporary file beside the deployed copy; do not
-   replace `users.json`, `ratings.json`, `server_secret.key`, or their paths.
-4. Run `node --check` on that temporary remote file.
-5. Back up the deployed `server.js`, atomically rename the checked file into
-   place, and restart it through the deployment's existing supervisor/process
-   mechanism.
+2. Run `npm run check` and `npm test` locally.
+3. Stage the complete matching application set (`server.js`, `admin_server.js`, LFG
+   modules, package metadata, and scripts); do not replace `users.json`, `ratings.json`,
+   `server_secret.key`, external admin-password/environment files, or their paths.
+4. Run the same checks on the staged remote application.
+5. Back up the deployed application files, atomically install the checked set, and
+   restart it through the deployment's existing supervisor/process mechanism.
 6. Confirm both TCP and UDP listeners, then run `check_deployment.py` against
    the public hostname.
 

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Deploy, validate, and safely update the Eggnogg+ Node online server."><title>Deploy the online server · Eggnogg+ Developer Docs</title><link rel="stylesheet" href="../styles.css"><script defer src="../app.js"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a aria-current="page" href="server-deployment.html">Guides</a><a href="../api/lua.html">API</a><a href="../reference/security.html">Reference</a></nav></header>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Server deployment</h2><a href="#roles">What it runs</a><a href="#prereq">Prerequisites</a><a href="#config">Configuration</a><a href="#systemd">systemd</a><a href="#network">Network</a><a href="#admin">LAN admin UI</a><a href="#compatibility">Compatibility</a><a href="#verify">Verify</a><a href="#update">Safe update</a><a href="#data">Persistent data</a><a href="#operations">Operations</a></nav></aside>
+<main id="main" class="content" data-doc-title="Deploy the online server"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Guides / Deploy the online server</nav><article>
+<h1>Deploy the online server</h1>
+<p class="lead">The dependency-free Node service uses newline-delimited JSON over TCP for accounts/social/matchmaking and UDP for rendezvous plus bounded relay. Run one supervised process with both protocols on the public port.</p>
+
+<section id="roles"><h2>Server responsibilities</h2>
+<p>The bundled prototype handles accounts, password verification, public Elo/private MMR, casual and widening-range competitive queues, friends, requests, block/mute state, five-minute map-aware challenges, private rematches, shared-map selection, P2P candidate signaling, relay, match lifecycle, result confirmation, and optional outbound Discord LFG.</p>
+<p>It does <em>not</em> run gameplay simulation, validate rollback state, or make one player authoritative. Clients exchange authenticated deterministic inputs.</p></section>
+
+<section id="prereq"><h2>1. Install and check</h2>
+<pre><code>cd /srv/yule/eggnoggplus-win/online_server
+node --version              # Node 18 or newer
+npm run check
+npm test</code></pre>
+<p>No runtime npm dependencies are required, but keep the matching <code>server.js</code>, <code>admin_server.js</code>, <code>discord_lfg_bot.js</code>, <code>lfg_redirect.js</code>, and <code>package.json</code> together.</p></section>
+
+<section id="config"><h2>2. Configure environment</h2>
+<table><thead><tr><th>Variable</th><th>Default / purpose</th></tr></thead><tbody>
+  <tr><td><code>HOST</code>, <code>PORT</code></td><td><code>0.0.0.0</code>, <code>47778</code> TCP listener.</td></tr>
+  <tr><td><code>UDP_HOST</code>, <code>UDP_PORT</code></td><td>Defaults to TCP host/port; rendezvous and relay listener.</td></tr>
+  <tr><td><code>DB</code>, <code>RATINGS</code>, <code>SECRET_FILE</code></td><td>Paths for <code>users.json</code>, <code>ratings.json</code>, and server secret.</td></tr>
+  <tr><td><code>DEFAULT_ELO</code>, <code>DEFAULT_MMR</code></td><td>Initial rating values, normally 1000.</td></tr>
+  <tr><td><code>INPUT_DELAY</code></td><td>Default assigned rollback input delay, normally 1.</td></tr>
+  <tr><td><code>P2P_RELAY_ENABLED</code></td><td>On unless exactly <code>0</code>. Current clients require relay capability.</td></tr>
+  <tr><td><code>RELAY_FINISH_GRACE_MS</code></td><td>15,000 by default, clamped 1–30 seconds so native win presentation can finish.</td></tr>
+  <tr><td><code>REMATCH_TTL_MS</code></td><td>45,000 by default.</td></tr>
+  <tr><td><code>MATCH_REPORT_TIMEOUT_MS</code></td><td>10,000 by default; legacy alias <code>MATCH_SINGLE_REPORT_GRACE_MS</code>.</td></tr>
+  <tr><td><code>CLIENT_IDLE_TIMEOUT_MS</code></td><td>120,000; clients heartbeat every 30 seconds.</td></tr>
+  <tr><td><code>UDP_DIAG</code></td><td><code>1</code> enables additional UDP diagnostics.</td></tr>
+  <tr><td><code>ADMIN_ENABLED</code></td><td>Enabled unless exactly <code>0</code>. The LAN-only UI intentionally has no password/login page.</td></tr>
+  <tr><td><code>ADMIN_HOST</code>, <code>ADMIN_PORT</code></td><td><code>127.0.0.1</code>, <code>47779</code>. Use the exact private server address for LAN access.</td></tr>
+</tbody></table>
+<p>Competitive matching also supports base/range-growth/max-range overrides. Keep secrets in a restricted environment file, not the unit text or repository.</p></section>
+
+<section id="systemd"><h2>3. Run under systemd</h2>
+<pre><code>[Unit]
+Description=Eggnogg Online Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=loaf
+Group=loaf
+WorkingDirectory=/home/loaf/Yule/eggnoggplus-win/online_server
+Environment=HOST=0.0.0.0
+Environment=PORT=47778
+Environment=ADMIN_HOST=127.0.0.1
+Environment=ADMIN_PORT=47779
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/loaf/Yule/eggnoggplus-win/online_server/server.log
+StandardError=append:/home/loaf/Yule/eggnoggplus-win/online_server/server.err.log
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+<pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now eggnogg
+sudo systemctl status eggnogg --no-pager</code></pre>
+<p>Do not start a second <code>nohup node server.js</code> beside a supervised instance; it will only contend for the same TCP/UDP port.</p></section>
+
+<section id="network"><h2>4. Open TCP and UDP</h2>
+<p>Allow and forward the public server port for <strong>both</strong> protocols. On UFW:</p>
+<pre><code>sudo ufw allow 47778/tcp
+sudo ufw allow 47778/udp
+sudo ss -ltnp | grep 47778
+sudo ss -lunp | grep 47778</code></pre>
+<p>A DNS record is not enough; the router/security group must direct both protocols to the host, and the Node process must own both sockets.</p></section>
+
+<section id="admin"><h2>Optional LAN administration UI</h2>
+<p>The separate maintenance listener provides searchable account status, password reset, ban/unban, force-disconnect, rating reset, and queue/match counts. It is not exposed on the public game port and intentionally has no admin password: private-LAN access is the authorization boundary. Set <code>ADMIN_ENABLED=0</code> to turn it off.</p>
+<p>Keep <code>ADMIN_HOST=127.0.0.1</code> for same-machine or SSH-tunnel access. For direct LAN use, bind the machine's exact private address, for example <code>ADMIN_HOST=192.168.1.50</code>, then allow only the administrator subnet:</p>
+<pre><code>sudo ufw allow from 192.168.1.0/24 to any port 47779 proto tcp</code></pre>
+<div class="callout warning">Never port-forward 47779 or allow it from Anywhere. Wildcard/public binds and non-private client addresses fail closed by default. <code>ADMIN_ALLOW_WILDCARD=1</code> is an unsafe emergency override. Plain HTTP belongs only on a trusted isolated LAN; use an SSH tunnel or authenticated TLS reverse proxy across an untrusted network.</div>
+<p>The first private-client visit automatically receives a random, IP-bound, HttpOnly, SameSite=Strict session, capped and expiring after eight hours. The session owns a CSRF token and every state change is POST-only, so an unrelated webpage cannot silently submit an action. Set <code>ADMIN_COOKIE_SECURE=1</code> when the browser always reaches the UI through HTTPS.</p></section>
+
+<section id="compatibility"><h2>Client admission and protocol compatibility</h2>
+<p>The client <code>map_manifest</code> reports an informational <code>framework_version</code>, strict integer control/match/P2P protocol versions, and deterministic <code>build_id</code>, <code>game_exe_id</code>, and <code>framework_dll_id</code> fingerprints. The current client requires the server to advertise <code>cap_client_build_gate: 1</code>. The server rejects missing, malformed, or old values before queue/challenge entry and pairs only exact <code>3/3/17</code> clients whose complete build fingerprint tuples match. P2P v16/v17 cannot interoperate because their authentication-key domain and packet layout differ.</p>
+<p>Use the server log to confirm deployment: registration should contain <code>[maps] ... build=... exe=... dll=... protocols=3/3/17</code>; match creation should record the checked build and <code>p2p=17</code>. Release labels help diagnosis but are not the admission gate.</p></section>
+
+<section id="verify"><h2>5. Run the deployment preflight</h2>
+<pre><code>python check_deployment.py
+python check_deployment.py 127.0.0.1 47778
+python ../tests/online_server_match_protocol_test.py
+python ../tests/discord_lfg_server_static_test.py
+npm test</code></pre>
+<p>The probe checks the flat <code>server_info</code> response and an actual UDP <code>udp_ping</code>/<code>udp_pong</code>. Current deployment must advertise control 3, match 3, P2P 17, packet auth, social controls, private rematch, and relay. Replacing source without restarting does not update the listening process.</p>
+<p>If TCP matchmaking succeeds but server logs never show received P2P probes, trace UDP from public ingress to the Node socket. If direct traversal fails, confirm both clients receive one relay generation and that the server logs relay activation.</p></section>
+
+<section id="update"><h2>6. Update application files safely</h2>
+<pre><code>cd /home/loaf/Yule/eggnoggplus-win/online_server
+chmod +x update_server.sh
+./update_server.sh</code></pre>
+<p>The script clones the configured repository/ref into a temporary directory, runs server checks before downtime, stops the service, swaps only application files, restarts, waits for readiness, and probes TCP plus UDP. If startup/protocol validation fails, it restores the previous application files.</p>
+<p>Useful overrides: <code>YULE_REPOSITORY_URL</code>, <code>YULE_REPOSITORY_REF</code>, <code>YULE_SERVICE_NAME</code>, <code>YULE_SERVER_PORT</code>, <code>YULE_TARGET_ROOT</code>, and <code>YULE_READINESS_TIMEOUT_SECONDS</code>.</p>
+<div class="callout warning">Run the updater from the actual <code>online_server</code> checkout. The clone must contain the repository's matching <code>online_server/server.js</code>. A wrong repository/ref or target root is correctly rejected.</div></section>
+
+<section id="data"><h2>Persistent data that updates must preserve</h2>
+<ul>
+  <li><code>users.json</code> and <code>ratings.json</code></li>
+  <li><code>server_secret.key</code> and any external environment/secret file</li>
+  <li>server logs and diagnostics</li>
+  <li>PID/socket files, caches, and <code>node_modules</code></li>
+</ul>
+<p>Before first production update, record file hashes and backup the complete persistent set. The updater intentionally never stages it. Test rollback in a disposable deployment before depending on it remotely.</p></section>
+
+<section id="operations"><h2>Operational checklist</h2>
+<ul>
+  <li>Drain or announce downtime before changing a protocol-breaking server.</li>
+  <li>Run syntax/tests locally, deploy payload, restart the supervised process, then run public TCP+UDP preflight.</li>
+  <li>Watch memory, control disconnects, matchmaking latency, UDP probe/relay counters, result conflicts, disk errors, and JSON corruption.</li>
+  <li>Back up persistent JSON and secret material securely; rehearse restoration and key rotation.</li>
+  <li>Never log credentials, session/P2P tokens, or full environment output.</li>
+  <li>Verify the passwordless admin listener is reachable only from the intended private LAN and absent from public port scans.</li>
+  <li>Put a future authenticated TLS boundary in front of control traffic before treating public passwords/ranked play as production-secure.</li>
+</ul></section>
+</article></main></div>
+</body></html>

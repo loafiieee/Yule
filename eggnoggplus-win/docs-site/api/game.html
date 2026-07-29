@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Eggnogg+ gameplay, deterministic state, bot, map, and online API reference.">
+  <title>Gameplay and online API · Eggnogg+ Developer Docs</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script defer src="../api-data.js"></script>
+  <script defer src="../app.js"></script>
+</head>
+<body data-root="../" data-page="api-game">
+<main id="main"><article>
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / <a href="index.html">API</a> / Gameplay</nav>
+  <h1>Gameplay &amp; online</h1>
+  <p class="lead">Structured native telemetry, rollback state, deterministic input control, bots, map selection, presentation overrides, and online lifecycle status.</p>
+  <div class="callout warning"><strong>Online suspension is fail-closed.</strong> Registering tick/bot/content behavior or calling a gameplay mutator classifies the package as gameplay-affecting. Managed online then suspends its callbacks and refuses its mutators until cleanup.</div>
+  <div id="api-browser" data-groups="game,online"></div>
+</article></main>
+</body>
+</html>

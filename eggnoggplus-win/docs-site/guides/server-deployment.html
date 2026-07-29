@@ -102,7 +102,7 @@ python check_deployment.py 127.0.0.1 47778
 python ../tests/online_server_match_protocol_test.py
 python ../tests/discord_lfg_server_static_test.py
 npm test</code></pre>
-<p>The probe checks the flat <code>server_info</code> response and an actual UDP <code>udp_ping</code>/<code>udp_pong</code>. Current deployment must advertise control 3, match 3, P2P 17, packet auth, social controls, private rematch, and relay. Replacing source without restarting does not update the listening process.</p>
+<p>The probe checks the flat <code>server_info</code> response and an actual UDP <code>udp_ping</code>/<code>udp_pong</code>. Current deployment must advertise control 3, match 4, P2P 17, packet auth, social controls, private rematch, and relay. Replacing source without restarting does not update the listening process.</p>
 <p>If TCP matchmaking succeeds but server logs never show received P2P probes, trace UDP from public ingress to the Node socket. If direct traversal fails, confirm both clients receive one relay generation and that the server logs relay activation.</p></section>
 
 <section id="update"><h2>6. Update application files safely</h2>

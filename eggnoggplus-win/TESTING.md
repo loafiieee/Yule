@@ -22,10 +22,12 @@ map-script, updater/recovery, Discord IPC, and audio-render regression coverage.
 
 ## Discord application and Rich Presence
 
-The current development default is already in `mods/modframework.cfg`:
+The release default is compiled in and enabled even when
+`mods/modframework.cfg` does not exist:
 
 ```ini
 discord_application_id=1531027934004117664
+discord_presence=1
 ```
 
 With Discord desktop running, use:

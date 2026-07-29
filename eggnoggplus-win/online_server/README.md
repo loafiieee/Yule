@@ -182,10 +182,10 @@ performing the rollback.
 The server sends an unauthenticated, flat `server_info` welcome on every TCP
 connection and answers an explicit `{"type":"server_info"}` request. Control
 protocol 3 adds the counted friend-challenge map-intersection stream and
-server-revalidated selected map. Match protocol 3 advertises:
+server-revalidated selected map. Match protocol 4 advertises:
 
 ```json
-{"type":"server_info","control_protocol":3,"match_protocol":3,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1,"cap_client_build_gate":1}
+{"type":"server_info","control_protocol":3,"match_protocol":4,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1,"cap_client_build_gate":1}
 ```
 
 The same scalar version/capability fields are repeated in `auth_ok`, and each
@@ -259,7 +259,7 @@ The checked-out server source advertises v17 plus the required relay capability.
 deployment must restart the service and pass the TCP+UDP deployment preflight; replacing
 files without restarting is not sufficient.
 
-Match protocol 3 adds a server-authoritative gameplay-start barrier. After the
+Match protocol 4 retains the server-authoritative gameplay-start barrier. After the
 authenticated P2P link, authoritative state, and neutral frame zero are fully
 ready, each client sends `match_started`. The server broadcasts
 `match_started` with `committed:1` only after both assigned clients are ready;
@@ -269,6 +269,11 @@ for both players without a winner, result screen, or Elo change. After commit,
 an abort/disconnect is a forfeit. Normal completion is settled only when both
 clients report the same winner; a conflicting pair or an unconfirmed single
 report times out as a no-contest and cannot change Elo.
+An established P2P socket failure is reported separately as
+`match_transport_failure`; it is not converted into a local loss. One report
+waits through the normal result-confirmation window, while two transport
+failures resolve immediately as a no-contest. A native winner already committed
+on the same tick still uses `match_end`.
 Deliberately leaving committed gameplay uses the forfeit path, so the connected
 opponent is awarded the win without needing a second normal result report. A
 late P2P-disconnect report that races that terminal result replays the client's

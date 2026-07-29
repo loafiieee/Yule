@@ -19,9 +19,20 @@
     <p class="eyebrow">Framework internals</p><h1>Building from source</h1>
     <p class="lead">The supported build is a 32-bit Windows DLL produced with MinGW. The script links a temporary proxy first and only copies verified artifacts into the runnable root after success.</p>
 
+    <h2 id="get-source">Get the public source</h2>
+    <pre><code>git clone https://github.com/loafiieee/Yule-src.git
+cd Yule-src</code></pre>
+    <p>The public repository starts with clean history and includes the native framework,
+      online server/admin/LFG/redirect services, installer/updater source, examples,
+      documentation, and tests. It intentionally excludes the Eggnogg executable,
+      redistributable runtime DLLs, generated builds, player configuration, account/rating
+      databases, logs, and deployment secrets. You do not need private-repository access
+      to inspect, build, test, or deploy the source services.</p>
+
     <h2 id="prerequisites">Prerequisites</h2>
     <ul>
-      <li>A working repository checkout containing the supported <code>eggnoggplus.exe</code> and original <code>SDL2_real.dll</code>.</li>
+      <li>The public <code>Yule-src</code> checkout. A legitimate Eggnogg installation is
+        required only to run the resulting framework, not to compile the source tests.</li>
       <li>MSYS2 with the 32-bit MinGW toolchain at <code>C:\msys64\mingw32\bin</code>.</li>
       <li>32-bit LuaJIT headers/import library available to MinGW; the script includes <code>/mingw32/include</code> and links <code>-lluajit-5.1</code>.</li>
       <li>PowerShell, Python, and Node.js for the full mixed-language test suite.</li>
@@ -65,7 +76,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_update_helper_test
     </table></div>
 
     <h2 id="release">Build a release</h2>
-    <p>Release publication has stricter version and hash checks. After changing <code>FRAMEWORK_VERSION</code>, closing the game, compiling, and passing tests:</p>
+    <div class="callout warning"><strong>Maintainer workflow.</strong> A playable release
+      also needs the separately managed runtime payload and update channel. Those files are
+      intentionally absent from public source and should not be reconstructed from secrets
+      or copied out of a private deployment.</div>
+    <p>Maintainer release publication has stricter version and hash checks. After changing <code>FRAMEWORK_VERSION</code>, closing the game, compiling, and passing tests:</p>
     <pre><code>powershell -ExecutionPolicy Bypass -File .\tools\build_release.ps1 `
   -Version 1.2 `
   -Notes "Short release notes"</code></pre>
@@ -79,4 +94,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/run_update_helper_test
   </article></main></div>
 </body>
 </html>
-

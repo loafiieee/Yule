@@ -2,29 +2,28 @@
 
 Yule includes a dependency-free Discord desktop Rich Presence client. It reports only a
 small fixed set of public activity classes and never sends gameplay or account identity.
-The integration is optional, local-only, nonblocking, and disabled automatically until a
-valid Discord Application ID is configured.
+The integration is optional, local-only, nonblocking, and enabled by default in release
+builds with the public Yule Application ID.
 
 ## Deployment setup
 
-1. Create the public Yule application in the Discord Developer Portal.
-2. Copy its numeric Application ID.
-3. Add this key to `mods/modframework.cfg`:
+No deployment configuration is required for the standard release. It compiles
+Application ID `1531027934004117664` and defaults `discord_presence` on.
+
+To use a different Discord application, create it in the Discord Developer Portal and
+add its public numeric ID to `mods/modframework.cfg`:
 
    ```ini
    discord_application_id=12345678901234567890
    discord_presence=1
    ```
 
-4. Start `eggnoggplus.exe` normally.
-
 The ID is a public application identifier, not a client secret. A release may instead
 provide it at compile time with
 `-DEGGNOGGPLUS_DISCORD_APPLICATION_ID=\"12345678901234567890\"`. An explicit valid
-configuration value takes precedence; an explicit invalid value fails closed to
-`UNAVAILABLE`. Builds default to the Yule application ID
-`1531027934004117664` even when the configuration key is absent; the shipped
-development configuration records the same value explicitly.
+configuration value takes precedence. A blank or invalid stale override is ignored and
+preserves the compiled Yule default, which prevents upgraded configurations from silently
+disabling presence. An explicit `discord_presence=0` still disables it.
 
 The same public ID can be inspected or changed without restarting:
 

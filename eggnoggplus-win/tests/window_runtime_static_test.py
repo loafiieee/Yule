@@ -43,6 +43,11 @@ assert "p_main_set_fullscreen" not in pre_swap
 assert "glViewport(0, 0, dw, dh);" in refresh
 assert "g_game_w_native" not in refresh
 assert "g_game_h_native" not in refresh
+geometry_change_test = refresh[
+    refresh.index("changed =") : refresh.index("if (dw > 0")
+]
+assert "flags !=" not in geometry_change_test
+assert "last_window_flags = flags" in refresh
 
 # SDL_PollEvent only records/consumes window input. All recreation work runs
 # after wrapper_handle_events, at the hooked state-update boundary.

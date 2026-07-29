@@ -71,8 +71,16 @@ static void test_config(void) {
                 &enabled, application_id, sizeof(application_id)),
             "invalid application ID config should still parse safely");
     require(enabled == 1, "enabled presence should parse");
-    require(application_id[0] == '\0',
-            "invalid application ID must fail closed to unavailable");
+    require(strcmp(application_id, "1531027934004117664") == 0,
+            "invalid application ID must preserve the compiled release default");
+
+    require(discord_rpc_ext_test_parse_config(
+                "",
+                &enabled, application_id, sizeof(application_id)),
+            "missing config should preserve release defaults");
+    require(enabled == 1, "missing presence toggle must default on");
+    require(strcmp(application_id, "1531027934004117664") == 0,
+            "missing application ID must use the compiled release default");
 }
 
 static void test_activity_contract(void) {

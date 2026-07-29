@@ -75,7 +75,7 @@ discord_application_id=1531027934004117664
 discord_presence=1</code></pre>
 <pre><code>discord.app
 discord.app 1531027934004117664</code></pre>
-<p>The public numeric application id is not a secret. The command validates/persists it and reconnects without restarting. Toggle presence from Mods → Framework or Online Settings.</p>
+<p>The public numeric application id is not a secret. Release builds compile the shown Yule ID and default presence on even without a config file; blank or invalid stale overrides preserve that default. The command validates/persists a valid override and reconnects without restarting. Toggle presence from Mods → Framework or Online Settings.</p>
 <p>Published classes are fixed: menus, local match, hub, signing in, friends/challenges, casual queue, competitive queue, prematch, and casual/competitive/friend online match. No usernames, opponents, maps, ratings, ids, endpoints, tokens, buttons, parties, or join secrets are included.</p>
 <p>The dependency-free client talks only to Discord's local Windows named pipe using overlapped bounded I/O. It rate-limits/coalesces updates, reconnects every 15 seconds, and never waits for Discord or performs network access. An offline-looking bot presence is normal for the outbound-REST LFG bot and unrelated to local Rich Presence.</p></section>
 

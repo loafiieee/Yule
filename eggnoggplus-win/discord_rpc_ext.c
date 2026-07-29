@@ -140,9 +140,10 @@ static void discord_parse_config_line(char* line, int* enabled,
     } else if (_stricmp(key, "discord_application_id") == 0) {
         if (discord_validate_application_id(value)) {
             memcpy(application_id, value, strlen(value) + 1u);
-        } else {
-            application_id[0] = '\0';
         }
+        /* The compiled release ID is public, valid, and usable without a
+         * config file. A stale/blank local override must not silently disable
+         * Rich Presence for upgraded installs; invalid overrides are ignored. */
     }
 }
 
@@ -666,7 +667,8 @@ int discord_rpc_ext_test_parse_config(const char* text, int* enabled,
     char parsed_id[DISCORD_RPC_MAX_APPLICATION_ID + 1u];
     int parsed_enabled = 1;
     if (!enabled || !application_id || application_id_cap == 0u) return 0;
-    parsed_id[0] = '\0';
+    memcpy(parsed_id, EGGNOGGPLUS_DISCORD_APPLICATION_ID,
+           sizeof(EGGNOGGPLUS_DISCORD_APPLICATION_ID));
     if (!discord_parse_config_text(text, &parsed_enabled, parsed_id)) return 0;
     if (strlen(parsed_id) + 1u > application_id_cap) return 0;
     *enabled = parsed_enabled;

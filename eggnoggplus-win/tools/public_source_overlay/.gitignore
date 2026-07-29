@@ -1,0 +1,39 @@
+# Native/build output
+build/
+dist/
+*.a
+*.dll
+*.dmp
+*.exe
+*.lib
+*.log
+*.o
+*.obj
+*.pdb
+*.pyc
+*.tmp
+*.zip
+__pycache__/
+
+# Player/runtime state
+mods/console_history.txt
+mods/crash*
+mods/desync*
+mods/modframework.cfg
+mods/online_hub.cfg
+mods/*/cache/
+mods/*/storage.cfg
+
+# Server runtime state and deployment secrets
+online_server/users.json
+online_server/ratings.json
+online_server/server_secret.key
+online_server/*.log
+online_server/*.env
+.env
+
+# Editor/OS state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

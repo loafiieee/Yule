@@ -1,0 +1,37 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Documentation and server syntax
+        run: |
+          node docs-site/check-docs.js
+          npm --prefix online_server run check
+      - name: Online service tests
+        run: |
+          npm --prefix online_server test
+          python tests/online_server_match_protocol_test.py
+      - name: Portable source contracts
+        run: |
+          python tests/public_source_export_static_test.py
+          python tests/compile_sources_static_test.py
+          python tests/online_flow_integration_static_test.py
+          python tests/online_server_auth_static_test.py
+          python tests/discord_presence_static_test.py
+          python tests/window_runtime_static_test.py

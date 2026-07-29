@@ -112,7 +112,7 @@ Runtime acceptance still required:
       rematch after a competitive result is unranked and does not change Elo. The
       checked-out client and server source require control v3/match v3/P2P v17 plus
       packet-auth, social-controls, private-rematch, and UDP-relay capabilities. The public
-      server now passes control-v3/match-v3/P2P-v17 TCP+UDP discovery preflight, but the
+      server now passes control-v3/match-v4/P2P-v17 TCP+UDP discovery preflight, but the
       relay-capability revision and real relay game round still need deployment/acceptance.
       Test loopback (two clients on one PC), LAN, and public routes; no source-only test
       replaces this live game round.
@@ -253,6 +253,39 @@ Feature backlog:
 
 
 # Completed (source implementation and focused automated coverage)
+
+    - Clean public-source release path: `tools/export_public_source.ps1` builds a
+      flattened, fresh-history Yule source tree from an explicit tracked-file allowlist,
+      includes the native framework, online server/admin/LFG/redirect services, installer,
+      updater, maps/mod examples, docs site, and tests, and overlays a developer README,
+      contribution/security guidance, Git attributes/ignores, and safe example configs.
+      It hard-excludes runtime/game binaries, build output, caches, logs, dumps, account/
+      rating databases, server secrets, player configs, and the retired cosmetics package,
+      scans exported text for credential/private-key patterns, records source provenance,
+      and has both working-tree review and committed-HEAD export smoke coverage.
+
+    - Match-protocol-v4 correction/result race repair: native win polling and GAME-to-MAIN
+      terminal transitions are deferred while either peer is inside a coordinated
+      correction barrier, preventing a joiner's known-divergent READY state from ending
+      the match before the host COMMIT can be applied and mutually released. The corrected
+      transition is released after bilateral correction completion. A terminal transport
+      error now polls an already-authoritative native winner before teardown and otherwise
+      sends `match_transport_failure` instead of fabricating a local loss; the server
+      resolves bilateral failures as a no-contest and never turns the two peers' failures
+      into conflicting winner reports. Static client ordering and real server protocol
+      coverage pin both paths.
+
+    - Release-default Discord Rich Presence hardening: the public Yule Application ID
+      `1531027934004117664` is compiled into every normal build, presence defaults on when
+      no config exists, a valid local ID may override it, and a stale blank/invalid
+      override now preserves the compiled default instead of silently making the feature
+      unavailable. Native parser and static build/wiring tests pin the shipped ID, default
+      state, override behavior, toggle persistence, and privacy contract.
+
+    - Window diagnostics log de-noising: transient SDL focus/attention flag changes no
+      longer count as geometry changes, so routine window events cannot spam identical
+      `window[event]` INFO lines. Actual display, logical window size, drawable size, and
+      DPI-affecting changes remain logged.
 
     - Hostable developer documentation site: `docs-site/` contains 31 dependency-free
       HTML pages covering installation, framework architecture/building, content/map-Lua
@@ -800,7 +833,7 @@ Feature backlog:
       before queue/P2P setup on incompatibility. A public TCP+UDP preflight and isolated
       two-client runtime test prove that both peers receive one shared 64-hex match key
       and distinct probe keys. The pre-gate public service passed the
-      control-v3/match-v3/P2P-v17 TCP+UDP discovery preflight; the new build-gate
+      control-v3/match-v4/P2P-v17 TCP+UDP discovery preflight; the new build-gate
       capability deliberately requires another matching server deployment and public
       preflight before the next client can sign in. The real two-game direct/relay round
       remains in Runtime acceptance. Each authenticated map manifest now also sends

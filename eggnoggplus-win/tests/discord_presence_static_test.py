@@ -41,6 +41,7 @@ assert "DISCORD_RPC_UPDATE_INTERVAL_MS 4100u" in SOURCE
 assert 'L"\\\\\\\\?\\\\pipe\\\\discord-ipc-%d"' in SOURCE
 assert "DISCORD_RPC_MAX_PAYLOAD (64u * 1024u)" in SOURCE
 assert '#define EGGNOGGPLUS_DISCORD_APPLICATION_ID "1531027934004117664"' in SOURCE
+assert "invalid overrides are ignored" in SOURCE
 
 assert "discord_rpc_ext_pump(online_discord_activity());" in HOOKS
 assert "g_online_active_match.opponent" not in re.search(

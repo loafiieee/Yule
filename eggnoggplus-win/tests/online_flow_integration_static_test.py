@@ -15,7 +15,7 @@ assert "Each attempt therefore uses exactly one symmetric route generation" in S
 assert "ggpo_net_add_peer_candidate(public_host" not in SOURCE
 assert "ggpo_net_add_peer_candidate(lan_host" not in SOURCE
 assert "ggpo_net_link_ready()" in SOURCE
-assert "#define ONLINE_MATCH_PROTOCOL_VERSION        3" in SOURCE
+assert "#define ONLINE_MATCH_PROTOCOL_VERSION        4" in SOURCE
 assert "#define ONLINE_SERVER_HEARTBEAT_MS       30000u" in SOURCE
 
 
@@ -180,6 +180,17 @@ assert "online_server_send_match_end" not in forfeit_match
 
 monitor_match = function_body("online_monitor_active_match_state")
 assert "online_forfeit_active_match" in monitor_match
+assert "online_resolve_p2p_transport_failure" in monitor_match
+assert "ONLINE_MATCH_RESULT_LOSS" not in monitor_match
+
+transport_failure = function_body("online_resolve_p2p_transport_failure")
+assert "online_match_poll_completion();" in transport_failure
+assert "standalone P2P transport failure" in transport_failure
+assert transport_failure.index("online_match_poll_completion();") < transport_failure.index(
+    "online_server_send_match_transport_failure"
+)
+assert "ONLINE_MATCH_RESULT_DRAW" in transport_failure
+assert "online_server_send_match_end" not in transport_failure
 
 hub_enter = function_body("online_hub_enter")
 assert "online_forfeit_active_match" in hub_enter
@@ -270,6 +281,8 @@ assert finish_match.index("return;", native_wait) < finish_match.index(
 poll_completion = function_body("online_match_poll_completion")
 assert "g_online_active_match.winner_player = winner;" in poll_completion
 assert "g_online_active_match.awaiting_native_return = 1;" in poll_completion
+assert "ggpo_net_correction_active()" in poll_completion
+assert "ggpo_net_awaiting_correction()" in poll_completion
 assert poll_completion.index("winner_player = winner") < poll_completion.index(
     "online_finish_active_match"
 )
@@ -277,6 +290,8 @@ assert poll_completion.index("winner_player = winner") < poll_completion.index(
 state_switch = function_body("hooked_state_switch")
 assert "finish_online_after_switch" in state_switch
 assert "online_native_finish_is_presenting()" in state_switch
+assert "correction_terminal_transition" in state_switch
+assert "g_online_correction_terminal_switch_pending = 1;" in state_switch
 assert "online_match_poll_completion();" in state_switch
 assert state_switch.index("switched = real_switch") < state_switch.index(
     'stop_ggpo_net("native win sequence complete")'

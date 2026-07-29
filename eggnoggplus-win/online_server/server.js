@@ -26,11 +26,12 @@ const MAX_MANIFEST_MAPS = 4096;
 /* Control protocol 3 adds the authoritative friend-challenge map picker.
  * Persistent social controls/presence and bilateral private rematches are
  * additive required capabilities advertised separately from the version.
- * Match protocol 3 adds an explicit two-client gameplay commit. Before both
- * clients send match_started, aborts, premature results, disconnects, and stale
- * cleanup cancel without a winner or rating change. */
+ * Match protocol 4 retains the explicit two-client gameplay commit and adds a
+ * neutral P2P transport-failure report. Before both clients send
+ * match_started, aborts, premature results, disconnects, and stale cleanup
+ * cancel without a winner or rating change. */
 const CONTROL_PROTOCOL_VERSION = 3;
-const MATCH_PROTOCOL_VERSION = 3;
+const MATCH_PROTOCOL_VERSION = 4;
 const P2P_PROTOCOL_VERSION = 17;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 // Recently chosen map keys (most-recent last). Used to even out random map
@@ -730,6 +731,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     competitive,
     created_at: now(),
     results: new Map(),
+    transport_failures: new Map(),
     started_by: new Set(),
     committed: false,
     committed_at: 0,
@@ -1902,6 +1904,7 @@ function handleMatchEnd(client, msg) {
       }
     }
     if (match.results.has(client.username)) return;
+    match.transport_failures.delete(client.username);
     match.results.set(client.username, winner);
     if (match.results.size >= 2) {
       const winners = [...match.results.values()];
@@ -1911,16 +1914,65 @@ function handleMatchEnd(client, msg) {
       return;
     }
     send(client, { type: "match_report_ack", match_id: match.id, pending: 1 });
-    if (!match.result_timer) {
-      match.result_timer = setTimeout(() => {
-        if (!activeMatches.has(match.id) || match.finished || match.results.size < 1) return;
-        cancelMatch(match, "match result was not confirmed; no contest");
-      }, MATCH_REPORT_TIMEOUT_MS);
-      if (typeof match.result_timer.unref === "function") match.result_timer.unref();
-    }
+    armMatchResolutionTimer(match);
     return;
   }
   sendError(client, "match result must be win or loss");
+}
+
+function armMatchResolutionTimer(match) {
+  if (!match || match.finished || match.result_timer) return;
+  match.result_timer = setTimeout(() => {
+    if (!activeMatches.has(match.id) || match.finished) return;
+    if (match.results.size < 1 && match.transport_failures.size < 1) return;
+    cancelMatch(
+      match,
+      match.transport_failures.size > 0
+        ? "P2P connection failed; no contest"
+        : "match result was not confirmed; no contest",
+    );
+  }, MATCH_REPORT_TIMEOUT_MS);
+  if (typeof match.result_timer.unref === "function") match.result_timer.unref();
+}
+
+function handleMatchTransportFailure(client, msg) {
+  const match = matchForClientMessage(client, msg);
+  if (!match) {
+    if (replayTerminalMatch(client, msg)) return;
+    return sendError(client, "invalid or stale match transport failure");
+  }
+  if (!match.committed) {
+    cancelMatch(match, "P2P connection failed before gameplay");
+    return;
+  }
+  if (match.results.has(client.username)) {
+    send(client, {
+      type: "match_transport_failure_ack",
+      match_id: match.id,
+      pending: 1,
+    });
+    return;
+  }
+  const reason = String((msg && msg.reason) || "P2P transport failed")
+    .replace(/[\r\n\t]/g, " ")
+    .slice(0, 160);
+  if (!match.transport_failures.has(client.username)) {
+    match.transport_failures.set(client.username, reason);
+    console.warn(
+      `[match#${match.id}] ${client.username} reported transport failure ` +
+      `(${match.transport_failures.size}/2): ${reason}`,
+    );
+  }
+  send(client, {
+    type: "match_transport_failure_ack",
+    match_id: match.id,
+    pending: 1,
+  });
+  if (match.transport_failures.size >= 2) {
+    cancelMatch(match, "P2P connection failed; no contest");
+    return;
+  }
+  armMatchResolutionTimer(match);
 }
 
 function dispatch(client, msg) {
@@ -1945,6 +1997,7 @@ function dispatch(client, msg) {
     case "match_started": handleMatchStarted(client, msg); break;
     case "match_abort": handleMatchAbort(client, msg); break;
     case "match_end": handleMatchEnd(client, msg); break;
+    case "match_transport_failure": handleMatchTransportFailure(client, msg); break;
     case "rematch_request": handleRematchRequest(client, msg); break;
     case "rematch_decline": handleRematchDecline(client, msg); break;
     case "ping": send(client, { type: "pong", seq: msg.seq || 0 }); break;

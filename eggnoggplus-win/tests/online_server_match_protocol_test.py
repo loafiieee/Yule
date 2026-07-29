@@ -90,7 +90,7 @@ class Client:
 
 def assert_protocol(message: dict[str, object]) -> None:
     assert message.get("control_protocol") == 3
-    assert message.get("match_protocol") == 3
+    assert message.get("match_protocol") == 4
     assert message.get("p2p_protocol") == 17
     assert message.get("cap_p2p_auth") == 1
     assert message.get("cap_social_controls") == 1
@@ -172,7 +172,7 @@ def main() -> int:
                         "type": "map_manifest",
                         "framework_version": "1.2-test",
                         "control_protocol": 3,
-                        "match_protocol": 3,
+                        "match_protocol": 4,
                         "p2p_protocol": 17,
                         "build_id": 0x1234ABCD,
                         "game_exe_id": 0x2345BCDE,
@@ -193,7 +193,7 @@ def main() -> int:
                 assert found[0].get("match_id") == found[1].get("match_id")
                 assert found[0].get("opponent") == pair[1].name
                 assert found[1].get("opponent") == pair[0].name
-                assert all(message.get("match_protocol") == 3 for message in found)
+                assert all(message.get("match_protocol") == 4 for message in found)
                 assert all(message.get("p2p_protocol") == 17 for message in found)
                 assert {message.get("p2p_role") for message in found} == {"host", "join"}
                 auth_tokens = [message.get("p2p_auth_token") for message in found]
@@ -223,7 +223,7 @@ def main() -> int:
                             "type": "map_manifest",
                             "framework_version": "1.2-test",
                             "control_protocol": 3,
-                            "match_protocol": 3,
+                            "match_protocol": 4,
                             "p2p_protocol": 17,
                             "build_id": 0x1234ABCD,
                             "game_exe_id": 0x2345BCDE,
@@ -577,6 +577,38 @@ def main() -> int:
             clients[1].send({"type": "match_end", "match_id": conflict_id, "result": "win"})
             conflict_aborts = [client.receive_type("match_abort") for client in clients]
             assert all("conflicting" in str(message.get("reason", "")) for message in conflict_aborts)
+
+            # A P2P socket failure is not a local loss. One failure remains
+            # pending for the peer's terminal report; two failures resolve as
+            # a no-contest without manufacturing opposite winners.
+            matches = make_match(queue="competitive")
+            transport_id = int(matches[0]["match_id"])
+            for client in clients:
+                client.send({"type": "match_started", "match_id": transport_id})
+            for client in clients:
+                client.receive_type("match_started")
+            clients[0].send({
+                "type": "match_transport_failure",
+                "match_id": transport_id,
+                "reason": "peer disconnected during correction",
+            })
+            transport_ack = clients[0].receive_type(
+                "match_transport_failure_ack"
+            )
+            assert transport_ack.get("match_id") == transport_id
+            clients[1].send({
+                "type": "match_transport_failure",
+                "match_id": transport_id,
+                "reason": "peer disconnected during correction",
+            })
+            transport_aborts = [
+                client.receive_type("match_abort") for client in clients
+            ]
+            assert all(
+                message.get("match_id") == transport_id
+                and "no contest" in str(message.get("reason", "")).lower()
+                for message in transport_aborts
+            )
 
             # A delayed message from the previous match cannot affect the current
             # one. Both READY messages then commit gameplay, after which ordinary
@@ -940,7 +972,7 @@ def main() -> int:
                     "type": "map_manifest",
                     "framework_version": "1.2-test",
                     "control_protocol": 3,
-                    "match_protocol": 3,
+                    "match_protocol": 4,
                     "p2p_protocol": 17,
                     "build_id": 0x1234ABCD,
                     "game_exe_id": 0x2345BCDE,

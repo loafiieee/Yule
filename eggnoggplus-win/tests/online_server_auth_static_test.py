@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "online_server" / "server.js").read_text(encoding="utf-8")
 
-assert "const MATCH_PROTOCOL_VERSION = 3;" in SOURCE
+assert "const MATCH_PROTOCOL_VERSION = 4;" in SOURCE
 assert "const P2P_PROTOCOL_VERSION = 17;" in SOURCE
 assert 'process.env.CLIENT_IDLE_TIMEOUT_MS || "120000"' in SOURCE
 assert "socket.setTimeout(CLIENT_IDLE_TIMEOUT_MS);" in SOURCE
@@ -84,7 +84,8 @@ assert "value <= 0xffffffff" in fingerprint_sanitizer
 assert match_factory.count("p2p_token: match.p2p_tokens[") == 2
 assert "p2p_auth_token=${" not in SOURCE
 
-# Match protocol 3 is a two-client commit barrier. All client lifecycle input
+# Match protocol 4 is a two-client commit barrier plus neutral P2P-failure
+# reporting. All client lifecycle input
 # is bound to the exact positive current match ID; pre-commit exits cancel with
 # no result, while post-commit abort/disconnect is a forfeit.
 match_factory = function_body("function makeMatch")
@@ -115,7 +116,7 @@ assert "replayTerminalMatch(client, msg)" in ended
 assert 'cancelMatch(match, "premature match result")' in ended
 assert "MATCH_REPORT_TIMEOUT_MS" in SOURCE
 assert 'cancelMatch(match, "conflicting match reports; no contest")' in ended
-assert 'cancelMatch(match, "match result was not confirmed; no contest")' in ended
+assert "armMatchResolutionTimer(match)" in ended
 assert 'finishMatch(match, [...match.results.values()][0], "single report")' not in ended
 assert "if (agreed) finishMatch" in ended
 assert "winner_player" in ended
@@ -123,6 +124,16 @@ assert "match.player_by_index[winnerPlayer]" in ended
 assert "using ${winner}" in ended
 assert "player_by_index: []" in match_factory
 assert "match.player_by_index = [hostClient.username, joinClient.username]" in match_factory
+assert "transport_failures: new Map()" in match_factory
+
+transport_failure = function_body("function handleMatchTransportFailure")
+assert "match.transport_failures.set(client.username" in transport_failure
+assert 'cancelMatch(match, "P2P connection failed; no contest")' in transport_failure
+assert "match_transport_failure_ack" in transport_failure
+
+resolution_timer = function_body("function armMatchResolutionTimer")
+assert 'match result was not confirmed; no contest' in resolution_timer
+assert 'P2P connection failed; no contest' in resolution_timer
 
 finish = function_body("function finishMatch")
 cancel = function_body("function cancelMatch")

@@ -387,7 +387,7 @@ extern void SDL_free(void* mem);
 #define ONLINE_SERVER_LINE_CAP            8192u
 #define ONLINE_MAP_MANIFEST_MAX_BYTES    (96u * 1024u)
 #define ONLINE_CONTROL_PROTOCOL_VERSION      3
-#define ONLINE_MATCH_PROTOCOL_VERSION        3
+#define ONLINE_MATCH_PROTOCOL_VERSION        4
 #define ONLINE_RESULT_TOAST_FRAMES 420
 #define ONLINE_CHALLENGE_TOAST_FADE_FRAMES 30
 #define UPDATE_TOAST_VISIBLE_MS 12000u
@@ -1393,6 +1393,7 @@ typedef struct OnlineActiveMatch {
     int competitive;
     int queue_mode;
     int result_reported;
+    int transport_failure_reported;
     int server_committed;
     int invalid_state_ticks;
     int winner_player;
@@ -1502,6 +1503,7 @@ static int g_online_open_pending = 0;
 static void* g_online_pending_return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
 static OnlinePendingMatch g_online_pending_match;
 static OnlineActiveMatch g_online_active_match;
+static int g_online_correction_terminal_switch_pending = 0;
 static OnlineConnectRetry g_online_connect;
 static OnlineResultToast g_online_result;
 
@@ -9373,6 +9375,21 @@ static void online_server_send_match_end(OnlineMatchResult result) {
     online_server_send_raw(line);
 }
 
+static void online_server_send_match_transport_failure(const char* reason) {
+    char escaped[192];
+    char line[320];
+    int match_id = g_online_active_match.match_id;
+    if (match_id <= 0 || !g_online_active_match.server_committed) return;
+    if (!g_online_authed || g_online_server_state != ONLINE_SERVER_CONNECTED) return;
+    online_json_escape(escaped, sizeof(escaped),
+                       (reason && reason[0]) ? reason : "P2P transport failed");
+    snprintf(line, sizeof(line),
+             "{\"type\":\"match_transport_failure\",\"match_id\":%d,\"reason\":\"%s\"}\n",
+             match_id,
+             escaped);
+    online_server_send_raw(line);
+}
+
 static void online_server_send_match_started(void) {
     char line[128];
     int match_id = g_online_pending_match.match_id;
@@ -9496,6 +9513,7 @@ static void online_active_match_capture_from_pending(void) {
 
 static void online_active_match_begin_from_pending(void) {
     online_clear_waterfall_audio_state("match begin");
+    g_online_correction_terminal_switch_pending = 0;
     online_active_match_capture_from_pending();
     g_online_connect.connected_once = 1;
     g_online_connect.established = 1;
@@ -9563,6 +9581,7 @@ static void online_forfeit_active_match(const char* status, const char* reason) 
 static void online_clear_match_state(void) {
     online_pending_match_reset();
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+    g_online_correction_terminal_switch_pending = 0;
     online_connect_reset();
     lua_manager_online_suspend_end();
 }
@@ -10678,6 +10697,14 @@ static void online_server_handle_line(const char* line) {
             safe_copy(g_online_result.status, sizeof(g_online_result.status), "Result reported; waiting for opponent.");
         }
         online_hub_set_status("Result reported; waiting for opponent.");
+    } else if (_stricmp(type, "match_transport_failure_ack") == 0) {
+        if (!online_server_message_matches_current_match(line, type)) return;
+        if (g_online_result.active) {
+            safe_copy(g_online_result.status, sizeof(g_online_result.status),
+                      "Connection failure reported; resolving as no contest.");
+        }
+        online_hub_set_status(
+            "Connection failure reported; resolving as no contest.");
     } else if (_stricmp(type, "match_result") == 0) {
         OnlineMatchResult result;
         int preserve_native_finish = online_native_finish_is_presenting();
@@ -17301,7 +17328,9 @@ static void online_abort_connect_timeout(void) {
                !g_online_active_match.result_reported &&
                g_online_active_match.server_committed) {
         g_online_active_match.result_reported = 1;
-        online_server_send_match_end(ONLINE_MATCH_RESULT_LOSS);
+        g_online_active_match.transport_failure_reported = 1;
+        online_server_send_match_transport_failure(
+            "P2P connection timed out before gameplay");
     }
     if (ggpo_net_active()) stop_ggpo_net("connect timeout");
     online_clear_match_state();
@@ -17351,14 +17380,52 @@ static void online_abort_prematch_setup(const char* reason) {
     }
 }
 
+static void online_resolve_p2p_transport_failure(const char* reason) {
+    const char* status = "P2P connection lost; resolving as no contest.";
+    if (!g_online_active_match.active) {
+        /* Console-started/manual GGPO sessions do not have a server match to
+         * resolve, but their failed socket still must be closed. */
+        if (ggpo_net_active()) stop_ggpo_net("standalone P2P transport failure");
+        return;
+    }
+
+    /* A winner which was already committed by the native simulation outranks
+     * the transport error observed at the edge of that same wall tick. */
+    online_match_poll_completion();
+    if (g_online_active_match.result_reported) {
+        if (ggpo_net_active()) {
+            stop_ggpo_net("P2P failed after native terminal result");
+        }
+        return;
+    }
+
+    g_online_active_match.result_reported = 1;
+    g_online_active_match.transport_failure_reported = 1;
+    online_server_send_match_transport_failure(
+        (reason && reason[0]) ? reason : "P2P transport failed");
+    g_online_correction_terminal_switch_pending = 0;
+    if (ggpo_net_active()) stop_ggpo_net("P2P transport failure");
+    online_connect_reset();
+    online_pending_match_reset();
+
+    /* Retain the exact match ID in the provisional result record so the
+     * server's eventual no-contest response is still accepted, but remove the
+     * active native match before hub handoff. A divergent terminal countdown
+     * inside an interrupted correction must never be presented as a real win. */
+    online_result_prepare(ONLINE_MATCH_RESULT_DRAW, status);
+    memset(&g_online_active_match, 0, sizeof(g_online_active_match));
+    online_return_to_hub_after_match(status);
+}
+
 static void online_monitor_active_match_state(void* state_ptr) {
     if (!g_online_active_match.active || g_online_active_match.result_reported) return;
     if (!ggpo_net_active()) {
         /* A failed socket start is still inside the bounded pre-connect retry
-         * state machine. Once a connection was established, any teardown is a
-         * real disconnect and keeps the existing loss behavior. */
+         * state machine. Once a connection was established, first preserve a
+         * native terminal result, then report an impartial transport failure.
+         * A socket disappearing is not evidence that the local player lost. */
         if (g_online_connect.attempts > 0 && !g_online_connect.established) return;
-        online_finish_active_match(ONLINE_MATCH_RESULT_LOSS, "P2P disconnected; reported loss.", 1);
+        online_resolve_p2p_transport_failure("P2P connection was lost");
         return;
     }
     if (online_match_state_allowed(state_ptr)) {
@@ -17377,6 +17444,14 @@ static void online_match_poll_completion(void) {
     int local_player;
     OnlineMatchResult result;
     if (!g_online_active_match.active || g_online_active_match.result_reported) return;
+    /* A correction barrier means the visible native state is explicitly known
+     * to be provisional. In particular, a joiner waiting in READY may still
+     * contain the divergent win countdown which triggered correction. Never
+     * report or tear down from that state; wait for mutual RELEASE first. */
+    if (ggpo_net_active() &&
+        (ggpo_net_correction_active() || ggpo_net_awaiting_correction())) {
+        return;
+    }
     winner = online_native_winner_player();
     if (winner < 0) return;
     local_player = ggpo_net_local_player();
@@ -17967,7 +18042,14 @@ static int online_advance_net_gameplay_tick(int arg0) {
                      err[0] ? err : "see log");
             console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
             LOG_ERROR("ggpo.net: failed (%s)", err[0] ? err : "unknown error");
-            ggpo_net_stop();
+            /* The same native tick can both produce a real winner and observe
+             * a terminal transport error. Poll before closing GGPO so an
+             * already-authoritative result wins that race. If correction is
+             * still active, poll_completion deliberately rejects the
+             * provisional state and the server receives a no-contest transport
+             * claim instead of two fabricated local losses. */
+            online_resolve_p2p_transport_failure(
+                err[0] ? err : "P2P transport failed");
             return -1;
         }
         if (!advanced) break;
@@ -17978,6 +18060,16 @@ static int online_advance_net_gameplay_tick(int arg0) {
      * only afterward so a final queued handshake packet gets its chance. */
     online_connect_retry_tick();
     online_match_poll_completion();
+    if (g_online_correction_terminal_switch_pending &&
+        g_online_active_match.result_reported &&
+        !ggpo_net_correction_active() &&
+        !ggpo_net_awaiting_correction()) {
+        g_online_correction_terminal_switch_pending = 0;
+        LOG_INFO("online.match: correction released; applying deferred native terminal transition");
+        if (p_state_switch) {
+            p_state_switch((void*)(uintptr_t)ADDR_MAIN_STATE);
+        }
+    }
     online_log_desync_snapshot_if_changed();
     return advanced_any ? 1 : 0;
 }
@@ -18139,8 +18231,7 @@ static void hooks_window_refresh_geometry(const char* reason, int force_viewport
               wh != g_window_runtime.last_window_h ||
               dw != g_window_runtime.last_drawable_w ||
               dh != g_window_runtime.last_drawable_h ||
-              display != g_window_runtime.last_display_index ||
-              flags != g_window_runtime.last_window_flags;
+              display != g_window_runtime.last_display_index;
     if (dw > 0 && dh > 0 && (force_viewport || changed)) {
         glGetIntegerv(GL_VIEWPORT, viewport);
         if (force_viewport || viewport[0] != 0 || viewport[1] != 0 ||
@@ -19291,10 +19382,22 @@ static void* __cdecl hooked_state_switch(void* target) {
                         cur == (void*)(uintptr_t)ADDR_OPTIONS_STATE_PAUSED);
     int entering_main = (target == (void*)(uintptr_t)ADDR_MAIN_STATE ||
                          target == (void*)(uintptr_t)ADDR_MAIN_STATE_INITIAL);
+    int correction_terminal_transition =
+        leaving_game && entering_main &&
+        online_native_finish_is_presenting() &&
+        ggpo_net_active() &&
+        (ggpo_net_correction_active() || ggpo_net_awaiting_correction());
     int finish_online_after_switch =
         leaving_game && entering_main &&
         online_native_finish_is_presenting();
     void* switched;
+    if (correction_terminal_transition) {
+        if (!g_online_correction_terminal_switch_pending) {
+            LOG_INFO("online.match: deferred native terminal transition until correction release");
+        }
+        g_online_correction_terminal_switch_pending = 1;
+        return cur;
+    }
     if (finish_online_after_switch &&
         !g_online_active_match.result_reported) {
         /* The zero-countdown branch switches synchronously. Capture and report

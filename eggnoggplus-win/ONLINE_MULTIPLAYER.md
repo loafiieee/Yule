@@ -318,7 +318,7 @@ attacker.
 
 After TCP connects, the client requests and validates the server's flat `server_info`
 advertisement before it sends the login/register request. Control protocol 3, match
-protocol 3, P2P protocol 17, packet-auth capability, social-controls capability, and
+protocol 4, P2P protocol 17, packet-auth capability, social-controls capability, and
 private-rematch, UDP-relay, and client-build-gate capabilities are all required. `auth_ok`
 repeats the same fields and `match_found` repeats the match/P2P versions, so a stale or
 mixed deployment fails at the handshake (and again at match setup as defense in depth)
@@ -327,7 +327,7 @@ instead of consuming a queue match that cannot start.
 After authentication, every map manifest also identifies the sending client with its
 framework label, exact control/match/P2P protocol tuple, and deterministic
 build/game-executable/framework-DLL fingerprint tuple. The server stores and logs those
-values without secrets. It admits only control-v3/match-v3/P2P-v17 clients with complete
+values without secrets. It admits only control-v3/match-v4/P2P-v17 clients with complete
 build identities, and pairs only clients whose exact build tuples also match. Queue,
 challenge, rematch, and final match creation all use the same check. `match_found` carries
 the checked match/P2P versions and bounded opponent build diagnostics rather than blindly
@@ -342,7 +342,7 @@ Both players must run a build using the server's advertised tuple. The human-fac
 release label is diagnostic only; safe pairing requires both the numeric protocol tuple
 and exact build fingerprint tuple.
 
-The current client requires control v3/match v3/P2P v17 plus relay and client-build-gate
+The current client requires control v3/match v4/P2P v17 plus relay and client-build-gate
 capabilities. Deploy and restart this matching server revision before launching the
 rebuilt client, then require the TCP/UDP deployment preflight to report both build gating
 and UDP relay support.
@@ -685,10 +685,11 @@ buttons or joinable instance.
 The dependency-free client uses Discord's local Windows RPC pipe with overlapped,
 incremental, 64-KiB-bounded I/O. It never waits for Discord or performs network access.
 Updates coalesce and are rate-limited; absent, closed, malformed, or restarted Discord
-clients cannot stall gameplay. `discord_presence` is toggled from Online Settings. A
-deployment-owned public numeric `discord_application_id` is required in
-`mods/modframework.cfg`; without one, the row reads `UNAVAILABLE` and no connection is
-attempted. See `DISCORD_RICH_PRESENCE.md` for the exact data contract and release test.
+clients cannot stall gameplay. Release builds compile the public Yule Application ID
+`1531027934004117664` and default `discord_presence` on, so no configuration file is
+required. Online Settings can disable it locally; a valid `discord_application_id`
+override selects another public application, while blank or invalid stale overrides are
+ignored. See `DISCORD_RICH_PRESENCE.md` for the exact data contract and release test.
 
 ## Discord LFG bridge
 

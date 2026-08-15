@@ -417,55 +417,55 @@ Some names below are exact because the callback is named in Ghidra. Some plain-E
 | `space` | `tile 0x14`, `colouring_action`, `frame 0x00`, `arg 0x00` | Empty/open filler. `.` behaves the same way. |
 | `.` | `tile 0x14`, `colouring_action`, `frame 0x00`, `arg 0x00` | Same as `space`. |
 | `!` | `tile 0x03`, `floor_action`, `frame 0x00`, `arg = random byte` | Floor/platform variant. |
-| `#` | `tile 0x15`, `colouring_action`, `frame 0x2D`, `arg = random byte` | Decorative colouring tile variant. |
-| `(` | `tile 0x14`, `colouring_action`, `frame 0x6A`, `arg = side bit` | Side-aware decorative variant. |
-| `)` | `tile 0x14`, `colouring_action`, `frame 0x6B`, `arg = side bit` | Side-aware decorative variant. |
-| `*` | `tile 0x1C`, `spawn_thing_action`, `frame 0x00`, `arg 0x02` | Sword pickup/spawn tile. Works even when `rules.mode` is `karate`. |
-| `+` | `tile 0x16`, `colouring_action`, `frame 0x5D..0x5F`, `arg 0x00` | Random decorative colouring variant. |
-| `-` | `tile 0x15`, `colouring_action`, `frame 0x3C`, `arg 0x00` | Decorative colouring variant. |
-| `1` | `tile 0x1E`, `teamnogg_action`, `frame 0x05`, `arg 0x01` | Team/score target tile for side 1. |
-| `2` | `tile 0x1E`, `teamnogg_action`, `frame 0x05`, `arg 0x02` | Team/score target tile for side 2. |
-| `:` | `tile 0x15`, `colouring_action`, `frame 0x3D`, `arg 0x00` | Decorative colouring variant. |
-| `=` | `tile 0x15`, `colouring_action`, `frame 0x1F`, `arg = random byte` | Decorative colouring variant. |
+| `#` | `tile 0x15`, `colouring_action`, `frame 0x2D`, `arg = random byte` | brick outline decoration tile |
+| `(` | `tile 0x14`, `colouring_action`, `frame 0x6A`, `arg = side bit` | left half of arch |
+| `)` | `tile 0x14`, `colouring_action`, `frame 0x6B`, `arg = side bit` | right half of arch |
+| `*` | `tile 0x1C`, `spawn_thing_action`, `frame 0x00`, `arg 0x02` | sword spawn glyph |
+| `+` | `tile 0x16`, `colouring_action`, `frame 0x5D..0x5F`, `arg 0x00` | mushrooms |
+| `-` | `tile 0x15`, `colouring_action`, `frame 0x3C`, `arg 0x00` | horizontal row tile |
+| `1` | `tile 0x1E`, `teamnogg_action`, `frame 0x05`, `arg 0x01` | Team/score target eggnogg tile for side 1. |
+| `2` | `tile 0x1E`, `teamnogg_action`, `frame 0x05`, `arg 0x02` | Team/score target eggnogg tile for side 2. |
+| `:` | `tile 0x15`, `colouring_action`, `frame 0x3D`, `arg 0x00` | Vertical column |
+| `=` | `tile 0x15`, `colouring_action`, `frame 0x1F`, `arg = random byte` | Decorative tile, looks like a hashtag |
 | `?` | no tile is placed | Explicit no-op/reserved glyph. |
-| `@` | `tile 0x01` or `tile 0x02`, `wall_action` or `floor_action`, `frame 0x00`, `arg = auto/random` | Auto terrain glyph. It becomes wall-like when supported by solid tile above, otherwise floor-like. |
-| `A` | `tile 0x0B`, `spinny_action`, `frame 0x00`, `arg 0x04` | Spinny special tile. Likely a spinning hazard/prop. |
-| `C` | `tile 0x08`, `chandelier_action`, `frame 0x00`, `arg 0x1E` | Chandelier/hanging decoration variant. |
-| `E` | `tile 0x0A`, `tile_action_default`, `frame 0x00`, `arg 0x00` | EGGNOGG |
-| `F` | `tile 0x17`, `colouring_action`, `frame 0x59`, `arg 0x00` | Decorative colouring variant. |
+| `@` | `tile 0x01` or `tile 0x02`, `wall_action` or `floor_action`, `frame 0x00`, `arg = auto/random` | Auto terrain. It becomes wall-like when supported by solid tile above, otherwise floor-like. |
+| `A` | `tile 0x0B`, `spinny_action`, `frame 0x00`, `arg 0x04` | Spinny tile |
+| `C` | `tile 0x08`, `chandelier_action`, `frame 0x00`, `arg 0x1E` | Swinging chandelier |
+| `E` | `tile 0x0A`, `tile_action_default`, `frame 0x00`, `arg 0x00` | eggnogg, unmoving. top with ^ |
+| `F` | `tile 0x17`, `colouring_action`, `frame 0x59`, `arg 0x00` | Vertical column |
 | `G` | emits a `3x3` block of `tile 0x07`, `decal_action`, frames `0x28..0x3F` | Large `3x3` decal/mural block anchored above the glyph. It needs 3 tiles of headroom and cannot sit on either side edge. |
-| `H` | `tile 0x15`, `colouring_action`, `frame 0x06`, `arg 0x00` | Decorative colouring variant. |
-| `I` | `tile 0x15`, `colouring_action`, `frame 0x1E`, `arg = random byte` | Decorative colouring variant. |
-| `K` | `tile 0x1C`, `spawn_thing_action`, `frame 0x00`, `arg 0x03` | Pass-through hazard marker. Room reset creates a separate native type-3 point-mass entity with gravity/bounce, fixed sprite 109, and 10-pixel player damage. Direct map markers are accepted only when the room passes the strict native reset-spawn budget; generic custom `native_glyph: "K"` remains excluded. |
-| `L` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant keyed by glyph `L`. It expands upward and cannot sit on the top 3 rows or either side edge. |
-| `N` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant keyed by glyph `N`. It expands upward and cannot sit on the top 3 rows or either side edge. |
-| `O` | `tile 0x1B`, `sky_glow_action`, `frame 0x21`, `arg = side bit` | Sky-glow / backdrop-light tile. |
-| `P` | `tile 0x0C`, `puzzley_action`, `frame 0x00`, `arg 0x00` | Puzzle-style special tile/prop. |
-| `Q` | `tile 0x1A`, `colouring_action`, `frame 0x46 or 0x47`, `arg = random byte` | Decorative colouring variant. |
-| `S` | `tile 0x14`, `colouring_action`, `frame 0x07`, `arg 0x00` | Decorative colouring variant. |
-| `T` | emits a tentacle column using `tile 0x13`, `tentacle_action` | Special tentacle generator glyph. `s` and `t` behave the same at plot time. |
+| `H` | `tile 0x15`, `colouring_action`, `frame 0x06`, `arg 0x00` | vertical column tile |
+| `I` | `tile 0x15`, `colouring_action`, `frame 0x1E`, `arg = random byte` | vertical column tile |
+| `K` | `tile 0x1C`, `spawn_thing_action`, `frame 0x00`, `arg 0x03` | spike ball physics hazard |
+| `L` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant  |
+| `N` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant |
+| `O` | `tile 0x1B`, `sky_glow_action`, `frame 0x21`, `arg = side bit` | sun |
+| `P` | `tile 0x0C`, `puzzley_action`, `frame 0x00`, `arg 0x00` | changing art tile. |
+| `Q` | `tile 0x1A`, `colouring_action`, `frame 0x46 or 0x47`, `arg = random byte` | skull on a stick |
+| `S` | `tile 0x14`, `colouring_action`, `frame 0x07`, `arg 0x00` | Eye tile. |
+| `T` | emits a tentacle column using `tile 0x13`, `tentacle_action` | large tentacle |
 | `W` | `tile 0x0E`, `high_water_action`, `frame 0x05`, `arg 0x00` | High/deep water tile. |
-| `X` | `tile 0x05`, `spikes_action`, `frame 0x00`, `arg = random byte` | Spike hazard variant. |
-| `Y` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant keyed by glyph `Y`. It expands upward and cannot sit on the top 3 rows or either side edge. |
-| `Z` | `tile 0x17`, `colouring_action`, `frame 0x05`, `arg = random byte` | Decorative colouring variant. |
-| `^` | `tile 0x09`, `eggnogg_action`, `frame 0x00`, `arg 0x00` | Eggnogg special tile used in vanilla maps. |
+| `X` | `tile 0x05`, `spikes_action`, `frame 0x00`, `arg = random byte` | ground spikes |
+| `Y` | emits a `2x3` block of `tile 0x0D`, `arty_action` | person art block. expands upwards from glyph, 2x3 |
+| `Z` | `tile 0x17`, `colouring_action`, `frame 0x05`, `arg = random byte` | metal plate tile. |
+| `^` | `tile 0x09`, `eggnogg_action`, `frame 0x00`, `arg 0x00` | waving eggnogg tile |
 | `_` | `tile 0x04`, `ceiling_action`, `frame 0x00`, `arg = random byte` | Ceiling tile. |
-| `` ` `` | `tile 0x15`, `colouring_action`, `frame 0x56`, `arg = random byte` | Decorative colouring variant. |
-| `c` | `tile 0x08`, `chandelier_action`, `frame 0x00`, `arg 0x05` | Chandelier/hanging decoration variant. |
-| `e` | `tile 0x15`, `colouring_action`, `frame 0x40`, `arg 0x00` | Decorative colouring variant. |
-| `f` | `tile 0x18`, `scroll_action`, `frame 0x2E`, `arg 0x00` | Scroll/moving-surface tile. |
+| `` ` `` | `tile 0x15`, `colouring_action`, `frame 0x56`, `arg = random byte` | fence |
+| `c` | `tile 0x08`, `chandelier_action`, `frame 0x00`, `arg 0x05` | chandelier, swinging only slightly |
+| `e` | `tile 0x15`, `colouring_action`, `frame 0x40`, `arg 0x00` | top left of head tile? |
+| `f` | `tile 0x18`, `scroll_action`, `frame 0x2E`, `arg 0x00` | scrolling decor tile. |
 | `i` | `tile 0x1D`, `crowd_action`, `frame 0x00`, `arg = random byte` | Crowd/backdrop tile. |
-| `l` | `tile 0x1F`, `score_light_action`, `frame 0x00`, `arg 0x00` | Score light / scoreboard indicator tile. |
-| `m` | `tile 0x06`, `mine_action`, `frame 0x00`, `arg 0x00` | Mine tile. |
-| `q` | `tile 0x1A`, `colouring_action`, `frame 0x6F`, `arg = random byte` | Decorative colouring variant. |
-| `s` | emits a tentacle column using `tile 0x13`, `tentacle_action` | Same tentacle generator family as `T` and `t`. |
-| `t` | emits a tentacle column using `tile 0x13`, `tentacle_action` | Same tentacle generator family as `T` and `s`. |
-| `u` | `tile 0x14`, `colouring_action`, `frame 0x6C`, `arg 0x00` | Decorative colouring variant. |
-| `v` | `tile 0x05`, `spikes_action`, `frame 0x02`, `arg 0x00` | Spike hazard variant. Often reads like a hanging/ceiling spike tile in vanilla rooms. |
-| `w` | `tile 0x0F`, `water_action`, `frame 0x05`, `arg 0x00` | Regular/shallow water tile. |
-| `x` | `tile 0x14`, `colouring_action`, `frame 0x56`, `arg 0x00` | Decorative colouring variant. |
-| `|` | `tile 0x19`, `colouring_action`, `frame 0x26`, `arg 0x00` | Decorative colouring variant, commonly used as a vertical column/pipe edge in vanilla maps. |
-| `~` | `tile 0x10`, `waterfall_action`, `frame 0x60`, `arg = row parity` | Waterfall tile. Also back-fills the tile above with a decorative colouring tile when appropriate. |
+| `l` | `tile 0x1F`, `score_light_action`, `frame 0x00`, `arg 0x00` | score light |
+| `m` | `tile 0x06`, `mine_action`, `frame 0x00`, `arg 0x00` | mine tile |
+| `q` | `tile 0x1A`, `colouring_action`, `frame 0x6F`, `arg = random byte` | hanging skeleton |
+| `s` | emits a tentacle column using `tile 0x13`, `tentacle_action` | small tentacle |
+| `t` | emits a tentacle column using `tile 0x13`, `tentacle_action` | large tentacle |
+| `u` | `tile 0x14`, `colouring_action`, `frame 0x6C`, `arg 0x00` | arch |
+| `v` | `tile 0x05`, `spikes_action`, `frame 0x02`, `arg 0x00` | hanging spikes |
+| `w` | `tile 0x0F`, `water_action`, `frame 0x05`, `arg 0x00` | shallow water tile |
+| `x` | `tile 0x14`, `colouring_action`, `frame 0x56`, `arg 0x00` | fence |
+| `|` | `tile 0x19`, `colouring_action`, `frame 0x26`, `arg 0x00` | Vertical Pipe |
+| `~` | `tile 0x10`, `waterfall_action`, `frame 0x60`, `arg = row parity` | Waterfall tile |
 
 ### Gameplay-relevant native glyph behavior
 

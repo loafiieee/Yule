@@ -110,7 +110,7 @@ end</code></pre>
   <li><strong>Procedural sound:</strong> bounded bytebeat/floatbeat is mixed through the game's existing device and does not require <code>SDL2_mixer.dll</code>. See <a href="../reference/audio.html">audio &amp; music</a>.</li>
 </ul></section>
 
-<section id="debug"><h2>7. Debug without guessing</h2>
+<section id="debug"><h2>7. Debug the mod</h2>
 <ol>
   <li>Open the console with backtick.</li>
   <li>Run <code>mods.info hello_yule</code>, <code>mods.trace hello_yule on</code>, and <code>log.tail 60</code>.</li>
@@ -127,7 +127,7 @@ end</code></pre>
 <section id="ship"><h2>9. Package and test</h2>
 <ul>
   <li>Use a stable lowercase id and semantic version.</li>
-  <li>Set the compatible <code>api_version</code>, minimum <code>api_revision</code>, and genuinely mandatory <code>api_requires</code>; run <code>framework.api</code> to inspect the build.</li>
+  <li>Set the compatible <code>api_version</code>, minimum <code>api_revision</code>, and required <code>api_requires</code>; run <code>framework.api</code> to inspect the build.</li>
   <li>Remove secrets, generated logs, console history, and user storage from the archive.</li>
   <li>Test clean install, enable/disable, hot reload, missing optional dependency, dependency mismatch, and configuration migration.</li>
   <li>Test every supported window size/input method and confirm unload stops owned audio and removes owned UI/content.</li>

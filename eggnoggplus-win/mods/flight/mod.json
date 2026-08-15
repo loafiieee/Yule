@@ -1,0 +1,12 @@
+{
+  "id": "flight",
+  "name": "Flight Mode",
+  "version": "1.0.0",
+  "author": "Codex",
+  "description": "Toggle collision-free flight and steer with the player's movement controls.",
+  "api_version": 1,
+  "api_revision": 2,
+  "api_requires": ["game.rollback_state"],
+  "entry": "main.lua",
+  "config": "config.cfg"
+}

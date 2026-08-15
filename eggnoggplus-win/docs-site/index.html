@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Developer documentation for the Eggnogg+ framework, APIs, modding, maps, online services, and releases.">
-  <title>Eggnogg+ Developer Docs</title>
+  <meta name="description" content="Instructions and reference documentation for Eggnogg+.">
+  <title>Eggnogg+ Documentation</title>
   <link rel="stylesheet" href="styles.css">
   <script defer src="app.js"></script>
 </head>
@@ -12,72 +12,58 @@
 <main id="main"><article>
   <section class="docs-hero">
     <div class="hero-copy">
-      <p class="page-kicker">Yule developer documentation</p>
-      <h1>Build on Yule.</h1>
-      <p class="lead">The source-backed reference for every public Lua callable, V1/V2 maps, deterministic map scripting, configuration, online infrastructure, deployment, and releases.</p>
+      <h1>Eggnogg+ documentation</h1>
+      <p class="lead">Instructions and reference material for installing the framework, making mods and maps, using the Lua API, running online services, and building releases.</p>
       <div class="hero-actions">
-        <a class="pixel-button primary" href="api/index.html">Browse the API</a>
-        <a class="pixel-button" href="getting-started/installation.html">Install Yule</a>
+        <a class="pixel-button primary" href="getting-started/installation.html">Installation</a>
+        <a class="pixel-button" href="api/index.html">API reference</a>
       </div>
     </div>
-    <aside class="hero-terminal" aria-label="Documentation coverage">
-      <div class="terminal-title"><span></span><span>REFERENCE STATUS</span></div>
-      <dl>
-        <div><dt>API surface</dt><dd>Every public callable</dd></div>
-        <div><dt>Map systems</dt><dd>V1, V2, and Map Lua</dd></div>
-        <div><dt>Operations</dt><dd>Build, test, server, updater</dd></div>
-        <div><dt>Trust model</dt><dd>Explicit boundaries</dd></div>
-      </dl>
-      <p>Use search or follow a task path below.</p>
-    </aside>
   </section>
 
   <section>
-    <p class="section-chip">Choose a route</p>
-    <h2>Start with what you are making</h2>
+    <h2>Instructions</h2>
     <div class="doc-grid">
-      <a class="doc-card" href="guides/modding.html"><em>01</em><strong>Create an ordinary mod</strong><span>Manifest, entry script, lifecycle, configuration, packaging, and debugging.</span><i>Open guide →</i></a>
-      <a class="doc-card" href="guides/maps.html"><em>02</em><strong>Create a V2 map</strong><span>Per-map tilesets, symbolic tiles, collision, behavior scripts, and validation.</span><i>Open guide →</i></a>
-      <a class="doc-card" href="api/index.html"><em>03</em><strong>Look up an API function</strong><span>Signatures, parameters, returns, failure behavior, constraints, and examples.</span><i>Open reference →</i></a>
-      <a class="doc-card" href="reference/console.html"><em>04</em><strong>Find a console command</strong><span>Complete commands and aliases with arguments, output, and safety notes.</span><i>Open reference →</i></a>
-      <a class="doc-card" href="guides/online.html"><em>05</em><strong>Test online play</strong><span>Hub configuration, admission, direct/relay routes, diagnostics, and acceptance.</span><i>Open guide →</i></a>
-      <a class="doc-card" href="guides/testing-releasing.html"><em>06</em><strong>Build and release safely</strong><span>Supported toolchain, guarded runners, packaging, publishing, and rollback.</span><i>Open guide →</i></a>
+      <a class="doc-card" href="guides/modding.html"><strong>Create a mod</strong><span>Manifest, entry script, lifecycle, configuration, packaging, and debugging.</span></a>
+      <a class="doc-card" href="guides/maps.html"><strong>Create a map</strong><span>V1 and V2 packages, tilesets, symbolic tiles, behavior scripts, and validation.</span></a>
+      <a class="doc-card" href="guides/online.html"><strong>Configure online play</strong><span>Hub configuration, admission, direct and relay routes, diagnostics, and testing.</span></a>
+      <a class="doc-card" href="guides/testing-releasing.html"><strong>Build and release</strong><span>Supported toolchain, guarded runners, packaging, publishing, and rollback.</span></a>
     </div>
   </section>
 
   <section>
-    <p class="section-chip">Reference map</p>
-    <h2>API areas</h2>
+    <h2>API reference</h2>
     <table>
-      <thead><tr><th>Area</th><th>Namespaces</th><th>Use it for</th></tr></thead>
+      <thead><tr><th>Area</th><th>Namespaces</th><th>Contents</th></tr></thead>
       <tbody>
-        <tr><td><a href="api/runtime.html">Runtime &amp; lifecycle</a></td><td><code>mod</code>, <code>config</code>, <code>storage</code>, <code>interop</code>, <code>mod.input</code></td><td>Package startup, frame/tick handlers, persistence, dependencies, and rebindable actions.</td></tr>
-        <tr><td><a href="api/ui.html">UI &amp; rendering</a></td><td><code>mod.ui</code>, <code>mod.assets</code>, <code>mod.font</code>, <code>mod.texture</code>, <code>mod.anim</code></td><td>Overlays, widgets, custom screens, sprites, atlas replacement, and animation.</td></tr>
+        <tr><td><a href="api/runtime.html">Runtime &amp; lifecycle</a></td><td><code>mod</code>, <code>config</code>, <code>storage</code>, <code>interop</code>, <code>mod.input</code></td><td>Package startup, frame and tick handlers, persistence, dependencies, and input actions.</td></tr>
+        <tr><td><a href="api/ui.html">UI &amp; rendering</a></td><td><code>mod.ui</code>, <code>mod.assets</code>, <code>mod.font</code>, <code>mod.texture</code>, <code>mod.anim</code></td><td>Overlays, widgets, screens, sprites, atlas replacement, and animation.</td></tr>
         <tr><td><a href="api/game.html">Gameplay &amp; online</a></td><td><code>mod.game</code>, <code>mod.online</code></td><td>Telemetry, deterministic state, bot input, maps, presentation, and online suspension.</td></tr>
-        <tr><td><a href="api/audio.html">Audio</a></td><td><code>mod.audio</code></td><td>Sound, music, generated bytebeat, ownership, cache, and diagnostics.</td></tr>
-        <tr><td><a href="api/content.html">Content registry</a></td><td><code>mod.content</code>, transaction methods</td><td>Owner-qualified symbolic tiles and strict atomic definition replacement.</td></tr>
-        <tr><td><a href="api/services.html">Data &amp; networking</a></td><td><code>mod.fs</code>, <code>mod.json</code>, <code>mod.net</code>, <code>mod.http</code></td><td>User-selected packages, strict JSON, TCP clients, and asynchronous GET requests.</td></tr>
-        <tr><td><a href="api/map-lua.html">Map Lua</a></td><td><code>map</code>, callback <code>object</code>, callback <code>tile</code></td><td>Rollback-safe contact behavior, sensors, state, RNG, velocity, and sprite response.</td></tr>
+        <tr><td><a href="api/audio.html">Audio</a></td><td><code>mod.audio</code></td><td>Sound, music, generated audio, ownership, cache, and diagnostics.</td></tr>
+        <tr><td><a href="api/content.html">Content registry</a></td><td><code>mod.content</code>, transaction methods</td><td>Owner-qualified symbolic tiles and atomic definition replacement.</td></tr>
+        <tr><td><a href="api/services.html">Files &amp; networking</a></td><td><code>mod.fs</code>, <code>mod.json</code>, <code>mod.net</code>, <code>mod.http</code></td><td>File selection, JSON, TCP clients, and asynchronous GET requests.</td></tr>
+        <tr><td><a href="api/map-lua.html">Map Lua</a></td><td><code>map</code>, callback <code>object</code>, callback <code>tile</code></td><td>Contact behavior, sensors, state, RNG, velocity, and sprite response.</td></tr>
       </tbody>
     </table>
   </section>
 
   <section>
-    <p class="section-chip">Before you ship</p>
-    <h2>Know the boundary</h2>
-    <div class="callout"><strong>Ordinary mods are trusted.</strong> They share one Lua VM and can use standard Lua libraries, local dialogs, TCP, and HTTP. Install only reviewed packages.</div>
-    <div class="callout warning"><strong>Gameplay mods stop online.</strong> Tick handlers, content registration, bots, and gameplay mutation are classified and suspended while managed rollback owns the match.</div>
-    <div class="callout"><strong>Map scripts are different.</strong> A V2 <code>map.lua</code> runs in a separate restricted deterministic VM with bounded memory, instructions, state, callbacks, and no filesystem/network/process access.</div>
+    <h2>Reference</h2>
+    <div class="doc-grid">
+      <a class="doc-card" href="reference/map-format.html"><strong>Map format</strong><span>Package schemas, native glyphs, tilesets, and engine limits.</span></a>
+      <a class="doc-card" href="reference/console.html"><strong>Console commands</strong><span>Commands, aliases, arguments, output, and safety notes.</span></a>
+      <a class="doc-card" href="reference/configuration.html"><strong>Configuration</strong><span>Framework, mod, online, updater, and server settings.</span></a>
+      <a class="doc-card" href="reference/security.html"><strong>Security model</strong><span>Trust boundaries for mods, map scripts, networking, credentials, and updates.</span></a>
+    </div>
   </section>
 
   <section>
-    <p class="section-chip">Maintainers</p>
-    <h2>Framework internals and operations</h2>
+    <h2>Framework maintenance</h2>
     <div class="doc-grid">
-      <a class="doc-card" href="framework/architecture.html"><strong>Architecture</strong><span>SDL proxy loading, native hooks, extension modules, Lua ownership, rendering, maps, rollback, and services.</span></a>
-      <a class="doc-card" href="framework/file-layout.html"><strong>Source and runtime layout</strong><span>Where code, installed configuration, logs, maps, mods, server state, and release artifacts live.</span></a>
-      <a class="doc-card" href="guides/server-deployment.html"><strong>Online server deployment</strong><span>State-preserving updates, protocol/build gates, preflight, systemd, relay, and rollback.</span></a>
-      <a class="doc-card" href="guides/updater-release.html"><strong>Updater and releases</strong><span>Version manifests, hashes, staged handoff, journals, cleanup, rollback, and publishing order.</span></a>
+      <a class="doc-card" href="framework/architecture.html"><strong>Architecture</strong><span>SDL proxy loading, hooks, Lua ownership, rendering, maps, rollback, and services.</span></a>
+      <a class="doc-card" href="framework/file-layout.html"><strong>File layout</strong><span>Source files, build output, runtime state, maps, mods, server state, and releases.</span></a>
+      <a class="doc-card" href="guides/server-deployment.html"><strong>Server deployment</strong><span>Updates, protocol gates, preflight, systemd, relay, and rollback.</span></a>
+      <a class="doc-card" href="guides/updater-release.html"><strong>Updater and releases</strong><span>Manifests, hashes, staged handoff, recovery, and publishing order.</span></a>
     </div>
   </section>
 </article></main>

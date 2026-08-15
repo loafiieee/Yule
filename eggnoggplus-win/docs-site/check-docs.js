@@ -223,6 +223,20 @@ for (const file of htmlFiles) {
     for (const id of dynamicIdsByPage.get(targetRelative) || []) targetIds.add(id);
     if (!targetIds.has(fragment)) fail(`${relative}: missing fragment ${href}`);
   }
+
+  for (const match of text.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)) {
+    const src = match[1];
+    if (/^(?:https?:|data:)/.test(src)) continue;
+    let decoded;
+    try {
+      decoded = decodeURIComponent(src.split(/[?#]/, 1)[0]);
+    } catch {
+      fail(`${relative}: malformed image path ${src}`);
+      continue;
+    }
+    const target = path.resolve(path.dirname(file), decoded);
+    if (!fs.existsSync(target)) fail(`${relative}: missing image ${src}`);
+  }
 }
 
 for (const file of ["app.js", "api-data.js", "styles.css", "index.html", "README.md"]) {
@@ -249,7 +263,7 @@ if (/(--teal|--cyan|--blue|--gold)\s*:/.test(styleSource)) {
 if (appSource.includes("theme-toggle") || appSource.includes("eggnogg-docs-theme")) {
   fail("legacy generic theme switch remains in the Yule documentation shell");
 }
-for (const marker of ["docs-hero", "hero-terminal", "pixel-button", "section-chip"]) {
+for (const marker of ["docs-hero", "pixel-button"]) {
   if (!homeSource.includes(marker)) fail(`task-first documentation home marker missing: ${marker}`);
 }
 

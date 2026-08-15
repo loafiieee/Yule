@@ -109,9 +109,9 @@
         <button class="nav-toggle" id="nav-toggle" type="button"
                 aria-label="Open documentation navigation" aria-controls="global-nav"
                 aria-expanded="false"><span></span><span></span><span></span></button>
-        <a class="wordmark" href="${root}index.html" aria-label="Yule developer documentation home">
-          <span class="wordmark-mark">Y</span>
-          <span class="wordmark-copy"><b>YULE</b><small>developer docs</small></span>
+        <a class="wordmark" href="${root}index.html" aria-label="Eggnogg+ documentation home">
+          <span class="wordmark-mark">+</span>
+          <span class="wordmark-copy"><b>EGGNOGG+</b><small>documentation</small></span>
         </a>
         <button class="search-trigger" id="search-trigger" type="button"
                 aria-haspopup="dialog" aria-controls="search-dialog">
@@ -127,8 +127,8 @@
     nav.innerHTML = `
       <div class="nav-scroll">
         <div class="nav-intro">
-          <span>Documentation directory</span>
-          <p>Framework contracts, examples, formats, and operations.</p>
+          <span>Contents</span>
+          <p>Instructions, API documentation, and reference pages.</p>
         </div>
         ${pageGroups.map(group => `
           <section class="nav-group">
@@ -156,8 +156,8 @@
 
     const footer = document.createElement("footer");
     footer.className = "site-footer";
-    footer.innerHTML = `<p><b>YULE</b> developer docs · Source-backed, version-specific framework contracts.</p>
-      <span><a href="${root}reference/security.html">Security boundaries</a><a href="${root}framework/file-layout.html">Source map</a></span>`;
+    footer.innerHTML = `<p><b>EGGNOGG+</b> documentation</p>
+      <span><a href="${root}reference/security.html">Security reference</a><a href="${root}framework/file-layout.html">File layout</a></span>`;
 
     const search = document.createElement("dialog");
     search.className = "search-dialog";

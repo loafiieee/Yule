@@ -7,7 +7,7 @@
 <div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Console</h2><a href="#controls">Controls</a><a href="#core">Core</a><a href="#runtime">Runtime</a><a href="#mods">Mods</a><a href="#online">Online</a><a href="#netcode">Netcode</a><a href="#developer">Developer mode</a><a href="#examples">Examples</a><a href="#hotkeys">Debug hotkeys</a></nav></aside>
 <main id="main" class="content" data-doc-title="Developer console"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Developer console</nav><article>
 <h1>Developer console</h1>
-<p class="lead">Press backtick (<code>`</code>) to open Yule's in-game console. It provides day-to-day framework administration, diagnostics, live mod configuration, and an explicitly gated set of invasive developer tools.</p>
+<p class="lead">Press backtick (<code>`</code>) to open the in-game console. It contains framework commands, diagnostics, live mod configuration, and developer-mode commands.</p>
 <div class="callout warning"><strong>Do not paste secrets into commands.</strong> Command history persists in <code>mods/console_history.txt</code>. The authenticated direct-netplay key path deliberately reads a one-use key from the clipboard and clears it.</div>
 
 <section id="controls"><h2>Input and history</h2>
@@ -108,7 +108,7 @@
 </tbody></table>
 <p>Only one loopback, local, self-test, or network harness can own rollback at a time. There is no working <code>ggpo.loopback</code> console dispatch in the current source; use <code>F3</code> for the live loopback harness.</p></section>
 
-<section id="developer"><h2>Developer mode and power tools</h2>
+<section id="developer"><h2>Developer-mode commands</h2>
 <pre><code>dev on
 # run diagnostic commands
 dev off</code></pre>

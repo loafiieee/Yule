@@ -7,7 +7,7 @@
 <div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Map format</h2><a href="#package">Package &amp; limits</a><a href="#json">V1 JSON</a><a href="#rooms">Rooms &amp; appearance</a><a href="#map-text">data.map</a><a href="#glyphs">Native glyphs</a><a href="#v2">V2 tileset</a><a href="#tile-fields">Tile fields</a><a href="#assets">Asset rules</a><a href="#identity">Identity &amp; reload</a><a href="#validation">Validation</a></nav></aside>
 <main id="main" class="content" data-doc-title="Map format reference"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Map format</nav><article>
 <h1>Custom map format</h1>
-<p class="lead">V1 is an engine-native room package. V2 is backward-compatible and adds namespaced symbolic tiles, one true per-map sheet, external sheet exceptions, and optional deterministic map Lua. Both preserve fixed native room generation.</p>
+<p class="lead">V1 defines engine-native rooms. V2 is backward-compatible and adds namespaced symbolic tiles, a map-wide sprite sheet, per-tile sheet overrides, and optional deterministic map Lua. Both use the fixed native room dimensions.</p>
 
 <section id="package"><h2>Package and engine limits</h2>
 <pre><code>maps/map_id/
@@ -95,46 +95,62 @@ A C E F G H I K L N O P Q S T W X Y Z
 ^ _ ` c e f i l m q s t u v w x | ~</code></pre></section>
 
 <section id="glyphs"><h2>Native glyph reference</h2>
-<table><thead><tr><th>Glyph</th><th>Native output / behavior</th></tr></thead><tbody>
-  <tr><td>space, <code>.</code></td><td>Empty/open filler: tile <code>0x14</code>, coloring action.</td></tr>
-  <tr><td><code>!</code></td><td>Floor/platform variant; tile <code>0x03</code>, random arg.</td></tr>
-  <tr><td><code>#</code></td><td>Decorative coloring, tile <code>0x15</code>, frame <code>0x2D</code>.</td></tr>
-  <tr><td><code>(</code>, <code>)</code></td><td>Side-aware decorative frames <code>0x6A</code>/<code>0x6B</code>.</td></tr>
-  <tr><td><code>*</code></td><td>Sword pickup/reset spawner: tile <code>0x1C</code>, arg 2.</td></tr>
-  <tr><td><code>+</code></td><td>Random decorative frames <code>0x5D..0x5F</code>.</td></tr>
-  <tr><td><code>-</code>, <code>:</code>, <code>=</code></td><td>Decorative frames <code>0x3C</code>, <code>0x3D</code>, <code>0x1F</code> (last random arg).</td></tr>
-  <tr><td><code>1</code>, <code>2</code></td><td>Team/score target tiles for side 1/2.</td></tr>
-  <tr><td><code>?</code></td><td>Explicit recognized no-op; places no tile.</td></tr>
-  <tr><td><code>@</code></td><td>Auto terrain. Becomes floor if the already-plotted tile above is non-solid, otherwise wall/fill.</td></tr>
-  <tr><td><code>A</code></td><td>Spinny special tile.</td></tr>
-  <tr><td><code>C</code>, <code>c</code></td><td>Chandelier variants (args <code>0x1E</code> and <code>0x05</code>).</td></tr>
-  <tr><td><code>E</code></td><td>EGGNOGG tile, default action.</td></tr>
-  <tr><td><code>F</code>, <code>H</code>, <code>I</code></td><td>Decorative coloring frames <code>0x59</code>, <code>0x06</code>, <code>0x1E</code>.</td></tr>
-  <tr><td><code>G</code></td><td>Expands into a 3×3 decal anchored above. Needs three rows headroom and cannot touch side edges.</td></tr>
-  <tr><td><code>K</code></td><td>Reset marker spawning a separate native type-3 point hazard (gravity/bounce, sprite 109, 10px player damage). Subject to room spawn budget.</td></tr>
-  <tr><td><code>L</code>, <code>N</code>, <code>Y</code></td><td>Each expands upward into a 2×3 art block; needs three rows headroom and no side edge.</td></tr>
-  <tr><td><code>O</code></td><td>Side-aware sky glow/backdrop light, frame <code>0x21</code>.</td></tr>
-  <tr><td><code>P</code></td><td>Puzzle-style prop.</td></tr>
-  <tr><td><code>Q</code>, <code>q</code></td><td>Decorative frames <code>0x46/0x47</code> or <code>0x6F</code>.</td></tr>
-  <tr><td><code>S</code></td><td>Decorative frame <code>0x07</code>.</td></tr>
-  <tr><td><code>T</code>, <code>s</code>, <code>t</code></td><td>Tentacle column generator family.</td></tr>
-  <tr><td><code>W</code></td><td>High/deep water.</td></tr>
-  <tr><td><code>X</code>, <code>v</code></td><td>Spike hazard variants; <code>v</code> is commonly ceiling/hanging.</td></tr>
-  <tr><td><code>Z</code></td><td>Decorative frame <code>0x05</code>.</td></tr>
-  <tr><td><code>^</code></td><td>Eggnogg special tile.</td></tr>
-  <tr><td><code>_</code></td><td>Ceiling tile.</td></tr>
-  <tr><td><code>`</code></td><td>Decorative frame <code>0x56</code> with random arg.</td></tr>
-  <tr><td><code>e</code></td><td>Decorative frame <code>0x40</code>.</td></tr>
-  <tr><td><code>f</code></td><td>Scroll/moving-surface tile.</td></tr>
-  <tr><td><code>i</code></td><td>Crowd/backdrop tile.</td></tr>
-  <tr><td><code>l</code></td><td>Score light / scoreboard indicator.</td></tr>
-  <tr><td><code>m</code></td><td>Mine tile/reset spawner.</td></tr>
-  <tr><td><code>u</code></td><td>Decorative frame <code>0x6C</code>.</td></tr>
-  <tr><td><code>w</code></td><td>Regular/shallow water.</td></tr>
-  <tr><td><code>x</code></td><td>Pass-through decorative tile, safe preset fallback.</td></tr>
-  <tr><td><code>|</code></td><td>Decorative vertical column/pipe frame <code>0x26</code>.</td></tr>
-  <tr><td><code>~</code></td><td>Waterfall; row-parity frame and may back-fill the tile above.</td></tr>
+<p>The preview shows the in-game result. Animated and multi-tile previews show behavior that is not visible from one cell.</p>
+<div class="table-wrap"><table class="glyph-table"><thead><tr><th>Glyph</th><th>Preview</th><th>Output</th><th>Meaning / notes</th></tr></thead><tbody>
+  <tr><td><code>space</code></td><td class="glyph-empty">Empty</td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Empty/open filler. <code>.</code> behaves the same way.</td></tr>
+  <tr><td><code>.</code></td><td class="glyph-empty">Empty</td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Same as <code>space</code>.</td></tr>
+  <tr><td><code>!</code></td><td><img src="../map-tiles/!.png" alt="Floor platform tile"></td><td><code>tile 0x03</code>, <code>floor_action</code>, frame <code>0x00</code>, random arg</td><td>Floor/platform variant.</td></tr>
+  <tr><td><code>#</code></td><td><img src="../map-tiles/%23.png" alt="Brick outline decoration"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x2D</code>, random arg</td><td>Brick outline decoration.</td></tr>
+  <tr><td><code>(</code></td><td><img src="../map-tiles/(.png" alt="Left half of an arch"></td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x6A</code>, side-bit arg</td><td>Left half of an arch.</td></tr>
+  <tr><td><code>)</code></td><td><img src="../map-tiles/).png" alt="Right half of an arch"></td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x6B</code>, side-bit arg</td><td>Right half of an arch.</td></tr>
+  <tr><td><code>*</code></td><td><img src="../map-tiles/asterisk.png" alt="Sword spawn"></td><td><code>tile 0x1C</code>, <code>spawn_thing_action</code>, frame <code>0x00</code>, arg <code>0x02</code></td><td>Sword spawn. Works in karate mode.</td></tr>
+  <tr><td><code>+</code></td><td><img src="../map-tiles/+.png" alt="Mushrooms"></td><td><code>tile 0x16</code>, <code>colouring_action</code>, frame <code>0x5D..0x5F</code>, arg <code>0x00</code></td><td>Mushrooms.</td></tr>
+  <tr><td><code>-</code></td><td><img src="../map-tiles/-.png" alt="Horizontal row tile"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x3C</code>, arg <code>0x00</code></td><td>Horizontal row.</td></tr>
+  <tr><td><code>1</code></td><td><img src="../map-tiles/1.gif" alt="Team target Eggnogg tile"></td><td><code>tile 0x1E</code>, <code>teamnogg_action</code>, frame <code>0x05</code>, arg <code>0x01</code></td><td>Team/score target Eggnogg for side 1.</td></tr>
+  <tr><td><code>2</code></td><td><img src="../map-tiles/1.gif" alt="Team target Eggnogg tile"></td><td><code>tile 0x1E</code>, <code>teamnogg_action</code>, frame <code>0x05</code>, arg <code>0x02</code></td><td>Team/score target Eggnogg for side 2.</td></tr>
+  <tr><td><code>:</code></td><td><img src="../map-tiles/colon.png" alt="Vertical column tile"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x3D</code>, arg <code>0x00</code></td><td>Vertical column.</td></tr>
+  <tr><td><code>=</code></td><td><img src="../map-tiles/=.png" alt="Hashtag-like decoration"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x1F</code>, random arg</td><td>Decorative tile shaped like a hashtag.</td></tr>
+  <tr><td><code>?</code></td><td class="glyph-empty">No tile</td><td>No tile is placed</td><td>Recognized no-op/reserved glyph.</td></tr>
+  <tr><td><code>@</code></td><td class="glyph-preview-set"><img src="../map-tiles/@.png" alt="Automatic terrain tile"><img src="../map-tiles/two%20@%20stacked%20to%20show%20it%20adapts%20to%20neighboring%20tiles.png" alt="Two automatic terrain tiles stacked"></td><td><code>tile 0x01</code> or <code>0x02</code>, wall or floor action, frame <code>0x00</code>, automatic/random arg</td><td>Automatic terrain. It becomes wall-like when supported by solid tile above; otherwise it becomes floor-like.</td></tr>
+  <tr><td><code>A</code></td><td><img src="../map-tiles/A.gif" alt="Spinning tile"></td><td><code>tile 0x0B</code>, <code>spinny_action</code>, frame <code>0x00</code>, arg <code>0x04</code></td><td>Spinning tile.</td></tr>
+  <tr><td><code>C</code></td><td><img src="../map-tiles/C.gif" alt="Swinging chandelier"></td><td><code>tile 0x08</code>, <code>chandelier_action</code>, frame <code>0x00</code>, arg <code>0x1E</code></td><td>Swinging chandelier.</td></tr>
+  <tr><td><code>E</code></td><td class="glyph-preview-set"><img src="../map-tiles/E.png" alt="Unmoving Eggnogg"><img src="../map-tiles/several%20'E's%20with%20'%5E's%20above%20them.gif" alt="Several unmoving Eggnoggs with waving Eggnoggs above"></td><td><code>tile 0x0A</code>, <code>tile_action_default</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Unmoving Eggnogg. Place <code>^</code> above it for the waving top.</td></tr>
+  <tr><td><code>F</code></td><td><img src="../map-tiles/F.png" alt="Vertical column tile"></td><td><code>tile 0x17</code>, <code>colouring_action</code>, frame <code>0x59</code>, arg <code>0x00</code></td><td>Vertical column.</td></tr>
+  <tr><td><code>G</code></td><td><img src="../map-tiles/G.png" alt="Large mural block"></td><td>3×3 block of <code>tile 0x07</code>, <code>decal_action</code>, frames <code>0x28..0x3F</code></td><td>Large mural anchored above the glyph. Requires three rows of headroom and cannot touch either side edge.</td></tr>
+  <tr><td><code>H</code></td><td><img src="../map-tiles/H.png" alt="Vertical column tile"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x06</code>, arg <code>0x00</code></td><td>Vertical column.</td></tr>
+  <tr><td><code>I</code></td><td><img src="../map-tiles/I.png" alt="Vertical column tile"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x1E</code>, random arg</td><td>Vertical column.</td></tr>
+  <tr><td><code>K</code></td><td><img src="../map-tiles/K.png" alt="Spiked ball physics hazard"></td><td><code>tile 0x1C</code>, <code>spawn_thing_action</code>, frame <code>0x00</code>, arg <code>0x03</code></td><td>Spiked-ball physics hazard with gravity and bounce. It deals 10 pixels of player damage and counts against the room spawn budget.</td></tr>
+  <tr><td><code>L</code></td><td><img src="../map-tiles/L.png" alt="Large art block"></td><td>2×3 block of <code>tile 0x0D</code>, <code>arty_action</code></td><td>Large art block that expands upward. Requires three rows of headroom and cannot touch either side edge.</td></tr>
+  <tr><td><code>N</code></td><td><img src="../map-tiles/N.png" alt="Large art block"></td><td>2×3 block of <code>tile 0x0D</code>, <code>arty_action</code></td><td>Large art block that expands upward. Requires three rows of headroom and cannot touch either side edge.</td></tr>
+  <tr><td><code>O</code></td><td><img src="../map-tiles/O.gif" alt="Sun tile"></td><td><code>tile 0x1B</code>, <code>sky_glow_action</code>, frame <code>0x21</code>, side-bit arg</td><td>Sun.</td></tr>
+  <tr><td><code>P</code></td><td><img src="../map-tiles/P.png" alt="Changing art tile"></td><td><code>tile 0x0C</code>, <code>puzzley_action</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Changing art tile.</td></tr>
+  <tr><td><code>Q</code></td><td><img src="../map-tiles/Q.png" alt="Skull on a stick"></td><td><code>tile 0x1A</code>, <code>colouring_action</code>, frame <code>0x46</code> or <code>0x47</code>, random arg</td><td>Skull on a stick.</td></tr>
+  <tr><td><code>S</code></td><td><img src="../map-tiles/S.png" alt="Eye tile"></td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x07</code>, arg <code>0x00</code></td><td>Eye tile.</td></tr>
+  <tr><td><code>T</code></td><td><img src="../map-tiles/uppercase%20T.gif" alt="Large tentacle"></td><td>Tentacle column using <code>tile 0x13</code>, <code>tentacle_action</code></td><td>Large tentacle.</td></tr>
+  <tr><td><code>W</code></td><td class="glyph-preview-set"><img src="../map-tiles/W%20(alone).gif" alt="One deep-water tile"><img src="../map-tiles/W%20(multiple%20side%20by%20side).gif" alt="Several deep-water tiles side by side"></td><td><code>tile 0x0E</code>, <code>high_water_action</code>, frame <code>0x05</code>, arg <code>0x00</code></td><td>High/deep water.</td></tr>
+  <tr><td><code>X</code></td><td><img src="../map-tiles/X.png" alt="Ground spikes"></td><td><code>tile 0x05</code>, <code>spikes_action</code>, frame <code>0x00</code>, random arg</td><td>Ground spikes.</td></tr>
+  <tr><td><code>Y</code></td><td><img src="../map-tiles/Y.png" alt="Person art block"></td><td>2×3 block of <code>tile 0x0D</code>, <code>arty_action</code></td><td>Person art block that expands upward from the glyph. Requires three rows of headroom and cannot touch either side edge.</td></tr>
+  <tr><td><code>Z</code></td><td><img src="../map-tiles/Z.png" alt="Metal plate tile"></td><td><code>tile 0x17</code>, <code>colouring_action</code>, frame <code>0x05</code>, random arg</td><td>Metal plate.</td></tr>
+  <tr><td><code>^</code></td><td><img src="../map-tiles/%5E.gif" alt="Waving Eggnogg tile"></td><td><code>tile 0x09</code>, <code>eggnogg_action</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Waving Eggnogg.</td></tr>
+  <tr><td><code>_</code></td><td><img src="../map-tiles/_.png" alt="Ceiling tile"></td><td><code>tile 0x04</code>, <code>ceiling_action</code>, frame <code>0x00</code>, random arg</td><td>Ceiling tile.</td></tr>
+  <tr><td><code>`</code></td><td><img src="../map-tiles/%60.png" alt="Fence tile"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x56</code>, random arg</td><td>Fence.</td></tr>
+  <tr><td><code>c</code></td><td><img src="../map-tiles/lowercase%20c.gif" alt="Slightly swinging chandelier"></td><td><code>tile 0x08</code>, <code>chandelier_action</code>, frame <code>0x00</code>, arg <code>0x05</code></td><td>Chandelier with a shorter swing than <code>C</code>.</td></tr>
+  <tr><td><code>e</code></td><td><img src="../map-tiles/lowercase%20e.png" alt="Head-like decorative tile"></td><td><code>tile 0x15</code>, <code>colouring_action</code>, frame <code>0x40</code>, arg <code>0x00</code></td><td>Decorative tile, possibly the top-left part of a head.</td></tr>
+  <tr><td><code>f</code></td><td><img src="../map-tiles/f.gif" alt="Scrolling decoration"></td><td><code>tile 0x18</code>, <code>scroll_action</code>, frame <code>0x2E</code>, arg <code>0x00</code></td><td>Scrolling decoration.</td></tr>
+  <tr><td><code>i</code></td><td><img src="../map-tiles/i.gif" alt="Crowd backdrop tile"></td><td><code>tile 0x1D</code>, <code>crowd_action</code>, frame <code>0x00</code>, random arg</td><td>Crowd/backdrop tile.</td></tr>
+  <tr><td><code>l</code></td><td><img src="../map-tiles/lowercase%20l.png" alt="Score light"></td><td><code>tile 0x1F</code>, <code>score_light_action</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Score light.</td></tr>
+  <tr><td><code>m</code></td><td><img src="../map-tiles/m.png" alt="Mine"></td><td><code>tile 0x06</code>, <code>mine_action</code>, frame <code>0x00</code>, arg <code>0x00</code></td><td>Mine.</td></tr>
+  <tr><td><code>q</code></td><td><img src="../map-tiles/lowercase%20q.png" alt="Hanging skeleton"></td><td><code>tile 0x1A</code>, <code>colouring_action</code>, frame <code>0x6F</code>, random arg</td><td>Hanging skeleton.</td></tr>
+  <tr><td><code>s</code></td><td><img src="../map-tiles/s.gif" alt="Small tentacle"></td><td>Tentacle column using <code>tile 0x13</code>, <code>tentacle_action</code></td><td>Small tentacle.</td></tr>
+  <tr><td><code>t</code></td><td><img src="../map-tiles/t.gif" alt="Large tentacle"></td><td>Tentacle column using <code>tile 0x13</code>, <code>tentacle_action</code></td><td>Large tentacle.</td></tr>
+  <tr><td><code>u</code></td><td><img src="../map-tiles/u.png" alt="Arch tile"></td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x6C</code>, arg <code>0x00</code></td><td>Arch.</td></tr>
+  <tr><td><code>v</code></td><td><img src="../map-tiles/v.png" alt="Hanging spikes"></td><td><code>tile 0x05</code>, <code>spikes_action</code>, frame <code>0x02</code>, arg <code>0x00</code></td><td>Hanging spikes.</td></tr>
+  <tr><td><code>w</code></td><td><img src="../map-tiles/w.gif" alt="Shallow water"></td><td><code>tile 0x0F</code>, <code>water_action</code>, frame <code>0x05</code>, arg <code>0x00</code></td><td>Shallow water.</td></tr>
+  <tr><td><code>x</code></td><td><img src="../map-tiles/lowercase%20x.png" alt="Fence tile"></td><td><code>tile 0x14</code>, <code>colouring_action</code>, frame <code>0x56</code>, arg <code>0x00</code></td><td>Fence.</td></tr>
+  <tr><td><code>|</code></td><td><img src="../map-tiles/vertical%20line%20(U+007C).png" alt="Vertical pipe"></td><td><code>tile 0x19</code>, <code>colouring_action</code>, frame <code>0x26</code>, arg <code>0x00</code></td><td>Vertical pipe.</td></tr>
+  <tr><td><code>~</code></td><td class="glyph-preview-set"><img src="../map-tiles/~%20(standalone).gif" alt="One waterfall tile"><img src="../map-tiles/~%20(two%20stacked).gif" alt="Two waterfall tiles stacked"></td><td><code>tile 0x10</code>, <code>waterfall_action</code>, frame <code>0x60</code>, row-parity arg</td><td>Waterfall. May fill the tile above with a decorative tile.</td></tr>
 </tbody></table>
+</div>
 <p>Rooms may contain no more than 13 combined <code>K</code>, <code>*</code>, and <code>m</code> reset spawners. The native pool contains 16 records minus reserved/player occupancy, and <code>K</code>'s native handler does not safely handle allocation failure.</p></section>
 
 <section id="v2"><h2>V2 map-level <code>tileset</code></h2>

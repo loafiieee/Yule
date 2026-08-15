@@ -324,7 +324,7 @@ locate_source_project() {
 }
 
 printf 'cloning %s (%s)...\n' "$REPOSITORY_URL" "$REPOSITORY_REF"
-git clone --quiet --no-tags --branch "$REPOSITORY_REF" \
+git clone --progress --no-tags --branch "$REPOSITORY_REF" \
   "$REPOSITORY_URL" "$SOURCE_ROOT"
 locate_source_project
 

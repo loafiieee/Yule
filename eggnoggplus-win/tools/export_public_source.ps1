@@ -5,6 +5,9 @@ param(
 
     [Parameter()]
     [switch]$WorkingTree
+    ,
+    [Parameter()]
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,7 +30,13 @@ if ($destinationRoot.Equals($sourceRoot, [StringComparison]::OrdinalIgnoreCase) 
     throw 'Destination must be outside the private project source tree.'
 }
 if (Test-Path -LiteralPath $destinationRoot) {
-    throw "Destination already exists: $destinationRoot"
+    if (-not $Force) {
+        Write-Warning "Destination exists; removing stale export before continuing: $destinationRoot"
+    }
+    else {
+        Write-Verbose "Destination exists; removing because -Force was specified: $destinationRoot"
+    }
+    Remove-Item -LiteralPath $destinationRoot -Recurse -Force
 }
 
 $allowedRootFiles = @(

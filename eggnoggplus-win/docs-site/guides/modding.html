@@ -21,6 +21,8 @@
   "author": "you",
   "description": "A tiny overlay example",
   "api_version": 1,
+  "api_revision": 1,
+  "api_requires": ["input.bindings", "ui.native"],
   "entry": "main.lua",
   "config": "config.cfg",
   "storage": "storage.cfg",
@@ -43,7 +45,7 @@ end)</code></pre>
 <p>Start the game and inspect <code>mods/modframework.log</code>. Folders beginning with <code>_</code> are ignored, which is useful for templates and disabled copies.</p></section>
 
 <section id="manifest"><h2>2. Describe dependencies and load order</h2>
-<p>Required manifest fields are <code>id</code>, <code>name</code>, <code>version</code>, <code>author</code>, and <code>entry</code>. Set <code>api_version</code> for released mods; mismatches fail by default instead of running uncertain code.</p>
+<p>Required manifest fields are <code>id</code>, <code>name</code>, <code>version</code>, <code>author</code>, and <code>entry</code>. Set the compatible <code>api_version</code> major for released mods, the minimum additive <code>api_revision</code> you tested, and only the <code>api_requires</code> capabilities without which the package cannot start. Compatibility failures happen before entry-script side effects.</p>
 <pre><code>{
   "priority": 10,
   "depends": ["shared_lib@&gt;=1.2.0 &lt;2.0.0"],
@@ -52,7 +54,7 @@ end)</code></pre>
   "load_before": ["late_overlay"],
   "conflicts": ["incompatible_mod"]
 }</code></pre>
-<p>Supported comparisons are <code>=</code>, <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>^</code>, and <code>~</code>. Hard dependencies block a load; optional dependencies only influence ordering. Use <code>allow_api_mismatch</code> only during deliberate local compatibility work.</p></section>
+<p>Supported comparisons are <code>=</code>, <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>^</code>, and <code>~</code>. Hard dependencies block a load; optional dependencies only influence ordering. Use <code>mod.api.has</code> for optional feature branches. Use <code>allow_api_mismatch</code> only during deliberate local compatibility work, never in a release.</p></section>
 
 <section id="settings"><h2>3. Add in-game settings, binds, and storage</h2>
 <pre><code># config.cfg
@@ -125,7 +127,7 @@ end</code></pre>
 <section id="ship"><h2>9. Package and test</h2>
 <ul>
   <li>Use a stable lowercase id and semantic version.</li>
-  <li>Set the current <code>api_version</code>; run <code>framework.api</code> to inspect it.</li>
+  <li>Set the compatible <code>api_version</code>, minimum <code>api_revision</code>, and genuinely mandatory <code>api_requires</code>; run <code>framework.api</code> to inspect the build.</li>
   <li>Remove secrets, generated logs, console history, and user storage from the archive.</li>
   <li>Test clean install, enable/disable, hot reload, missing optional dependency, dependency mismatch, and configuration migration.</li>
   <li>Test every supported window size/input method and confirm unload stops owned audio and removes owned UI/content.</li>

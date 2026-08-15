@@ -13,9 +13,10 @@
 <main id="main"><article>
   <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / <a href="index.html">API</a> / Services</nav>
   <h1>Files &amp; networking</h1>
-  <p class="lead">User-mediated path selection, bounded recursive lookup, nonblocking TCP streams, and asynchronous WinHTTP GET requests.</p>
+  <p class="lead">Owner-bound Unicode file selection, strict JSON conversion, bounded recursive lookup, nonblocking TCP streams, and asynchronous WinHTTP GET requests.</p>
+  <div class="callout note"><strong>File picker:</strong> use <code>mod.fs.pick_file(options)</code> for new work. Its filters are explicit and bounded; the character-specific helper remains only for API-v1 compatibility.</div>
   <div class="callout danger"><strong>Trusted-mod boundary:</strong> these APIs can show native dialogs and contact external systems. Validate all remote data, bound your own buffers, close slots, and never place credentials in logs.</div>
-  <div id="api-browser" data-groups="fs,net,http"></div>
+  <div id="api-browser" data-groups="fs,json,net,http"></div>
 </article></main>
 </body>
 </html>

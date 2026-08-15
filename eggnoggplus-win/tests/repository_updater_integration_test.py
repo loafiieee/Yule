@@ -87,6 +87,17 @@ with tempfile.TemporaryDirectory(prefix="yule-repository-updater-") as temporary
     write(upstream, ".vscode/settings.json", '{"version": 2}\n')
     write(upstream, project / "hooks.c", "framework v2\n")
     write(upstream, project / "new.txt", "new tracked file\n")
+    bootstrap_contents = "#!/usr/bin/env bash\nprintf 'bootstrap updater\\n'\n"
+    write(
+        upstream,
+        project / "tools/update_repository.sh",
+        bootstrap_contents,
+    )
+    write(
+        target,
+        project / "tools/update_repository.sh",
+        bootstrap_contents,
+    )
     write(upstream, project / "mods/example/config.cfg", "setting=upstream-v2\n")
     write(upstream, project / "online_server/server.js", "server v2\n")
     (upstream / project / "old.txt").unlink()
@@ -107,12 +118,16 @@ with tempfile.TemporaryDirectory(prefix="yule-repository-updater-") as temporary
     updater_path = shell_path(UPDATER, bash)
     result = run([bash, updater_path], ROOT, env=environment)
     assert "repository update complete" in result.stdout
+    assert "adopting byte-identical untracked upstream file" in result.stdout
     assert git(target, "rev-parse", "HEAD") == v2
     assert (target / "README.md").read_text(encoding="utf-8") == "root v2\n"
     assert (target / project / "hooks.c").read_text(encoding="utf-8") == (
         "framework v2\n"
     )
     assert (target / project / "new.txt").is_file()
+    assert (target / project / "tools/update_repository.sh").read_text(
+        encoding="utf-8"
+    ) == bootstrap_contents
     assert not (target / project / "old.txt").exists()
 
     # Every live/local path survives even though the branch and index advance.
@@ -167,5 +182,18 @@ with tempfile.TemporaryDirectory(prefix="yule-repository-updater-") as temporary
     assert (target / project / "online_server/server.js").read_text(
         encoding="utf-8"
     ) == "live server\n"
+
+    # A genuinely different untracked file remains a hard conflict.
+    write(upstream, project / "collision.txt", "upstream contents\n")
+    git(upstream, "add", ".")
+    git(upstream, "commit", "-m", "v4")
+    write(target, project / "collision.txt", "local contents\n")
+    collision = run([bash, updater_path], ROOT, check=False, env=environment)
+    assert collision.returncode != 0
+    assert "upstream file conflicts with untracked local path" in collision.stdout
+    assert git(target, "rev-parse", "HEAD") == v3
+    assert (target / project / "collision.txt").read_text(
+        encoding="utf-8"
+    ) == "local contents\n"
 
 print("repository-wide updater integration: OK")

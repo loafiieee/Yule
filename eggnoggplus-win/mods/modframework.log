@@ -1,249 +1,70 @@
-[22:41:09] [INFO] Mod framework initializing...
-[22:41:09] [INFO] Mod framework API version: 1
-[22:41:09] [INFO] Scanning mods/ folder...
-[22:41:09] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
-[22:41:09] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
-[22:41:09] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
-[22:41:09] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
-[22:41:09] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
-[22:41:09] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
-[22:41:09] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
-[22:41:09] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
-[22:41:09] [INFO] Loaded mod: ai_opponent
-[22:41:09] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
-[22:41:09] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
-[22:41:09] [INFO] [mod:options_demo] Loaded options demo
-[22:41:09] [INFO] [mod:options_demo] difficulty=normal greeting=hello
-[22:41:09] [INFO] Loaded mod: options_demo
-[22:41:09] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
-[22:41:09] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[22:41:09] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
-[22:41:09] [INFO] [mod:speedhack] speed=1
-[22:41:09] [INFO] Loaded mod: speedhack
-[22:41:09] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[22:41:09] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[22:41:09] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[22:41:09] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[22:41:09] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[22:41:09] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[22:41:09] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[22:41:09] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[22:41:09] [INFO] Loaded mod: texture_pack_test
-[22:41:09] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[22:41:09] [INFO] [maps] scanning maps/ for custom maps
-[22:41:09] [INFO] [maps][example_map] scanning folder: maps\example_map
-[22:41:09] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[22:41:09] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[22:41:09] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[22:41:09] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[22:41:09] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[22:41:09] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[22:41:09] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
-[22:41:09] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[22:41:09] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[22:41:09] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[22:41:09] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
-[22:41:09] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
-[22:41:09] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
-[22:41:09] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
-[22:41:09] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
-[22:41:09] [INFO] [maps] registry ready: 3 custom maps (was 0)
-[22:41:09] [INFO] hooks_init: custom MODS menu ready
-[22:41:10] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
-[22:41:10] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
-[22:41:10] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:41:10] [INFO] update: boot local=1.9 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
-[22:41:10] [INFO] [discord] Rich Presence connected
-[22:41:10] [INFO] update: current (local=1.9 channel=1.9)
-[22:41:13] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:41:13] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:41:15] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:41:15] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:41:19] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:41:19] [INFO] window[F1]: display=0 window=480x320 drawable=480x320 flags=0x00000206 viewport=0,0 480x320 dpi-scale=1.000x1.000
-[22:41:19] [INFO] window[F1]: native 3:2 size 480x320 on display 0
-[22:41:20] [INFO] window[F1]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:20] [INFO] window[F1]: native 3:2 size 960x640 on display 0
-[22:41:20] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:20] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:21] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:21] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:21] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:22] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000006 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:22] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000406 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:23] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:23] [INFO] online.credentials: loaded remembered login server=eggnogg.loafiieee.com:47778 user=loaf
-[22:41:23] [INFO] online.hub: Connecting to online server...
-[22:41:23] [INFO] ONLINE HUB: enter
-[22:41:23] [INFO] online.hub: Checking online server...
-[22:41:23] [INFO] online.hub: Signing in...
-[22:41:23] [INFO] online.credentials: updated remembered login server=eggnogg.loafiieee.com:47778 user=loaf
-[22:41:23] [INFO] online.hub: Logged in.
-[22:41:23] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:24] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000006 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:26] [INFO] online.hub: Logged in from another location.
-[22:41:26] [INFO] online.hub: Server disconnected.
-[22:41:26] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000406 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:27] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:28] [INFO] online.hub: Settings saved.
-[22:41:29] [INFO] online.hub: Settings saved.
-[22:41:30] [INFO] online.hub: Connecting to online server...
-[22:41:30] [INFO] online.hub: Checking online server...
-[22:41:30] [INFO] online.hub: Signing in...
-[22:41:30] [INFO] online.credentials: updated remembered login server=eggnogg.loafiieee.com:47778 user=loaf2
-[22:41:30] [INFO] online.hub: Logged in.
-[22:41:31] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:31] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000006 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:35] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000406 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:36] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:36] [INFO] Online mod safety: gameplay-affecting Lua mods suspended; cosmetic mods remain active
-[22:41:36] [INFO] [mod:ai_opponent] suspended for online rollback safety (mod.game.register_menu_mode)
-[22:41:36] [INFO] online.hub: Match found: loaf on Vanilla 1
-[22:41:36] [INFO] ggpo.net: local build fingerprint build=8DB5BB10 exe=632C561E dll=83986EFB correction=on
-[22:41:36] [INFO] ggpo.net: hosting held udp port=60718; rollback layout deferred
-[22:41:36] [INFO] ggpo.net: hosting from online server match udp=60718 player=0 delay=1 adv=20 predcap=24 corr=on state_size=0
-[22:41:36] [INFO] online.p2p: connect attempt 1/3 local_udp=60718 configured socket
-[22:41:36] [INFO] online.p2p: sent UDP discovery probe match=9 server=eggnogg.loafiieee.com:47778 local_udp=60718
-[22:41:36] [INFO] online.p2p: server selected route=loopback peer=127.0.0.1:60719 match=9
-[22:41:36] [INFO] ggpo.net: set peer endpoint 127.0.0.1:60719 mode=host local_port=60718 candidates=1
-[22:41:36] [INFO] ggpo.net: peer traffic received mode=host local_player=0 peer_port=60719; confirming bidirectional link
-[22:41:36] [INFO] online.p2p: connected during countdown on attempt 1/3 local_udp=60718
-[22:41:36] [INFO] ggpo.net: bidirectional link confirmed mode=host local_player=0 remote_player=1 peer_port=60719
-[22:41:36] [INFO] ggpo.net: peer prematch hold engaged hold_epoch=1 state_epoch=0
-[22:41:36] [INFO] ggpo.net: remote palette received player=1 skin=3 clothing=2 entries=45
-[22:41:36] [INFO] ggpo.net: peer finalized rollback layout schema=A1FDDD89 capacity=215888 hold_epoch=1
-[22:41:36] [INFO] ggpo.net: finalized rollback layout mode=host schema=A1FDDD89 capacity=215888 snapshot=176912 checksum=1333063800
-[22:41:36] [INFO] online.prematch: deterministic match state prepared in countdown match=9 map=0 seed=2043789409
-[22:41:36] [INFO] ggpo.net: prematch hold released mode=host hold_epoch=2 state_epoch=2 remote_floor=0 checksum=1333063800
-[22:41:36] [INFO] online.hub: Synchronizing match...
-[22:41:36] [INFO] online.prematch: hold released during countdown match=9 epoch=2
-[22:41:36] [INFO] ggpo.net: local palette acknowledged by peer
-[22:41:36] [INFO] ggpo.net: peer prematch hold released hold_epoch=2 state_epoch=0
-[22:41:37] [INFO] ggpo.net: remote state sync ack received
-[22:41:37] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:37] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000006 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:39] [INFO] ggpo.net: auto input delay 1->3 (rtt~1 ticks, one_way~1, samples=270)
-[22:41:39] [INFO] ggpo.net: start state loaded checksum=1333063800 input_delay=3
-[22:41:39] [INFO] ggpo.net: prematch ready; synchronized frame 0 prepared before gameplay
-[22:41:39] [INFO] online.prematch: applied presentation palettes p1=7/13 p2=3/2 entries=45
-[22:41:39] [INFO] online.hub: Waiting for opponent to finish setup...
-[22:41:39] [INFO] online.hub: Both players ready. Starting match...
-[22:41:39] [INFO] online.match: server committed gameplay start match=9
-[22:41:39] [INFO] ONLINE HUB: leave
-[22:41:39] [INFO] online.viewport[match-start]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,96.00 fullscreen=0 state=game match=9 lp=0 frame=0/0
-[22:41:40] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000406 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:40] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:49] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:50] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:51] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2874.65,95.85 fullscreen=0 state=options_paused match=9 lp=0 frame=728/727
-[22:41:52] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.30 fullscreen=0 state=main match=9 lp=0 frame=821/821
-[22:41:53] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:53] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:53] [INFO] ggpo.net: stopped from local online match forfeit after 821 frame(s), checksum=475327727 tx=2154 rx=1961 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
-[22:41:53] [INFO] online.viewport[match-end]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.59 fullscreen=0 state=main match=9 lp=0 frame=0/0
-[22:41:53] [INFO] Online mod safety: gameplay-affecting Lua mods resumed
-[22:41:53] [INFO] online.hub: You left the match; forfeit reported.
-[22:41:53] [INFO] online.hub: Private rematch available.
-[22:41:53] [INFO] ONLINE HUB: enter
-[22:41:54] [INFO] online.hub: Rematch requested; waiting for opponent.
-[22:41:54] [INFO] online.hub: Rematch requested; waiting for opponent.
-[22:41:55] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:55] [INFO] online.hub: Private rematch is starting...
-[22:41:55] [INFO] Online mod safety: gameplay-affecting Lua mods suspended; cosmetic mods remain active
-[22:41:55] [INFO] [mod:ai_opponent] suspended for online rollback safety (mod.game.register_menu_mode)
-[22:41:55] [INFO] online.hub: Match found: loaf on Vanilla 1
-[22:41:55] [INFO] ggpo.net: local build fingerprint build=8DB5BB10 exe=632C561E dll=83986EFB correction=on
-[22:41:55] [INFO] ggpo.net: hosting held udp port=63210; rollback layout deferred
-[22:41:55] [INFO] ggpo.net: hosting from online server match udp=63210 player=0 delay=1 adv=20 predcap=24 corr=on state_size=0
-[22:41:55] [INFO] online.p2p: connect attempt 1/3 local_udp=63210 configured socket
-[22:41:55] [INFO] online.p2p: sent UDP discovery probe match=10 server=eggnogg.loafiieee.com:47778 local_udp=63210
-[22:41:55] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000006 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:55] [INFO] online.p2p: server selected route=loopback peer=127.0.0.1:63211 match=10
-[22:41:55] [INFO] ggpo.net: set peer endpoint 127.0.0.1:63211 mode=host local_port=63210 candidates=1
-[22:41:55] [INFO] ggpo.net: peer traffic received mode=host local_player=0 peer_port=63211; confirming bidirectional link
-[22:41:55] [INFO] ggpo.net: bidirectional link confirmed mode=host local_player=0 remote_player=1 peer_port=63211
-[22:41:55] [INFO] ggpo.net: peer prematch hold engaged hold_epoch=1 state_epoch=0
-[22:41:55] [INFO] online.p2p: connected during countdown on attempt 1/3 local_udp=63210
-[22:41:55] [INFO] ggpo.net: finalized rollback layout mode=host schema=A1FDDD89 capacity=215888 snapshot=176912 checksum=3085340365
-[22:41:55] [INFO] online.prematch: deterministic match state prepared in countdown match=10 map=0 seed=0
-[22:41:55] [INFO] online.hub: Synchronizing map layout...
-[22:41:55] [INFO] online.hub: Synchronizing map layout...
-[22:41:55] [INFO] online.hub: Synchronizing map layout...
-[22:41:55] [INFO] ggpo.net: remote palette received player=1 skin=3 clothing=2 entries=45
-[22:41:55] [INFO] ggpo.net: local palette acknowledged by peer
-[22:41:55] [INFO] ggpo.net: peer finalized rollback layout schema=A1FDDD89 capacity=215888 hold_epoch=1
-[22:41:55] [INFO] ggpo.net: peer prematch hold released hold_epoch=2 state_epoch=0
-[22:41:55] [INFO] ggpo.net: prematch hold released mode=host hold_epoch=2 state_epoch=2 remote_floor=0 checksum=3085340365
-[22:41:55] [INFO] online.hub: Synchronizing match...
-[22:41:55] [INFO] online.prematch: hold released during countdown match=10 epoch=2
-[22:41:56] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x640 flags=0x00000406 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:41:56] [INFO] ggpo.net: remote state sync ack received
-[22:41:58] [INFO] ggpo.net: auto input delay 1->3 (rtt~1 ticks, one_way~1, samples=267)
-[22:41:58] [INFO] ggpo.net: start state loaded checksum=3085340365 input_delay=3
-[22:41:58] [INFO] ggpo.net: prematch ready; synchronized frame 0 prepared before gameplay
-[22:41:58] [INFO] online.prematch: applied presentation palettes p1=7/13 p2=3/2 entries=45
-[22:41:58] [INFO] online.hub: Waiting for opponent to finish setup...
-[22:41:58] [INFO] online.hub: Both players ready. Starting match...
-[22:41:58] [INFO] online.match: server committed gameplay start match=10
-[22:41:58] [INFO] ONLINE HUB: leave
-[22:41:58] [INFO] online.viewport[match-start]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,96.00 fullscreen=0 state=game match=10 lp=0 frame=0/0
-[22:42:00] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:42:04] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=options_paused match=10 lp=0 frame=339/338
-[22:42:05] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=remap2 match=10 lp=0 frame=432/432
-[22:42:06] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=options_paused match=10 lp=0 frame=464/464
-[22:42:06] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=game match=10 lp=0 frame=487/487
-[22:42:07] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=options_paused match=10 lp=0 frame=521/521
-[22:42:07] [INFO] online.viewport[changed]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.30 fullscreen=0 state=main match=10 lp=0 frame=540/541
-[22:42:08] [INFO] ggpo.net: stopped from local online match forfeit after 540 frame(s), checksum=2374241538 tx=1592 rx=1398 pred=0 rb=0 adv_stall=0 pred_stall=0 desync=0
-[22:42:08] [INFO] online.viewport[match-end]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.59 fullscreen=0 state=main match=10 lp=0 frame=0/0
-[22:42:08] [INFO] Online mod safety: ga[22:42:08] [INFO] online.viewport[match-end]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=game m[22:42:09] [INFO] ONLINE HUB: leave
-[22:42:10] [INFO] window[F1]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:42:10] [INFO] window[F1]: native 3:2 size 1440x960 on display 0
-[22:42:10] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:42:11] [INFO] online.hub: Rematch requested; waiting for opponent.
-[22:42:11] [INFO] online.hub: Rematch requested; waiting for opponent.
-[22:42:12] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000206 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:42:12] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000006 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[22:42:13] [INFO] online.hub: Private rematch is starting...
-[22:42:13] [INFO] Online mod safety: gameplay-affecting Lua mods suspended; cosmetic mods remain active
-[22:42:13] [INFO] [mod:ai_opponent] suspended for online rollback safety (mod.game.register_menu_mode)
-[22:42:13] [INFO] online.hub: Match found: loaf on Vanilla 1
-[22:42:13] [INFO] ggpo.net: local build fingerprint build=8DB5BB10 exe=632C561E dll=83986EFB correction=on
-[22:42:13] [INFO] ggpo.net: joining held/deferred local_port=64296; rollback layout deferred
-[22:42:13] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=64296 player=1 delay=1 adv=20 predcap=24 corr=on state_size=0
-[22:42:13] [INFO] online.p2p: connect attempt 1/3 local_udp=64296 configured socket
-[22:42:13] [INFO] ONLINE HUB: enter
-[22:42:13] [INFO] online.p2p: sent UDP discovery probe match=11 server=eggnogg.loafiieee.com:47778 local_udp=64296
-[22:42:13] [INFO] online.p2p: server selected route=loopback peer=127.0.0.1:64295 match=11
-[22:42:13] [INFO] ggpo.net: set peer e[22:42:13] [INFO] ggpo.net: peer traffic received mode=host local[22:42:13] [INFO] ggpo.net: peer traffic received mode=join local_player=1 peer_port=64295; confirming bidirectional link
-[22:42:13] [INFO] online.p2p: connected during countdown on attempt 1/3 local_udp=64296
-[22:42:13] [INFO] ggpo.net: bidirectional link confirmed mode=join local_player=1 remote_player=0 peer_port=64295
-[22:42:13] [INFO] ggpo.net: peer prematch hold engaged hold_epoch=1 state_epoch=1
-[22:42:13] [INFO] ggpo.net: remote palette received player=0 skin=7 clothing=13 entries=45
-[22:42:13] [INFO] ggpo.net: peer finalized rollback layout schema=A1FDDD89 capacity=215888 hold_epoch=1
-[22:42:13] [INFO] ggpo.net: finalized rollback layout mode=join schema=A1FDDD89 capacity=215888 snapshot=176912 checksum=3765146983
-[22:42:13] [INFO] online.prematch: deterministic match state prepared in countdown match=11 map=0 seed=1659080976
-[22:42:13] [INFO] ggpo.net: prematch hold released mode=join hold_epoch=2 state_epoch=0 remote_floor=1 checksum=3765146983
-[22:42:13] [INFO] online.hub: Synchronizing match...
-[22:42:13] [INFO] online.prematch: hold released during countdown match=11 epoch=0
-[22:42:13] [INFO] ggpo.net: local palette acknowledged by peer
-[22:42:13] [INFO] ggpo.net: peer prematch hold released hold_epoch=2 state_epoch=2
-[22:42:13] [INFO] ggpo.net: receiving host state epoch=2 id=0 frame=0 size=176912 checksum=2780312135 chunks=197/197
-[22:42:13] [INFO] window[pre-swap]: display=0 window=1440x960 drawable[22:42:13] [INFO] window[pre-swap]: display=0 window=960x640 drawable=96[22:42:13] [INFO] window[pre-swap]: display=0 window=1440x960 drawa[22:42:13] [INFO] window[pre-swap]: display=0 window=960x640 drawable=960x6[22:42:13] [INFO] ggpo.net: host state synced epoch=2 size=17691[22:42:13] [INFO] ggpo.net: remote[22:42:15] [INFO] ggpo.net: auto input delay 1->3 (rtt~1 ticks, one_way~1, samples=267)
-[22:42:15] [INFO] ggpo.net: start state loaded checksum=2780312135 input_delay=3
-[22:42:15] [INFO] ggpo.net: prematch ready; synchronized frame 0 prepared before gameplay
-[22:42:15] [INFO] online.prematch: applied presentation palettes p2=3/3 p1=7/13 entries=45
-[22:42:15] [INFO] online.hub: Waiting for opponent to finish setup...
-[22:42:15] [INFO] online.h[22:42:15] [INFO] online.hub: Both players ready. Starting match...
-[22:42:15] [INFO] online.match: server committed gameplay start match=11
-[22:42:15] [22:42:15] [INFO] online.v[22:42:15] [INFO] online.viewport[match-start]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,96.00 fullscreen=0 state=game mat[22:42:18] [INFO] onli[22:42:20] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000206 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:42:20] [INFO] window[event]: display=0 window=960x640 drawable=960x640 flags=0x00000606 viewport=0,0 960x640 dpi-scale=1.000x1.000
-[22:42:20] [INFO] ggpo.net: stopped from online server result after 239 frame(s), checksum=3166845963 tx=1023 rx=763 pred=17 rb=0 adv_stall=24 pred_stall=0 desync=0
-[22:42:20] [INFO] Online mod safety: gameplay-affecting Lua mods resumed
-[22:42:20] [INFO] online.hub: Match complete.
-[22:42:20] [INFO] online.hub: Match complete.
-[22:42:20] [INFO] online.viewport[match-end]: window=960x640 drawable=960x640 viewport=0,0 960x640 scissor=off:0,0 1440x960 mad=960x640 game=240.0x160.0 camera=2904.00,95.85 fullscreen=0 state=game match=0 lp=0 frame=0/0
-[22:42:20] [INFO] ONLINE HUB: enter
-[22:42:20] [INFO] ONLINE HUB: leave
-[22:42:20] [INFO] [mod:speedhack] Unloaded
-[22:42:20] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[21:58:34] [INFO] Mod framework initializing...
+[21:58:34] [INFO] Mod framework API version: 1
+[21:58:34] [INFO] Scanning mods/ folder...
+[21:58:34] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
+[21:58:34] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
+[21:58:34] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
+[21:58:34] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
+[21:58:34] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
+[21:58:34] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
+[21:58:34] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
+[21:58:34] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
+[21:58:34] [INFO] Loaded mod: ai_opponent
+[21:58:34] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[21:58:34] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[21:58:34] [INFO] [mod:options_demo] Loaded options demo
+[21:58:34] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[21:58:34] [INFO] Loaded mod: options_demo
+[21:58:34] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[21:58:34] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[21:58:34] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[21:58:34] [INFO] [mod:speedhack] speed=1
+[21:58:34] [INFO] Loaded mod: speedhack
+[21:58:34] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[21:58:34] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[21:58:34] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[21:58:34] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[21:58:34] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[21:58:34] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[21:58:34] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[21:58:34] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[21:58:34] [INFO] Loaded mod: texture_pack_test
+[21:58:34] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[21:58:34] [INFO] [maps] scanning maps/ for custom maps
+[21:58:34] [INFO] [maps][example_map] scanning folder: maps\example_map
+[21:58:34] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[21:58:34] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[21:58:34] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[21:58:34] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[21:58:34] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[21:58:34] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[21:58:34] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[21:58:34] [INFO] [maps][test] scanning folder: maps\test
+[21:58:34] [INFO] [maps][test] loading json: maps\test\data.json
+[21:58:34] [INFO] [maps][test] loading map: maps\test\data.map
+[21:58:34] [WARN] [maps][test] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[21:58:34] [WARN] [maps][test] warning: map has only one source room
+[21:58:34] [INFO] [maps][test] registered: name="Example Map" author="loaf" source_rooms=1 final_rooms=1 mode=swords K-room reset budget<=3/13 k_markers=1
+[21:58:34] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[21:58:34] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[21:58:34] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[21:58:34] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[21:58:34] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[21:58:34] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[21:58:34] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[21:58:34] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[21:58:34] [INFO] [maps] registry ready: 4 custom maps (was 0)
+[21:58:34] [INFO] hooks_init: custom MODS menu ready
+[21:58:34] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
+[21:58:35] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
+[21:58:35] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[21:58:35] [INFO] [discord] Rich Presence connected
+[21:58:35] [INFO] update: boot local=1.9 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[21:58:35] [INFO] update: current (local=1.9 channel=1.9)
+[21:58:41] [INFO] [maps][v2_symbolic_demo] applying custom map for selector index 8
+[21:58:41] [INFO] map script: selector=8 active id=ca7543b261b142fc
+[21:58:41] [INFO] content bridge: selector=8 source_cells=52 bound_cells=76 definitions=5 generation=2
+[21:58:41] [INFO] [maps][big_jump] applying custom map for selector index 7
+[21:58:42] [INFO] [maps][test] applying custom map for selector index 6
+[21:59:21] [INFO] [mod:speedhack] Unloaded
+[21:59:21] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

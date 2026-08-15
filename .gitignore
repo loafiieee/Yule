@@ -1,5 +1,13 @@
 
 eggnoggplus-win/mods/ai_opponent/storage.cfg
 eggnoggplus-win/dist/
+eggnoggplus-win/build/mod_api_test.exe
+eggnoggplus-win/build/mod_json_test.exe
+eggnoggplus-win/build/text_util_test.exe
+eggnoggplus-win/build/image_util_test.exe
+eggnoggplus-win/build/console_catalog_test.exe
+eggnoggplus-win/build/console_parse_test.exe
+eggnoggplus-win/build/command_history_test.exe
+eggnoggplus-win/build/command_history_test.tmp
 yule-src/
 yule-src-public/

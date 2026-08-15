@@ -67,6 +67,41 @@ try {
         'tests\online_control_test.c', 'online_control.c',
         '-o', 'build\online_control_test.exe'
     )
+    Invoke-NativeTest 'mod API compatibility/capability tests' '.\build\mod_api_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\mod_api_test.c', 'mod_api.c',
+        '-o', 'build\mod_api_test.exe'
+    )
+    Invoke-NativeTest 'bounded Lua JSON parser/encoder tests' '.\build\mod_json_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\mod_json_test.c', 'mod_json.c',
+        '-o', 'build\mod_json_test.exe', '-lluajit-5.1', '-lm'
+    )
+    Invoke-NativeTest 'bounded text utility tests' '.\build\text_util_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\text_util_test.c', 'text_util.c',
+        '-o', 'build\text_util_test.exe'
+    )
+    Invoke-NativeTest 'RGBA image utility tests' '.\build\image_util_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\image_util_test.c', 'image_util.c',
+        '-o', 'build\image_util_test.exe'
+    )
+    Invoke-NativeTest 'console command catalog tests' '.\build\console_catalog_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\console_catalog_test.c', 'console_catalog.c',
+        '-o', 'build\console_catalog_test.exe'
+    )
+    Invoke-NativeTest 'console parser tests' '.\build\console_parse_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\console_parse_test.c', 'console_parse.c',
+        '-o', 'build\console_parse_test.exe', '-lm'
+    )
+    Invoke-NativeTest 'bounded command history tests' '.\build\command_history_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\command_history_test.c', 'command_history.c', 'text_util.c',
+        '-o', 'build\command_history_test.exe'
+    )
     Invoke-NativeTest 'safe launch request parser tests' '.\build\launch_request_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\launch_request_test.c', 'launch_request.c', 'online_control.c',
@@ -124,14 +159,18 @@ try {
         '-ffunction-sections', '-fdata-sections',
         '-DEGGNOGGPLUS_SERIALIZER_TESTING',
         'tests\state_serializer_test.c',
-        'dllmain.c', 'stubs.c', 'hooks.c', 'custom_maps.c',
+        'dllmain.c', 'stubs.c', 'hooks.c', 'image_util.c', 'text_util.c',
+        'console_catalog.c', 'console_parse.c', 'command_history.c',
+        'custom_maps.c',
         'content_registry.c', 'content_tiles.c', 'content_bridge.c',
         'map_script.c', 'cursor_ext.c', 'credential_ext.c', 'discord_rpc_ext.c',
         'bytebeat_ext.c', 'bytebeat_chakra.c', 'bytebeat_js.c',
         'bytebeat_stream.c',
         'third_party\quickjs-ng\quickjs-amalgam.c',
         '-w',
-        'online_control.c', 'launch_request.c', 'launch_ipc.c', 'lua_manager.c', 'ggpo_ext.c',
+        'online_control.c', 'launch_request.c', 'launch_ipc.c',
+        'lua_manager.c', 'mod_api.c', 'mod_fs.c', 'mod_http.c', 'mod_json.c',
+        'ggpo_ext.c',
         'ggpo_loopback.c', 'ggpo_local.c', 'ggpo_net.c',
         'fp_control.c', 'rollback_schema.c',
         'font_ext.c', 'texture_ext.c', 'log.c', 'net_ext.c', 'update_ext.c',
@@ -174,8 +213,12 @@ try {
         'tests\bytebeat_lua_static_test.py',
         'tests\lua_http_lifecycle_static_test.py',
         'tests\lua_online_api_static_test.py',
+        'tests\lua_fs_picker_static_test.py',
+        'tests\mod_api_integration_static_test.py',
+        'tests\mod_json_integration_static_test.py',
         'tests\bytebeat_js_static_test.py',
         'tests\music_console_static_test.py',
+        'tests\console_catalog_static_test.py',
         'tests\discord_lfg_server_static_test.py',
         'tests\server_updater_static_test.py',
         'tests\repository_updater_static_test.py',

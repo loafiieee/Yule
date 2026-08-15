@@ -18,10 +18,6 @@ Release/security blockers:
       match participants/map/phase/direct-or-relay state, challenges, rematches, and the
       friendship/request/block/mute graph; add account deletion, append-only audit logs,
       durable transactional storage, and backup/restore operations.
-    - Replace the custom rollback UDP harness with the production GGPO library/session
-      wrapper after the repaired deterministic callbacks/input protocol and seeded chaos
-      suite are accepted.
-
 Netcode correctness and quality (open; the current rollback transport still has known
 desync and recovery failure modes):
     - P0: Replace the production pointer-dependent raw memory slabs with a fully typed,
@@ -79,11 +75,12 @@ desync and recovery failure modes):
     - P1/P2: Replace service-tick RTT and fixed margins with monotonic sequence-aware
       RTT/jitter/loss measurements, safe-boundary adaptive input delay, and GGPO-style time
       sync with bounded replay/catch-up work instead of freeze-then-ignore behavior.
-    - P2: Add established-match reconnect/resume, authenticated NAT rebinding, coordinated
-      direct-to-relay failover, MTU discovery, congestion/pacing, and richer player-visible
-      jitter, loss, stall, and route health. The default-off small HUD now supplies the
-      existing smoothed ping, input delay, and rollback count. Gate production GGPO
-      integration on the deterministic schema/input protocol and seeded chaos suite above.
+    - P2: Add authenticated NAT rebinding, coordinated direct-to-relay failover, MTU
+      discovery, congestion/pacing, and richer player-visible jitter, loss, stall, and
+      route health. The default-off small HUD now supplies the existing smoothed ping,
+      input delay, and rollback count.
+
+    - theres a desync in the last room of vanilla 1 thats causing disconnects in online play.
 
 Runtime acceptance still required:
     - Soak room transitions and mine explosions through ordinary rollback and coordinated
@@ -193,27 +190,13 @@ Runtime acceptance still required:
       cleanup, deployment docs, and guarded test integration are complete.
 
 Framework API release gate:
-    - P0: Freeze a coherent public API compatibility policy before community mods target
-      API 1. The loader currently requires exact integer `api_version` equality, which
-      cannot distinguish additive capability growth from a breaking change. Define major
-      compatibility, feature discovery, deprecation/removal rules, and a machine-readable
-      capability surface; then pin the reference and add manifest/load regressions.
     - P1: Extend the now owner-scoped, cancellation-safe, 8-MiB-bounded `mod.http` GET
       surface with explicit redirect/status/header metadata and live concurrent
       cancel/unload/reuse tests. Preserve its opaque owner-bound handles, eight-worker
       ceiling, ten-second phase timeouts, and deferred canceled-worker cleanup.
-    - P0: Replace the remaining character-specific file picker with a general owner-safe
-      `mod.fs.pick_file({ title, filters })` contract before the API freeze. The abandoned
-      `mod.online` profile/asset calls and revision fields are no longer exported or
-      documented; ordinary presentation-only classification remains independent of any
-      official cosmetics mod.
     - P1: Add owner-scoped console command registration with namespaced commands, help/
       usage metadata, typed or raw arguments, duplicate detection, online suspension
       guards, unregister handles, unload cleanup, and console/help documentation.
-    - P1: Add bounded JSON encode/decode helpers. HTTP and interop consumers currently need
-      to bundle handwritten parsers even though manifests, maps, server payloads, and most
-      community web APIs are JSON. Define finite depth/size/number/string limits and useful
-      path-aware diagnostics.
     - P1: Return removable subscription handles from append-only lifecycle/event/config
       registrations, with idempotent `remove()` and automatic unload cleanup. This avoids
       duplicate handlers when a mod dynamically reconfigures itself without requiring a
@@ -247,12 +230,86 @@ Feature backlog:
       completed below intentionally does not mutate native sprite-derived combat boxes.
     - Expand the UI library heavily, including reusable responsive layout, controls,
       focus/navigation, scrolling, theming, accessibility, and robust hitbox scaling.
-    - Build a custom map creator/editor around the documented V2 format and content
-      registry.
+    - Build a separate custom map creator/editor, either as its own desktop application
+      or a website, around the documented V2 format and content registry. It will not be
+      built into the game client.
+    - Clean up the framework source without changing behavior: split oversized files,
+      use consistent formatting and names, remove duplication, document tricky module
+      boundaries, and keep the build and tests updated as code moves.
     - add linux and mac support.
+    - make the admin panel update live
+    - allow custom maps to have custom heights/widths
 
 
 # Completed (source implementation and focused automated coverage)
+
+    - Console code cleanup: moved the command list, argument parser, and saved command
+      history out of `hooks.c` into small tested modules. Autocomplete now includes every
+      command that can actually run, including the GGPO test commands, `mods.cfg.*`
+      shortcuts, and `online`. Invalid huge numbers, `nan`, and `inf` are rejected instead
+      of reaching framework settings. The production build and full test suite pass.
+
+    - Console image cleanup: moved the pure RGBA box-downsample and blur loops out of
+      `hooks.c` into `image_util.c/.h`. OpenGL capture and texture ownership stay in the
+      console code, while pixel math now has strict standalone compilation and native
+      tests for averaging, clamped edges, alpha, and invalid/in-place inputs. The
+      production build and full guarded suite pass.
+
+    - Common text safety cleanup: replaced the private `hooks.c` copy/ellipsis/byte-size
+      helpers with a small `text_util.c/.h` module and explicit names at all 143 call
+      sites. Bounded copies now safely support overlapping buffers. A native test covers
+      null input, truncation, overlap, in-place ellipsis, tiny limits, and byte labels;
+      the production build and full guarded suite pass.
+
+    - First source cleanup pass: moved `mod.fs` and the asynchronous `mod.http` worker
+      pool out of `lua_manager.c` into focused modules, cutting about 800 unrelated lines
+      from the Lua manager. Each module now owns its Windows/Lua includes, limits, API
+      registration, and tests while the manager only supplies stable mod ownership and
+      lifecycle calls. The filesystem search also no longer mistakes a directory
+      junction whose name matches the target for a file. The production build,
+      documentation audit, strict standalone compiles, and full guarded suite pass.
+
+    - Filesystem picker consistency: the adjacent folder picker is now an owner-bound
+      wide-character dialog with strict UTF-8 titles/results and a neutral default label,
+      while recursive lookup skips directory reparse points/junctions in addition to its
+      existing depth bound. Both native dialogs attach to the active window. Static
+      ownership/Unicode/traversal checks and the public API/spec text pin the behavior.
+
+    - Lua HTTP request-target correctness: strict UTF-8/embedded-NUL validation now runs
+      before worker creation; workers reject non-HTTP(S) schemes and URL credentials,
+      preserve the query returned separately by `WinHttpCrackUrl`, strip client-only
+      fragments, synthesize `/` only for a genuinely empty path, and bound the combined
+      wide request target. Static lifecycle/request construction checks, API docs, and the
+      HTTP hardening spec pin the fix while the broader metadata/live-lifecycle P1 remains
+      open.
+
+    - Bounded strict `mod.json`: deterministic encode and full-document decode now cover
+      finite numbers, UTF-8/Unicode escapes and surrogate pairs, explicit null, preserved
+      array/object kind, shallow empty-container helpers, lexically sorted object keys,
+      duplicate rejection, and path/byte-aware failures without code evaluation or
+      metamethod calls. Both directions enforce 32 levels, 65,536 nodes, 256-KiB strings,
+      and 1-MiB input/output, while rejecting cycles, sparse/mixed tables, non-finite
+      numbers, malformed UTF-8, ambiguous types, and trailing data. API revision 2 and
+      `json.v1`, real LuaJIT native regressions, source/build/docs checks, a design spec,
+      and complete examples pin the release contract.
+
+    - Public API-1 compatibility policy and discovery: manifests now distinguish a
+      breaking `api_version` major from an additive minimum `api_revision`, may require up
+      to 32 validated stable `api_requires` identifiers, and are rejected during both
+      discovery and final load before entry-script side effects when requirements cannot
+      be met. `mod.api` exposes major, revision, sorted capabilities, `has`, and `require`;
+      flat API-1 compatibility fields and the local-only mismatch escape remain. The
+      deprecation/removal rules, schema, console diagnostics, native compatibility matrix,
+      Lua/build integration checks, and full reference examples are pinned.
+
+    - General owner-safe file picker: `mod.fs.pick_file(options)` provides bounded custom
+      display-name/pattern filters, optional All-files exposure and initial filter choice,
+      owner-enabled validation, Unicode Win32 dialogs, long UTF-8 result paths, distinct
+      cancellation/native-error reporting, and strict pre-dialog rejection of malformed
+      UTF-8, embedded NULs, paths, controls, metacharacters, and excessive counts/lengths.
+      The character-specific helper remains only as a deprecated API-1 compatibility
+      wrapper. Static source/build/docs coverage and complete API examples pin the public
+      contract.
 
     - Clean public-source release path: `tools/export_public_source.ps1` builds a
       flattened, fresh-history Yule source tree from an explicit tracked-file allowlist,
@@ -298,7 +355,7 @@ Feature backlog:
       bridge, higher-level UI/animation method, content transaction, map callback/object/
       tile method, metadata property, and command constant has an individual signature,
       description, parameter/return/failure contract, constraints, and example. A
-      dependency-free source/API coverage checker pins 19 namespaces and 256 documented
+      dependency-free source/API coverage checker pins 21 namespaces and 269 documented
       members while auditing all 31 pages for structure, links, and fragments.
 
     - Small toggleable online-match network HUD: Online Settings and
@@ -696,8 +753,9 @@ Feature backlog:
       advances the real branch/index without touching the complete live `online_server/`
       tree, runtime configuration/logs/caches/build output, editor settings, extra configured
       preserve paths, or untracked community content. Staged/non-runtime local edits and
-      untracked collisions fail closed; dry-run output, post-copy comparison, and automatic
-      file/index/ref rollback are covered by isolated throwaway-repository tests.
+      mismatched untracked collisions fail closed, while byte-identical upstream additions
+      are adopted for safe first-run bootstrap; dry-run output, post-copy comparison, and
+      automatic file/index/ref rollback are covered by isolated throwaway-repository tests.
     - Once-per-frame local-input commit boundary: hook-side physical input remains a
       tentative wall-tick sample until frame-zero, correction, frame-advantage, prediction,
       and checksum-retirement gates all permit simulation. Stalled updates repoll without

@@ -1,7 +1,4 @@
 #include <windows.h>
-#include <winhttp.h>
-#include <commdlg.h>
-#include <shlobj.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -10,6 +7,7 @@
 #include <stddef.h>
 #include <limits.h>
 #include <math.h>
+#include <wchar.h>
 #include <luajit-2.1/lua.h>
 #include <luajit-2.1/lauxlib.h>
 #include <luajit-2.1/lualib.h>
@@ -25,6 +23,10 @@
 #include "ggpo_net.h"
 #include "cursor_ext.h"
 #include "bytebeat_ext.h"
+#include "mod_api.h"
+#include "mod_fs.h"
+#include "mod_http.h"
+#include "mod_json.h"
 
 static lua_State *L = NULL;
 
@@ -34,9 +36,6 @@ extern SDL_RWops* SDL_RWFromConstMem(const void* mem, int size);
 extern const char* SDL_GetError(void);
 
 void luna_force_crash_report(unsigned int exit_code);
-
-// Bump this when you make breaking changes to the Lua mod API.
-#define MOD_API_VERSION 1
 
 // Config entry file format version (internal; not exposed)
 // The schema/value format is the simple line-based "key: type, value" described in MODDING.md.
@@ -640,7 +639,7 @@ static int lua_absindex_compat(lua_State* Ls, int idx);
 #define MOD_INTEROP_NAMESPACE_MAX 96
 
 typedef struct ModIdList {
-    char ids[MOD_ID_LIST_MAX][64];
+    char ids[MOD_ID_LIST_MAX][MOD_API_CAPABILITY_NAME_MAX];
     int count;
 } ModIdList;
 
@@ -663,6 +662,7 @@ struct LoadedMod {
     char entry[128];
     char folder_path[MAX_PATH];
     int  api_version;
+    int  api_revision;
 
     int  enabled;
     int  error_count;
@@ -681,6 +681,7 @@ struct LoadedMod {
     ModDepList depends;
     ModDepList optional_deps;
     ModIdList conflicts;
+    ModIdList api_requires;
 
     // Registry refs
     int  env_ref;       // mod environment table
@@ -785,6 +786,7 @@ typedef struct ModManifest {
     char binds_rel[128];
 
     int api_version;
+    int api_revision;
     int allow_api_mismatch;
     int priority;
 
@@ -793,6 +795,7 @@ typedef struct ModManifest {
     ModIdList conflicts;
     ModIdList load_before;
     ModIdList load_after;
+    ModIdList api_requires;
 } ModManifest;
 
 typedef struct DiscoveredMod {
@@ -1134,6 +1137,7 @@ static void mod_manifest_set_defaults(ModManifest* manifest, const char* folder_
     snprintf(manifest->binds_rel, sizeof(manifest->binds_rel), "binds.cfg");
     snprintf(manifest->storage_rel, sizeof(manifest->storage_rel), "storage.cfg");
     manifest->api_version = MOD_API_VERSION;
+    manifest->api_revision = 0;
     manifest->allow_api_mismatch = 0;
     manifest->priority = 0;
     mod_dep_list_reset(&manifest->depends);
@@ -1141,6 +1145,7 @@ static void mod_manifest_set_defaults(ModManifest* manifest, const char* folder_
     mod_id_list_reset(&manifest->conflicts);
     mod_id_list_reset(&manifest->load_before);
     mod_id_list_reset(&manifest->load_after);
+    mod_id_list_reset(&manifest->api_requires);
 }
 
 static void json_cursor_set_error(JsonCursor* jc, const char* msg) {
@@ -1499,6 +1504,23 @@ static int json_cursor_parse_string_array(JsonCursor* jc, ModIdList* out_list, c
     return 0;
 }
 
+static int json_cursor_parse_capability_array(JsonCursor* jc,
+                                              ModIdList* out_list) {
+    int i;
+    if (!json_cursor_parse_string_array(jc, out_list, "api_requires")) return 0;
+    for (i = 0; i < out_list->count; ++i) {
+        if (!mod_api_capability_name_valid(out_list->ids[i])) {
+            char message[160];
+            snprintf(message, sizeof(message),
+                     "manifest field \"api_requires\" contains invalid capability \"%s\"",
+                     out_list->ids[i]);
+            json_cursor_set_error(jc, message);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int json_cursor_parse_dep_array(JsonCursor* jc, ModDepList* out_list, const char* field_name) {
     if (!out_list) return 0;
     mod_dep_list_reset(out_list);
@@ -1653,6 +1675,11 @@ static int parse_mod_manifest_json(const char* json_text, size_t json_len, ModMa
             if (!json_cursor_parse_string(&jc, manifest->storage_rel, (int)sizeof(manifest->storage_rel))) goto fail;
         } else if (_stricmp(key, "api_version") == 0) {
             if (!json_cursor_parse_int(&jc, &manifest->api_version)) goto fail;
+        } else if (_stricmp(key, "api_revision") == 0) {
+            if (!json_cursor_parse_int(&jc, &manifest->api_revision)) goto fail;
+        } else if (_stricmp(key, "api_requires") == 0) {
+            if (!json_cursor_parse_capability_array(&jc,
+                                                    &manifest->api_requires)) goto fail;
         } else if (_stricmp(key, "allow_api_mismatch") == 0) {
             if (!json_cursor_parse_bool(&jc, &manifest->allow_api_mismatch)) goto fail;
         } else if (_stricmp(key, "priority") == 0) {
@@ -1751,6 +1778,24 @@ static int global_allow_api_mismatch(void) {
         g_allow_api_mismatch_global = 1;
     }
     return g_allow_api_mismatch_global;
+}
+
+static int mod_manifest_api_compatible(const ModManifest* manifest,
+                                       char* error, size_t error_capacity) {
+    if (!manifest) {
+        if (error && error_capacity > 0) {
+            snprintf(error, error_capacity, "manifest is missing");
+        }
+        return 0;
+    }
+    return mod_api_check_compatibility(
+        manifest->api_version,
+        manifest->api_revision,
+        &manifest->api_requires.ids[0][0],
+        manifest->api_requires.count,
+        error,
+        error_capacity
+    );
 }
 
 // =============================
@@ -3082,6 +3127,7 @@ static LoadedMod* mods_add(void) {
     m->on_load_ref = LUA_NOREF;
     m->on_unload_ref = LUA_NOREF;
     m->api_version = MOD_API_VERSION;
+    m->api_revision = 0;
 
     m->on_layout = NULL;
     m->on_layout_count = 0;
@@ -8157,6 +8203,7 @@ static int lua_mod_info(lua_State *Ls) {
     lua_pushstring(Ls, mod->description); lua_setfield(Ls, -2, "description");
     lua_pushstring(Ls, mod->entry);       lua_setfield(Ls, -2, "entry");
     lua_pushinteger(Ls, mod->api_version);lua_setfield(Ls, -2, "api_version");
+    lua_pushinteger(Ls, mod->api_revision); lua_setfield(Ls, -2, "api_revision");
     lua_pushboolean(Ls, mod->enabled);    lua_setfield(Ls, -2, "enabled");
     lua_pushboolean(Ls, mod->gameplay_affecting); lua_setfield(Ls, -2, "gameplay_affecting");
     lua_pushboolean(Ls, mod_is_gameplay_suspended(mod)); lua_setfield(Ls, -2, "suspended_online");
@@ -12667,107 +12714,6 @@ static void push_online_api_table(lua_State* Ls) {
     lua_pushcfunction(Ls, lua_online_status); lua_setfield(Ls, -2, "status");
 }
 
-static int lua_fs_pick_character_file(lua_State* Ls) {
-    const char* title = luaL_optstring(Ls, 1, "Import character package");
-    char path[MAX_PATH];
-    OPENFILENAMEA ofn;
-    memset(path, 0, sizeof(path));
-    memset(&ofn, 0, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = sizeof(path);
-    ofn.lpstrTitle = title;
-    ofn.lpstrFilter =
-        "Character Packages (*.zip;*.json)\0*.zip;*.json\0"
-        "ZIP Files (*.zip)\0*.zip\0"
-        "JSON Files (*.json)\0*.json\0"
-        "All Files (*.*)\0*.*\0\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameA(&ofn)) {
-        lua_pushstring(Ls, path);
-        return 1;
-    }
-    lua_pushnil(Ls);
-    lua_pushstring(Ls, "cancelled");
-    return 2;
-}
-
-static int lua_fs_pick_folder(lua_State* Ls) {
-    const char* title = luaL_optstring(Ls, 1, "Import character folder");
-    char path[MAX_PATH];
-    BROWSEINFOA bi;
-    LPITEMIDLIST pidl;
-    memset(path, 0, sizeof(path));
-    memset(&bi, 0, sizeof(bi));
-    bi.lpszTitle = title;
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    pidl = SHBrowseForFolderA(&bi);
-    if (pidl) {
-        int ok = SHGetPathFromIDListA(pidl, path);
-        CoTaskMemFree(pidl);
-        if (ok && path[0]) {
-            lua_pushstring(Ls, path);
-            return 1;
-        }
-    }
-    lua_pushnil(Ls);
-    lua_pushstring(Ls, "cancelled");
-    return 2;
-}
-
-static int fs_find_file_recursive(const char* dir, const char* name, char* out, size_t out_cap, int depth) {
-    char pattern[MAX_PATH];
-    WIN32_FIND_DATAA fd;
-    HANDLE h;
-    size_t dir_len;
-    if (!dir || !name || !out || out_cap == 0 || depth > 12) return 0;
-    dir_len = strlen(dir);
-    if (dir_len == 0 || dir_len + 3 >= sizeof(pattern)) return 0;
-    snprintf(pattern, sizeof(pattern), "%s%s*", dir, (dir[dir_len - 1] == '\\' || dir[dir_len - 1] == '/') ? "" : "\\");
-    h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) return 0;
-    do {
-        char child[MAX_PATH];
-        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
-        if (dir_len + strlen(fd.cFileName) + 2 >= sizeof(child)) continue;
-        snprintf(child, sizeof(child), "%s%s%s", dir, (dir[dir_len - 1] == '\\' || dir[dir_len - 1] == '/') ? "" : "\\", fd.cFileName);
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            if (fs_find_file_recursive(child, name, out, out_cap, depth + 1)) {
-                FindClose(h);
-                return 1;
-            }
-        } else if (_stricmp(fd.cFileName, name) == 0) {
-            snprintf(out, out_cap, "%s", child);
-            FindClose(h);
-            return 1;
-        }
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
-    return 0;
-}
-
-static int lua_fs_find_file(lua_State* Ls) {
-    const char* root = luaL_checkstring(Ls, 1);
-    const char* name = luaL_optstring(Ls, 2, "character.json");
-    char out[MAX_PATH];
-    out[0] = '\0';
-    if (fs_find_file_recursive(root, name, out, sizeof(out), 0)) {
-        lua_pushstring(Ls, out);
-        return 1;
-    }
-    lua_pushnil(Ls);
-    lua_pushstring(Ls, "not found");
-    return 2;
-}
-
-static void push_fs_api_table(lua_State* Ls) {
-    lua_newtable(Ls);
-    lua_pushcfunction(Ls, lua_fs_pick_character_file); lua_setfield(Ls, -2, "pick_character_file");
-    lua_pushcfunction(Ls, lua_fs_pick_folder); lua_setfield(Ls, -2, "pick_folder");
-    lua_pushcfunction(Ls, lua_fs_find_file); lua_setfield(Ls, -2, "find_file");
-}
-
 static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_loaded, 1);         lua_setfield(Ls, -2, "font_loaded");
@@ -12883,360 +12829,65 @@ static void push_net_api_table(lua_State *Ls) {
     lua_pushcfunction(Ls, lua_net_connecting); lua_setfield(Ls, -2, "connecting");
 }
 
-/* ---- mod.http: async HTTPS-capable GET via WinHTTP + worker thread ------- */
-
-#define HTTP_MAX_SLOTS 8
-#define HTTP_MAX_BODY_BYTES (8u * 1024u * 1024u)
-
-typedef struct {
-    int            in_use;
-    int            handle;
-    LoadedMod     *owner;
-    HANDLE         thread;
-    volatile LONG  done;      /* 0=pending, 1=ok, -1=error — written by thread */
-    volatile LONG  cancelled; /* cancellation is observed by the worker/reaper */
-    char          *body;
-    size_t         body_len;
-    char           error_msg[256];
-    wchar_t        url[2048];
-} HttpSlot;
-
-static HttpSlot g_http_slots[HTTP_MAX_SLOTS];
-static int g_http_next_handle = 1;
-
-static void http_release_slot(HttpSlot *slot) {
-    if (!slot) return;
-    if (slot->thread) {
-        CloseHandle(slot->thread);
-        slot->thread = NULL;
+static int lua_mod_api_has(lua_State* Ls) {
+    size_t length = 0;
+    const char* capability = luaL_checklstring(Ls, 1, &length);
+    if (length == 0 || length >= MOD_API_CAPABILITY_NAME_MAX ||
+        strlen(capability) != length ||
+        !mod_api_capability_name_valid(capability)) {
+        lua_pushboolean(Ls, 0);
+        return 1;
     }
-    free(slot->body);
-    memset(slot, 0, sizeof(*slot));
-}
-
-static void http_reap_cancelled_slots(void) {
-    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
-        HttpSlot *slot = &g_http_slots[i];
-        if (!slot->in_use ||
-            InterlockedCompareExchange(&slot->cancelled, 0, 0) == 0 ||
-            InterlockedCompareExchange(&slot->done, 0, 0) == 0) {
-            continue;
-        }
-        http_release_slot(slot);
-    }
-}
-
-static HttpSlot *http_find_slot(int handle, LoadedMod *owner) {
-    if (handle <= 0 || !owner) return NULL;
-    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
-        HttpSlot *slot = &g_http_slots[i];
-        if (slot->in_use && slot->handle == handle && slot->owner == owner) {
-            return slot;
-        }
-    }
-    return NULL;
-}
-
-static void http_cancel_owner(LoadedMod *owner) {
-    if (!owner) return;
-    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
-        HttpSlot *slot = &g_http_slots[i];
-        if (slot->in_use && slot->owner == owner) {
-            InterlockedExchange(&slot->cancelled, 1);
-        }
-    }
-    http_reap_cancelled_slots();
-}
-
-static DWORD WINAPI http_worker_thread(LPVOID param) {
-    HttpSlot *slot = (HttpSlot *)param;
-
-    URL_COMPONENTS uc;
-    wchar_t host[512] = {0};
-    wchar_t path[1024] = {0};
-    memset(&uc, 0, sizeof(uc));
-    uc.dwStructSize      = sizeof(uc);
-    uc.lpszHostName      = host;
-    uc.dwHostNameLength  = (DWORD)(sizeof(host) / sizeof(host[0]));
-    uc.lpszUrlPath       = path;
-    uc.dwUrlPathLength   = (DWORD)(sizeof(path) / sizeof(path[0]));
-
-    if (!WinHttpCrackUrl(slot->url, 0, 0, &uc)) {
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "bad URL (WinHttpCrackUrl err %lu)", GetLastError());
-        InterlockedExchange(&slot->done, -1);
-        return 0;
-    }
-
-    HINTERNET session = WinHttpOpen(
-        L"EggnoggPlus/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS,
-        0);
-    if (!session) {
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "WinHttpOpen failed %lu", GetLastError());
-        InterlockedExchange(&slot->done, -1);
-        return 0;
-    }
-
-    /* 10-second resolve+connect timeout */
-    DWORD timeout_ms = 10000;
-    WinHttpSetOption(session, WINHTTP_OPTION_CONNECT_TIMEOUT,    &timeout_ms, sizeof(timeout_ms));
-    WinHttpSetOption(session, WINHTTP_OPTION_RECEIVE_TIMEOUT,    &timeout_ms, sizeof(timeout_ms));
-    WinHttpSetOption(session, WINHTTP_OPTION_SEND_TIMEOUT,       &timeout_ms, sizeof(timeout_ms));
-    WinHttpSetOption(session, WINHTTP_OPTION_RESOLVE_TIMEOUT,    &timeout_ms, sizeof(timeout_ms));
-
-    INTERNET_PORT port = uc.nPort
-        ? uc.nPort
-        : (uc.nScheme == INTERNET_SCHEME_HTTPS
-            ? INTERNET_DEFAULT_HTTPS_PORT
-            : INTERNET_DEFAULT_HTTP_PORT);
-
-    HINTERNET conn = WinHttpConnect(session, host, port, 0);
-    if (!conn) {
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "WinHttpConnect failed %lu", GetLastError());
-        WinHttpCloseHandle(session);
-        InterlockedExchange(&slot->done, -1);
-        return 0;
-    }
-
-    DWORD req_flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET req = WinHttpOpenRequest(conn, L"GET",
-        path[0] ? path : L"/",
-        NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, req_flags);
-    if (!req) {
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "WinHttpOpenRequest failed %lu", GetLastError());
-        WinHttpCloseHandle(conn);
-        WinHttpCloseHandle(session);
-        InterlockedExchange(&slot->done, -1);
-        return 0;
-    }
-
-    if (!WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(req, NULL)) {
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "request failed %lu", GetLastError());
-        WinHttpCloseHandle(req);
-        WinHttpCloseHandle(conn);
-        WinHttpCloseHandle(session);
-        InterlockedExchange(&slot->done, -1);
-        return 0;
-    }
-
-    /* Verify HTTP status code */
-    DWORD status_code = 0;
-    DWORD status_size = sizeof(status_code);
-    WinHttpQueryHeaders(req,
-        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX,
-        &status_code, &status_size, WINHTTP_NO_HEADER_INDEX);
-    if (status_code != 200) {
-        _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "HTTP %lu", status_code);
-        WinHttpCloseHandle(req);
-        WinHttpCloseHandle(conn);
-        WinHttpCloseHandle(session);
-        InterlockedExchange(&slot->done, -1);
-        return 0;
-    }
-
-    /* Reject declared oversized bodies before allocating them. Some servers
-     * omit Content-Length, so the streaming loop enforces the same ceiling. */
-    {
-        DWORD content_length = 0;
-        DWORD content_length_size = sizeof(content_length);
-        if (WinHttpQueryHeaders(req,
-                                WINHTTP_QUERY_CONTENT_LENGTH |
-                                    WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX,
-                                &content_length,
-                                &content_length_size,
-                                WINHTTP_NO_HEADER_INDEX) &&
-            content_length > HTTP_MAX_BODY_BYTES) {
-            _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-                      "response body exceeds %u bytes",
-                      (unsigned int)HTTP_MAX_BODY_BYTES);
-            WinHttpCloseHandle(req);
-            WinHttpCloseHandle(conn);
-            WinHttpCloseHandle(session);
-            InterlockedExchange(&slot->done, -1);
-            return 0;
-        }
-    }
-
-    /* Read body incrementally. Keep the buffer worker-local until the final
-     * publication so cancel/poll never races realloc or free. */
-    size_t cap = 8192, len = 0;
-    char  *buf = (char *)malloc(cap);
-    int    ok  = (buf != NULL);
-    int    too_large = 0;
-
-    while (ok) {
-        DWORD avail = 0;
-        if (InterlockedCompareExchange(&slot->cancelled, 0, 0) != 0) {
-            ok = 0;
-            break;
-        }
-        if (!WinHttpQueryDataAvailable(req, &avail)) {
-            ok = 0;
-            break;
-        }
-        if (avail == 0) break;
-        if ((size_t)avail > HTTP_MAX_BODY_BYTES - len) {
-            too_large = 1;
-            ok = 0;
-            break;
-        }
-        if (len + avail + 1 > cap) {
-            size_t newcap = (len + avail + 1) * 2;
-            if (newcap > HTTP_MAX_BODY_BYTES + 1u) {
-                newcap = HTTP_MAX_BODY_BYTES + 1u;
-            }
-            char *tmp = (char *)realloc(buf, newcap);
-            if (!tmp) { ok = 0; break; }
-            buf = tmp;
-            cap = newcap;
-        }
-        DWORD nread = 0;
-        if (!WinHttpReadData(req, buf + len, avail, &nread)) { ok = 0; break; }
-        len += nread;
-    }
-
-    WinHttpCloseHandle(req);
-    WinHttpCloseHandle(conn);
-    WinHttpCloseHandle(session);
-
-    if (ok && buf &&
-        InterlockedCompareExchange(&slot->cancelled, 0, 0) == 0) {
-        buf[len]      = '\0';
-        slot->body     = buf;
-        slot->body_len = len;
-        InterlockedExchange(&slot->done, 1);
-    } else {
-        free(buf);
-        if (too_large) {
-            _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-                      "response body exceeds %u bytes",
-                      (unsigned int)HTTP_MAX_BODY_BYTES);
-        } else if (InterlockedCompareExchange(&slot->cancelled, 0, 0) == 0) {
-            _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-                      "failed reading response body");
-        }
-        InterlockedExchange(&slot->done, -1);
-    }
-    return 0;
-}
-
-/* mod.http.get(url_string) → handle_int  or  nil, errmsg */
-static int lua_http_get(lua_State *L) {
-    LoadedMod *owner = mod_from_upvalue(L);
-    const char *url_utf8 = luaL_checkstring(L, 1);
-
-    if (!owner || !owner->enabled) {
-        lua_pushnil(L);
-        lua_pushstring(L, "mod is not active");
-        return 2;
-    }
-    http_reap_cancelled_slots();
-
-    int idx = -1;
-    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
-        if (!g_http_slots[i].in_use) { idx = i; break; }
-    }
-    if (idx < 0) {
-        lua_pushnil(L);
-        lua_pushstring(L, "too many concurrent HTTP requests");
-        return 2;
-    }
-
-    HttpSlot *slot = &g_http_slots[idx];
-    memset(slot, 0, sizeof(*slot));
-
-    if (!MultiByteToWideChar(CP_UTF8, 0, url_utf8, -1,
-                             slot->url,
-                             (int)(sizeof(slot->url) / sizeof(slot->url[0])))) {
-        lua_pushnil(L);
-        lua_pushstring(L, "URL too long or invalid UTF-8");
-        return 2;
-    }
-
-    slot->in_use = 1;
-    slot->owner = owner;
-    slot->handle = g_http_next_handle;
-    g_http_next_handle =
-        (g_http_next_handle == INT_MAX) ? 1 : g_http_next_handle + 1;
-    slot->done   = 0;
-    slot->cancelled = 0;
-    slot->thread = CreateThread(NULL, 0, http_worker_thread, slot, 0, NULL);
-    if (!slot->thread) {
-        http_release_slot(slot);
-        lua_pushnil(L);
-        lua_pushstring(L, "CreateThread failed");
-        return 2;
-    }
-
-    lua_pushinteger(L, slot->handle);
+    lua_pushboolean(Ls, mod_api_has_capability(capability));
     return 1;
 }
 
-/* mod.http.poll(handle) → "pending"  |  "done", body  |  "error", msg */
-static int lua_http_poll(lua_State *L) {
-    LoadedMod *owner = mod_from_upvalue(L);
-    int handle = (int)luaL_checkinteger(L, 1);
-    HttpSlot *slot;
-    http_reap_cancelled_slots();
-    slot = http_find_slot(handle, owner);
-    if (!slot ||
-        InterlockedCompareExchange(&slot->cancelled, 0, 0) != 0) {
-        lua_pushstring(L, "error");
-        lua_pushstring(L, "invalid handle");
+static int lua_mod_api_require(lua_State* Ls) {
+    size_t length = 0;
+    const char* capability = luaL_checklstring(Ls, 1, &length);
+    if (length == 0 || length >= MOD_API_CAPABILITY_NAME_MAX ||
+        strlen(capability) != length ||
+        !mod_api_capability_name_valid(capability)) {
+        return luaL_error(
+            Ls,
+            "mod.api.require expects a lowercase capability identifier"
+        );
+    }
+    if (!mod_api_has_capability(capability)) {
+        lua_pushboolean(Ls, 0);
+        lua_pushfstring(Ls, "framework capability is unavailable: %s",
+                        capability);
         return 2;
     }
-    LONG d = InterlockedCompareExchange(&slot->done, 0, 0);  /* atomic read */
-    if (d == 0) {
-        lua_pushstring(L, "pending");
-        return 1;
-    }
-    if (d == 1) {
-        lua_pushstring(L, "done");
-        lua_pushlstring(L, slot->body ? slot->body : "", slot->body_len);
-        http_release_slot(slot);
-        return 2;
-    }
-    lua_pushstring(L, "error");
-    lua_pushstring(L, slot->error_msg[0]
-        ? slot->error_msg
-        : "request failed");
-    http_release_slot(slot);
-    return 2;
+    lua_pushboolean(Ls, 1);
+    return 1;
 }
 
-/* mod.http.cancel(handle) */
-static int lua_http_cancel(lua_State *L) {
-    LoadedMod *owner = mod_from_upvalue(L);
-    int handle = (int)luaL_checkinteger(L, 1);
-    HttpSlot *slot;
-    http_reap_cancelled_slots();
-    slot = http_find_slot(handle, owner);
-    if (slot) {
-        /* Do not free or reuse the slot until the worker has published done.
-         * Closing the thread HANDLE does not stop the thread. */
-        InterlockedExchange(&slot->cancelled, 1);
-        http_reap_cancelled_slots();
-    }
-    return 0;
-}
-
-static void push_http_api_table(lua_State *Ls, LoadedMod *mod) {
+static void push_api_api_table(lua_State* Ls) {
+    int i;
+    int capability_count = mod_api_capability_count();
     lua_newtable(Ls);
-    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_http_get, 1);    lua_setfield(Ls, -2, "get");
-    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_http_poll, 1);   lua_setfield(Ls, -2, "poll");
-    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_http_cancel, 1); lua_setfield(Ls, -2, "cancel");
+    lua_pushinteger(Ls, MOD_API_MAJOR); lua_setfield(Ls, -2, "major");
+    lua_pushinteger(Ls, MOD_API_REVISION); lua_setfield(Ls, -2, "revision");
+    lua_pushcfunction(Ls, lua_mod_api_has); lua_setfield(Ls, -2, "has");
+    lua_pushcfunction(Ls, lua_mod_api_require); lua_setfield(Ls, -2, "require");
+
+    lua_newtable(Ls);
+    for (i = 0; i < capability_count; ++i) {
+        lua_pushstring(Ls, mod_api_capability_at(i));
+        lua_rawseti(Ls, -2, i + 1);
+    }
+    lua_setfield(Ls, -2, "capabilities");
+}
+
+static void push_json_api_table(lua_State* Ls) {
+    lua_newtable(Ls);
+    lua_pushcfunction(Ls, mod_json_lua_encode); lua_setfield(Ls, -2, "encode");
+    lua_pushcfunction(Ls, mod_json_lua_decode); lua_setfield(Ls, -2, "decode");
+    lua_pushcfunction(Ls, mod_json_lua_array); lua_setfield(Ls, -2, "array");
+    lua_pushcfunction(Ls, mod_json_lua_object); lua_setfield(Ls, -2, "object");
+    lua_pushcfunction(Ls, mod_json_lua_is_null); lua_setfield(Ls, -2, "is_null");
+    mod_json_lua_push_null(Ls); lua_setfield(Ls, -2, "null");
 }
 
 static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -13308,19 +12959,28 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     push_online_api_table(Ls);
     lua_setfield(Ls, -2, "online");
 
-    // Local file/folder pickers for user-selected import packages.
-    push_fs_api_table(Ls);
+    // Local file/folder pickers live in their own owner-aware module.
+    mod_fs_lua_push_api(Ls, &mod->enabled);
     lua_setfield(Ls, -2, "fs");
 
-    // HTTPS-capable async HTTP GET (WinHTTP).
-    push_http_api_table(Ls, mod);
+    // HTTPS-capable async HTTP GET lives in its own owner-aware module.
+    mod_http_lua_push_api(Ls, mod, &mod->enabled);
     lua_setfield(Ls, -2, "http");
+
+    // Major/revision compatibility metadata and stable feature discovery.
+    push_api_api_table(Ls);
+    lua_setfield(Ls, -2, "api");
+
+    // Strict, bounded JSON conversion with explicit null/container markers.
+    push_json_api_table(Ls);
+    lua_setfield(Ls, -2, "json");
 
     // Fields (convenience)
     lua_pushstring(Ls, mod->id);      lua_setfield(Ls, -2, "id");
     lua_pushstring(Ls, mod->name);    lua_setfield(Ls, -2, "name");
     lua_pushstring(Ls, mod->version); lua_setfield(Ls, -2, "version");
     lua_pushinteger(Ls, MOD_API_VERSION); lua_setfield(Ls, -2, "framework_api");
+    lua_pushinteger(Ls, MOD_API_REVISION); lua_setfield(Ls, -2, "framework_api_revision");
 }
 
 static const char* k_mod_ui_helpers_lua =
@@ -14218,7 +13878,9 @@ static void loaded_mod_apply_manifest(LoadedMod* mod, const ModManifest* manifes
     mod->depends = manifest->depends;
     mod->optional_deps = manifest->optional_deps;
     mod->conflicts = manifest->conflicts;
+    mod->api_requires = manifest->api_requires;
     mod->api_version = manifest->api_version;
+    mod->api_revision = manifest->api_revision;
 }
 
 static void loaded_mod_build_manifest(const LoadedMod* mod, ModManifest* manifest) {
@@ -14235,13 +13897,18 @@ static void loaded_mod_build_manifest(const LoadedMod* mod, ModManifest* manifes
     snprintf(manifest->storage_rel, sizeof(manifest->storage_rel), "%s", mod->storage_rel);
     snprintf(manifest->binds_rel, sizeof(manifest->binds_rel), "%s", mod->binds_rel);
     manifest->api_version = mod->api_version;
+    manifest->api_revision = mod->api_revision;
     manifest->allow_api_mismatch = 1;
     manifest->depends = mod->depends;
     manifest->optional_deps = mod->optional_deps;
     manifest->conflicts = mod->conflicts;
+    manifest->api_requires = mod->api_requires;
 }
 
 static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
+    char api_error[256];
+    int api_compatible;
+    int api_override;
     if (!mod || !manifest) return 0;
     loaded_mod_apply_manifest(mod, manifest);
 
@@ -14265,15 +13932,21 @@ static int load_mod_lua(LoadedMod* mod, const ModManifest* manifest) {
     }
     mod_storage_load(mod);
 
-    if (mod->api_version != MOD_API_VERSION && !(manifest->allow_api_mismatch || global_allow_api_mismatch())) {
-        LOG_ERROR("Skipping mod %s: api_version=%d but framework is %d (set allow_api_mismatch=true to override)",
-                  mod->id, mod->api_version, MOD_API_VERSION);
+    api_error[0] = '\0';
+    api_compatible = mod_manifest_api_compatible(manifest, api_error,
+                                                 sizeof(api_error));
+    api_override = manifest->allow_api_mismatch || global_allow_api_mismatch();
+    if (!api_compatible && !api_override) {
+        LOG_ERROR(
+            "Skipping mod %s: %s (set allow_api_mismatch=true only for local testing)",
+            mod->id, api_error[0] ? api_error : "incompatible framework API"
+        );
         return 0;
     }
 
-    if (mod->api_version != MOD_API_VERSION && (manifest->allow_api_mismatch || global_allow_api_mismatch())) {
-        LOG_WARN("Loading mod %s with api_version=%d on framework=%d due explicit override",
-                 mod->id, mod->api_version, MOD_API_VERSION);
+    if (!api_compatible && api_override) {
+        LOG_WARN("Loading mod %s despite API incompatibility due explicit override: %s",
+                 mod->id, api_error[0] ? api_error : "unknown incompatibility");
     }
 
     LOG_INFO("Loading mod: %s (%s) v%s by %s", mod->id, mod->name, mod->version, mod->author);
@@ -14407,7 +14080,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     if (call_on_unload_cb && mod->enabled && !mod_is_gameplay_suspended(mod)) {
         call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
     }
-    http_cancel_owner(mod);
+    mod_http_cancel_owner(mod);
 
     reflist_clear(L, &mod->on_frame);
     reflist_clear(L, &mod->on_tick);
@@ -14476,7 +14149,7 @@ static void unload_all_mods(void) {
 
     if (!L) {
         for (int i = 0; i < g_mod_count; i++) {
-            http_cancel_owner(&g_mods[i]);
+            mod_http_cancel_owner(&g_mods[i]);
             mod_bind_clear(&g_mods[i]);
             mod_storage_clear(&g_mods[i]);
             mod_audio_clear(&g_mods[i]);
@@ -14710,12 +14383,16 @@ static int scan_and_load_mods(void) {
 
     // Enforce API compatibility unless explicitly overridden.
     for (int i = 0; i < discovered_count; i++) {
+        char api_error[256];
         if (!active[i]) continue;
         const ModManifest* m = &discovered[i].manifest;
-        if (m->api_version == MOD_API_VERSION) continue;
+        api_error[0] = '\0';
+        if (mod_manifest_api_compatible(m, api_error, sizeof(api_error))) continue;
         if (m->allow_api_mismatch || global_allow_api_mismatch()) continue;
-        LOG_ERROR("Skipping mod %s: api_version=%d but framework is %d (set allow_api_mismatch=true to override)",
-                  m->id, m->api_version, MOD_API_VERSION);
+        LOG_ERROR(
+            "Skipping mod %s: %s (set allow_api_mismatch=true only for local testing)",
+            m->id, api_error[0] ? api_error : "incompatible framework API"
+        );
         active[i] = 0;
     }
 
@@ -15649,7 +15326,7 @@ void lua_manager_on_tick_post(void) {
 void lua_manager_on_frame() {
     hot_reload_poll();
     hot_reload_apply_pending_menu_state_reset();
-    http_reap_cancelled_slots();
+    mod_http_pump();
     if (!L) return;
     void* state_ptr = ui_current_state_ptr();
 
@@ -15981,6 +15658,14 @@ static int enable_single_mod_runtime(int mod_index) {
 
 int lua_manager_framework_api(void) {
     return MOD_API_VERSION;
+}
+
+int lua_manager_framework_api_revision(void) {
+    return MOD_API_REVISION;
+}
+
+int lua_manager_framework_api_capability_count(void) {
+    return mod_api_capability_count();
 }
 
 static int content_builtin_sprite_resolve(const char* local_id,

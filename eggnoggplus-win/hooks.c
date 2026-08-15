@@ -92,6 +92,11 @@
 #include "lua_manager.h"
 #include "font_ext.h"
 #include "texture_ext.h"
+#include "text_util.h"
+#include "image_util.h"
+#include "console_catalog.h"
+#include "console_parse.h"
+#include "command_history.h"
 #include "custom_maps.h"
 #include "content_bridge.h"
 #include "content_tiles.h"
@@ -355,7 +360,6 @@ extern void SDL_free(void* mem);
 #define CONSOLE_INPUT_BUF      512
 #define CONSOLE_LINE_TEXT      384
 #define CONSOLE_MAX_LINES      256
-#define CONSOLE_HISTORY_MAX     64
 #define CONSOLE_BG_DOWNSAMPLE    4
 #define CONSOLE_MAX_MATCHES       32
 #define MAX_CUSTOM_STATES         16
@@ -912,7 +916,6 @@ static CaptureKind g_capture_kind = CAPTURE_NONE;
 static int g_capture_mod = -1;
 static int g_capture_cfg = -1;
 static char g_capture_buf[CAPTURE_BUF_SIZE];
-static int g_console_history_loaded = 0;
 static float g_ui_scale = 1.0f;
 
 // Minimal developer console state.
@@ -927,8 +930,7 @@ static int g_console_cursor = 0;
 static char g_console_edit_stash[CONSOLE_INPUT_BUF];
 static int g_console_has_edit_stash = 0;
 static int g_console_history_pos = -1;
-static char g_console_history[CONSOLE_HISTORY_MAX][CONSOLE_INPUT_BUF];
-static int g_console_history_count = 0;
+static CommandHistory g_console_history;
 static ConsoleLine g_console_lines[CONSOLE_MAX_LINES];
 static int g_console_line_head = 0;
 static int g_console_line_count = 0;
@@ -1237,10 +1239,7 @@ static void console_push_line_rgb(const char* text, float r, float g, float b);
 static void console_set_input(const char* s);
 static void console_insert_text(const char* text);
 static const char* console_stristr(const char* haystack, const char* needle);
-static char* console_parse_token(char** inout_cursor);
 static int console_find_mod_index_by_id(const char* id);
-static int console_try_parse_long(const char* s, long* out_value);
-static int console_try_parse_double(const char* s, double* out_value);
 static int console_try_parse_bool(const char* s, int* out_value);
 static void console_strip_crlf(char* s);
 static void console_run_ggpo_selftest(const char* arg);
@@ -2193,50 +2192,6 @@ static float calc_ui_scale(void) {
     return clampf(s, 0.75f, 1.60f);
 }
 
-static void safe_copy(char* dst, size_t dst_sz, const char* src) {
-    if (!dst || dst_sz == 0) return;
-    if (!src) src = "";
-    strncpy(dst, src, dst_sz - 1);
-    dst[dst_sz - 1] = '\0';
-}
-
-static void safe_copy_ellipsized(char* dst, size_t dst_sz,
-                                 const char* src, size_t max_chars) {
-    size_t len;
-    size_t keep;
-    if (!dst || dst_sz == 0) return;
-    if (!src) src = "";
-    if (max_chars >= dst_sz) max_chars = dst_sz - 1;
-    len = strlen(src);
-    if (len <= max_chars) {
-        if (dst != src) safe_copy(dst, dst_sz, src);
-        return;
-    }
-    if (max_chars < 4) {
-        keep = max_chars;
-        if (dst != src) memmove(dst, src, keep);
-        dst[keep] = '\0';
-        return;
-    }
-    keep = max_chars - 3;
-    if (dst != src) memmove(dst, src, keep);
-    dst[keep] = '.';
-    dst[keep + 1] = '.';
-    dst[keep + 2] = '.';
-    dst[keep + 3] = '\0';
-}
-
-static void format_bytes_compact(unsigned int bytes, char* out, size_t out_sz) {
-    if (!out || out_sz == 0) return;
-    if (bytes >= 1024u * 1024u) {
-        snprintf(out, out_sz, "%.2fMB", (double)bytes / (1024.0 * 1024.0));
-    } else if (bytes >= 1024u) {
-        snprintf(out, out_sz, "%.1fKB", (double)bytes / 1024.0);
-    } else {
-        snprintf(out, out_sz, "%uB", bytes);
-    }
-}
-
 static volatile int g_hooks_rng_trace_active = 0;
 static HooksRngTrace g_hooks_rng_trace;
 /* Armed the first time rngtrace turns on (begin called); gates the out-of-tick
@@ -3162,8 +3117,8 @@ static void rows_add(RowKind kind, int selectable, int mod_index, int cfg_index,
     row->selectable = selectable;
     row->mod_index = mod_index;
     row->cfg_index = cfg_index;
-    safe_copy(row->left, sizeof(row->left), left ? left : "");
-    safe_copy(row->right, sizeof(row->right), right ? right : "");
+    text_copy(row->left, sizeof(row->left), left ? left : "");
+    text_copy(row->right, sizeof(row->right), right ? right : "");
 }
 
 static int first_selectable_index(void) {
@@ -3227,7 +3182,7 @@ static void begin_string_capture(int mod_index, int cfg_index) {
     g_capture_kind = CAPTURE_CONFIG_STRING;
     g_capture_mod = mod_index;
     g_capture_cfg = cfg_index;
-    safe_copy(g_capture_buf, sizeof(g_capture_buf), v ? v : "");
+    text_copy(g_capture_buf, sizeof(g_capture_buf), v ? v : "");
 }
 
 static void begin_bind_capture(int mod_index, int bind_index) {
@@ -3236,7 +3191,7 @@ static void begin_bind_capture(int mod_index, int bind_index) {
     g_capture_kind = CAPTURE_BIND;
     g_capture_mod = mod_index;
     g_capture_cfg = bind_index;
-    safe_copy(g_capture_buf, sizeof(g_capture_buf), "Press a key... Esc cancel, Backspace/Delete clear");
+    text_copy(g_capture_buf, sizeof(g_capture_buf), "Press a key... Esc cancel, Backspace/Delete clear");
 }
 
 static int bind_name_to_sym(const char* name) {
@@ -3347,8 +3302,8 @@ static void rebuild_rows(void) {
     if (!update_line || !update_line[0]) {
         update_line = (update_status == UPDATE_IDLE) ? "not checked yet" : "working...";
     }
-    safe_copy_ellipsized(update_line_display, sizeof(update_line_display), update_line, 42);
-    safe_copy_ellipsized(latest_display, sizeof(latest_display), latest_version, 28);
+    text_copy_ellipsized(update_line_display, sizeof(update_line_display), update_line, 42);
+    text_copy_ellipsized(latest_display, sizeof(latest_display), latest_version, 28);
     rows_add(ROW_INFO, 0, -1, -1, "  Update status", update_line_display);
     if (update_status == UPDATE_AVAILABLE) {
         snprintf(update_action, sizeof(update_action), "Install %s",
@@ -3428,7 +3383,7 @@ static void rebuild_rows(void) {
         rows_add(ROW_MOD_HEADER, 1, mi, -1, header, header_right);
 
         if (desc && desc[0]) {
-            safe_copy(desc_line, sizeof(desc_line), desc);
+            text_copy(desc_line, sizeof(desc_line), desc);
             rows_add(ROW_INFO, 0, mi, -1, desc_line, "");
         }
 
@@ -3465,11 +3420,11 @@ static void rebuild_rows(void) {
                     if (!raw_value) raw_value = "";
                     snprintf(label, sizeof(label), "  %s", raw_label);
                     switch (type) {
-                        case LUA_CFG_BOOL: safe_copy(value, sizeof(value), str_bool_true(raw_value) ? "ON" : "OFF"); break;
-                        case LUA_CFG_ACTION: safe_copy(value, sizeof(value), "[Run]"); break;
+                        case LUA_CFG_BOOL: text_copy(value, sizeof(value), str_bool_true(raw_value) ? "ON" : "OFF"); break;
+                        case LUA_CFG_ACTION: text_copy(value, sizeof(value), "[Run]"); break;
                         case LUA_CFG_STRING: snprintf(value, sizeof(value), "\"%s\"", raw_value); break;
                         case LUA_CFG_OPTIONS: snprintf(value, sizeof(value), "< %s >", raw_value); break;
-                        default: safe_copy(value, sizeof(value), raw_value); break;
+                        default: text_copy(value, sizeof(value), raw_value); break;
                     }
                     rows_add(ROW_CONFIG, suspended ? 0 : 1, mi, ci, label, value);
                 }
@@ -3484,7 +3439,7 @@ static void rebuild_rows(void) {
                     const char* raw_key = lua_manager_get_mod_bind_key(mi, bi);
                     const char* raw_value = lua_manager_get_mod_bind_value_str(mi, bi);
                     snprintf(label, sizeof(label), "  Bind: %s", (raw_label && raw_label[0]) ? raw_label : ((raw_key && raw_key[0]) ? raw_key : "(bind)"));
-                    safe_copy(value, sizeof(value), (raw_value && raw_value[0]) ? raw_value : "[Unbound]");
+                    text_copy(value, sizeof(value), (raw_value && raw_value[0]) ? raw_value : "[Unbound]");
                     if (lua_manager_mod_bind_has_conflict(mi, bi) && strlen(value) + 11 < sizeof(value)) {
                         strcat(value, " [conflict]");
                     }
@@ -3687,7 +3642,7 @@ static ConsoleLine* console_line_at_oldest_index(int idx) {
 
 static void console_push_line_rgb(const char* text, float r, float g, float b) {
     ConsoleLine* line = &g_console_lines[g_console_line_head];
-    safe_copy(line->text, sizeof(line->text), text ? text : "");
+    text_copy(line->text, sizeof(line->text), text ? text : "");
     line->r = r;
     line->g = g;
     line->b = b;
@@ -3772,7 +3727,7 @@ static void console_copy_cmd(const char* arg) {
     char arg_buf[CONSOLE_INPUT_BUF];
     const char* mode = "";
     if (arg && arg[0]) {
-        safe_copy(arg_buf, sizeof(arg_buf), arg);
+        text_copy(arg_buf, sizeof(arg_buf), arg);
         mode = trim_ws(arg_buf);
     }
     if (!mode || !mode[0] || _stricmp(mode, "output") == 0 || _stricmp(mode, "all") == 0) {
@@ -3786,92 +3741,30 @@ static void console_copy_cmd(const char* arg) {
     console_push_line_rgb("Usage: console.copy [output|input]", 0.98f, 0.76f, 0.40f);
 }
 
-static const char* k_console_commands[] = {
-    "help", "commands", "clear", "history", "echo", "find", "console.find", "console.stats", "console.copy",
-    "state", "state.last", "state.return", "state.switch", "sys.info", "ui.size",
-    "time.scale", "framework.api", "discord.app",
-    "music.status", "music.scan", "music.rescan", "music.play",
-    "music.output_rate",
-    "mods.count", "mods.list", "mods.find", "mods.info", "mods.trace", "mods.enable", "mods.disable", "mods.toggle",
-    "mods.config", "mods.config.find", "mods.config.get", "mods.config.set", "mods.config.action",
-    "binds.list", "binds.find", "binds.set", "binds.clear",
-    "reload.mods", "mods.reload", "reload.assets",
-    "online.hub", "online.troubleshoot",
-    "net.diag", "net.trouble",
-    "ggpo.net",
-    "log.level", "log.tail", "input.show", "input.override", "input.clear",
-    "lua", "eval", "lua.mod", "eval.mod", "lua.file", "exit", "quit",
-    "dev",
-};
-
 /* Developer mode: hidden until enabled via the console `dev on` command. The
  * commands below (netcode debug harness incl. rngtrace, forced state switches,
  * input injection, arbitrary Lua/eval, raw log tail) are diagnostic/power tools
  * that a normal build shouldn't expose - unknown-command'd unless dev mode is on,
  * and omitted from `commands`/autocomplete. */
 static int g_developer_mode = 0;
-static const char* k_console_dev_commands[] = {
-    "ggpo.net", "ggpo.roundtrip", "ggpo.selftest", "ggpo.local",
-    "state.switch", "input.show", "input.override", "input.clear",
-    "lua", "eval", "lua.mod", "eval.mod", "lua.file", "log.tail",
-};
 
 static void console_history_path(char* out, size_t out_sz) {
     CreateDirectoryA("mods", NULL);
     snprintf(out, out_sz, "mods\\console_history.txt");
 }
 
-static void console_history_save(void) {
-    char path[MAX_PATH];
-    FILE* f;
-    console_history_path(path, sizeof(path));
-    f = fopen(path, "w");
-    if (!f) return;
-    for (int i = 0; i < g_console_history_count; i++) {
-        fprintf(f, "%s\n", g_console_history[i]);
-    }
-    fclose(f);
-}
-
 static void console_history_load(void) {
     char path[MAX_PATH];
-    FILE* f;
-    char line[CONSOLE_INPUT_BUF];
-    if (g_console_history_loaded) return;
-    g_console_history_loaded = 1;
-    g_console_history_count = 0;
     console_history_path(path, sizeof(path));
-    f = fopen(path, "r");
-    if (!f) return;
-    while (fgets(line, sizeof(line), f)) {
-        console_strip_crlf(line);
-        if (!line[0]) continue;
-        if (g_console_history_count >= CONSOLE_HISTORY_MAX) break;
-        safe_copy(g_console_history[g_console_history_count], sizeof(g_console_history[0]), line);
-        g_console_history_count++;
-    }
-    fclose(f);
+    (void)command_history_load_once(&g_console_history, path);
 }
 
 static void console_history_add(const char* cmd) {
-    int i;
-    if (!cmd || !cmd[0]) return;
-
-    if (g_console_history_count > 0) {
-        const char* last = g_console_history[g_console_history_count - 1];
-        if (_stricmp(last, cmd) == 0) return;
+    if (command_history_add(&g_console_history, cmd)) {
+        char path[MAX_PATH];
+        console_history_path(path, sizeof(path));
+        (void)command_history_save(&g_console_history, path);
     }
-
-    if (g_console_history_count >= CONSOLE_HISTORY_MAX) {
-        for (i = 1; i < CONSOLE_HISTORY_MAX; i++) {
-            safe_copy(g_console_history[i - 1], sizeof(g_console_history[0]), g_console_history[i]);
-        }
-        g_console_history_count = CONSOLE_HISTORY_MAX - 1;
-    }
-
-    safe_copy(g_console_history[g_console_history_count], sizeof(g_console_history[0]), cmd);
-    g_console_history_count++;
-    console_history_save();
 }
 
 static int console_common_prefix_len(const char* a, const char* b) {
@@ -3889,18 +3782,13 @@ static int console_cmd_in_list(const char* cmd, const char* const* list, int cou
     return 0;
 }
 
-static int console_cmd_is_developer(const char* cmd) {
-    return console_cmd_in_list(cmd, k_console_dev_commands,
-                               (int)(sizeof(k_console_dev_commands) / sizeof(k_console_dev_commands[0])));
-}
-
 /* Build argument-completion candidates for `cmd` at argument position
  * `arg_index` (1 = first arg). arg1/arg2 are earlier args, for context. */
 static int console_build_arg_candidates(char cands[][CONSOLE_CAND_LEN], int max,
                                         const char* cmd, int arg_index,
                                         const char* arg1, const char* arg2) {
     int n = 0;
-    #define CAND_ADD(s) do { const char* _s = (s); if (n < max && _s && _s[0]) { safe_copy(cands[n], CONSOLE_CAND_LEN, _s); n++; } } while (0)
+    #define CAND_ADD(s) do { const char* _s = (s); if (n < max && _s && _s[0]) { text_copy(cands[n], CONSOLE_CAND_LEN, _s); n++; } } while (0)
 
     static const char* const mod_id_cmds[] = {
         "mods.info","mods.enable","mods.disable","mods.toggle","mods.trace",
@@ -4013,11 +3901,12 @@ static void console_autocomplete(void) {
     arg_index = ntok;  /* 0 = completing the command itself */
 
     if (arg_index == 0) {
-        int total = (int)(sizeof(k_console_commands) / sizeof(k_console_commands[0]));
-        for (int i = 0; i < total && ncand < CONSOLE_CAND_MAX; i++) {
+        size_t total = console_catalog_count();
+        for (size_t i = 0; i < total && ncand < CONSOLE_CAND_MAX; i++) {
+            const char* command = console_catalog_at(i);
             /* Hide developer commands from autocomplete unless dev mode is on. */
-            if (!g_developer_mode && console_cmd_is_developer(k_console_commands[i])) continue;
-            safe_copy(cands[ncand], CONSOLE_CAND_LEN, k_console_commands[i]);
+            if (!g_developer_mode && console_catalog_is_developer(command)) continue;
+            text_copy(cands[ncand], CONSOLE_CAND_LEN, command);
             ncand++;
         }
     } else {
@@ -4061,7 +3950,7 @@ static void console_autocomplete(void) {
         int single = (match_count == 1);
         int new_cursor;
         if (single) {
-            safe_copy(completion, sizeof(completion), first_match);
+            text_copy(completion, sizeof(completion), first_match);
         } else if (common_len > partial_len) {
             int cl = common_len;
             if (cl >= (int)sizeof(completion)) cl = (int)sizeof(completion) - 1;
@@ -4073,7 +3962,7 @@ static void console_autocomplete(void) {
         snprintf(newbuf, sizeof(newbuf), "%.*s%s%s%s",
                  tok_start, buf, completion, single ? " " : "", suffix);
         new_cursor = tok_start + (int)strlen(completion) + (single ? 1 : 0);
-        safe_copy(g_console_input, sizeof(g_console_input), newbuf);
+        text_copy(g_console_input, sizeof(g_console_input), newbuf);
         if (new_cursor > (int)strlen(g_console_input)) new_cursor = (int)strlen(g_console_input);
         g_console_cursor = new_cursor;
     }
@@ -4087,7 +3976,7 @@ static void console_reset_history_nav(void) {
 
 static void console_set_input(const char* s) {
     size_t len;
-    safe_copy(g_console_input, sizeof(g_console_input), s ? s : "");
+    text_copy(g_console_input, sizeof(g_console_input), s ? s : "");
     len = strlen(g_console_input);
     g_console_cursor = (int)len;
 }
@@ -4100,22 +3989,25 @@ static void console_detach_from_history(void) {
 }
 
 static void console_history_step(int dir) {
-    if (g_console_history_count <= 0) return;
+    int history_count = (int)command_history_count(&g_console_history);
+    if (history_count <= 0) return;
 
     if (dir < 0) {
         if (g_console_history_pos == -1) {
-            safe_copy(g_console_edit_stash, sizeof(g_console_edit_stash), g_console_input);
+            text_copy(g_console_edit_stash, sizeof(g_console_edit_stash), g_console_input);
             g_console_has_edit_stash = 1;
-            g_console_history_pos = g_console_history_count - 1;
+            g_console_history_pos = history_count - 1;
         } else if (g_console_history_pos > 0) {
             g_console_history_pos--;
         }
-        console_set_input(g_console_history[g_console_history_pos]);
+        console_set_input(command_history_at(&g_console_history,
+                                             (size_t)g_console_history_pos));
     } else {
         if (g_console_history_pos == -1) return;
-        if (g_console_history_pos < g_console_history_count - 1) {
+        if (g_console_history_pos < history_count - 1) {
             g_console_history_pos++;
-            console_set_input(g_console_history[g_console_history_pos]);
+            console_set_input(command_history_at(&g_console_history,
+                                                 (size_t)g_console_history_pos));
             return;
         }
         g_console_history_pos = -1;
@@ -4170,82 +4062,6 @@ static void console_scroll_by(int delta) {
     if (g_console_scroll > max_scroll) g_console_scroll = max_scroll;
 }
 
-static void console_downsample_rgba(const unsigned char* src, int sw, int sh, unsigned char* dst, int dw, int dh) {
-    int y;
-    int x;
-    if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
-
-    for (y = 0; y < dh; y++) {
-        int sy0 = (y * sh) / dh;
-        int sy1 = ((y + 1) * sh) / dh;
-        if (sy1 <= sy0) sy1 = sy0 + 1;
-        if (sy1 > sh) sy1 = sh;
-
-        for (x = 0; x < dw; x++) {
-            int sx0 = (x * sw) / dw;
-            int sx1 = ((x + 1) * sw) / dw;
-            uint64_t ar = 0, ag = 0, ab = 0, aa = 0, count = 0;
-            int sy;
-            int sx;
-            if (sx1 <= sx0) sx1 = sx0 + 1;
-            if (sx1 > sw) sx1 = sw;
-
-            for (sy = sy0; sy < sy1; sy++) {
-                const unsigned char* row = src + ((size_t)sy * (size_t)sw * 4);
-                for (sx = sx0; sx < sx1; sx++) {
-                    const unsigned char* p = row + ((size_t)sx * 4);
-                    ar += p[0];
-                    ag += p[1];
-                    ab += p[2];
-                    aa += p[3];
-                    count++;
-                }
-            }
-
-            if (count == 0) count = 1;
-            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 0] = (unsigned char)(ar / count);
-            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 1] = (unsigned char)(ag / count);
-            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 2] = (unsigned char)(ab / count);
-            dst[((size_t)y * (size_t)dw + (size_t)x) * 4 + 3] = (unsigned char)(aa / count);
-        }
-    }
-}
-
-static void console_box_blur_rgba(const unsigned char* src, unsigned char* dst, int w, int h, int radius) {
-    int y;
-    int x;
-    if (!src || !dst || w <= 0 || h <= 0 || radius <= 0) return;
-    for (y = 0; y < h; y++) {
-        for (x = 0; x < w; x++) {
-            uint64_t ar = 0, ag = 0, ab = 0, aa = 0, count = 0;
-            int ky;
-            for (ky = -radius; ky <= radius; ky++) {
-                int sy = y + ky;
-                int kx;
-                if (sy < 0) sy = 0;
-                if (sy >= h) sy = h - 1;
-                for (kx = -radius; kx <= radius; kx++) {
-                    int sx = x + kx;
-                    const unsigned char* p;
-                    if (sx < 0) sx = 0;
-                    if (sx >= w) sx = w - 1;
-                    p = src + ((size_t)sy * (size_t)w + (size_t)sx) * 4;
-                    ar += p[0];
-                    ag += p[1];
-                    ab += p[2];
-                    aa += p[3];
-                    count++;
-                }
-            }
-            if (count == 0) count = 1;
-            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 0] = (unsigned char)(ar / count);
-            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 1] = (unsigned char)(ag / count);
-            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 2] = (unsigned char)(ab / count);
-            dst[((size_t)y * (size_t)w + (size_t)x) * 4 + 3] = (unsigned char)(aa / count);
-        }
-    }
-}
-
 static int console_capture_background_now(void) {
     int w = (int)(p_mad_w ? p_mad_w() : BASE_UI_W);
     int h = (int)(p_mad_h ? p_mad_h() : BASE_UI_H);
@@ -4282,9 +4098,9 @@ static int console_capture_background_now(void) {
     glReadBuffer(GL_BACK);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, src);
 
-    console_downsample_rgba(src, w, h, downsampled, bw, bh);
-    console_box_blur_rgba(downsampled, blur_tmp, bw, bh, 1);
-    console_box_blur_rgba(blur_tmp, downsampled, bw, bh, 1);
+    rgba_downsample_box(src, w, h, downsampled, bw, bh);
+    rgba_box_blur(downsampled, blur_tmp, bw, bh, 1);
+    rgba_box_blur(blur_tmp, downsampled, bw, bh, 1);
 
     if (!g_console_bg_tex) {
         glGenTextures(1, &g_console_bg_tex);
@@ -4386,68 +4202,6 @@ static const char* console_stristr(const char* haystack, const char* needle) {
     return NULL;
 }
 
-static char* console_parse_token(char** inout_cursor) {
-    char* s;
-    char* tok;
-    char quote;
-    if (!inout_cursor || !*inout_cursor) return NULL;
-    s = trim_ws(*inout_cursor);
-    if (!s || !s[0]) {
-        *inout_cursor = s;
-        return NULL;
-    }
-
-    if (*s == '"' || *s == '\'') {
-        quote = *s;
-        s++;
-        tok = s;
-        while (*s && *s != quote) s++;
-        if (*s == quote) {
-            *s = '\0';
-            s++;
-        }
-        *inout_cursor = s;
-        return tok;
-    }
-
-    tok = s;
-    while (*s && !isspace((unsigned char)*s)) s++;
-    if (*s) {
-        *s = '\0';
-        s++;
-    }
-    *inout_cursor = s;
-    return tok;
-}
-
-static int console_try_parse_long(const char* s, long* out_value) {
-    char* end = NULL;
-    long v;
-    if (!s) return 0;
-    while (*s && isspace((unsigned char)*s)) s++;
-    if (!s[0]) return 0;
-    v = strtol(s, &end, 0);
-    if (end == s) return 0;
-    while (*end && isspace((unsigned char)*end)) end++;
-    if (*end) return 0;
-    if (out_value) *out_value = v;
-    return 1;
-}
-
-static int console_try_parse_double(const char* s, double* out_value) {
-    char* end = NULL;
-    double v;
-    if (!s) return 0;
-    while (*s && isspace((unsigned char)*s)) s++;
-    if (!s[0]) return 0;
-    v = strtod(s, &end);
-    if (end == s) return 0;
-    while (*end && isspace((unsigned char)*end)) end++;
-    if (*end) return 0;
-    if (out_value) *out_value = v;
-    return 1;
-}
-
 static int console_try_parse_bool(const char* s, int* out_value) {
     if (!s || !s[0]) return 0;
     if (str_bool_true(s)) {
@@ -4475,7 +4229,7 @@ static void console_show_help(const char* topic) {
     char topic_buf[CONSOLE_INPUT_BUF];
     const char* t = "";
     if (topic && topic[0]) {
-        safe_copy(topic_buf, sizeof(topic_buf), topic);
+        text_copy(topic_buf, sizeof(topic_buf), topic);
         t = trim_ws(topic_buf);
     }
     if (!t || !t[0]) {
@@ -4700,6 +4454,7 @@ static void console_show_help(const char* topic) {
 }
 
 static void console_show_history(const char* count_arg) {
+    int history_count = (int)command_history_count(&g_console_history);
     int limit = 20;
     int start;
     if (count_arg && count_arg[0]) {
@@ -4708,17 +4463,18 @@ static void console_show_history(const char* count_arg) {
             console_push_line_rgb("Usage: history [positive_count]", 0.98f, 0.76f, 0.40f);
             return;
         }
-        if (parsed > CONSOLE_HISTORY_MAX) parsed = CONSOLE_HISTORY_MAX;
+        if (parsed > COMMAND_HISTORY_CAPACITY) parsed = COMMAND_HISTORY_CAPACITY;
         limit = (int)parsed;
     }
-    if (g_console_history_count <= 0) {
+    if (history_count <= 0) {
         console_push_line_rgb("(history empty)", 0.62f, 0.70f, 0.82f);
         return;
     }
-    start = g_console_history_count > limit ? (g_console_history_count - limit) : 0;
-    for (int i = start; i < g_console_history_count; i++) {
+    start = history_count > limit ? (history_count - limit) : 0;
+    for (int i = start; i < history_count; i++) {
         char out[CONSOLE_LINE_TEXT];
-        snprintf(out, sizeof(out), "%2d: %s", i + 1, g_console_history[i]);
+        snprintf(out, sizeof(out), "%2d: %s", i + 1,
+                 command_history_at(&g_console_history, (size_t)i));
         console_push_line_rgb(out, 0.80f, 0.83f, 0.90f);
     }
 }
@@ -4728,7 +4484,8 @@ static void console_show_console_stats(void) {
     snprintf(out, sizeof(out),
              "console.stats: lines=%d/%d history=%d/%d scroll=%d cursor=%d input_len=%d",
              g_console_line_count, CONSOLE_MAX_LINES,
-             g_console_history_count, CONSOLE_HISTORY_MAX,
+             (int)command_history_count(&g_console_history),
+             COMMAND_HISTORY_CAPACITY,
              g_console_scroll, g_console_cursor, (int)strlen(g_console_input));
     console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
 }
@@ -4754,7 +4511,7 @@ static void console_find_in_output(const char* query) {
         ConsoleLine* line = console_line_at_oldest_index(i);
         if (!line || !console_stristr(line->text, query)) continue;
         total++;
-        if (hit_count < 64) safe_copy(hits[hit_count++], CONSOLE_LINE_TEXT, line->text);
+        if (hit_count < 64) text_copy(hits[hit_count++], CONSOLE_LINE_TEXT, line->text);
     }
     if (total == 0) {
         char out[CONSOLE_LINE_TEXT];
@@ -4821,7 +4578,7 @@ static void console_set_return_state(const char* state_arg) {
     void* target;
     char out[CONSOLE_LINE_TEXT];
 
-    safe_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
+    text_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
     name = trim_ws(name_buf);
     if (!name || !name[0]) {
         console_show_return_state();
@@ -4843,7 +4600,7 @@ static void console_switch_state(const char* state_arg) {
     char name_buf[CONSOLE_INPUT_BUF];
     char* name;
     void* target;
-    safe_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
+    text_copy(name_buf, sizeof(name_buf), state_arg ? state_arg : "");
     name = trim_ws(name_buf);
     if (!name || !name[0]) {
         console_push_line_rgb("Usage: state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>", 0.98f, 0.76f, 0.40f);
@@ -4880,8 +4637,9 @@ static void console_show_ui_size(void) {
 static void console_show_system_info(void) {
     char out[CONSOLE_LINE_TEXT];
     int manual_ts = lua_manager_get_time_scale_manual(NULL);
-    snprintf(out, sizeof(out), "framework.api=%d mods=%d state=%s time.scale=%.3f%s log=%s",
+    snprintf(out, sizeof(out), "framework.api=%d.%d mods=%d state=%s time.scale=%.3f%s log=%s",
              lua_manager_framework_api(),
+             lua_manager_framework_api_revision(),
              lua_manager_get_mod_count(),
              state_name_from_ptr(p_state_current ? p_state_current() : NULL),
              (double)lua_manager_get_time_scale(),
@@ -4978,7 +4736,7 @@ static void console_show_mod_info(const char* id) {
     console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
     memset(&diag, 0, sizeof(diag));
     if (lua_manager_get_mod_diagnostics(idx, &diag)) {
-        format_bytes_compact(diag.approx_memory_bytes, mem_buf, sizeof(mem_buf));
+        text_format_bytes(diag.approx_memory_bytes, mem_buf, sizeof(mem_buf));
         snprintf(out, sizeof(out), "trace.events=%s mem~%s handlers frame=%d event=%d layout=%d",
                  diag.trace_events ? "on" : "off",
                  mem_buf,
@@ -5045,7 +4803,7 @@ static void console_set_mod_trace(const char* args) {
         return;
     }
 
-    safe_copy(args_buf, sizeof(args_buf), args);
+    text_copy(args_buf, sizeof(args_buf), args);
     cursor = args_buf;
     id = console_parse_token(&cursor);
     value = console_parse_token(&cursor);
@@ -5772,7 +5530,7 @@ static void console_run_ggpo_local(const char* arg) {
     const char* t = "";
 
     if (arg && arg[0]) {
-        safe_copy(arg_buf, sizeof(arg_buf), arg);
+        text_copy(arg_buf, sizeof(arg_buf), arg);
         t = trim_ws(arg_buf);
     }
 
@@ -6128,7 +5886,7 @@ static void online_build_net_diag(char* out, size_t cap) {
         g_online_server_state == ONLINE_SERVER_CONNECTING ? "connecting" : "offline";
     if (!out || cap == 0) return;
     lan[0] = '\0';
-    if (!(net_local_ipv4(lan, sizeof(lan)) && lan[0])) safe_copy(lan, sizeof(lan), "(unknown)");
+    if (!(net_local_ipv4(lan, sizeof(lan)) && lan[0])) text_copy(lan, sizeof(lan), "(unknown)");
     net[0] = '\0';
     ggpo_net_format_diag(net, sizeof(net));
     n = snprintf(out, cap,
@@ -6310,7 +6068,7 @@ static void console_run_online_troubleshooter(void) {
         net_connect(g_online_cfg.server_host, g_online_cfg.server_port);
     if (test->tcp_slot < 0) {
         test->tcp_done = 1;
-        safe_copy(test->tcp_error, sizeof(test->tcp_error),
+        text_copy(test->tcp_error, sizeof(test->tcp_error),
                   "could not resolve the server or allocate a socket");
     } else {
         test->tcp_deadline_ms = (DWORD)online_control_deadline_after(now, 5000u);
@@ -6321,7 +6079,7 @@ static void console_run_online_troubleshooter(void) {
                              (uint16_t)g_online_cfg.server_port,
                              sequence, 5000u, error, sizeof(error))) {
         test->udp_done = 1;
-        safe_copy(test->udp_error, sizeof(test->udp_error),
+        text_copy(test->udp_error, sizeof(test->udp_error),
                   error[0] ? error : "could not start the probe");
     }
 
@@ -6345,13 +6103,13 @@ static void online_troubleshooter_pump(void) {
             test->tcp_slot = -1;
         } else if (status < 0) {
             test->tcp_done = 1;
-            safe_copy(test->tcp_error, sizeof(test->tcp_error),
+            text_copy(test->tcp_error, sizeof(test->tcp_error),
                       "connection was refused or could not be completed");
             test->tcp_slot = -1;
         } else if (online_control_deadline_reached(
                        now, (uint32_t)test->tcp_deadline_ms)) {
             test->tcp_done = 1;
-            safe_copy(test->tcp_error, sizeof(test->tcp_error),
+            text_copy(test->tcp_error, sizeof(test->tcp_error),
                       "connection timed out");
             net_close(test->tcp_slot);
             test->tcp_slot = -1;
@@ -6369,7 +6127,7 @@ static void online_troubleshooter_pump(void) {
             test->udp_ok = 1;
         } else if (status < 0) {
             test->udp_done = 1;
-            safe_copy(test->udp_error, sizeof(test->udp_error),
+            text_copy(test->udp_error, sizeof(test->udp_error),
                       error[0] ? error : "probe failed");
         }
     }
@@ -6389,7 +6147,7 @@ static void console_run_ggpo_net(const char* arg) {
         return;
     }
 
-    safe_copy(arg_buf, sizeof(arg_buf), arg);
+    text_copy(arg_buf, sizeof(arg_buf), arg);
     cursor = arg_buf;
     action = console_parse_token(&cursor);
     if (!action || !action[0] || _stricmp(action, "status") == 0) {
@@ -6872,7 +6630,7 @@ static void console_handle_time_scale(const char* arg) {
         char arg_buf[CONSOLE_INPUT_BUF];
         char* a;
         double value = 1.0;
-        safe_copy(arg_buf, sizeof(arg_buf), arg);
+        text_copy(arg_buf, sizeof(arg_buf), arg);
         a = trim_ws(arg_buf);
         if (!a || !a[0]) {
             snprintf(out, sizeof(out), "time.scale: %.6g%s",
@@ -6934,7 +6692,7 @@ static void console_handle_discord_app(const char* arg) {
         return;
     }
 
-    safe_copy(value, sizeof(value), arg);
+    text_copy(value, sizeof(value), arg);
     application_id = trim_ws(value);
     if (!console_discord_application_id_valid(application_id)) {
         console_push_line_rgb(
@@ -7050,7 +6808,7 @@ static void native_tune_probe(int index, NativeTuneProbe* probe) {
     FILE* file;
     if (!probe) return;
     memset(probe, 0, sizeof(*probe));
-    safe_copy(probe->title, sizeof(probe->title), "(untitled)");
+    text_copy(probe->title, sizeof(probe->title), "(untitled)");
     native_tune_path(index, path, sizeof(path));
     file = fopen(path, "rb");
     if (!file) return;
@@ -7731,7 +7489,7 @@ static void console_music_output_rate(const char* arg) {
         console_music_status();
         return;
     }
-    safe_copy(value, sizeof(value), arg);
+    text_copy(value, sizeof(value), arg);
     rate_text = trim_ws(value);
     rate = strtol(rate_text, &end, 10);
     if (!end || *end != '\0' || !framework_audio_rate_valid(rate)) {
@@ -7835,7 +7593,7 @@ static void console_music_play(const char* arg) {
                               0.98f, 0.76f, 0.40f);
         return;
     }
-    safe_copy(value, sizeof(value), arg);
+    text_copy(value, sizeof(value), arg);
     selection = trim_ws(value);
     if (p_main_tally_tunes) p_main_tally_tunes();
     count = g_native_tune_count ? *g_native_tune_count : 0;
@@ -7959,7 +7717,7 @@ static void console_run_lua_mod_code(const char* args) {
         return;
     }
 
-    safe_copy(buf, sizeof(buf), args);
+    text_copy(buf, sizeof(buf), args);
     cursor = buf;
     mod_id = console_parse_token(&cursor);
     code = trim_ws(cursor ? cursor : "");
@@ -7987,7 +7745,7 @@ static void console_run_lua_file(const char* arg) {
         return;
     }
 
-    safe_copy(buf, sizeof(buf), arg);
+    text_copy(buf, sizeof(buf), arg);
     cursor = buf;
     path = console_parse_token(&cursor);
     if (!path || !path[0]) {
@@ -8042,7 +7800,7 @@ static void console_set_input_override_cmd(const char* args) {
         console_push_line_rgb("Usage: input.override <player> <mask> [frames] [replace]", 0.98f, 0.76f, 0.40f);
         return;
     }
-    safe_copy(buf, sizeof(buf), args);
+    text_copy(buf, sizeof(buf), args);
     cursor = buf;
     tok_player = console_parse_token(&cursor);
     tok_mask = console_parse_token(&cursor);
@@ -8167,7 +7925,7 @@ static void console_set_bind_cmd(const char* args, int clear_only) {
         console_push_line_rgb(clear_only ? "Usage: binds.clear <id> <key>" : "Usage: binds.set <id> <key> <value>", 0.98f, 0.76f, 0.40f);
         return;
     }
-    safe_copy(buf, sizeof(buf), args);
+    text_copy(buf, sizeof(buf), args);
     cursor = buf;
     id = console_parse_token(&cursor);
     key = console_parse_token(&cursor);
@@ -8203,7 +7961,7 @@ static void console_execute_input(void) {
     char* arg = NULL;
     char* p;
 
-    safe_copy(work, sizeof(work), g_console_input);
+    text_copy(work, sizeof(work), g_console_input);
     cmd = trim_ws(work);
     if (!cmd || !cmd[0]) {
         console_set_input("");
@@ -8227,7 +7985,7 @@ static void console_execute_input(void) {
 
     /* Developer-mode gate: hide debug/power commands unless enabled. Reported as
      * an unknown command so their existence isn't advertised. */
-    if (console_cmd_is_developer(cmd) && !g_developer_mode) {
+    if (console_catalog_is_developer(cmd) && !g_developer_mode) {
         char out[CONSOLE_LINE_TEXT];
         snprintf(out, sizeof(out), "Unknown command: %s (type 'help')", cmd);
         console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
@@ -8281,7 +8039,10 @@ static void console_execute_input(void) {
         console_handle_time_scale(arg);
     } else if (_stricmp(cmd, "framework.api") == 0) {
         char out[CONSOLE_LINE_TEXT];
-        snprintf(out, sizeof(out), "framework.api: %d", lua_manager_framework_api());
+        snprintf(out, sizeof(out), "framework.api: major=%d revision=%d capabilities=%d",
+                 lua_manager_framework_api(),
+                 lua_manager_framework_api_revision(),
+                 lua_manager_framework_api_capability_count());
         console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
     } else if (_stricmp(cmd, "discord.app") == 0) {
         console_handle_discord_app(arg);
@@ -8320,7 +8081,7 @@ static void console_execute_input(void) {
         char* cursor;
         char* id;
         char* key;
-        safe_copy(args_buf, sizeof(args_buf), arg);
+        text_copy(args_buf, sizeof(args_buf), arg);
         cursor = args_buf;
         id = console_parse_token(&cursor);
         key = console_parse_token(&cursor);
@@ -8331,7 +8092,7 @@ static void console_execute_input(void) {
         char* id;
         char* key;
         char* value;
-        safe_copy(args_buf, sizeof(args_buf), arg);
+        text_copy(args_buf, sizeof(args_buf), arg);
         cursor = args_buf;
         id = console_parse_token(&cursor);
         key = console_parse_token(&cursor);
@@ -8349,7 +8110,7 @@ static void console_execute_input(void) {
         char* cursor;
         char* id;
         char* key;
-        safe_copy(args_buf, sizeof(args_buf), arg);
+        text_copy(args_buf, sizeof(args_buf), arg);
         cursor = args_buf;
         id = console_parse_token(&cursor);
         key = console_parse_token(&cursor);
@@ -8459,9 +8220,9 @@ static void online_hub_defaults(void) {
     g_online_cfg.username[0] = '\0';
     g_online_cfg.password[0] = '\0';
     g_online_cfg.remember_me = 0;
-    safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
+    text_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
     g_online_cfg.server_port = ONLINE_DEFAULT_SERVER_PORT;
-    safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
+    text_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
     g_online_cfg.peer_port = GGPO_NET_DEFAULT_PORT;
     g_online_cfg.local_port = 0;
     g_online_cfg.p2p_enabled = 1;
@@ -8489,7 +8250,7 @@ static int online_parse_long_range(const char* s, long lo, long hi, long* out) {
 }
 
 static void online_hub_set_status(const char* msg) {
-    safe_copy(g_online_status, sizeof(g_online_status), msg ? msg : "");
+    text_copy(g_online_status, sizeof(g_online_status), msg ? msg : "");
     if (msg && msg[0]) {
         LOG_INFO("online.hub: %s", msg);
     }
@@ -8516,8 +8277,8 @@ static void online_hub_clamp_config(void) {
     g_online_cfg.challenge_notifications = g_online_cfg.challenge_notifications ? 1 : 0;
     g_online_cfg.match_hud = g_online_cfg.match_hud ? 1 : 0;
     g_online_cfg.remember_me = g_online_cfg.remember_me ? 1 : 0;
-    if (!g_online_cfg.server_host[0]) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
-    if (!g_online_cfg.peer_host[0]) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
+    if (!g_online_cfg.server_host[0]) text_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
+    if (!g_online_cfg.peer_host[0]) text_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
 }
 
 static int online_credential_identity_ready(const char* server,
@@ -8589,7 +8350,7 @@ static CredentialExtResult online_load_remembered_password(int announce) {
 
     if (result == CREDENTIAL_EXT_OK) {
         result = CREDENTIAL_EXT_MALFORMED_CREDENTIAL;
-        safe_copy(error, sizeof(error), "saved password was empty");
+        text_copy(error, sizeof(error), "saved password was empty");
     }
     if (result == CREDENTIAL_EXT_MALFORMED_CREDENTIAL ||
         result == CREDENTIAL_EXT_BUFFER_TOO_SMALL) {
@@ -8643,8 +8404,8 @@ static void online_hub_add_friend(const char* name, const char* host, uint16_t p
     if (!name || !name[0] || g_online_friend_count >= ONLINE_HUB_MAX_FRIENDS) return;
     f = &g_online_friends[g_online_friend_count++];
     memset(f, 0, sizeof(*f));
-    safe_copy(f->name, sizeof(f->name), name);
-    safe_copy(f->host, sizeof(f->host), (host && host[0]) ? host : g_online_cfg.peer_host);
+    text_copy(f->name, sizeof(f->name), name);
+    text_copy(f->host, sizeof(f->host), (host && host[0]) ? host : g_online_cfg.peer_host);
     f->port = port ? port : g_online_cfg.peer_port;
     f->blocked = blocked ? 1 : 0;
 }
@@ -8655,16 +8416,16 @@ static int online_hub_parse_host_port(const char* src, char* out_host, size_t ho
     char* colon;
     long port;
     if (!src || !src[0] || !out_host || host_sz == 0) return 0;
-    safe_copy(tmp, sizeof(tmp), src);
+    text_copy(tmp, sizeof(tmp), src);
     s = trim_ws(tmp);
     colon = strrchr(s, ':');
     if (colon && colon[1]) {
         *colon = '\0';
         if (!online_parse_long_range(colon + 1, 0, 65535, &port)) return 0;
-        safe_copy(out_host, host_sz, trim_ws(s));
+        text_copy(out_host, host_sz, trim_ws(s));
         if (out_port) *out_port = (uint16_t)port;
     } else {
-        safe_copy(out_host, host_sz, s);
+        text_copy(out_host, host_sz, s);
         if (out_port) *out_port = fallback_port;
     }
     return out_host[0] != '\0';
@@ -8678,7 +8439,7 @@ static int online_hub_add_friend_spec(const char* spec) {
     char* s;
     char* sep;
     if (!spec || !spec[0]) return 0;
-    safe_copy(tmp, sizeof(tmp), spec);
+    text_copy(tmp, sizeof(tmp), spec);
     s = trim_ws(tmp);
     if (!s[0]) return 0;
 
@@ -8688,12 +8449,12 @@ static int online_hub_add_friend_spec(const char* spec) {
         while (*sep && !isspace((unsigned char)*sep)) sep++;
     }
     if (!sep || !*sep) {
-        safe_copy(name, sizeof(name), s);
-        safe_copy(host, sizeof(host), g_online_cfg.peer_host);
+        text_copy(name, sizeof(name), s);
+        text_copy(host, sizeof(host), g_online_cfg.peer_host);
         port = g_online_cfg.peer_port;
     } else {
         *sep = '\0';
-        safe_copy(name, sizeof(name), trim_ws(s));
+        text_copy(name, sizeof(name), trim_ws(s));
         sep++;
         while (*sep && isspace((unsigned char)*sep)) sep++;
         if (!online_hub_parse_host_port(sep, host, sizeof(host), &port, g_online_cfg.peer_port)) {
@@ -8734,11 +8495,11 @@ static void online_hub_load(void) {
         key = trim_ws(key);
         value = trim_ws(value);
 
-        if (_stricmp(key, "username") == 0) safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), value);
+        if (_stricmp(key, "username") == 0) text_copy(g_online_cfg.username, sizeof(g_online_cfg.username), value);
         else if (_stricmp(key, "remember_me") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.remember_me = (int)parsed;
-        else if (_stricmp(key, "server_host") == 0) safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), value);
+        else if (_stricmp(key, "server_host") == 0) text_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), value);
         else if (_stricmp(key, "server_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.server_port = (uint16_t)parsed;
-        else if (_stricmp(key, "peer_host") == 0) safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), value);
+        else if (_stricmp(key, "peer_host") == 0) text_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), value);
         else if (_stricmp(key, "peer_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.peer_port = (uint16_t)parsed;
         else if (_stricmp(key, "local_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.local_port = (uint16_t)parsed;
         else if (_stricmp(key, "challenge_notifications") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.challenge_notifications = (int)parsed;
@@ -8754,7 +8515,7 @@ static void online_hub_load(void) {
             char* blocked_s;
             uint16_t port = GGPO_NET_DEFAULT_PORT;
             int blocked = 0;
-            safe_copy(friend_buf, sizeof(friend_buf), value);
+            text_copy(friend_buf, sizeof(friend_buf), value);
             p = friend_buf;
             name = p;
             host = strchr(p, '|');
@@ -9147,7 +8908,7 @@ static void online_result_rematch_clear(const char* status) {
     g_online_result.rematch_deadline_ms = 0;
     g_online_result.rematch_unranked = 0;
     if (status && status[0]) {
-        safe_copy(g_online_result.status, sizeof(g_online_result.status), status);
+        text_copy(g_online_result.status, sizeof(g_online_result.status), status);
         online_hub_set_status(status);
     }
 }
@@ -9168,7 +8929,7 @@ static int online_server_send_rematch_request(void) {
              g_online_result.match_id);
     if (!online_server_send_raw(line)) return 0;
     g_online_result.rematch_state = ONLINE_REMATCH_WAITING;
-    safe_copy(g_online_result.status, sizeof(g_online_result.status),
+    text_copy(g_online_result.status, sizeof(g_online_result.status),
               "Rematch requested; waiting for opponent.");
     online_hub_set_status("Rematch requested; waiting for opponent.");
     return 1;
@@ -9242,10 +9003,10 @@ static int online_challenge_map_picker_add(const char* key, const char* label) {
         picker->choice_capacity = next_capacity;
     }
     memset(&picker->choices[picker->choice_count], 0, sizeof(picker->choices[picker->choice_count]));
-    safe_copy(picker->choices[picker->choice_count].key,
+    text_copy(picker->choices[picker->choice_count].key,
               sizeof(picker->choices[picker->choice_count].key),
               key);
-    safe_copy(picker->choices[picker->choice_count].label,
+    text_copy(picker->choices[picker->choice_count].label,
               sizeof(picker->choices[picker->choice_count].label),
               (label && label[0]) ? label : key);
     picker->choice_count++;
@@ -9265,7 +9026,7 @@ static int online_challenge_map_picker_begin(const char* username) {
     g_online_challenge_map_picker.loading = 1;
     g_online_challenge_map_picker.request_id = request_id;
     g_online_challenge_map_picker.expected_count = -1;
-    safe_copy(g_online_challenge_map_picker.username,
+    text_copy(g_online_challenge_map_picker.username,
               sizeof(g_online_challenge_map_picker.username),
               username);
     online_json_escape(user, sizeof(user), username);
@@ -9433,9 +9194,9 @@ static void online_result_prepare(OnlineMatchResult result, const char* status) 
     g_online_result.competitive = g_online_active_match.competitive;
     g_online_result.elo_before = g_online_public_elo;
     g_online_result.elo_after = g_online_public_elo;
-    safe_copy(g_online_result.opponent, sizeof(g_online_result.opponent), g_online_active_match.opponent);
-    safe_copy(g_online_result.map_label, sizeof(g_online_result.map_label), g_online_active_match.map_label);
-    safe_copy(g_online_result.status, sizeof(g_online_result.status), status ? status : "Waiting for server result...");
+    text_copy(g_online_result.opponent, sizeof(g_online_result.opponent), g_online_active_match.opponent);
+    text_copy(g_online_result.map_label, sizeof(g_online_result.map_label), g_online_active_match.map_label);
+    text_copy(g_online_result.status, sizeof(g_online_result.status), status ? status : "Waiting for server result...");
 }
 
 static int online_native_finish_is_presenting(void) {
@@ -9464,7 +9225,7 @@ static void online_return_to_hub_after_match(const char* status) {
     if (online_native_finish_is_presenting()) {
         g_online_active_match.awaiting_native_return = 1;
         if (status && status[0]) {
-            safe_copy(g_online_active_match.completion_status,
+            text_copy(g_online_active_match.completion_status,
                       sizeof(g_online_active_match.completion_status),
                       status);
         }
@@ -9502,9 +9263,9 @@ static void online_active_match_capture_from_pending(void) {
     g_online_active_match.competitive = g_online_pending_match.competitive;
     g_online_active_match.queue_mode = g_online_pending_match.queue_mode;
     g_online_active_match.server_committed = g_online_pending_match.server_committed;
-    safe_copy(g_online_active_match.p2p_token, sizeof(g_online_active_match.p2p_token), g_online_pending_match.p2p_token);
-    safe_copy(g_online_active_match.opponent, sizeof(g_online_active_match.opponent), g_online_pending_match.opponent);
-    safe_copy(g_online_active_match.map_label, sizeof(g_online_active_match.map_label), g_online_pending_match.map_label);
+    text_copy(g_online_active_match.p2p_token, sizeof(g_online_active_match.p2p_token), g_online_pending_match.p2p_token);
+    text_copy(g_online_active_match.opponent, sizeof(g_online_active_match.opponent), g_online_pending_match.opponent);
+    text_copy(g_online_active_match.map_label, sizeof(g_online_active_match.map_label), g_online_pending_match.map_label);
     /* No retry can occur after a server commit, whether GAME is entered or the
      * server immediately resolves a committed disconnect. Retain only ggpo_net's
      * in-session derived keys long enough for the caller to stop the socket. */
@@ -9534,7 +9295,7 @@ static void online_finish_active_match(OnlineMatchResult result, const char* sta
         g_online_active_match.awaiting_native_return = 1;
     }
     g_online_active_match.result = result;
-    safe_copy(g_online_active_match.completion_status,
+    text_copy(g_online_active_match.completion_status,
               sizeof(g_online_active_match.completion_status),
               status ? status : "Match complete.");
     if (send_report && !g_online_active_match.result_reported) {
@@ -9612,7 +9373,7 @@ static void online_handle_server_match_disconnect(const char* reason) {
         /* A malformed terminal state must still never fall through to the
          * immediate teardown path merely because the control socket vanished. */
         g_online_active_match.result_reported = 1;
-        safe_copy(g_online_active_match.completion_status,
+        text_copy(g_online_active_match.completion_status,
                   sizeof(g_online_active_match.completion_status),
                   status);
         g_online_pending_connect_fail_status = 2;
@@ -9712,11 +9473,11 @@ static void online_normalize_pending_match_ports(void) {
         g_online_pending_match.peer_port = 0;
     }
     if (online_pending_match_is_host() && !g_online_pending_match.p2p_role[0]) {
-        safe_copy(g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role), "host");
+        text_copy(g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role), "host");
         return;
     }
     if (!g_online_pending_match.p2p_role[0]) {
-        safe_copy(g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role), "join");
+        text_copy(g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role), "join");
     }
 }
 
@@ -9986,16 +9747,16 @@ static void online_server_begin_pending_match(const char* line) {
     g_online_connect.match_id = g_online_pending_match.match_id;
     g_online_connect.local_port = g_online_pending_match.local_port;
     g_online_connect.peer_port = g_online_pending_match.peer_port;
-    safe_copy(g_online_connect.p2p_role,
+    text_copy(g_online_connect.p2p_role,
               sizeof(g_online_connect.p2p_role),
               g_online_pending_match.p2p_role);
-    safe_copy(g_online_connect.peer_host,
+    text_copy(g_online_connect.peer_host,
               sizeof(g_online_connect.peer_host),
               g_online_pending_match.peer_host);
-    safe_copy(g_online_connect.p2p_token,
+    text_copy(g_online_connect.p2p_token,
               sizeof(g_online_connect.p2p_token),
               g_online_pending_match.p2p_token);
-    safe_copy(g_online_connect.p2p_auth_token,
+    text_copy(g_online_connect.p2p_auth_token,
               sizeof(g_online_connect.p2p_auth_token),
               g_online_pending_match.p2p_auth_token);
     online_hub_apply_net_settings();
@@ -10042,12 +9803,12 @@ static void online_apply_p2p_peer(const char* line) {
          * passed the control-server configuration and DNS validation; the
          * server-provided port may differ from its TCP listener.
          */
-        safe_copy(host, sizeof(host), g_online_cfg.server_host);
+        text_copy(host, sizeof(host), g_online_cfg.server_host);
     }
     if (match_id <= 0 || port <= 0 || port > 65535 || !host[0]) return;
 
     if (g_online_pending_match.active && g_online_pending_match.match_id == match_id) {
-        safe_copy(g_online_pending_match.peer_host, sizeof(g_online_pending_match.peer_host), host);
+        text_copy(g_online_pending_match.peer_host, sizeof(g_online_pending_match.peer_host), host);
         g_online_pending_match.peer_port = port;
         applies = 1;
     }
@@ -10055,17 +9816,17 @@ static void online_apply_p2p_peer(const char* line) {
         applies = 1;
     }
     if (g_online_connect.match_id == match_id) {
-        safe_copy(g_online_connect.peer_host, sizeof(g_online_connect.peer_host), host);
+        text_copy(g_online_connect.peer_host, sizeof(g_online_connect.peer_host), host);
         g_online_connect.peer_port = port;
-        safe_copy(g_online_connect.peer_route,
+        text_copy(g_online_connect.peer_route,
                   sizeof(g_online_connect.peer_route),
                   peer_route[0] ? peer_route : "preferred");
         if (public_host[0] && public_port > 0 && public_port <= 65535) {
-            safe_copy(g_online_connect.public_host, sizeof(g_online_connect.public_host), public_host);
+            text_copy(g_online_connect.public_host, sizeof(g_online_connect.public_host), public_host);
             g_online_connect.public_port = public_port;
         }
         if (lan_host[0] && lan_port > 0 && lan_port <= 65535) {
-            safe_copy(g_online_connect.lan_host, sizeof(g_online_connect.lan_host), lan_host);
+            text_copy(g_online_connect.lan_host, sizeof(g_online_connect.lan_host), lan_host);
             g_online_connect.lan_port = lan_port;
         }
         applies = 1;
@@ -10299,7 +10060,7 @@ static void online_server_handle_line(const char* line) {
             online_server_disconnect("Online server update required; matchmaking protocol is incompatible.");
             return;
         }
-        safe_copy(submitted_username, sizeof(submitted_username), g_online_cfg.username);
+        text_copy(submitted_username, sizeof(submitted_username), g_online_cfg.username);
         username_result = online_control_json_get_string(line,
                                                           "username",
                                                           text,
@@ -10317,7 +10078,7 @@ static void online_server_handle_line(const char* line) {
             g_online_launch.waiting_status_shown = 0;
         }
         online_server_heartbeat_arm((uint32_t)GetTickCount());
-        safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), text);
+        text_copy(g_online_cfg.username, sizeof(g_online_cfg.username), text);
         if (online_json_get_int(line, "elo", &value)) g_online_public_elo = value;
         if (!online_server_send_map_manifest()) {
             online_clear_password_memory();
@@ -10493,12 +10254,12 @@ static void online_server_handle_line(const char* line) {
             online_json_get_string(line, "username", text, sizeof(text))) {
             OnlineFriend* fr = &g_online_friends[g_online_friend_count++];
             memset(fr, 0, sizeof(*fr));
-            safe_copy(fr->name, sizeof(fr->name), text);
+            text_copy(fr->name, sizeof(fr->name), text);
             if (online_json_get_int(line, "elo", &value)) fr->elo = value;
             if (online_json_get_int(line, "online", &value)) fr->online = value ? 1 : 0;
             if (!online_json_get_string(line, "presence",
                                         fr->presence, sizeof(fr->presence))) {
-                safe_copy(fr->presence, sizeof(fr->presence),
+                text_copy(fr->presence, sizeof(fr->presence),
                           fr->online ? "online" : "offline");
             }
             if (online_json_get_int(line, "muted", &value)) fr->muted = value ? 1 : 0;
@@ -10508,7 +10269,7 @@ static void online_server_handle_line(const char* line) {
             online_json_get_string(line, "username", text, sizeof(text))) {
             OnlineFriend* fr = &g_online_friends[g_online_friend_count++];
             memset(fr, 0, sizeof(*fr));
-            safe_copy(fr->name, sizeof(fr->name), text);
+            text_copy(fr->name, sizeof(fr->name), text);
             fr->blocked = 1;
         }
     } else if (_stricmp(type, "friend_request") == 0) {
@@ -10516,7 +10277,7 @@ static void online_server_handle_line(const char* line) {
             online_json_get_string(line, "from", text, sizeof(text))) {
             OnlineFriendRequest* req = &g_online_requests[g_online_request_count++];
             memset(req, 0, sizeof(*req));
-            safe_copy(req->name, sizeof(req->name), text);
+            text_copy(req->name, sizeof(req->name), text);
             if (online_json_get_int(line, "elo", &value)) req->elo = value;
         }
     } else if (_stricmp(type, "challenge") == 0) {
@@ -10524,7 +10285,7 @@ static void online_server_handle_line(const char* line) {
             online_json_get_string(line, "from", text, sizeof(text))) {
             OnlineChallenge* ch = &g_online_challenges[g_online_challenge_count++];
             memset(ch, 0, sizeof(*ch));
-            safe_copy(ch->from, sizeof(ch->from), text);
+            text_copy(ch->from, sizeof(ch->from), text);
             if (online_json_get_int(line, "id", &value)) ch->id = value;
             if (online_json_get_int(line, "elo", &value)) ch->elo = value;
             if (online_json_get_int(line, "expires_in", &value)) ch->expires_in = value;
@@ -10610,7 +10371,7 @@ static void online_server_handle_line(const char* line) {
         g_online_result.toast_visible = 1;
         g_online_result.toast_age = 0;
         g_online_result.toast_lifetime = expires_in * 60 + 90;
-        safe_copy(g_online_result.status, sizeof(g_online_result.status),
+        text_copy(g_online_result.status, sizeof(g_online_result.status),
                   "Rematch requested; waiting for opponent.");
         online_hub_set_status("Rematch requested; waiting for opponent.");
     } else if (_stricmp(type, "rematch_offer") == 0) {
@@ -10633,7 +10394,7 @@ static void online_server_handle_line(const char* line) {
         g_online_result.toast_visible = 1;
         g_online_result.toast_age = 0;
         g_online_result.toast_lifetime = expires_in * 60 + 90;
-        safe_copy(g_online_result.status, sizeof(g_online_result.status),
+        text_copy(g_online_result.status, sizeof(g_online_result.status),
                   "Opponent requested a private rematch.");
         online_hub_set_status("Opponent requested a private rematch.");
     } else if (_stricmp(type, "rematch_starting") == 0) {
@@ -10642,7 +10403,7 @@ static void online_server_handle_line(const char* line) {
         g_online_result.rematch_state = ONLINE_REMATCH_STARTING;
         g_online_result.toast_visible = 1;
         g_online_result.toast_age = 0;
-        safe_copy(g_online_result.status, sizeof(g_online_result.status),
+        text_copy(g_online_result.status, sizeof(g_online_result.status),
                   "Private rematch is starting...");
         online_hub_set_status("Private rematch is starting...");
     } else if (_stricmp(type, "rematch_declined") == 0 ||
@@ -10694,13 +10455,13 @@ static void online_server_handle_line(const char* line) {
     } else if (_stricmp(type, "match_report_ack") == 0) {
         if (!online_server_message_matches_current_match(line, type)) return;
         if (g_online_result.active) {
-            safe_copy(g_online_result.status, sizeof(g_online_result.status), "Result reported; waiting for opponent.");
+            text_copy(g_online_result.status, sizeof(g_online_result.status), "Result reported; waiting for opponent.");
         }
         online_hub_set_status("Result reported; waiting for opponent.");
     } else if (_stricmp(type, "match_transport_failure_ack") == 0) {
         if (!online_server_message_matches_current_match(line, type)) return;
         if (g_online_result.active) {
-            safe_copy(g_online_result.status, sizeof(g_online_result.status),
+            text_copy(g_online_result.status, sizeof(g_online_result.status),
                       "Connection failure reported; resolving as no contest.");
         }
         online_hub_set_status(
@@ -10816,29 +10577,29 @@ static void online_server_handle_line(const char* line) {
             }
             g_online_result.toast_lifetime = rematch_expires_in * 60 + 90;
             if (g_online_result.rematch_state == ONLINE_REMATCH_WAITING) {
-                safe_copy(g_online_result.status, sizeof(g_online_result.status),
+                text_copy(g_online_result.status, sizeof(g_online_result.status),
                           "Rematch requested; waiting for opponent.");
                 online_hub_set_status("Rematch requested; waiting for opponent.");
             } else if (g_online_result.rematch_state == ONLINE_REMATCH_OFFERED) {
-                safe_copy(g_online_result.status, sizeof(g_online_result.status),
+                text_copy(g_online_result.status, sizeof(g_online_result.status),
                           "Opponent requested a private rematch.");
                 online_hub_set_status("Opponent requested a private rematch.");
             } else if (g_online_result.rematch_state == ONLINE_REMATCH_STARTING) {
-                safe_copy(g_online_result.status, sizeof(g_online_result.status),
+                text_copy(g_online_result.status, sizeof(g_online_result.status),
                           "Private rematch is starting...");
                 online_hub_set_status("Private rematch is starting...");
             } else {
-                safe_copy(g_online_result.status, sizeof(g_online_result.status),
+                text_copy(g_online_result.status, sizeof(g_online_result.status),
                           "Private rematch available.");
                 online_hub_set_status("Private rematch available.");
             }
         } else if (prior_rematch_state != ONLINE_REMATCH_STARTING) {
             online_result_rematch_clear(NULL);
-            safe_copy(g_online_result.status, sizeof(g_online_result.status), "Match complete.");
+            text_copy(g_online_result.status, sizeof(g_online_result.status), "Match complete.");
             online_hub_set_status("Match complete.");
         }
         if (preserve_native_finish) {
-            safe_copy(g_online_active_match.completion_status,
+            text_copy(g_online_active_match.completion_status,
                       sizeof(g_online_active_match.completion_status),
                       "Match complete.");
         } else {
@@ -10860,7 +10621,7 @@ static void online_server_handle_line(const char* line) {
         online_json_get_string(line, "reason", text, sizeof(text));
         online_hub_set_status(text[0] ? text : "Online match setup ended.");
         if (preserve_native_finish) {
-            safe_copy(g_online_active_match.completion_status,
+            text_copy(g_online_active_match.completion_status,
                       sizeof(g_online_active_match.completion_status),
                       text[0] ? text : "Match ended as a no contest.");
         } else {
@@ -11050,7 +10811,7 @@ static void online_sent_challenge_add(const char* username, int id, int expires_
         idx = g_online_sent_challenge_count++;
         memset(&g_online_sent_challenges[idx], 0, sizeof(g_online_sent_challenges[idx]));
     }
-    safe_copy(g_online_sent_challenges[idx].username, sizeof(g_online_sent_challenges[idx].username), username);
+    text_copy(g_online_sent_challenges[idx].username, sizeof(g_online_sent_challenges[idx].username), username);
     g_online_sent_challenges[idx].id = id;
     if (expires_in <= 0) expires_in = 300;
     g_online_sent_challenges[idx].expires_ms = (uint32_t)GetTickCount() + (uint32_t)expires_in * 1000u;
@@ -11081,12 +10842,12 @@ static void online_rows_add(OnlineHubRowKind kind, int selectable, int id, int a
     row->selectable = selectable;
     row->id = id;
     row->aux = aux;
-    safe_copy(row->left, sizeof(row->left), left ? left : "");
-    safe_copy(row->right, sizeof(row->right), right ? right : "");
+    text_copy(row->left, sizeof(row->left), left ? left : "");
+    text_copy(row->right, sizeof(row->right), right ? right : "");
 }
 
 static void online_format_bool(char* out, size_t out_sz, int enabled) {
-    safe_copy(out, out_sz, enabled ? "ON" : "OFF");
+    text_copy(out, out_sz, enabled ? "ON" : "OFF");
 }
 
 static void online_format_setting_value(OnlineHubSetting setting, char* out, size_t out_sz) {
@@ -11115,7 +10876,7 @@ static void online_format_setting_value(OnlineHubSetting setting, char* out, siz
         case ONLINE_SETTING_CHALLENGE_NOTIFICATIONS: online_format_bool(out, out_sz, g_online_cfg.challenge_notifications); break;
         case ONLINE_SETTING_MATCH_HUD: online_format_bool(out, out_sz, g_online_cfg.match_hud); break;
         case ONLINE_SETTING_DISCORD_PRESENCE:
-            safe_copy(out, out_sz, discord_rpc_ext_setting_label());
+            text_copy(out, out_sz, discord_rpc_ext_setting_label());
             break;
         default: out[0] = '\0'; break;
     }
@@ -11478,11 +11239,11 @@ static void online_begin_setting_capture(OnlineHubSetting setting) {
     g_online_capture_kind = ONLINE_CAPTURE_SETTING;
     g_online_capture_target = setting;
     switch (setting) {
-        case ONLINE_SETTING_USERNAME: safe_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.username); break;
-        case ONLINE_SETTING_PASSWORD: safe_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.password); break;
+        case ONLINE_SETTING_USERNAME: text_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.username); break;
+        case ONLINE_SETTING_PASSWORD: text_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.password); break;
         case ONLINE_SETTING_SERVER_HOST: online_format_setting_value(setting, g_online_capture_buf, sizeof(g_online_capture_buf)); break;
         case ONLINE_SETTING_LOCAL_PORT: online_format_setting_value(setting, g_online_capture_buf, sizeof(g_online_capture_buf)); break;
-        case ONLINE_SETTING_PEER_HOST: safe_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.peer_host); break;
+        case ONLINE_SETTING_PEER_HOST: text_copy(g_online_capture_buf, sizeof(g_online_capture_buf), g_online_cfg.peer_host); break;
         default: g_online_capture_buf[0] = '\0'; break;
     }
 }
@@ -11505,12 +11266,12 @@ static void online_commit_capture(void) {
     setting = (g_online_capture_kind == ONLINE_CAPTURE_SETTING)
         ? (OnlineHubSetting)g_online_capture_target
         : ONLINE_SETTING_NONE;
-    safe_copy(old_server, sizeof(old_server), g_online_cfg.server_host);
-    safe_copy(old_username, sizeof(old_username), g_online_cfg.username);
+    text_copy(old_server, sizeof(old_server), g_online_cfg.server_host);
+    text_copy(old_username, sizeof(old_username), g_online_cfg.username);
     old_server_port = g_online_cfg.server_port;
     if (g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
         switch (setting) {
-            case ONLINE_SETTING_USERNAME: safe_copy(g_online_cfg.username, sizeof(g_online_cfg.username), trim_ws(g_online_capture_buf)); break;
+            case ONLINE_SETTING_USERNAME: text_copy(g_online_cfg.username, sizeof(g_online_cfg.username), trim_ws(g_online_capture_buf)); break;
             case ONLINE_SETTING_PASSWORD: {
                 const char* password = g_online_capture_buf;
                 if (strlen(password) >= sizeof(g_online_cfg.password)) {
@@ -11518,7 +11279,7 @@ static void online_commit_capture(void) {
                     return;
                 }
                 online_clear_password_memory();
-                safe_copy(g_online_cfg.password, sizeof(g_online_cfg.password), password);
+                text_copy(g_online_cfg.password, sizeof(g_online_cfg.password), password);
             } break;
             case ONLINE_SETTING_SERVER_HOST: {
                 char host[ONLINE_HUB_TEXT_MAX];
@@ -11527,7 +11288,7 @@ static void online_commit_capture(void) {
                     online_hub_set_status("Enter server as host:port.");
                     return;
                 }
-                safe_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), host);
+                text_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), host);
                 g_online_cfg.server_port = port;
             } break;
             case ONLINE_SETTING_LOCAL_PORT: {
@@ -11542,7 +11303,7 @@ static void online_commit_capture(void) {
                     return;
                 }
             } break;
-            case ONLINE_SETTING_PEER_HOST: safe_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), trim_ws(g_online_capture_buf)); break;
+            case ONLINE_SETTING_PEER_HOST: text_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), trim_ws(g_online_capture_buf)); break;
             default: break;
         }
         online_hub_clamp_config();
@@ -12956,7 +12717,7 @@ static void online_hub_render_ui(void) {
         float box_h = L.row_h - 8.0f * s;
         char right[224];
 
-        safe_copy(right, sizeof(right), row->right);
+        text_copy(right, sizeof(right), row->right);
         if (g_online_capture_active && row->kind == ONLINE_ROW_SETTING &&
             g_online_capture_kind == ONLINE_CAPTURE_SETTING &&
             row->id == g_online_capture_target) {
@@ -13722,7 +13483,7 @@ static void online_result_render_toast(void) {
         int delta = g_online_result.elo_after - g_online_result.elo_before;
         snprintf(line, sizeof(line), "Elo %d (%+d)", g_online_result.elo_after, delta);
     } else {
-        safe_copy(line, sizeof(line),
+        text_copy(line, sizeof(line),
                   g_online_result.status[0]
                       ? g_online_result.status
                       : (g_online_result.server_confirmed ? "Match complete." : "Waiting for server result..."));
@@ -13732,7 +13493,7 @@ static void online_result_render_toast(void) {
     if (g_online_result.rematch_state != ONLINE_REMATCH_NONE) {
         rematch_left = online_result_rematch_seconds_left();
         if (g_online_result.rematch_state == ONLINE_REMATCH_STARTING) {
-            safe_copy(line, sizeof(line), "PRIVATE REMATCH  |  STARTING...");
+            text_copy(line, sizeof(line), "PRIVATE REMATCH  |  STARTING...");
         } else {
             snprintf(line, sizeof(line), "PRIVATE REMATCH%s  |  %ds",
                      g_online_result.rematch_unranked ? "  |  UNRANKED" : "",
@@ -13839,8 +13600,8 @@ static void online_challenge_toast_show(const char* from, int id, int elo, int e
     g_online_challenge_toast.elo = elo;
     if (expires_in <= 0) expires_in = 300;
     g_online_challenge_toast.expires_ms = (uint32_t)GetTickCount() + (uint32_t)expires_in * 1000u;
-    safe_copy(g_online_challenge_toast.from, sizeof(g_online_challenge_toast.from), from);
-    safe_copy(g_online_challenge_toast.map_label,
+    text_copy(g_online_challenge_toast.from, sizeof(g_online_challenge_toast.from), from);
+    text_copy(g_online_challenge_toast.map_label,
               sizeof(g_online_challenge_toast.map_label),
               (map_label && map_label[0]) ? map_label : "Compatible map");
 }
@@ -13952,11 +13713,11 @@ static int online_challenge_toast_activate(int action) {
         return 1;
     }
     id = g_online_challenge_toast.id;
-    safe_copy(from, sizeof(from), g_online_challenge_toast.from);
+    text_copy(from, sizeof(from), g_online_challenge_toast.from);
     idx = online_challenge_index_by_ref(id, from);
     if (idx >= 0) {
         id = g_online_challenges[idx].id;
-        safe_copy(from, sizeof(from), g_online_challenges[idx].from);
+        text_copy(from, sizeof(from), g_online_challenges[idx].from);
     }
     online_server_send_challenge_action(action == 1 ? "challenge_accept" : "challenge_decline", id, from);
     if (idx >= 0) online_remove_challenge_index(idx);
@@ -14884,8 +14645,8 @@ static void update_toast_render(UpdateStatus status, uint32_t elapsed_ms) {
     char body[192];
     const char* title = "FRAMEWORK UPDATE";
 
-    safe_copy(latest, sizeof(latest), update_ext_latest_version());
-    safe_copy(status_line, sizeof(status_line), update_ext_status_line());
+    text_copy(latest, sizeof(latest), update_ext_latest_version());
+    text_copy(status_line, sizeof(status_line), update_ext_status_line());
     if (elapsed_ms < 240u) alpha = clampf((float)elapsed_ms / 240.0f, 0.18f, 1.0f);
     if (elapsed_ms > UPDATE_TOAST_VISIBLE_MS - 700u) {
         float fade = (float)(UPDATE_TOAST_VISIBLE_MS - elapsed_ms) / 700.0f;
@@ -14900,7 +14661,7 @@ static void update_toast_render(UpdateStatus status, uint32_t elapsed_ms) {
             break;
         case UPDATE_APPLYING:
             title = "INSTALLING UPDATE";
-            safe_copy(body, sizeof(body), status_line[0] ? status_line : "Downloading and verifying files...");
+            text_copy(body, sizeof(body), status_line[0] ? status_line : "Downloading and verifying files...");
             break;
         case UPDATE_RESTART_PENDING:
             title = InterlockedCompareExchange(
@@ -14908,7 +14669,7 @@ static void update_toast_render(UpdateStatus status, uint32_t elapsed_ms) {
                 ? "RESTARTING TO UPDATE" : "UPDATE READY";
             if (InterlockedCompareExchange(
                     &g_update_handoff_started, 0, 0)) {
-                safe_copy(body, sizeof(body),
+                text_copy(body, sizeof(body),
                           "Closing Eggnogg, replacing verified files, and "
                           "relaunching...");
             } else if (!update_handoff_safe_state()) {
@@ -14924,10 +14685,10 @@ static void update_toast_render(UpdateStatus status, uint32_t elapsed_ms) {
             break;
         case UPDATE_ERROR:
             title = "UPDATE NEEDS ATTENTION";
-            safe_copy(body, sizeof(body), "Open Mods > Framework to retry. Details are in the log.");
+            text_copy(body, sizeof(body), "Open Mods > Framework to retry. Details are in the log.");
             break;
         default:
-            safe_copy(body, sizeof(body), status_line[0] ? status_line : "Open Mods > Framework for details.");
+            text_copy(body, sizeof(body), status_line[0] ? status_line : "Open Mods > Framework for details.");
             break;
     }
 
@@ -14937,7 +14698,7 @@ static void update_toast_render(UpdateStatus status, uint32_t elapsed_ms) {
         size_t max_chars = text_w > 0.0f
             ? (size_t)(text_w / (9.0f * body_scale))
             : 1u;
-        safe_copy_ellipsized(body, sizeof(body), body, max_chars);
+        text_copy_ellipsized(body, sizeof(body), body, max_chars);
     }
     hooks_ui_fill_rect(x + 4.0f * ui, y + 5.0f * ui, w, h,
                        0.0f, 0.0f, 0.0f, 0.36f * alpha);
@@ -16833,7 +16594,10 @@ static void console_render_ui(void) {
                      title_scale, 0.94f, 0.96f, 0.99f, "DEV CONSOLE");
     {
         char hdr[192];
-        snprintf(hdr, sizeof(hdr), "ret=%s  hist=%d  scroll=%d", state_name_from_ptr(g_console_return_state), g_console_history_count, g_console_scroll);
+        snprintf(hdr, sizeof(hdr), "ret=%s  hist=%d  scroll=%d",
+                 state_name_from_ptr(g_console_return_state),
+                 (int)command_history_count(&g_console_history),
+                 g_console_scroll);
         draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (22.0f * ui) + 0.5f)),
                                text_scale, 0.66f, 0.74f, 0.86f, hdr);
     }
@@ -17060,7 +16824,7 @@ int hooks_register_custom_state(const char* name) {
             slot = &g_custom_states[i];
             memset(slot, 0, sizeof(*slot));
             slot->used = 1;
-            safe_copy(slot->name, sizeof(slot->name), name);
+            text_copy(slot->name, sizeof(slot->name), name);
             slot->return_state = (void*)(uintptr_t)ADDR_MAIN_STATE;
             slot->state.enter = custom_state_enter;
             slot->state.update = custom_state_update;
@@ -19410,7 +19174,7 @@ static void* __cdecl hooked_state_switch(void* target) {
     switched = real_switch ? real_switch(target) : target;
     if (finish_online_after_switch) {
         char status[192];
-        safe_copy(status, sizeof(status),
+        text_copy(status, sizeof(status),
                   g_online_active_match.completion_status[0]
                       ? g_online_active_match.completion_status
                       : "Match complete.");

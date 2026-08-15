@@ -17,10 +17,13 @@ The repository updater always preserves:
 - any extra repository-relative paths named in `YULE_PRESERVE_PATHS`.
 
 It refuses non-protected tracked edits or staged changes instead of silently
-discarding development work. A fresh clone is validated before deployment.
-Only fast-forward updates are accepted. Files removed upstream are pruned only
-when they were tracked locally, and an interrupted apply automatically restores
-the previous files, Git index, branch, and upstream ref.
+discarding development work. An untracked file that upstream is adding is
+accepted only when its contents are byte-identical, which safely handles the
+updater's own first-run bootstrap without weakening collision protection. A
+fresh clone is validated before deployment. Only fast-forward updates are
+accepted. Files removed upstream are pruned only when they were tracked locally,
+and an interrupted apply automatically restores the previous files, Git index,
+branch, and upstream ref.
 
 ## Use
 
@@ -40,6 +43,25 @@ YULE_REPOSITORY_URL=https://github.com/loafiieee/Yule.git \
 YULE_REPOSITORY_REF=main \
 bash ./eggnoggplus-win/tools/update_repository.sh
 ```
+
+## First-run bootstrap
+
+If an older checkout does not track this tool yet, execute a temporary copy
+outside the checkout so that it can install the upstream tracked copy:
+
+```bash
+cd ~/Yule
+mv eggnoggplus-win/tools/update_repository.sh /tmp/yule-update-repository.sh
+YULE_TARGET_ROOT="$PWD" YULE_PROJECT_PATH=eggnoggplus-win \
+  bash /tmp/yule-update-repository.sh --dry-run
+YULE_TARGET_ROOT="$PWD" YULE_PROJECT_PATH=eggnoggplus-win \
+  bash /tmp/yule-update-repository.sh
+rm /tmp/yule-update-repository.sh
+```
+
+Current versions also adopt an untracked file automatically when it is
+byte-identical to the file being added upstream. A different untracked file is
+still rejected, named, and left untouched.
 
 Preserve additional paths with a colon-separated list. Paths are relative to
 the Git repository root:

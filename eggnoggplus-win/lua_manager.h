@@ -10,8 +10,10 @@ extern "C" {
 // Public API for the mod framework runtime.
 // (Used by hooks.c to build the MODS/config UI.)
 
-// Framework API version (bump on breaking Lua API changes)
+// Framework API major/revision. Major changes are breaking; revisions add.
 int lua_manager_framework_api(void);
+int lua_manager_framework_api_revision(void);
+int lua_manager_framework_api_capability_count(void);
 
 /* Resolve a mod.content symbolic sheet key (owner:sheet) after the current
  * atlas build. Returns 0 while the owner/sheet is absent or not yet packed. */

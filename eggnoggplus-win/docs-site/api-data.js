@@ -58,7 +58,8 @@
       prop("mod.id", "string", "Canonical manifest id for the currently executing package.", "mod.log(\"loaded \" .. mod.id)"),
       prop("mod.name", "string", "Human-readable manifest name.", "mod.log(mod.name .. \" is ready\")"),
       prop("mod.version", "string", "Package version copied from mod.json.", "mod.log(\"version \" .. mod.version)"),
-      prop("mod.framework_api", "integer", "Framework API version exposed by this build.", "assert(mod.framework_api == 1)"),
+      prop("mod.framework_api", "integer", "Compatibility alias for the framework API major exposed by this build.", "assert(mod.framework_api == mod.api.major)", { notes: ["Retained for API-1 mods. New code should use mod.api.major and capability discovery."] }),
+      prop("mod.framework_api_revision", "integer", "Compatibility convenience field for the additive API revision.", "assert(mod.framework_api_revision == mod.api.revision)", { notes: ["Prefer mod.api.revision in new code."] }),
       callback("mod.on_load", "after the entry script finishes and the package becomes active", "function()", `mod.on_load(function()
   mod.log("initialization complete")
 end)`),
@@ -120,7 +121,7 @@ end)`,
         [p("message", "any", "Value converted to text.")], "No values.",
         `mod.error("configuration is invalid")`),
       fn("mod.info", "mod.info()", "Returns manifest metadata and live framework classification state for the package.",
-        [], "A table containing id, name, version, author, description, entry, api_version, enabled, folder_path, gameplay_affecting, suspended_online, and gameplay_reason.",
+        [], "A table containing id, name, version, author, description, entry, api_version, api_revision, enabled, folder_path, gameplay_affecting, suspended_online, and gameplay_reason.",
         `local info = mod.info()
 mod.log(("enabled=%s suspended=%s"):format(
   tostring(info.enabled), tostring(info.suspended_online)))`,
@@ -135,6 +136,25 @@ mod.log(("enabled=%s suspended=%s"):format(
         "The loaded chunk's returned values, or a Lua error if loading/execution fails.",
         `local helpers = mod.dofile("lib/helpers.lua")`,
         { errors: "Invalid paths, missing files, syntax errors, and runtime errors raise through the calling mod.", notes: ["Prefer this over require when the file must share this mod's environment and ownership."] })
+    ]
+  });
+
+  add({
+    id: "api",
+    label: "mod.api",
+    page: "api/runtime.html",
+    description: "Machine-readable framework compatibility and feature discovery. Major changes are breaking; revisions and new capability identifiers are additive.",
+    entries: [
+      prop("mod.api.major", "integer", "Current public API major. Public removals or incompatible contract changes require a new major.", "assert(mod.api.major == 1)"),
+      prop("mod.api.revision", "integer", "Current additive revision within this major.", "if mod.api.revision >= 1 then mod.log(\"capability manifests supported\") end"),
+      prop("mod.api.capabilities", "string[]", "Sorted array of stable capability identifiers supplied by this build.", `for _, capability in ipairs(mod.api.capabilities) do
+  mod.log(capability)
+end`, { notes: ["Treat the array as read-only. Use has() for branch decisions and api_requires for mandatory load-time requirements."] }),
+      fn("mod.api.has", "mod.api.has(capability)", "Checks a stable capability identifier without raising for an unknown or malformed name.", [p("capability", "string", "Lowercase identifier such as fs.pick_file.")], "Boolean.", `if mod.api.has("fs.pick_file") then
+  -- Offer an import button.
+end`, { tags: ["read-only"] }),
+      fn("mod.api.require", "mod.api.require(capability)", "Asserts a capability at runtime when a conditional module is loaded.", [p("capability", "string", "Lowercase stable capability identifier.")], "true when available; false plus an explanation when well-formed but unavailable.", `local ok, err = mod.api.require("content.tiles.v1")
+if not ok then mod.warn(err) end`, { errors: "Malformed identifiers raise a Lua argument error. For a hard package requirement, declare api_requires in mod.json so loading fails before any entry-script side effects.", tags: ["read-only"] })
     ]
   });
 
@@ -660,9 +680,50 @@ mod.log(("%s tiles=%d generation=%d"):format(sha256, count, generation))`, { tag
     page: "api/services.html",
     description: "Synchronous user-mediated Windows file/folder selection and bounded recursive lookup.",
     entries: [
-      fn("mod.fs.pick_character_file", "mod.fs.pick_character_file([title])", "Opens a native file picker filtered for ZIP/JSON character packages.", [p("title", "string", "Dialog title.", "optional")], "Absolute selected path; nil plus \"cancelled\" otherwise.", `local path, err = mod.fs.pick_character_file("Import fighter")`, { notes: ["This call opens modal native UI; invoke from an explicit user action, not every frame."] }),
-      fn("mod.fs.pick_folder", "mod.fs.pick_folder([title])", "Opens a native folder picker.", [p("title", "string", "Dialog title.", "optional")], "Absolute selected path; nil plus \"cancelled\" otherwise.", `local folder = mod.fs.pick_folder("Choose package folder")`, { notes: ["Invoke only from an explicit user action."] }),
-      fn("mod.fs.find_file", "mod.fs.find_file(root [, name])", "Recursively finds the first named file below a selected directory.", [p("root", "string", "Absolute search root."), p("name", "string", "Filename; defaults to character.json.", "optional")], "Absolute file path; nil plus \"not found\".", `local manifest, err = mod.fs.find_file(folder, "character.json")`, { tags: ["read-only"], notes: ["Traversal is bounded to depth 12."] })
+      fn("mod.fs.pick_file", "mod.fs.pick_file(options)", "Opens an owner-bound native file picker with caller-defined file-type filters.", [p("options", "table", "Required table containing title, filters, allow_all, and filter_index fields.")], "Absolute UTF-8 selected path; nil plus \"cancelled\" when the user closes the dialog, or nil plus a native-dialog error.", `local path, err = mod.fs.pick_file({
+  title = "Choose a map package",
+  filters = {
+    { name = "Yule maps (*.zip;*.json)", patterns = { "*.zip", "*.json" } },
+    { name = "JSON maps (*.json)", patterns = { "*.json" } }
+  },
+  allow_all = false,
+  filter_index = 1
+})
+if path then mod.log("selected " .. path) end`, { details: "<code>title</code> defaults to <code>Select file</code>. <code>filters</code> is an optional array of at most 16 tables; every filter requires a display <code>name</code> and an array of 1–16 filename <code>patterns</code>. With no filters, an All files entry is supplied automatically. Set <code>allow_all = true</code> to append it to a custom list. <code>filter_index</code> is a one-based initial selection and must name an available entry.", errors: "Malformed option types, invalid UTF-8, unsafe filename patterns, excessive counts/lengths, or an out-of-range filter index raise a Lua argument error before native UI opens. A disabled owner returns nil plus an explanation.", notes: ["This call opens modal native UI; invoke it only from an explicit user action, never from on_frame/on_tick.", "Patterns are filename expressions such as *.png or data-??.json. Paths, control characters, separators, and shell metacharacters are rejected.", "The returned Windows path supports Unicode and can exceed legacy MAX_PATH."] }),
+      fn("mod.fs.pick_character_file", "mod.fs.pick_character_file([title])", "Deprecated API-v1 compatibility wrapper that opens the old ZIP/JSON character-package picker.", [p("title", "string", "Dialog title.", "optional")], "Absolute UTF-8 selected path; nil plus \"cancelled\" or a native-dialog error.", `-- Existing API-v1 mods remain compatible.
+-- New code should call mod.fs.pick_file instead.
+local path, err = mod.fs.pick_character_file("Import fighter")`, { tags: ["deprecated"], notes: ["This wrapper remains for API 1 compatibility; it is not the general framework picker.", "Invoke only from an explicit user action."] }),
+      fn("mod.fs.pick_folder", "mod.fs.pick_folder([title])", "Opens an owner-bound Unicode native folder picker.", [p("title", "string", "UTF-8 dialog title; defaults to Select folder.", "optional")], "Absolute UTF-8 selected path; nil plus \"cancelled\" or an encoding error.", `local folder = mod.fs.pick_folder("Choose package folder")`, { notes: ["Invoke only from an explicit user action.", "A disabled owner cannot reopen a retained picker closure."] }),
+      fn("mod.fs.find_file", "mod.fs.find_file(root [, name])", "Recursively finds the first named file below a selected directory.", [p("root", "string", "Absolute search root."), p("name", "string", "Filename; defaults to character.json.", "optional")], "Absolute file path; nil plus \"not found\".", `local manifest, err = mod.fs.find_file(folder, "character.json")`, { tags: ["read-only"], notes: ["Traversal is bounded to depth 12 and does not follow directory reparse points/junctions."] })
+    ]
+  });
+
+  add({
+    id: "json",
+    label: "mod.json",
+    page: "api/services.html",
+    description: "Strict bounded JSON parsing and deterministic encoding for HTTP, interop, configuration imports, and other untrusted structured data.",
+    entries: [
+      prop("mod.json.null", "sentinel", "Unique value used to preserve JSON null without confusing it with absent Lua nil.", `local payload = { value = mod.json.null }
+assert(mod.json.encode(payload) == '{"value":null}')`, { notes: ["Use mod.json.is_null after decoding. The sentinel is not userdata supplied by a remote payload."] }),
+      fn("mod.json.encode", "mod.json.encode(value)", "Encodes a bounded Lua value as deterministic compact JSON.", [p("value", "boolean | finite number | UTF-8 string | table | mod.json.null", "Root value to encode.")], "JSON string; nil plus a path-aware diagnostic on failure.", `local body, err = mod.json.encode({
+  action = "join",
+  tags = mod.json.array({ "casual", "public" }),
+  note = mod.json.null
+})`, { details: "Object keys are emitted in bytewise lexical order. Dense positive-integer tables become arrays; string-keyed tables become objects; an untagged empty table becomes an object. Use array()/object() to preserve empty-container intent.", errors: "Rejects nil, functions, threads, full/light userdata other than the null sentinel, non-finite numbers, invalid UTF-8, mixed/sparse tables, unsupported keys, cycles, depth beyond 32, more than 65,536 nodes, strings beyond 256 KiB, and output beyond 1 MiB. Diagnostics identify the value path.", notes: ["Encoding never invokes tostring, metamethods, __pairs, or user code.", "Deterministic key order is useful for tests and caching, but is not a signature/canonical-JSON standard."] }),
+      fn("mod.json.decode", "mod.json.decode(text)", "Parses strict full-document JSON into bounded Lua values.", [p("text", "string", "Complete UTF-8 JSON document, at most 1 MiB.")], "Decoded value; nil plus a byte-offset and path-aware diagnostic on failure. JSON null becomes mod.json.null; arrays and objects retain explicit container kind.", `local value, err = mod.json.decode('{"players":["a","b"],"next":null}')
+if not value then
+  mod.warn(err)
+elseif mod.json.is_null(value.next) then
+  mod.log("no next page")
+end`, { errors: "Rejects invalid UTF-8/escapes/surrogates/numbers, duplicate object keys, trailing data, excessive depth/nodes/string/input size, and non-finite double results.", notes: ["The parser never evaluates Lua or JavaScript.", "Duplicate keys fail instead of silently choosing a winner."] }),
+      fn("mod.json.array", "mod.json.array([values])", "Creates an explicitly tagged JSON array, shallow-copying an optional table.", [p("values", "table", "Optional source table.", "optional")], "New table tagged as an array.", `local empty = mod.json.array()
+assert(mod.json.encode(empty) == "[]")`, { notes: ["Encoding still requires consecutive positive integer keys.", "The source table and returned table are distinct; nested values are not deep-copied."] }),
+      fn("mod.json.object", "mod.json.object([values])", "Creates an explicitly tagged JSON object, shallow-copying an optional table.", [p("values", "table", "Optional source table.", "optional")], "New table tagged as an object.", `local object = mod.json.object({ enabled = true })
+assert(mod.json.encode(object) == '{"enabled":true}')`, { notes: ["Encoding still requires string keys."] }),
+      fn("mod.json.is_null", "mod.json.is_null(value)", "Checks whether a value is the framework JSON-null sentinel.", [p("value", "any", "Value to inspect.")], "Boolean.", `if mod.json.is_null(decoded.value) then
+  decoded.value = "fallback"
+end`, { tags: ["read-only"] })
     ]
   });
 
@@ -691,7 +752,7 @@ if chunk == false then mod.net.close(slot) end`, { tags: ["read-only"], notes: [
     description: "Asynchronous WinHTTP GET requests for trusted bounded endpoints.",
     lifecycle: "Eight workers are shared process-wide, but handles and cleanup are owner-scoped. Cancel marks a request immediately; its slot is not freed or reused until the worker has actually finished.",
     entries: [
-      fn("mod.http.get", "mod.http.get(url)", "Starts an asynchronous HTTP or HTTPS GET.", [p("url", "string", "URL, at most the native 2,048-wide-character buffer.")], "Opaque owner-bound request handle; nil plus an error when invalid or capacity is exhausted.", `local request, err = mod.http.get("https://example.com/version.json")`, { notes: ["Resolve/connect/send/receive timeouts are 10 seconds.", "Bodies larger than 8 MiB are rejected from Content-Length and while streaming.", "This general trusted-mod API does not enforce the updater's stricter host/redirect policy."] }),
+      fn("mod.http.get", "mod.http.get(url)", "Starts an asynchronous HTTP or HTTPS GET.", [p("url", "string", "Strict UTF-8 HTTP(S) URL, at most the native 2,048-wide-character buffer.")], "Opaque owner-bound request handle; nil plus an error when invalid or capacity is exhausted.", `local request, err = mod.http.get("https://example.com/version.json?channel=stable")`, { notes: ["Query strings are preserved in the request target; client-only fragments are stripped.", "Embedded URL credentials and non-HTTP(S) schemes are rejected.", "Resolve/connect/send/receive timeouts are 10 seconds.", "Bodies larger than 8 MiB are rejected from Content-Length and while streaming.", "This general trusted-mod API does not enforce the updater's stricter host/redirect policy."] }),
       fn("mod.http.poll", "mod.http.poll(handle)", "Polls one asynchronous request.", [p("handle", "integer", "Handle returned by get.")], "\"pending\"; or \"done\", body; or \"error\", message.", `local state, value = mod.http.poll(request)
 if state == "done" then consume(value) end`, { tags: ["read-only"], notes: ["Only HTTP status 200 is treated as success.", "A handle is valid only for the mod that created it and is retired after its terminal poll."] }),
       fn("mod.http.cancel", "mod.http.cancel(handle)", "Cancels an owned request without blocking the game thread.", [p("handle", "integer", "Request handle.")], "No values.", `mod.http.cancel(request)`, { notes: ["Cancellation does not synchronously kill a WinHTTP worker already executing; the framework defers memory/slot cleanup until that worker publishes completion.", "All outstanding requests are canceled automatically when their owning mod unloads."] })

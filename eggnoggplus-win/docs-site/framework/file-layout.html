@@ -69,6 +69,9 @@
         <tr><td><code>dllmain.c</code>, <code>stubs.c</code>, <code>SDL2.def</code></td><td>DLL entry and SDL export proxy boundary.</td></tr>
         <tr><td><code>hooks.c/.h</code></td><td>Native hooks, framework states, console, menus, and high-level orchestration.</td></tr>
         <tr><td><code>lua_manager.c/.h</code></td><td>Manifest loading, dependency lifecycle, isolated Lua environments, and most mod APIs.</td></tr>
+        <tr><td><code>mod_api</code>, <code>mod_fs</code>, <code>mod_http</code>, <code>mod_json</code></td><td>Self-contained public API compatibility, native filesystem dialogs, asynchronous HTTP, and bounded JSON services extracted from the Lua manager.</td></tr>
+        <tr><td><code>text_util.c/.h</code>, <code>image_util.c/.h</code></td><td>Shared bounded text operations and pure RGBA downsample/blur helpers used by framework UI and diagnostics.</td></tr>
+        <tr><td><code>console_catalog</code>, <code>console_parse</code>, <code>command_history</code></td><td>Console command discovery and developer gating, strict argument parsing, and bounded persistent command history. Rendering and command handlers remain in <code>hooks.c</code>.</td></tr>
         <tr><td><code>custom_maps</code>, <code>content_*</code>, <code>map_script</code></td><td>Map formats, content registration/bridges, programmable tiles, and bounded map Lua.</td></tr>
         <tr><td><code>ggpo_*</code>, <code>online_control</code>, <code>net_ext</code></td><td>Rollback sessions, authenticated gameplay transport, server protocol, and sockets.</td></tr>
         <tr><td><code>rollback_schema</code>, <code>fp_control</code></td><td>Authoritative state serialization and deterministic floating-point setup.</td></tr>
@@ -103,4 +106,3 @@
   </article></main></div>
 </body>
 </html>
-

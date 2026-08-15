@@ -40,10 +40,15 @@ Required:
 
 Recommended:
 - `description` (string)
-- `api_version` (number): framework API version the mod was written against.
-  - If this does not match the current framework version, the mod is rejected by default.
-  - You can explicitly override this by setting `"allow_api_mismatch": true` (not recommended for released mods).
-  - For local testing only, you can also set environment variable `LUNA_ALLOW_API_MISMATCH=1`.
+- `api_version` (number): compatible framework API **major**.
+  - A different major is rejected before the entry script runs.
+- `api_revision` (number): minimum additive revision within that major (default `0`).
+  - A newer minimum is rejected by an older framework.
+- `api_requires` (array): up to 32 stable capability ids that must all exist.
+  - Use this only for mandatory features; branch on `mod.api.has(...)` for optional behavior.
+- `allow_api_mismatch` (boolean): unsafe major/revision/capability override for local testing.
+  - Do not ship released mods with this enabled.
+  - For local testing only, environment variable `LUNA_ALLOW_API_MISMATCH=1` provides the same override.
 - `config` (string): optional path to a **line-based config file** (relative to the mod folder). If present, the framework will surface it in the in-game **Options → Mods** menu.
 - `storage` (string): optional path to a **line-based persistent storage file** (relative to the mod folder). Defaults to `storage.cfg`.
 - `binds` (string): optional path to the mod bind file (relative to the mod folder). Defaults to `binds.cfg`.
@@ -71,6 +76,8 @@ Example:
   "author": "you",
   "description": "Adds something neat",
   "api_version": 1,
+  "api_revision": 1,
+  "api_requires": ["input.bindings"],
   "priority": 10,
   "depends": ["shared_lib@>=1.0.0 <2.0.0"],
   "optional_deps": ["ui_pack@^1.3.0"],
@@ -166,7 +173,38 @@ print(mod.id)
 print(mod.name)
 print(mod.version)
 print(mod.framework_api) -- the framework API version
+print(mod.framework_api_revision) -- additive revision compatibility alias
+print(mod.api.major, mod.api.revision)
+print(mod.api.has("fs.pick_file"))
 ```
+
+### API compatibility and capability discovery
+
+`mod.api.major` is the public compatibility boundary. A breaking signature,
+behavior, or removal requires a new major. `mod.api.revision` grows only when
+contracts are added without breaking API-major-compatible mods. A mod with
+`api_version = 1` and no `api_revision` therefore keeps loading on every API-1
+revision.
+
+`mod.api.capabilities` is a sorted array of stable feature ids.
+`mod.api.has("feature.id")` returns a boolean for optional branches.
+`mod.api.require("feature.id")` returns `true` when present, or
+`false, error` when a well-formed id is unavailable. Hard requirements belong
+in `mod.json` so the loader can reject before the entry script runs:
+
+```json
+{
+  "api_version": 1,
+  "api_revision": 1,
+  "api_requires": ["content.tiles.v1", "map.lua.v1"]
+}
+```
+
+Within one major, a published capability id never changes meaning or
+disappears. Deprecated functions remain usable for the rest of that major and
+must name their replacement. Ordinary removal waits for the next major. An
+emergency security repair may replace unsafe behavior with a bounded failure,
+and must be called out in release notes.
 
 ---
 
@@ -1352,6 +1390,85 @@ See `MAP_FORMAT.md` and
 `docs/superpowers/specs/2026-07-18-map-local-lua-design.md` for the full limits,
 event order, failure behavior, and example acceptance map.
 
+## JSON (`mod.json`)
+
+Use the built-in strict JSON helpers for web payloads, interop messages, and
+structured imports instead of bundling an evaluator or handwritten parser:
+
+```lua
+local encoded, encode_err = mod.json.encode({
+  action = "queue",
+  tags = mod.json.array({ "casual", "public" }),
+  cursor = mod.json.null
+})
+
+local decoded, decode_err = mod.json.decode(encoded)
+if decoded and mod.json.is_null(decoded.cursor) then
+  decoded.cursor = "start"
+end
+```
+
+`mod.json.encode(value)` supports booleans, finite numbers, valid UTF-8
+strings, tables, and `mod.json.null`. Dense positive-integer tables encode as
+arrays, string-keyed tables encode as objects, and object keys are emitted in
+deterministic bytewise order. An untagged empty table is an object. Use
+`mod.json.array([table])` or `mod.json.object([table])` to shallow-copy a table
+and preserve explicit container intent, especially `[]` versus `{}`.
+
+`mod.json.decode(text)` parses one complete strict UTF-8 JSON document. JSON
+null becomes `mod.json.null`; `mod.json.is_null(value)` recognizes it. Decoded
+arrays and objects retain their kind, including when empty. Duplicate object
+keys, invalid escapes/surrogates/numbers, and trailing data are errors instead
+of being normalized silently.
+
+Both directions are limited to 32 levels, 65,536 nodes, and 256 KiB per
+decoded/encoded string. Decode input and encoded output are each capped at
+1 MiB. Encoding rejects nil, cycles, sparse/mixed tables, unsupported key/value
+types, non-finite numbers, and invalid UTF-8. Failures return `nil, error` with
+a JSON value path; decode syntax errors also include a byte offset. No helper
+evaluates code, calls `tostring`, or invokes table metamethods.
+
+## File selection (`mod.fs`)
+
+New mods should use the general owner-bound file picker:
+
+```lua
+local path, err = mod.fs.pick_file({
+  title = "Choose a map package",
+  filters = {
+    {
+      name = "Map packages (*.zip;*.json)",
+      patterns = { "*.zip", "*.json" }
+    },
+    {
+      name = "JSON files (*.json)",
+      patterns = { "*.json" }
+    }
+  },
+  allow_all = false,
+  filter_index = 1
+})
+```
+
+`title` is optional and defaults to `Select file`. `filters` may contain at
+most 16 entries; each entry has a display `name` and 1-16 filename `patterns`.
+When `filters` is absent or empty, the picker supplies `All files (*.*)`.
+Set `allow_all = true` to append that entry to a custom list, and use the
+one-based `filter_index` to select the initial filter.
+
+The call returns an absolute UTF-8 Windows path. Closing the dialog returns
+`nil, "cancelled"`; native dialog failures return `nil` plus an error. Invalid
+types, UTF-8, lengths, counts, patterns, or filter indexes raise a Lua argument
+error before the dialog opens. Patterns are filename expressions such as
+`*.png`; path separators, control characters, and shell metacharacters are
+rejected. The owner must still be enabled when the picker is invoked.
+
+The dialog is modal. Open it only in response to an explicit user action, never
+from `on_frame` or `on_tick`. `mod.fs.pick_character_file([title])` remains as
+a deprecated API-1 compatibility wrapper. `mod.fs.pick_folder([title])` is
+also owner-bound and returns a Unicode path. `mod.fs.find_file` keeps its
+depth-12 bound and skips directory reparse points/junctions.
+
 ---
 
 ## Notes for modders
@@ -1382,4 +1499,6 @@ Prefer `mod.dofile("lib/foo.lua")` so extra scripts run in the same environment.
 
 ## Notes for framework developers
 
-Breaking changes to the API should bump `MOD_API_VERSION` in `lua_manager.c`.
+Breaking changes bump `MOD_API_MAJOR` in `mod_api.h`. Additive public changes
+bump `MOD_API_REVISION`, append stable capability identifiers when discovery is
+useful, and update the manifest/runtime/schema/docs/native regression suite.

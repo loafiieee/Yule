@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-28  
 **Status:** Source implementation and focused static coverage complete  
-**Primary code:** `lua_manager.c`, `tests/lua_http_lifecycle_static_test.py`
+**Primary code:** `mod_http.c/.h`, owner lifecycle calls in `lua_manager.c`,
+`tests/lua_http_lifecycle_static_test.py`
 
 ## Problem
 
@@ -36,6 +37,16 @@ receive timeouts remain ten seconds. A declared `Content-Length` above 8 MiB is 
 before body allocation, and the streaming loop independently enforces the same 8 MiB
 ceiling when the header is missing or false. HTTP status 200 remains the only success
 status in API 1.
+
+## URL and request-target correctness
+
+The Lua boundary rejects empty/embedded-NUL/invalid-UTF-8 URLs. The worker accepts only
+HTTP and HTTPS and rejects embedded username/password credentials. `WinHttpCrackUrl`
+returns the query and fragment through `lpszExtraInfo`, separately from `lpszUrlPath`;
+the worker now appends that extra component to the request target, while truncating at
+`#` because fragments are client-only. A missing path becomes `/`. All path/query
+concatenation is checked against the fixed wide request-target buffer before opening
+the request.
 
 ## Compatibility and follow-up
 

@@ -52,8 +52,45 @@ for (const { group, entry } of entries) {
 }
 
 const luaSource = fs.readFileSync(path.join(projectRoot, "lua_manager.c"), "utf8");
+const modFsSource = fs.readFileSync(path.join(projectRoot, "mod_fs.c"), "utf8");
+const modHttpSource = fs.readFileSync(path.join(projectRoot, "mod_http.c"), "utf8");
 
 function pushFunctionFields(functionName) {
+  if (functionName === "fs") {
+    const marker = "void mod_fs_lua_push_api";
+    const start = modFsSource.indexOf(marker);
+    if (start < 0) throw new Error(`missing ${marker}`);
+    const body = modFsSource.slice(start);
+    const fields = Array.from(
+      body.matchAll(
+        /fs_register_owner_function\(\s*L,\s*owner_enabled,\s*[A-Za-z0-9_]+,\s*"([^"]+)"\s*\)/g
+      ),
+      match => match[1]
+    );
+    const direct = body.match(
+      /lua_pushcfunction\(L,\s*lua_fs_find_file\);\s*lua_setfield\(L,\s*-2,\s*"([^"]+)"\)/
+    );
+    if (direct) fields.push(direct[1]);
+    return fields;
+  }
+  if (functionName === "http") {
+    const marker = "void mod_http_lua_push_api";
+    const start = modHttpSource.indexOf(marker);
+    if (start < 0) throw new Error(`missing ${marker}`);
+    const body = modHttpSource.slice(start);
+    const fields = Array.from(
+      body.matchAll(
+        /http_register_owner_function\(\s*L,\s*owner,\s*[A-Za-z0-9_]+,\s*"([^"]+)"\s*\)/g
+      ),
+      match => match[1]
+    );
+    const get = body.match(
+      /lua_pushcclosure\(L,\s*lua_http_get,\s*2\);\s*lua_setfield\(L,\s*-2,\s*"([^"]+)"\)/
+    );
+    if (get) fields.push(get[1]);
+    return fields;
+  }
+
   const marker = `static void push_${functionName}_api_table`;
   const start = luaSource.indexOf(marker);
   if (start < 0) throw new Error(`missing ${marker}`);
@@ -84,6 +121,8 @@ const namespaces = {
   texture: "mod.texture",
   net: "mod.net",
   http: "mod.http",
+  api: "mod.api",
+  json: "mod.json",
   mod: "mod"
 };
 

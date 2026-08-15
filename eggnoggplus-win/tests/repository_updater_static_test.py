@@ -16,6 +16,7 @@ for required in (
     '"$PROJECT_ONLINE_SERVER"|"$PROJECT_ONLINE_SERVER"/*',
     "target checkout has staged changes",
     "non-runtime local edits that would be overwritten",
+    "adopting byte-identical untracked upstream file",
     "upstream file conflicts with untracked local path",
     "source ref is not a fast-forward",
     "post-apply verification failed",

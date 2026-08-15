@@ -29,6 +29,8 @@
   "author": "you",
   "description": "Optional text",
   "api_version": 1,
+  "api_revision": 1,
+  "api_requires": ["fs.pick_file"],
   "allow_api_mismatch": false,
   "entry": "main.lua",
   "config": "config.cfg",
@@ -47,14 +49,17 @@
   <tr><td><code>version</code></td><td>Required, 1..31 chars; semantic version recommended.</td></tr>
   <tr><td><code>entry</code></td><td>Required mod-relative Lua path, 1..127 chars.</td></tr>
   <tr><td><code>description</code></td><td>Optional, up to 255 chars.</td></tr>
-  <tr><td><code>api_version</code></td><td>Recommended integer. Mismatch rejects by default.</td></tr>
-  <tr><td><code>allow_api_mismatch</code></td><td>Optional boolean override; unsafe for released mods. Local environment override: <code>LUNA_ALLOW_API_MISMATCH=1</code>.</td></tr>
+  <tr><td><code>api_version</code></td><td>Recommended API major integer. A different major rejects before the entry script runs.</td></tr>
+  <tr><td><code>api_revision</code></td><td>Optional minimum additive revision, default 0. A newer requirement rejects on an older API-1 framework.</td></tr>
+  <tr><td><code>api_requires</code></td><td>Optional unique list of up to 32 stable lowercase capability ids. Every capability must be available before load.</td></tr>
+  <tr><td><code>allow_api_mismatch</code></td><td>Optional boolean override for major, revision, or capability failures; unsafe for releases. Local environment override: <code>LUNA_ALLOW_API_MISMATCH=1</code>.</td></tr>
   <tr><td><code>config</code>, <code>storage</code>, <code>binds</code></td><td>Optional relative paths, each ≤127 chars. Storage/binds default to the names above.</td></tr>
   <tr><td><code>priority</code></td><td>Integer load-order tie breaker; higher loads earlier.</td></tr>
   <tr><td><code>depends</code>, <code>optional_deps</code></td><td>Up to 32 dependency strings, each ≤159 chars.</td></tr>
   <tr><td><code>conflicts</code>, <code>load_before</code>, <code>load_after</code></td><td>Up to 32 mod ids per list.</td></tr>
 </tbody></table>
-<p>Dependency forms: <code>other</code>, <code>other@&gt;=1.2 &lt;2</code>, or <code>other&gt;=1.2</code>. Operators are <code>= == != &gt; &gt;= &lt; &lt;= ^ ~</code>. Invalid JSON/types produce a concrete log error rather than partial load.</p></section>
+<p>Dependency forms: <code>other</code>, <code>other@&gt;=1.2 &lt;2</code>, or <code>other&gt;=1.2</code>. Operators are <code>= == != &gt; &gt;= &lt; &lt;= ^ ~</code>. Invalid JSON/types produce a concrete log error rather than partial load.</p>
+<p><strong>API policy:</strong> a major is the compatibility boundary. Revisions only add contracts. Stable capability identifiers do not change meaning or disappear during a major. Deprecated functions remain for the rest of their major and document a replacement; ordinary removal waits for the next major. Use <code>mod.api.has</code> for optional behavior and <code>api_requires</code> only when the package cannot start without a feature.</p></section>
 
 <section id="mod-config"><h2>Typed mod config grammar</h2>
 <pre><code># Comments begin with # or //

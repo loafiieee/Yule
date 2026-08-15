@@ -56,10 +56,30 @@
       "maxLength": 127
     },
     "api_version": {
-      "type": "integer"
+      "type": "integer",
+      "minimum": 1,
+      "description": "Required framework API major. Major mismatches are rejected."
+    },
+    "api_revision": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Minimum additive revision required within api_version. Omit or use 0 for an API-1 baseline mod."
+    },
+    "api_requires": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "description": "Stable framework capability identifiers required before the entry script may run.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 63,
+        "pattern": "^[a-z][a-z0-9._-]*$"
+      }
     },
     "allow_api_mismatch": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Unsafe local-testing override for major, revision, or capability mismatches."
     },
     "priority": {
       "type": "integer"

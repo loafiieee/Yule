@@ -407,7 +407,13 @@ while IFS= read -r relative; do
   destination="$TARGET_REPO/$relative"
   if [[ -e "$destination" || -L "$destination" ]]; then
     if ! grep -Fqx -- "$relative" "$TARGET_LIST"; then
-      die "upstream file conflicts with untracked local path: $relative"
+      if [[ -f "$destination" && ! -L "$destination" ]] &&
+         cmp -s -- "$STAGE_ROOT/$relative" "$destination"; then
+        printf 'adopting byte-identical untracked upstream file: %s\n' \
+          "$relative"
+      else
+        die "upstream file conflicts with untracked local path: $relative"
+      fi
     fi
     [[ ! -d "$destination" && ! -L "$destination" ]] ||
       die "tracked destination is not a regular file: $relative"

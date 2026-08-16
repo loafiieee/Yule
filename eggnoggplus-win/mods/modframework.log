@@ -1,70 +1,85 @@
-[14:47:37] [INFO] Mod framework initializing...
-[14:47:37] [INFO] Mod framework API version: 1
-[14:47:37] [INFO] Scanning mods/ folder...
-[14:47:37] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
-[14:47:37] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
-[14:47:37] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
-[14:47:37] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
-[14:47:37] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
-[14:47:37] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
-[14:47:37] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
-[14:47:37] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
-[14:47:37] [INFO] Loaded mod: ai_opponent
-[14:47:38] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by Codex
-[14:47:38] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
-[14:47:38] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
-[14:47:38] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
-[14:47:38] [INFO] Loaded mod: flight
-[14:47:38] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
-[14:47:38] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
-[14:47:38] [INFO] [mod:options_demo] Loaded options demo
-[14:47:38] [INFO] [mod:options_demo] difficulty=normal greeting=hello
-[14:47:38] [INFO] Loaded mod: options_demo
-[14:47:38] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
-[14:47:38] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[14:47:38] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
-[14:47:38] [INFO] [mod:speedhack] speed=1
-[14:47:38] [INFO] Loaded mod: speedhack
-[14:47:38] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[14:47:38] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[14:47:38] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[14:47:38] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[14:47:38] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[14:47:38] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[14:47:38] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[14:47:38] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[14:47:38] [INFO] Loaded mod: texture_pack_test
-[14:47:38] [INFO] Done. 6 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
-[14:47:38] [INFO] [maps] scanning maps/ for custom maps
-[14:47:38] [INFO] [maps][example_map] scanning folder: maps\example_map
-[14:47:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[14:47:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[14:47:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[14:47:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[14:47:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[14:47:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[14:47:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
-[14:47:38] [INFO] [maps][test map] scanning folder: maps\test map
-[14:47:38] [INFO] [maps][test map] loading json: maps\test map\data.json
-[14:47:38] [INFO] [maps][test map] loading map: maps\test map\data.map
-[14:47:38] [INFO] [maps][test_map] registered: name="test map" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=0 k_markers=0
-[14:47:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[14:47:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[14:47:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[14:47:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
-[14:47:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
-[14:47:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
-[14:47:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
-[14:47:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
-[14:47:38] [INFO] [maps] registry ready: 4 custom maps (was 0)
-[14:47:38] [INFO] hooks_init: custom MODS menu ready
-[14:47:38] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
-[14:47:38] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
-[14:47:38] [INFO] [maps][test_map] applying custom map for selector index 6
-[14:47:38] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[14:47:38] [INFO] [discord] Rich Presence connected
-[14:47:38] [INFO] update: boot local=1.9 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
-[14:47:39] [INFO] update: current (local=1.9 channel=1.9)
-[14:47:41] [INFO] [mod:flight] Flight enabled for P1
-[14:54:15] [INFO] [mod:speedhack] Unloaded
-[14:54:15] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[17:51:19] [INFO] Mod framework initializing...
+[17:51:19] [INFO] Mod framework API version: 1
+[17:51:19] [INFO] Scanning mods/ folder...
+[17:51:19] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
+[17:51:19] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
+[17:51:19] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
+[17:51:19] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
+[17:51:19] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
+[17:51:19] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
+[17:51:19] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
+[17:51:19] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
+[17:51:19] [INFO] Loaded mod: ai_opponent
+[17:51:19] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by Codex
+[17:51:19] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
+[17:51:19] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
+[17:51:19] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
+[17:51:19] [INFO] Loaded mod: flight
+[17:51:19] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[17:51:19] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[17:51:19] [INFO] [mod:options_demo] Loaded options demo
+[17:51:19] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[17:51:19] [INFO] Loaded mod: options_demo
+[17:51:19] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[17:51:19] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[17:51:19] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[17:51:19] [INFO] [mod:speedhack] speed=1
+[17:51:19] [INFO] Loaded mod: speedhack
+[17:51:19] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[17:51:19] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[17:51:19] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[17:51:19] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[17:51:19] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[17:51:19] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[17:51:19] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[17:51:19] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[17:51:19] [INFO] Loaded mod: texture_pack_test
+[17:51:19] [INFO] Done. 6 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
+[17:51:19] [INFO] [maps] scanning maps/ for custom maps
+[17:51:19] [INFO] [maps][example_map] scanning folder: maps\example_map
+[17:51:19] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[17:51:19] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[17:51:19] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[17:51:19] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[17:51:19] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[17:51:19] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[17:51:19] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[17:51:19] [INFO] [maps][example_map_night] scanning folder: maps\example_map_night
+[17:51:19] [INFO] [maps][example_map_night] loading json: maps\example_map_night\data.json
+[17:51:19] [INFO] [maps][example_map_night] loading map: maps\example_map_night\data.map
+[17:51:19] [INFO] [maps][example_map_night] registered: name="Example Map at night" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[17:51:19] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[17:51:19] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[17:51:19] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[17:51:19] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[17:51:19] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[17:51:19] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[17:51:19] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[17:51:19] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[17:51:19] [INFO] [maps] registry ready: 4 custom maps (was 0)
+[17:51:19] [INFO] hooks_init: custom MODS menu ready
+[17:51:20] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
+[17:51:20] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
+[17:51:20] [INFO] [maps][example_map_night] applying custom map for selector index 6
+[17:51:20] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[17:51:20] [INFO] update: boot local=1.9 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[17:51:20] [INFO] [discord] Rich Presence connected
+[17:51:20] [INFO] update: current (local=1.9 channel=1.9)
+[17:51:27] [INFO] [maps][big_jump] applying custom map for selector index 7
+[17:51:28] [INFO] [maps][example_map_night] applying custom map for selector index 6
+[17:52:14] [INFO] [maps][example_map_night] applying custom map for selector index 6
+[17:52:17] [INFO] menu: mode -> TRAIN VS ME
+[17:52:17] [INFO] ai_match: armed (ai_player=1 training=0)
+[17:52:18] [INFO] [maps][example_map_night] applying custom map for selector index 6
+[17:52:18] [INFO] ai_match: cleared
+[17:52:19] [INFO] menu: mode -> TRAIN AI
+[17:52:19] [INFO] menu: mode -> VS AI
+[17:52:20] [INFO] menu: mode -> ONLINE
+[17:52:21] [INFO] menu: mode -> VS AI
+[17:52:22] [INFO] menu: mode -> ONLINE
+[17:52:22] [INFO] menu: mode -> VS AI
+[17:52:23] [INFO] menu: mode -> ONLINE
+[18:36:21] [INFO] menu: mode -> PLAY
+[18:36:33] [INFO] [maps][example_map_night] applying custom map for selector index 6
+[18:36:49] [INFO] [mod:speedhack] Unloaded
+[18:36:49] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

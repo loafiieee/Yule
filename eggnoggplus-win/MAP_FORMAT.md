@@ -407,7 +407,9 @@ For ordinary single-tile glyphs, the plotter writes:
 The table below uses this shorthand:
 - `tile` = the tile id written by the plotter
 - `action` = the tile callback registered by `tiledef_init`
-- `frame` = the byte written into `tile[1]`
+- `frame` = the byte retained in `tile[1]` after the tile definition is copied
+  and any nonzero parser override is applied. A zero parser override means
+  “keep the tile definition's default”; it does not force atlas frame zero.
 - `arg` = the byte written into `tile[2]`
 
 Some names below are exact because the callback is named in Ghidra. Some plain-English descriptions are inferred from vanilla usage.
@@ -416,7 +418,7 @@ Some names below are exact because the callback is named in Ghidra. Some plain-E
 | --- | --- | --- |
 | `space` | `tile 0x14`, `colouring_action`, `frame 0x00`, `arg 0x00` | Empty/open filler. `.` behaves the same way. |
 | `.` | `tile 0x14`, `colouring_action`, `frame 0x00`, `arg 0x00` | Same as `space`. |
-| `!` | `tile 0x03`, `floor_action`, `frame 0x00`, `arg = random byte` | Floor/platform variant. |
+| `!` | `tile 0x03`, `floor_action`, `frame 0x01`, `arg = random byte` | Floor/platform variant. |
 | `#` | `tile 0x15`, `colouring_action`, `frame 0x2D`, `arg = random byte` | brick outline decoration tile |
 | `(` | `tile 0x14`, `colouring_action`, `frame 0x6A`, `arg = side bit` | left half of arch |
 | `)` | `tile 0x14`, `colouring_action`, `frame 0x6B`, `arg = side bit` | right half of arch |
@@ -428,10 +430,10 @@ Some names below are exact because the callback is named in Ghidra. Some plain-E
 | `:` | `tile 0x15`, `colouring_action`, `frame 0x3D`, `arg 0x00` | Vertical column |
 | `=` | `tile 0x15`, `colouring_action`, `frame 0x1F`, `arg = random byte` | Decorative tile, looks like a hashtag |
 | `?` | no tile is placed | Explicit no-op/reserved glyph. |
-| `@` | `tile 0x01` or `tile 0x02`, `wall_action` or `floor_action`, `frame 0x00`, `arg = auto/random` | Auto terrain. It becomes wall-like when supported by solid tile above, otherwise floor-like. |
-| `A` | `tile 0x0B`, `spinny_action`, `frame 0x00`, `arg 0x04` | Spinny tile |
-| `C` | `tile 0x08`, `chandelier_action`, `frame 0x00`, `arg 0x1E` | Swinging chandelier |
-| `E` | `tile 0x0A`, `tile_action_default`, `frame 0x00`, `arg 0x00` | eggnogg, unmoving. top with ^ |
+| `@` | `tile 0x01` or `tile 0x02`, `wall_action` or `floor_action`, `frame 0x02` (wall) or `0x01` (floor), `arg = auto/random` | Auto terrain. It becomes wall-like when supported by solid tile above, otherwise floor-like. |
+| `A` | `tile 0x0B`, `spinny_action`, `frame 0x16`, `arg 0x04` | Spinny tile |
+| `C` | `tile 0x08`, `chandelier_action`, `frame 0x18`, `arg 0x1E` | Swinging chandelier |
+| `E` | `tile 0x0A`, `tile_action_default`, `frame 0x65`, `arg 0x00` | eggnogg, unmoving. top with ^ |
 | `F` | `tile 0x17`, `colouring_action`, `frame 0x59`, `arg 0x00` | Vertical column |
 | `G` | emits a `3x3` block of `tile 0x07`, `decal_action`, frames `0x28..0x3F` | Large `3x3` decal/mural block anchored above the glyph. It needs 3 tiles of headroom and cannot sit on either side edge. |
 | `H` | `tile 0x15`, `colouring_action`, `frame 0x06`, `arg 0x00` | vertical column tile |
@@ -440,23 +442,23 @@ Some names below are exact because the callback is named in Ghidra. Some plain-E
 | `L` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant  |
 | `N` | emits a `2x3` block of `tile 0x0D`, `arty_action` | Large art block variant |
 | `O` | `tile 0x1B`, `sky_glow_action`, `frame 0x21`, `arg = side bit` | sun |
-| `P` | `tile 0x0C`, `puzzley_action`, `frame 0x00`, `arg 0x00` | changing art tile. |
+| `P` | `tile 0x0C`, `puzzley_action`, `frame 0x08`, `arg 0x00` | changing art tile. |
 | `Q` | `tile 0x1A`, `colouring_action`, `frame 0x46 or 0x47`, `arg = random byte` | skull on a stick |
 | `S` | `tile 0x14`, `colouring_action`, `frame 0x07`, `arg 0x00` | Eye tile. |
 | `T` | emits a tentacle column using `tile 0x13`, `tentacle_action` | large tentacle |
 | `W` | `tile 0x0E`, `high_water_action`, `frame 0x05`, `arg 0x00` | High/deep water tile. |
-| `X` | `tile 0x05`, `spikes_action`, `frame 0x00`, `arg = random byte` | ground spikes |
+| `X` | `tile 0x05`, `spikes_action`, `frame 0x01`, `arg = random byte` | ground spikes |
 | `Y` | emits a `2x3` block of `tile 0x0D`, `arty_action` | person art block. expands upwards from glyph, 2x3 |
 | `Z` | `tile 0x17`, `colouring_action`, `frame 0x05`, `arg = random byte` | metal plate tile. |
-| `^` | `tile 0x09`, `eggnogg_action`, `frame 0x00`, `arg 0x00` | waving eggnogg tile |
-| `_` | `tile 0x04`, `ceiling_action`, `frame 0x00`, `arg = random byte` | Ceiling tile. |
+| `^` | `tile 0x09`, `eggnogg_action`, `frame 0x65`, `arg 0x00` | waving eggnogg tile |
+| `_` | `tile 0x04`, `ceiling_action`, `frame 0x02`, `arg = random byte` | Ceiling tile. |
 | `` ` `` | `tile 0x15`, `colouring_action`, `frame 0x56`, `arg = random byte` | fence |
-| `c` | `tile 0x08`, `chandelier_action`, `frame 0x00`, `arg 0x05` | chandelier, swinging only slightly |
+| `c` | `tile 0x08`, `chandelier_action`, `frame 0x18`, `arg 0x05` | chandelier, swinging only slightly |
 | `e` | `tile 0x15`, `colouring_action`, `frame 0x40`, `arg 0x00` | top left of head tile? |
 | `f` | `tile 0x18`, `scroll_action`, `frame 0x2E`, `arg 0x00` | scrolling decor tile. |
-| `i` | `tile 0x1D`, `crowd_action`, `frame 0x00`, `arg = random byte` | Crowd/backdrop tile. |
-| `l` | `tile 0x1F`, `score_light_action`, `frame 0x00`, `arg 0x00` | score light |
-| `m` | `tile 0x06`, `mine_action`, `frame 0x00`, `arg 0x00` | mine tile |
+| `i` | `tile 0x1D`, `crowd_action`, `frame 0x3E`, `arg = random byte` | Crowd/backdrop tile. |
+| `l` | `tile 0x1F`, `score_light_action`, `frame 0x02`, `arg 0x00` | score light |
+| `m` | `tile 0x06`, `mine_action`, `frame 0x01`, `arg 0x00` | mine tile |
 | `q` | `tile 0x1A`, `colouring_action`, `frame 0x6F`, `arg = random byte` | hanging skeleton |
 | `s` | emits a tentacle column using `tile 0x13`, `tentacle_action` | small tentacle |
 | `t` | emits a tentacle column using `tile 0x13`, `tentacle_action` | large tentacle |

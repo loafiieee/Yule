@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Create, validate, import, and export EGGNOGG+ maps with Greggnogg, a visual 33 by 12 room editor.">
+  <meta name="theme-color" content="#140d0f">
+  <title>Greggnogg · EGGNOGG+ Map Editor</title>
+  <link rel="stylesheet" href="editor.css">
+  <script defer src="editor-core.js"></script>
+  <script defer src="atlas-renderer.js"></script>
+  <script defer src="editor.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#map-workspace">Skip to the map grid</a>
+
+  <header class="command-bar">
+    <div class="brand-lockup">
+      <div class="brand-mark" aria-hidden="true">G</div>
+      <div>
+        <div class="eyebrow">EGGNOGG+ MAPMAKER</div>
+        <div class="product-name">Greggnogg <span class="version-chip">V1</span></div>
+      </div>
+    </div>
+
+    <div class="project-heading" aria-live="polite">
+      <span id="project-title">Untitled Arena</span>
+      <span class="save-state"><span class="save-dot" aria-hidden="true"></span><span id="save-label">Saved locally</span></span>
+    </div>
+
+    <nav class="command-actions" aria-label="Project actions">
+      <button class="quiet-button" id="new-map-button" type="button"><span aria-hidden="true">＋</span> New</button>
+      <button class="quiet-button" id="import-button" type="button"><span aria-hidden="true">⇧</span> Import</button>
+      <button class="primary-button" id="export-button" type="button"><span aria-hidden="true">⇩</span> Export map</button>
+      <button class="icon-button help-button" id="help-button" type="button" aria-label="Open keyboard shortcuts and help">?</button>
+    </nav>
+  </header>
+
+  <main class="editor-shell" id="main">
+    <aside class="tool-panel palette-panel" id="palette-panel" aria-label="Tiles and drawing tools">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">BUILD MODE</p>
+          <h1>Greggnogg</h1>
+        </div>
+        <button class="panel-close" type="button" data-close-panel="palette" aria-label="Close tiles panel">×</button>
+      </div>
+
+      <div class="tool-section">
+        <div class="section-label-row">
+          <h2>Drawing tools</h2>
+          <span class="shortcut-hint">1–5</span>
+        </div>
+        <div class="drawing-tools" role="toolbar" aria-label="Drawing tools">
+          <button class="tool-button is-active" type="button" data-tool="pencil" aria-pressed="true"><span class="tool-icon" aria-hidden="true">✎</span><span>Pencil</span><kbd>1</kbd></button>
+          <button class="tool-button" type="button" data-tool="eraser" aria-pressed="false"><span class="tool-icon" aria-hidden="true">◇</span><span>Erase</span><kbd>2</kbd></button>
+          <button class="tool-button" type="button" data-tool="fill" aria-pressed="false"><span class="tool-icon" aria-hidden="true">▨</span><span>Fill</span><kbd>3</kbd></button>
+          <button class="tool-button" type="button" data-tool="line" aria-pressed="false"><span class="tool-icon" aria-hidden="true">╱</span><span>Line</span><kbd>4</kbd></button>
+          <button class="tool-button" type="button" data-tool="rectangle" aria-pressed="false"><span class="tool-icon" aria-hidden="true">□</span><span>Box</span><kbd>5</kbd></button>
+          <button class="tool-button" type="button" data-tool="eyedropper" aria-pressed="false"><span class="tool-icon" aria-hidden="true">⌾</span><span>Pick</span><kbd>I</kbd></button>
+        </div>
+      </div>
+
+      <div class="tool-section tile-section">
+        <div class="section-label-row">
+          <h2>Native tiles</h2>
+          <span id="tile-count">0 tiles</span>
+        </div>
+        <label class="search-field" for="tile-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="tile-search" type="search" autocomplete="off" placeholder="Search terrain, hazards…">
+          <kbd>/</kbd>
+        </label>
+        <div class="tile-catalog" id="tile-catalog" role="listbox" aria-label="Native EGGNOGG+ tile palette"></div>
+      </div>
+
+      <section class="selected-tile-card" id="selected-tile-card" aria-live="polite">
+        <div class="selected-tile-preview" id="selected-tile-preview" aria-hidden="true"></div>
+        <div>
+          <div class="eyebrow">SELECTED TILE</div>
+          <strong id="selected-tile-name">Automatic terrain</strong>
+          <p id="selected-tile-description">Adapts into a wall or floor based on its neighbors.</p>
+        </div>
+        <code id="selected-tile-glyph">@</code>
+      </section>
+    </aside>
+
+    <section class="workspace" id="map-workspace" tabindex="-1" aria-label="Map workspace">
+      <div class="workspace-toolbar">
+        <div class="history-controls" role="group" aria-label="History">
+          <button class="icon-button" id="undo-button" type="button" aria-label="Undo" disabled>↶</button>
+          <button class="icon-button" id="redo-button" type="button" aria-label="Redo" disabled>↷</button>
+        </div>
+        <div class="toolbar-divider" aria-hidden="true"></div>
+        <label class="toggle-control" for="symmetry-toggle">
+          <input id="symmetry-toggle" type="checkbox">
+          <span class="toggle-track" aria-hidden="true"><span></span></span>
+          Symmetry brush
+        </label>
+        <button class="quiet-button compact" id="mirror-view-button" type="button" aria-pressed="false" title="Preview the right-side spatial mirror; palette banks are edited separately"><span aria-hidden="true">⇆</span> Spatial mirror</button>
+        <button class="quiet-button compact" id="grid-toggle-button" type="button" aria-pressed="true"><span aria-hidden="true">▦</span> Grid</button>
+        <div class="zoom-control" role="group" aria-label="Map zoom">
+          <button class="icon-button" id="zoom-out-button" type="button" aria-label="Zoom out">−</button>
+          <button class="zoom-label" id="zoom-label" type="button" title="Fit map to workspace">100%</button>
+          <button class="icon-button" id="zoom-in-button" type="button" aria-label="Zoom in">＋</button>
+        </div>
+      </div>
+
+      <div class="arena-overview" aria-label="Final mirrored arena layout">
+        <div>
+          <span class="eyebrow">FINAL ARENA</span>
+          <strong id="arena-summary">2 source rooms · 3 final rooms</strong>
+        </div>
+        <div class="arena-track" id="arena-track"></div>
+        <p>Source rooms are mirrored outward automatically.</p>
+      </div>
+
+      <div class="map-scroll" id="map-scroll">
+        <div class="map-stage" id="map-stage">
+          <div class="map-frame">
+            <div class="room-atmosphere" id="room-atmosphere" aria-hidden="true"></div>
+            <div class="column-ruler" id="column-ruler" aria-hidden="true"></div>
+            <div class="row-ruler" id="row-ruler" aria-hidden="true"></div>
+            <div class="map-grid" id="map-grid" role="grid" aria-label="Room grid, 12 rows by 33 columns" aria-rowcount="12" aria-colcount="33">
+              <canvas class="room-render-canvas" id="room-render-canvas" width="528" height="192" aria-hidden="true"></canvas>
+            </div>
+            <div class="grid-corner" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="workspace-status">
+        <div class="coordinate-readout"><span class="status-pip" aria-hidden="true"></span><span id="coordinate-label">ROW 1 · COL 1</span></div>
+        <div id="tool-status">Pencil · Automatic terrain (@)</div>
+        <button class="validation-summary is-valid" id="validation-summary" type="button"><span aria-hidden="true">✓</span><span>Ready to export</span></button>
+      </div>
+
+      <div class="room-rail" aria-label="Source room order">
+        <div class="room-rail-heading">
+          <span class="eyebrow">SOURCE ROOMS · CENTER → OUTWARD</span>
+          <div class="room-actions">
+            <button class="quiet-button compact" id="duplicate-room-button" type="button">Duplicate</button>
+            <button class="quiet-button compact" id="add-room-button" type="button"><span aria-hidden="true">＋</span> Add room</button>
+          </div>
+        </div>
+        <div class="room-tabs" id="room-tabs" role="tablist" aria-label="Source rooms"></div>
+      </div>
+    </section>
+
+    <aside class="tool-panel inspector-panel" id="inspector-panel" aria-label="Map and room settings">
+      <div class="inspector-tabs" role="tablist" aria-label="Inspector">
+        <button type="button" role="tab" aria-selected="true" aria-controls="map-inspector" id="map-tab" data-inspector-tab="map">Map</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="room-inspector" id="room-tab" data-inspector-tab="room">Room</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="validation-inspector" id="validation-tab" data-inspector-tab="validation">Checks <span class="tab-count" id="validation-count">0</span></button>
+        <button class="panel-close" type="button" data-close-panel="inspector" aria-label="Close settings panel">×</button>
+      </div>
+
+      <div class="inspector-content">
+        <section class="inspector-view is-active" id="map-inspector" role="tabpanel" aria-labelledby="map-tab">
+          <div class="inspector-heading">
+            <p class="eyebrow">PROJECT SETTINGS</p>
+            <h2>Map details</h2>
+            <p>These fields become the map’s selector entry and gameplay rules.</p>
+          </div>
+
+          <div class="form-stack">
+            <label class="field">Map name <span>Required</span><input id="map-name" type="text" maxlength="127" autocomplete="off"></label>
+            <label class="field">Author <span>Required</span><input id="map-author" type="text" maxlength="127" autocomplete="name" placeholder="Your name"></label>
+            <label class="field">Map folder ID <span>Letters, numbers, . _ -</span><input id="map-id" type="text" maxlength="63" spellcheck="false" autocomplete="off"></label>
+            <label class="field">Description <span id="description-count">0 / 255</span><textarea id="map-description" maxlength="255" rows="3" placeholder="What makes this arena interesting?"></textarea></label>
+            <label class="field">Sort order <span>Lower appears first</span><input id="sort-order" type="number" step="1"></label>
+          </div>
+
+          <fieldset class="field-group">
+            <legend>Combat mode</legend>
+            <div class="segmented-control">
+              <label><input type="radio" name="combat-mode" value="swords" checked><span>Swords</span></label>
+              <label><input type="radio" name="combat-mode" value="karate"><span>Karate</span></label>
+            </div>
+            <p>Changes each player’s natural spawn loadout. Sword pickup tiles still work in either mode.</p>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>Round ends in</legend>
+            <div class="segmented-control">
+              <label><input type="radio" name="round-end" value="inner_only" checked><span>Inner rooms</span></label>
+              <label><input type="radio" name="round-end" value="any"><span>Any room</span></label>
+            </div>
+          </fieldset>
+
+          <div class="two-column-fields">
+            <label class="field">Score target <span>Blank = default</span><input id="score-target" type="number" min="1" step="1" placeholder="Default"></label>
+            <label class="field">Armed respawn limit <span>0 or more</span><input id="respawn-limit" type="number" min="0" step="1" value="4"></label>
+          </div>
+
+          <div class="format-card">
+            <div><span class="format-badge">V1</span><strong>Native map package</strong></div>
+            <p>Uses EGGNOGG+’s built-in tiles and produces <code>data.json</code> plus <code>data.map</code>. V2 sprite sheets and Lua are preserved on import by refusing to overwrite them.</p>
+          </div>
+        </section>
+
+        <section class="inspector-view" id="room-inspector" role="tabpanel" aria-labelledby="room-tab" hidden>
+          <div class="inspector-heading">
+            <p class="eyebrow">ACTIVE SOURCE ROOM</p>
+            <h2 id="room-inspector-title">center</h2>
+            <p id="room-position-copy">The center of the final arena.</p>
+          </div>
+
+          <div class="form-stack">
+            <label class="field">Room ID <span>Used in both files</span><input id="room-id" type="text" maxlength="63" spellcheck="false" autocomplete="off"></label>
+            <label class="field">Ambient effect
+              <select id="room-ambient">
+                <option value="none">None</option>
+                <option value="bugs">Bugs</option>
+                <option value="clouds">Clouds</option>
+                <option value="art">Art</option>
+                <option value="flies">Flies</option>
+                <option value="drips">Drips</option>
+                <option value="dust">Dust</option>
+                <option value="bats">Bats</option>
+                <option value="bubbles">Bubbles</option>
+                <option value="boil">Boil / fumes</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="section-label-row appearance-heading">
+            <h3>Room palette</h3>
+            <button class="text-button" id="preview-mirror-colors-button" type="button" aria-pressed="false">Preview: Primary</button>
+            <button class="text-button" id="reset-colors-button" type="button">Reset colors</button>
+          </div>
+          <div class="palette-presets" id="palette-presets" aria-label="Room color presets"></div>
+          <div class="color-fields" id="primary-color-fields"></div>
+
+          <label class="check-row" for="custom-mirror-colors">
+            <input id="custom-mirror-colors" type="checkbox">
+            <span><strong>Use a separate room mirror bank</strong><small>Otherwise this room follows Yule’s presence-sensitive palette inheritance.</small></span>
+          </label>
+          <div class="color-fields mirror-colors" id="mirror-color-fields" hidden></div>
+
+          <div class="room-order-actions">
+            <button class="quiet-button" id="move-room-in-button" type="button">← Move inward</button>
+            <button class="quiet-button" id="move-room-out-button" type="button">Move outward →</button>
+            <button class="danger-button" id="delete-room-button" type="button">Delete room</button>
+          </div>
+
+          <div class="spawn-budget-card">
+            <div class="spawn-meter"><span id="spawn-meter-fill"></span></div>
+            <div><strong id="spawn-budget-label">0 / 13 reset spawners</strong><span id="spawn-budget-detail">0 hazards · 0 swords · 0 mines</span></div>
+          </div>
+        </section>
+
+        <section class="inspector-view" id="validation-inspector" role="tabpanel" aria-labelledby="validation-tab" hidden>
+          <div class="inspector-heading">
+            <p class="eyebrow">LIVE PACKAGE CHECK</p>
+            <h2 id="validation-heading">Ready to export</h2>
+            <p>Checks the same room dimensions, glyphs, metadata, footprints, and spawn limits required by Yule.</p>
+          </div>
+          <div class="validation-list" id="validation-list"></div>
+          <div class="validation-facts">
+            <div><span id="fact-source-rooms">2</span><small>Source rooms</small></div>
+            <div><span id="fact-final-rooms">3</span><small>Final rooms</small></div>
+            <div><span>33×12</span><small>Cells per room</small></div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <nav class="mobile-dock" aria-label="Editor panels">
+    <button type="button" data-open-panel="palette"><span aria-hidden="true">▦</span>Tiles</button>
+    <button type="button" id="mobile-rooms-button"><span aria-hidden="true">▤</span>Rooms</button>
+    <button type="button" data-open-panel="inspector"><span aria-hidden="true">☷</span>Settings</button>
+  </nav>
+
+  <dialog class="editor-dialog new-map-dialog" id="new-map-dialog" aria-labelledby="new-map-heading">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">START FRESH</p><h2 id="new-map-heading">Create a new map</h2><p>Choose a starting point. You can change every tile and setting afterward.</p></div>
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <div class="template-grid">
+        <label class="template-option">
+          <input type="radio" name="map-template" value="arena" checked>
+          <span class="template-preview arena-preview" aria-hidden="true"><i></i><i></i><i></i></span>
+          <strong>Balanced arena</strong>
+          <small>Two playable rooms with floors, platforms, and pickups.</small>
+        </label>
+        <label class="template-option">
+          <input type="radio" name="map-template" value="blank">
+          <span class="template-preview blank-preview" aria-hidden="true"></span>
+          <strong>Blank rooms</strong>
+          <small>Two completely open 33×12 rooms.</small>
+        </label>
+        <label class="template-option">
+          <input type="radio" name="map-template" value="single">
+          <span class="template-preview single-preview" aria-hidden="true"><i></i></span>
+          <strong>Single room</strong>
+          <small>A compact one-room arena with a solid floor.</small>
+        </label>
+      </div>
+      <label class="field dialog-author-field">Author <span>Carried into future new maps</span><input id="new-map-author" type="text" maxlength="127" autocomplete="name" placeholder="Your name"></label>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Keep editing</button>
+        <button class="primary-button" id="confirm-new-map" value="default">Create map</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="editor-dialog import-dialog" id="import-dialog" aria-labelledby="import-heading">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">OPEN A PACKAGE</p><h2 id="import-heading">Import a Yule map</h2><p>Select both package files, an extracted map folder, or a ZIP. Your current draft stays saved locally.</p></div>
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <div class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="Choose or drop map package files">
+        <span class="drop-icon" aria-hidden="true">⇧</span>
+        <strong>Drop a map package here</strong>
+        <span><code>data.json</code> + <code>data.map</code>, folder, or ZIP</span>
+        <button class="quiet-button" id="choose-files-button" type="button">Choose files</button>
+      </div>
+      <div class="import-picker-row">
+        <button class="text-button" id="choose-folder-button" type="button">Choose an extracted folder</button>
+        <span>Everything is read locally in your browser.</span>
+      </div>
+      <input id="package-file-input" type="file" accept=".json,.map,.zip,.png,.lua,application/json,application/zip,image/png,text/plain" multiple hidden>
+      <input id="package-folder-input" type="file" webkitdirectory multiple hidden>
+      <div class="import-result" id="import-result" hidden></div>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Cancel</button>
+        <button class="primary-button" id="confirm-import-button" type="button" disabled>Import map</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="editor-dialog export-dialog" id="export-dialog" aria-labelledby="export-heading">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">PACKAGE READY</p><h2 id="export-heading">Export your map</h2><p id="export-dialog-copy">Download a ready-to-extract map package or either source file.</p></div>
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <div class="package-preview">
+        <div class="package-tree" id="package-tree"></div>
+        <div class="package-summary">
+          <span class="export-ready-mark" aria-hidden="true">✓</span>
+          <strong id="export-ready-title">Valid V1 package</strong>
+          <p id="export-ready-summary">2 source rooms become 3 mirrored rooms in game.</p>
+        </div>
+      </div>
+      <div class="install-note"><span aria-hidden="true">i</span><p><strong>After downloading:</strong> extract the map folder directly into EGGNOGG+’s <code>maps</code> folder. The game scans folders, not ZIP files.</p></div>
+      <div class="secondary-downloads">
+        <button class="quiet-button" id="download-json-button" type="button">Download data.json</button>
+        <button class="quiet-button" id="download-map-button" type="button">Download data.map</button>
+        <button class="quiet-button" id="copy-map-button" type="button">Copy data.map</button>
+      </div>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Keep editing</button>
+        <button class="primary-button export-download-button" id="download-package-button" type="button"><span aria-hidden="true">⇩</span> Download map ZIP</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="editor-dialog help-dialog" id="help-dialog" aria-labelledby="help-heading">
+    <form method="dialog">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">QUICK GUIDE</p><h2 id="help-heading">Build faster</h2><p>Everything stays on this device until you download a package.</p></div>
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <div class="help-columns">
+        <section><h3>Grid controls</h3><dl><div><dt><kbd>Drag</kbd></dt><dd>Paint continuously</dd></div><div><dt><kbd>Right drag</kbd></dt><dd>Erase cells</dd></div><div><dt><kbd>Arrows</kbd></dt><dd>Move keyboard cursor</dd></div><div><dt><kbd>Space</kbd></dt><dd>Paint focused cell</dd></div><div><dt><kbd>Delete</kbd></dt><dd>Erase focused cell</dd></div></dl></section>
+        <section><h3>Shortcuts</h3><dl><div><dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Choose drawing tool</dd></div><div><dt><kbd>I</kbd></dt><dd>Pick tile from grid</dd></div><div><dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd></div><div><dt><kbd>Ctrl</kbd> <kbd>Y</kbd></dt><dd>Redo</dd></div><div><dt><kbd>/</kbd></dt><dd>Search tiles</dd></div></dl></section>
+      </div>
+      <div class="help-tip"><strong>How rooms work</strong><p>You author rooms from the center outward. Yule mirrors every outer room on the other side, so two source rooms make a three-room arena.</p></div>
+      <div class="help-tip"><strong>Faithful previews, safe output</strong><p>Greggnogg renders from the game’s original <code>data/*.png</code> atlases. Animated, procedural, and physics-driven objects are marked as approximations; package validation follows the Yule loader, not the preview.</p></div>
+      <div class="dialog-actions"><button class="primary-button" value="cancel">Got it</button></div>
+    </form>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div class="sr-only" id="live-region" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

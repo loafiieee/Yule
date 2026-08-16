@@ -12915,8 +12915,8 @@ static void online_launch_poll_forwarded_requests(void) {
 /*
  * Parse via CommandLineToArgvW at a normal update boundary, never from
  * DllMain. UTF-8 conversion is only an interchange step: the launch parser
- * accepts an intentionally tiny ASCII URI/switch grammar and canonical
- * lowercase account names.
+ * accepts a bounded ASCII URI/switch grammar and canonical lowercase account
+ * names. Preview file contents remain base64url until loader validation.
  */
 static void online_launch_parse_process_args(void) {
     LPWSTR* wide_args = NULL;
@@ -13033,6 +13033,42 @@ static void online_launch_pump(void) {
      * reached its normal terminal state.
      */
     if (g_online_pending_match.active || g_online_active_match.active) return;
+    if (action == LAUNCH_REQUEST_PREVIEW_V1) {
+        char* json_text = NULL;
+        char* map_text = NULL;
+        char error[256];
+        int selector = -1;
+        int decoded;
+        error[0] = '\0';
+        decoded = launch_request_decode_preview(&g_online_launch.request,
+                                                &json_text, &map_text,
+                                                error, sizeof(error));
+        if (!decoded) {
+            LOG_WARN("preview.launch: payload rejected (%s)",
+                     error[0] ? error : "invalid payload");
+            online_launch_clear();
+            return;
+        }
+        if (!custom_maps_install_preview_text(json_text, map_text,
+                                              &selector,
+                                              error, sizeof(error))) {
+            LOG_WARN("preview.launch: map rejected (%s)",
+                     error[0] ? error : "loader validation failed");
+            free(json_text);
+            free(map_text);
+            online_launch_clear();
+            return;
+        }
+        free(json_text);
+        free(map_text);
+        if (!hooks_start_native_match(selector)) {
+            LOG_WARN("preview.launch: map installed but the local match could not start");
+        } else {
+            LOG_INFO("preview.launch: started selector %d", selector);
+        }
+        online_launch_clear();
+        return;
+    }
     if (!g_online_launch.hub_open_requested) {
         g_online_launch.hub_open_requested = 1;
         online_hub_open();

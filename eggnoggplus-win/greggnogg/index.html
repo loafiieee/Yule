@@ -28,9 +28,17 @@
       <span class="save-state"><span class="save-dot" aria-hidden="true"></span><span id="save-label">Saved locally</span></span>
     </div>
 
+    <div class="mode-launcher v2-disabled" aria-label="Greggnogg work mode">
+      <button class="mode-button is-active" id="map-mode-button" type="button" aria-pressed="true">Map</button>
+      <button class="mode-button" id="header-tile-lab-button" type="button">Tile Lab</button>
+      <button class="mode-button" id="header-script-button" type="button">Script</button>
+      <label class="format-toggle compact" for="format-v2-toggle"><input id="format-v2-toggle" type="checkbox"><span>V2</span></label>
+    </div>
+
     <nav class="command-actions" aria-label="Project actions">
       <button class="quiet-button" id="new-map-button" type="button"><span aria-hidden="true">＋</span> New</button>
       <button class="quiet-button" id="import-button" type="button"><span aria-hidden="true">⇧</span> Import</button>
+      <button class="primary-button" id="preview-button" type="button" title="Open this map in Yule"><span aria-hidden="true">▶</span> Preview</button>
       <button class="primary-button" id="export-button" type="button"><span aria-hidden="true">⇩</span> Export map</button>
       <button class="icon-button help-button" id="help-button" type="button" aria-label="Open keyboard shortcuts and help">?</button>
     </nav>
@@ -97,7 +105,6 @@
           <span class="toggle-track" aria-hidden="true"><span></span></span>
           Symmetry brush
         </label>
-        <button class="quiet-button compact" id="mirror-view-button" type="button" aria-pressed="false" title="Preview the right-side spatial mirror; palette banks are edited separately"><span aria-hidden="true">⇆</span> Spatial mirror</button>
         <button class="quiet-button compact" id="grid-toggle-button" type="button" aria-pressed="true"><span aria-hidden="true">▦</span> Grid</button>
         <div class="zoom-control" role="group" aria-label="Map zoom">
           <button class="icon-button" id="zoom-out-button" type="button" aria-label="Zoom out">−</button>
@@ -106,13 +113,12 @@
         </div>
       </div>
 
-      <div class="arena-overview" aria-label="Final mirrored arena layout">
+      <div class="arena-overview" aria-label="Final arena layout">
         <div>
           <span class="eyebrow">FINAL ARENA</span>
           <strong id="arena-summary">2 source rooms · 3 final rooms</strong>
         </div>
         <div class="arena-track" id="arena-track"></div>
-        <p>Source rooms are mirrored outward automatically.</p>
       </div>
 
       <div class="map-scroll" id="map-scroll">
@@ -181,11 +187,12 @@
           </fieldset>
 
           <fieldset class="field-group">
-            <legend>Round ends in</legend>
+            <legend>Round route</legend>
             <div class="segmented-control">
-              <label><input type="radio" name="round-end" value="inner_only" checked><span>Inner rooms</span></label>
-              <label><input type="radio" name="round-end" value="any"><span>Any room</span></label>
+              <label><input type="radio" name="round-end" value="inner_only" checked><span>Classic</span></label>
+              <label><input type="radio" name="round-end" value="any"><span>Goal required</span></label>
             </div>
+            <p><strong>Classic:</strong> reaching either outermost room wins; E/^ goals can finish inner rooms. <strong>Goal required:</strong> outer rooms need a goal or completed score target too.</p>
           </fieldset>
 
           <div class="two-column-fields">
@@ -194,8 +201,9 @@
           </div>
 
           <div class="format-card">
-            <div><span class="format-badge">V1</span><strong>Native map package</strong></div>
-            <p>Uses EGGNOGG+’s built-in tiles and produces <code>data.json</code> plus <code>data.map</code>. V2 sprite sheets and Lua are preserved on import by refusing to overwrite them.</p>
+            <div><span class="format-badge" id="format-badge">V1</span><strong id="format-title">Native map package</strong></div>
+            <p id="format-copy">Uses EGGNOGG+’s built-in tiles and produces <code>data.json</code> plus <code>data.map</code>.</p>
+            <p class="format-v2-summary" id="v2-tile-summary" hidden></p>
           </div>
         </section>
 
@@ -230,6 +238,12 @@
             <button class="text-button" id="reset-colors-button" type="button">Reset colors</button>
           </div>
           <div class="palette-presets" id="palette-presets" aria-label="Room color presets"></div>
+          <div class="palette-library-actions">
+            <label class="field palette-name-field">Palette name<input id="palette-name" type="text" maxlength="32" autocomplete="off" placeholder="My palette"></label>
+            <button class="quiet-button" id="save-palette-button" type="button">Save current</button>
+            <button class="quiet-button" id="random-palette-button" type="button">Random</button>
+          </div>
+          <div class="saved-palettes" id="saved-palettes" aria-label="Saved room palettes" hidden></div>
           <div class="color-fields" id="primary-color-fields"></div>
 
           <label class="check-row" for="custom-mirror-colors">
@@ -271,33 +285,15 @@
     <button type="button" data-open-panel="palette"><span aria-hidden="true">▦</span>Tiles</button>
     <button type="button" id="mobile-rooms-button"><span aria-hidden="true">▤</span>Rooms</button>
     <button type="button" data-open-panel="inspector"><span aria-hidden="true">☷</span>Settings</button>
+    <button type="button" id="mobile-preview-button"><span aria-hidden="true">▶</span>Preview</button>
+    <button type="button" id="mobile-export-button"><span aria-hidden="true">⇩</span>Export</button>
   </nav>
 
   <dialog class="editor-dialog new-map-dialog" id="new-map-dialog" aria-labelledby="new-map-heading">
     <form method="dialog">
       <div class="dialog-heading">
-        <div><p class="eyebrow">START FRESH</p><h2 id="new-map-heading">Create a new map</h2><p>Choose a starting point. You can change every tile and setting afterward.</p></div>
+        <div><p class="eyebrow">START FRESH</p><h2 id="new-map-heading">Create a new map</h2><p>Creates two empty 33×12 source rooms.</p></div>
         <button class="dialog-close" value="cancel" aria-label="Close">×</button>
-      </div>
-      <div class="template-grid">
-        <label class="template-option">
-          <input type="radio" name="map-template" value="arena" checked>
-          <span class="template-preview arena-preview" aria-hidden="true"><i></i><i></i><i></i></span>
-          <strong>Balanced arena</strong>
-          <small>Two playable rooms with floors, platforms, and pickups.</small>
-        </label>
-        <label class="template-option">
-          <input type="radio" name="map-template" value="blank">
-          <span class="template-preview blank-preview" aria-hidden="true"></span>
-          <strong>Blank rooms</strong>
-          <small>Two completely open 33×12 rooms.</small>
-        </label>
-        <label class="template-option">
-          <input type="radio" name="map-template" value="single">
-          <span class="template-preview single-preview" aria-hidden="true"><i></i></span>
-          <strong>Single room</strong>
-          <small>A compact one-room arena with a solid floor.</small>
-        </label>
       </div>
       <label class="field dialog-author-field">Author <span>Carried into future new maps</span><input id="new-map-author" type="text" maxlength="127" autocomplete="name" placeholder="Your name"></label>
       <div class="dialog-actions">
@@ -331,6 +327,155 @@
         <button class="primary-button" id="confirm-import-button" type="button" disabled>Import map</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="editor-dialog tile-lab-dialog" id="tile-lab-dialog" aria-labelledby="tile-lab-heading">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">V2 TILE LAB</p><h2 id="tile-lab-heading">Custom tile editor</h2><p>Draw a 16×16 tile, import a PNG sheet, and configure its animation, collision, layer, mirroring, tint, and forces.</p></div>
+      <button class="quiet-button" id="close-tile-lab-button" type="button">← Back to map</button>
+    </div>
+    <div class="tile-lab-layout">
+      <aside class="tile-lab-sidebar">
+        <div class="section-label-row"><h3>Tiles</h3><button class="text-button" id="new-v2-tile-button" type="button">＋ New</button></div>
+        <div class="v2-tile-list" id="v2-tile-list" role="listbox" aria-label="Custom V2 tiles"></div>
+        <div class="tile-list-actions"><button class="quiet-button" id="duplicate-v2-tile-button" type="button">Duplicate</button><button class="quiet-button" id="move-v2-tile-up" type="button">↑</button><button class="quiet-button" id="move-v2-tile-down" type="button">↓</button></div>
+        <button class="danger-button" id="delete-v2-tile-button" type="button">Delete selected tile</button>
+        <div class="section-label-row asset-heading"><h3>Package PNGs</h3></div>
+        <div class="v2-asset-list" id="v2-asset-list"></div>
+      </aside>
+      <section class="tile-lab-workbench">
+        <div class="tile-main-workspace">
+          <nav class="tile-workspace-tabs" aria-label="Tile Lab workspace">
+            <button class="is-active" type="button" data-tile-workspace="art">Art &amp; sheet</button>
+            <button type="button" data-tile-workspace="animation">Animation</button>
+            <button type="button" data-tile-workspace="hitbox">Hitbox &amp; physics</button>
+          </nav>
+        <div class="pixel-workspace tile-workspace-view" data-tile-view="art">
+          <div class="frame-editor-bar"><button id="tile-frame-prev" type="button" aria-label="Previous frame">←</button><strong id="tile-frame-label">Frame 1 / 1</strong><button id="tile-frame-next" type="button" aria-label="Next frame">→</button><button id="tile-frame-add" type="button">＋ Add</button><button id="tile-frame-duplicate" type="button">Copy</button><button id="tile-frame-delete" type="button">Delete</button><button id="tile-frame-move-left" type="button" aria-label="Move frame left">Move ←</button><button id="tile-frame-move-right" type="button" aria-label="Move frame right">Move →</button></div>
+          <div class="pixel-editor-tools" role="toolbar" aria-label="Pixel drawing tools">
+            <button class="is-active" type="button" data-pixel-tool="pencil">Pencil</button><button type="button" data-pixel-tool="eraser">Eraser</button><button type="button" data-pixel-tool="fill">Fill</button><button type="button" data-pixel-tool="line">Line</button><button type="button" data-pixel-tool="rectangle">Box</button><button type="button" data-pixel-tool="eyedropper">Pick</button>
+          </div>
+          <div class="pixel-canvas-shell"><canvas id="tile-pixel-canvas" width="16" height="16" tabindex="0" aria-label="16 by 16 pixel tile canvas"></canvas></div>
+          <div class="pixel-frame-timeline" id="pixel-frame-timeline" aria-label="Animation frames"></div>
+          <div class="pixel-tools">
+            <div class="custom-color-control" data-color-picker="paint">
+              <button class="custom-color-button" id="tile-paint-color-button" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="tile-paint-color-popover"><span id="tile-paint-color-swatch"></span><strong>Paint color</strong><code id="tile-paint-color-label">#f2e9e6</code></button>
+              <div class="custom-color-popover" id="tile-paint-color-popover" hidden>
+                <canvas id="tile-paint-color-plane" width="240" height="150" tabindex="0" aria-label="Paint color saturation and brightness"></canvas>
+                <label>Hue <input id="tile-paint-color-hue" type="range" min="0" max="360" value="0"></label>
+                <label>Hex <input id="tile-paint-color" type="text" value="#f2e9e6" pattern="#[0-9A-Fa-f]{6}" spellcheck="false"></label>
+                <div class="custom-color-presets" data-color-presets="paint"></div>
+              </div>
+            </div>
+            <button class="quiet-button" id="pixel-undo-button" type="button">Undo pixel</button><button class="quiet-button" id="pixel-redo-button" type="button">Redo pixel</button>
+            <button class="quiet-button" id="pixel-flip-x" type="button">Flip H</button><button class="quiet-button" id="pixel-flip-y" type="button">Flip V</button><button class="quiet-button" id="pixel-rotate" type="button">Rotate</button>
+            <label class="compact-check"><input id="pixel-onion-skin" type="checkbox"><span>Onion skin</span></label>
+            <button class="quiet-button" id="tile-seed-art-button" type="button">Copy current sprite</button>
+            <button class="quiet-button" id="tile-clear-button" type="button">Clear</button>
+          </div>
+          <div class="sheet-import">
+            <label class="quiet-button" for="tile-png-input">Import sprite sheet</label>
+            <input id="tile-png-input" type="file" accept="image/png" hidden>
+            <span id="tile-asset-status">Using a built-in atlas</span>
+          </div>
+        </div>
+        <div class="animation-workspace tile-workspace-view" data-tile-view="animation" hidden>
+          <canvas id="tile-animation-canvas" width="192" height="192" aria-label="Animated tile preview"></canvas>
+          <label class="field">Preview tick <input id="tile-animation-tick" type="range" min="0" max="3600" value="0"></label>
+          <label class="check-row"><input id="tile-animation-playing" type="checkbox" checked><span><strong>Play preview</strong><small>Uses Yule's tick-based frame timing.</small></span></label>
+          <div class="animation-readout" id="tile-animation-readout">Frame 1 of 1</div>
+        </div>
+        <div class="hitbox-workspace tile-workspace-view" data-tile-view="hitbox" hidden>
+          <canvas id="tile-hitbox-canvas" width="192" height="192" aria-label="Tile collision preview"></canvas>
+          <div class="hitbox-details" id="tile-hitbox-details"></div>
+          <div class="hitbox-presets" role="group" aria-label="Collision preset">
+            <button type="button" data-hitbox="solid">Solid cell</button>
+            <button type="button" data-hitbox="pass_through">No hitbox</button>
+            <button type="button" data-hitbox="hazard">Lethal cell</button>
+            <button type="button" data-hitbox="native">Native behavior</button>
+          </div>
+          <p>Yule V2 collision is cell-based: a tile can be solid, pass-through, lethal, or inherit a safe native glyph. Arbitrary polygon hitboxes are not supported by the game format.</p>
+        </div>
+        </div>
+        <div class="tile-fields">
+          <div class="tile-fields-heading"><p class="eyebrow">SELECTED TILE</p><h3>Tile settings</h3></div>
+          <details class="tile-field-group" open data-tile-field-group="identity"><summary>Identity</summary><div class="tile-field-grid">
+            <label class="field">Tile ID <input id="v2-tile-id" type="text" maxlength="47" spellcheck="false"></label>
+            <label class="field">Map symbol <input id="v2-tile-symbol" type="text" maxlength="1" spellcheck="false"></label>
+            <label class="field wide">Display name <input id="v2-tile-name" type="text" maxlength="95"></label>
+          </div></details>
+          <details class="tile-field-group" open data-tile-field-group="source"><summary>Sprite source</summary><div class="tile-field-grid">
+            <label class="field wide">Sprite sheet <select id="v2-sprite-sheet"><option value="builtin:tiles">Built-in tiles</option><option value="builtin:sprites">Built-in sprites</option><option value="builtin:misc">Built-in misc</option><option value="builtin:glyphs">Built-in glyphs</option></select></label>
+            <label class="field">Sprite index <input id="v2-sprite-index" type="number" min="0" max="1000000" value="0"></label>
+            <label class="field">Padding <input id="v2-padding" type="number" min="0" max="64" value="0"></label>
+            <label class="field">Cell width <input id="v2-cell-w" type="number" min="1" max="512" value="16"></label>
+            <label class="field">Cell height <input id="v2-cell-h" type="number" min="1" max="512" value="16"></label>
+          </div></details>
+          <details class="tile-field-group" data-tile-field-group="animation"><summary>Animation</summary><div class="tile-field-grid">
+            <label class="field">Frames <input id="v2-frame-count" type="number" min="1" max="256" value="1"></label>
+            <label class="field">Ticks/frame <input id="v2-frame-ticks" type="number" min="1" max="3600" value="1"></label>
+            <label class="field wide">Playback <select id="v2-animation"><option value="loop">Loop</option><option value="ping_pong">Ping-pong</option><option value="once">Once</option></select></label>
+            <label class="check-row wide"><input id="v2-random-phase" type="checkbox"><span><strong>Random phase</strong><small>Offsets each cell deterministically.</small></span></label>
+          </div></details>
+          <details class="tile-field-group" data-tile-field-group="appearance"><summary>Placement &amp; appearance</summary><div class="tile-field-grid">
+            <label class="field">Layer <select id="v2-layer"><option value="0">Normal</option><option value="1">Background</option></select></label>
+            <label class="field">Visual <select id="v2-native-visual"><option value="replace">Replace native</option><option value="underlay">Native underlay</option></select></label>
+            <label class="field">Offset X <input id="v2-offset-x" type="number" min="-4096" max="4096" value="0"></label>
+            <label class="field">Offset Y <input id="v2-offset-y" type="number" min="-4096" max="4096" value="0"></label>
+            <label class="field">Scale X <input id="v2-scale-x" type="number" min="-64" max="64" step="0.1" value="1"></label>
+            <label class="field">Scale Y <input id="v2-scale-y" type="number" min="-64" max="64" step="0.1" value="1"></label>
+            <label class="field wide">Angle <input id="v2-angle" type="number" min="-360000" max="360000" value="0"></label>
+            <div class="field custom-color-control wide" data-color-picker="tint"><span>Tint</span><button class="custom-color-button" id="v2-tint-button" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="v2-tint-popover"><span id="v2-tint-swatch"></span><strong>Sprite tint</strong><code id="v2-tint-label">#ffffff</code></button><div class="custom-color-popover" id="v2-tint-popover" hidden><canvas id="v2-tint-plane" width="240" height="150" tabindex="0" aria-label="Tint saturation and brightness"></canvas><label>Hue <input id="v2-tint-hue" type="range" min="0" max="360" value="0"></label><label>Hex <input id="v2-tint" type="text" value="#ffffff" pattern="#[0-9A-Fa-f]{6}" spellcheck="false"></label><div class="custom-color-presets" data-color-presets="tint"></div></div></div>
+            <label class="field wide">Tint alpha <input id="v2-tint-alpha" type="range" min="0" max="1" step="0.01" value="1"></label>
+            <label class="check-row wide"><input id="v2-mirror-with-room" type="checkbox"><span><strong>Mirror visual</strong><small>Flips the sprite and force X on the right side.</small></span></label>
+          </div></details>
+          <details class="tile-field-group" data-tile-field-group="physics"><summary>Collision &amp; force</summary><div class="tile-field-grid">
+            <label class="field">Collision <select id="v2-collision"><option value="pass_through">Pass through</option><option value="solid">Solid</option><option value="hazard">Hazard</option><option value="native">Native fallback</option></select></label>
+            <label class="field">Native fallback <input id="v2-native-glyph" type="text" maxlength="1" value="x"></label>
+            <label class="field">Force X <input id="v2-force-x" type="number" min="-64" max="64" step="0.05" placeholder="Off"></label>
+            <label class="field">Force Y <input id="v2-force-y" type="number" min="-64" max="64" step="0.05" placeholder="Off"></label>
+            <label class="field wide">Force mode <select id="v2-force-mode"><option value="add">Add velocity</option><option value="set">Set velocity</option></select></label>
+            <label class="field">Max speed X <input id="v2-max-speed-x" type="number" min="0" max="64" step="0.05" placeholder="No clamp"></label>
+            <label class="field">Max speed Y <input id="v2-max-speed-y" type="number" min="0" max="64" step="0.05" placeholder="No clamp"></label>
+          </div></details>
+        </div>
+      </section>
+    </div>
+    <div class="dialog-actions"><span id="tile-lab-status">Changes are applied live and remain undoable.</span><button class="primary-button" id="tile-lab-done-button" type="button">Done</button></div>
+  </dialog>
+
+  <dialog class="editor-dialog script-dialog" id="script-dialog" aria-labelledby="script-heading">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">V2 SCRIPTING MODE</p><h2 id="script-heading">map.lua</h2><p>Deterministic map behavior only. The editor never executes this script.</p></div>
+      <button class="quiet-button" id="close-script-button" type="button">← Back to map</button>
+    </div>
+    <div class="script-workspace">
+      <div class="script-editor-wrap">
+        <div class="script-toolbar"><button class="quiet-button" id="script-template-button" type="button">Insert starter</button><button class="quiet-button" id="script-format-button" type="button">Indent selection</button><span>Ctrl+Space: autocomplete</span></div>
+        <textarea id="map-lua-editor" spellcheck="false" autocomplete="off" aria-label="map.lua source"></textarea>
+        <div class="script-autocomplete" id="script-autocomplete" role="listbox" hidden></div>
+      </div>
+      <aside class="script-reference">
+        <h3>Build a handler</h3>
+        <label class="field">Tile binding <select id="script-builder-tile"></select></label>
+        <label class="field">Event <select id="script-builder-event"><option value="on_enter">On enter</option><option value="on_contact">During contact</option><option value="on_leave">On leave</option><option value="on_tick">Every map tick</option></select></label>
+        <label class="field">Objects <select id="script-builder-objects"><option value="alive_player">Living players</option><option value="player">Players and bodies</option><option value="sword">Swords</option><option value="hazard">K hazards</option><option value="all">All supported objects</option></select></label>
+        <div class="sensor-box-grid">
+          <label class="field">Sensor left <input id="script-sensor-left" type="number" min="-2" max="3" step="0.00390625" value="0"></label>
+          <label class="field">Top <input id="script-sensor-top" type="number" min="-2" max="3" step="0.00390625" value="0"></label>
+          <label class="field">Right <input id="script-sensor-right" type="number" min="-2" max="3" step="0.00390625" value="1"></label>
+          <label class="field">Bottom <input id="script-sensor-bottom" type="number" min="-2" max="3" step="0.00390625" value="1"></label>
+        </div>
+        <label class="field">Object profile <select id="script-sensor-object-box"><option value="center">Center point</option><option value="body" selected>Native body</option><option value="feet">Feet</option></select></label>
+        <label class="field">Contact scope <select id="script-sensor-scope"><option value="cell">Each cell</option><option value="binding">Joined binding region</option></select></label>
+        <label class="field">Action <select id="script-builder-action"><option value="launch">Launch / add velocity</option><option value="set_velocity">Set velocity</option><option value="sprite">Change tile sprite</option><option value="counter">Update map state</option><option value="custom">Empty callback</option></select></label>
+        <button class="primary-button script-builder-insert" id="script-builder-insert" type="button">Insert sensor + handler</button>
+        <div class="script-reference-heading"><h3>Map API</h3><input id="script-api-search" type="search" placeholder="Search API…"></div>
+        <div id="script-reference-list"></div>
+        <p>Files, networking, modules, FFI, coroutines, JIT controls, and <code>math.random</code> are unavailable. Sensor boxes are cell-based contact regions; combat hurtboxes remain native.</p>
+      </aside>
+    </div>
+    <div class="dialog-actions"><span id="script-byte-count">0 / 262144 bytes</span><button class="danger-button" id="remove-script-button" type="button">Remove map.lua</button><button class="primary-button" id="script-done-button" type="button">Done</button></div>
   </dialog>
 
   <dialog class="editor-dialog export-dialog" id="export-dialog" aria-labelledby="export-heading">
@@ -370,7 +515,6 @@
         <section><h3>Grid controls</h3><dl><div><dt><kbd>Drag</kbd></dt><dd>Paint continuously</dd></div><div><dt><kbd>Right drag</kbd></dt><dd>Erase cells</dd></div><div><dt><kbd>Arrows</kbd></dt><dd>Move keyboard cursor</dd></div><div><dt><kbd>Space</kbd></dt><dd>Paint focused cell</dd></div><div><dt><kbd>Delete</kbd></dt><dd>Erase focused cell</dd></div></dl></section>
         <section><h3>Shortcuts</h3><dl><div><dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Choose drawing tool</dd></div><div><dt><kbd>I</kbd></dt><dd>Pick tile from grid</dd></div><div><dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd></div><div><dt><kbd>Ctrl</kbd> <kbd>Y</kbd></dt><dd>Redo</dd></div><div><dt><kbd>/</kbd></dt><dd>Search tiles</dd></div></dl></section>
       </div>
-      <div class="help-tip"><strong>How rooms work</strong><p>You author rooms from the center outward. Yule mirrors every outer room on the other side, so two source rooms make a three-room arena.</p></div>
       <div class="help-tip"><strong>Faithful previews, safe output</strong><p>Greggnogg renders from the game’s original <code>data/*.png</code> atlases. Animated, procedural, and physics-driven objects are marked as approximations; package validation follows the Yule loader, not the preview.</p></div>
       <div class="dialog-actions"><button class="primary-button" value="cancel">Got it</button></div>
     </form>

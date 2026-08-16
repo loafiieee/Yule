@@ -7,7 +7,9 @@ and Yule-compatible package import and export.
 
 The editor is intentionally self-contained in `greggnogg/`. It is not linked
 from the repository documentation site and does not participate in that site's
-build. It makes no network requests and does not run EGGNOGG+ or map scripts.
+build. It makes no network requests and does not run map scripts. The explicit
+Preview action hands a validated package link to the installed Yule protocol
+handler; the browser remains sandboxed from the game process and filesystem.
 
 ## Run it locally
 
@@ -53,12 +55,12 @@ bytes of both files, even whitespace normalization changes that key. The import
 summary calls this out, and manifests with unknown compatibility fields are
 refused instead of silently dropping those fields.
 
-V2 is deliberately not editable in this interface. If an import declares
-`eggnogg-map/v2`, a `tileset`, a direct PNG, or `map.lua`, Greggnogg refuses the
-import and leaves the current draft unchanged. That fail-closed behavior avoids
-destroying custom symbols, exact asset bytes, Lua source, or the raw-byte package
-identity. The lower-level parser contains V2 validation and preservation logic,
-but the visual editor never presents a lossy V2 document as editable V1.
+Greggnogg intentionally authors V1 maps only. V2 packages, custom PNG tiles,
+and `map.lua` are detected and refused without changing the current draft or
+rewriting the imported files. The earlier browser Tile Lab experiment has been
+retired while a better V2 object-authoring model is designed. If an older local
+V2 draft is found, Greggnogg preserves its raw local draft under the
+`greggnogg:archived-v2-draft` backup key and starts a fresh V1 map.
 
 ## Typical workflow
 
@@ -69,9 +71,11 @@ but the visual editor never presents a lossy V2 document as editable V1.
    real game atlases; labels call out procedural or runtime-driven previews.
 4. Open **Validation** and resolve errors. Errors block export. Warnings point
    out likely playability or native-resource problems but do not rewrite cells.
-5. Choose **Export map**. Download the ready-to-extract ZIP or either source
+5. Choose **Preview** for an in-memory test match when the Yule link handler is
+   installed.
+6. Choose **Export map**. Download the ready-to-extract ZIP or either source
    file separately.
-6. Extract the ZIP so the map folder is directly under the game's `maps/`
+7. Extract the ZIP so the map folder is directly under the game's `maps/`
    directory. Do not leave the ZIP itself in `maps/`; the runtime scans folders,
    not archives.
 
@@ -79,22 +83,20 @@ Keyboard help is built into the `?` dialog. Important shortcuts include
 `1`–`5` for drawing tools, `I` for the eyedropper, `/` for palette search,
 arrow keys for grid navigation, and the normal undo/redo shortcuts.
 
-## Test in Yule status
+## Preview in Yule
 
-The current Yule launch parser has no map or test-map argument, and an ordinary
-website cannot safely execute the installed game or silently write into its
-`maps/` directory. Greggnogg therefore does not show a button that pretends to
-open the active draft in-game. The working flow is export, extract, launch Yule,
-and select the map normally.
+Choose **Preview** to open the current valid V1 draft in EGGNOGG+. Greggnogg
+puts the canonical `data.json` and `data.map` bytes into one bounded
+`yule://preview/v1/...` link. The installed Yule protocol handler may prompt for
+browser permission before opening the game.
 
-A future one-click path needs a small framework addition: a bounded
-`--test-map=ggtest-<nonce>` (and matching `yule://test/...`) intent that is
-validated again over existing-instance IPC, resolves only an editor-staged
-direct child of `maps/`, and starts that stable selection on the normal game
-thread. The browser side must first receive explicit write permission for the
-chosen `maps/` directory and must retain the temporary package for the whole
-match. Arbitrary executable paths, filesystem paths in URLs, and generic
-command forwarding are intentionally outside that design.
+The framework decodes and validates both files again with the real custom-map
+loader, installs the result only in process memory, and starts that exact map.
+It works through the existing single-instance handoff when Yule is already
+open. Preview does not write into `maps/`, mark the draft as exported, or add
+the temporary map to online manifests. V2 data, filesystem paths, query
+parameters, credentials, arbitrary executable arguments, and oversized or
+non-canonical payloads are rejected.
 
 ## Yule package contract
 

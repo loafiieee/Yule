@@ -86,6 +86,14 @@ function testExportedApi() {
   assert(typeof GregAtlas._nativeChandelierGlow === "function", "chandelier-glow test hook");
   assert(typeof GregAtlas._nativeSpinnerAlphaBytes === "function", "spinner-alpha test hook");
   assert(typeof GregAtlas._nativeSunPosition === "function", "sun-position test hook");
+  assert(typeof GregAtlas._previewEnemyColour === "function", "goal-preview contrast test hook");
+}
+
+function testGoalPreviewContrast() {
+  var neutral = { bg1: [0.5, 0.5, 0.5, 1], bg2: [0.5, 0.5, 0.5, 1] };
+  var goal = GregAtlas._previewEnemyColour(neutral);
+  assert(goal && (Math.abs(goal[0] - 0.5) > 0.2 || Math.abs(goal[1] - 0.5) > 0.2 || Math.abs(goal[2] - 0.5) > 0.2),
+    "E and ^ fallback colour cannot blend into the neutral default background");
 }
 
 function testNativeTerrainSeed() {
@@ -234,7 +242,7 @@ function testNativeChandelierAndSun() {
   assertNear(glow.bulb[2], 0.19140625, 0.000001, "chandelier frame-0x20 native blue channel");
   assertNear(glow.flare[0], 0.29125, 0.000001, "chandelier frame-0x21 native red attenuation");
   assertNear(glow.flare[1], 0.041810302734375, 0.000001, "chandelier frame-0x21 native green attenuation");
-  assertNear(glow.flare[2], 0.02787353515625, 0.000001, "chandelier frame-0x21 native blue attenuation");
+  assertNear(glow.flare[2], 0.0209051513671875, 0.000001, "chandelier frame-0x21 native blue attenuation");
   assertEqual(roomSun.x, 256, "room sun is centred horizontally, independent of O marker");
   assertEqual(roomSun.y, 40, "room sun is centred at one-quarter canvas height");
   assertEqual(glyphSun.x, 16, "glyph preview keeps a locally centred sun icon");
@@ -358,6 +366,7 @@ function testV2Binding() {
 try {
   loadRenderer();
   testExportedApi();
+  testGoalPreviewContrast();
   testNativeTerrainSeed();
   testRecoveredFrameRecipes();
   testPersistedNativeFrameBytes();

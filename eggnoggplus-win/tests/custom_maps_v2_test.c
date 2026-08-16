@@ -257,6 +257,56 @@ static void test_v1_compatibility(void) {
     CHECK(summary.content_cell_count == 0);
 }
 
+static void test_in_memory_v1_preview(void) {
+    static const char json[] =
+        "{\"format\":\"eggnogg-map/v1\",\"id\":\"preview_test\","
+        "\"name\":\"Preview Test\",\"author\":\"Greggnogg\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]}}";
+    static const char v2_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"preview_test\","
+        "\"name\":\"Preview Test\",\"author\":\"Greggnogg\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]}}";
+    char map_text[1024];
+    char error[256];
+    char* manifest = NULL;
+    CustomMapContentView view;
+    int selector = -1;
+    int total_before;
+    int needed;
+
+    build_one_room_map(0, map_text, sizeof(map_text));
+    custom_maps_init();
+    total_before = custom_maps_total_selectors();
+    CHECK(custom_maps_install_preview_text(json, map_text, &selector,
+                                           error, sizeof(error)));
+    CHECK(error[0] == '\0');
+    CHECK(selector == total_before);
+    CHECK(custom_maps_total_selectors() == total_before + 1);
+    CHECK(custom_maps_content_view_open(selector, &view) == 1);
+    CHECK(view.format_version == 1);
+    CHECK(view.source_room_count == 1);
+
+    needed = custom_maps_build_manifest_json(NULL, 0);
+    CHECK(needed > 0);
+    if (needed > 0) manifest = (char*)malloc((size_t)needed + 1u);
+    CHECK(manifest != NULL);
+    if (manifest) {
+        CHECK(custom_maps_build_manifest_json(manifest,
+                                              (size_t)needed + 1u) == needed);
+        CHECK(strstr(manifest, "Preview Test") == NULL);
+        CHECK(strstr(manifest, "_greggnogg_preview") == NULL);
+    }
+    free(manifest);
+
+    CHECK(!custom_maps_install_preview_text(v2_json, map_text, &selector,
+                                            error, sizeof(error)));
+    CHECK(error[0] != '\0');
+    CHECK(custom_maps_total_selectors() == total_before + 1);
+    custom_maps_shutdown();
+}
+
 static void test_native_room_spawn_budget(void) {
     char map_text[1024];
     CustomMapValidationSummary summary;
@@ -1188,6 +1238,7 @@ static void test_map_script_online_identity(void) {
 int main(void) {
     content_registry_shutdown();
     test_v1_compatibility();
+    test_in_memory_v1_preview();
     test_native_room_spawn_budget();
     test_v2_symbolic_builtin();
     test_v2_whole_symbol_override();

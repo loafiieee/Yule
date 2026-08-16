@@ -12,6 +12,8 @@
   var ROWS = Core.ROWS || 12;
   var MAX_ROOMS = Core.MAX_ROOMS || 9;
   var STORAGE_KEY = "greggnogg:draft:v1";
+  var V2_BACKUP_KEY = "greggnogg:archived-v2-draft";
+  var PALETTE_STORAGE_KEY = "greggnogg:saved-palettes:v1";
   var APPROXIMATE_GLYPHS = "12ACcOPTWw^~iltsm*K";
   var SPAWNER_GLYPHS = "K*m";
   var COLOR_KEYS = Core.COLOR_KEYS || ["fg1", "fg2", "bg1", "bg2", "water", "water_hi", "special", "special2"];
@@ -27,30 +29,52 @@
     { name: "Native", colors: { fg1: [0.5, 0.5, 0.5], fg2: [0.5, 0.5, 0.5], bg1: [0.5, 0.5, 0.5], bg2: [0.5, 0.5, 0.5], water: [0, 0.5, 0.75], water_hi: [0.9, 0.9, 0.9], special: [0, 0.5, 0.75], special2: [0.9, 0.9, 0.9] } },
     { name: "Ember", colors: { fg1: "#cc5844", fg2: "#f0a35f", bg1: "#291319", bg2: "#4a2021", water: "#2f6178", water_hi: "#bde4e8", special: "#ff6b4f", special2: "#ffd379" } },
     { name: "Moss", colors: { fg1: "#6f855f", fg2: "#b4c77c", bg1: "#17211d", bg2: "#29372c", water: "#376f73", water_hi: "#c7e5c2", special: "#9e5f45", special2: "#e1c784" } },
-    { name: "Moon", colors: { fg1: "#6874a0", fg2: "#c0bce8", bg1: "#11152b", bg2: "#25254b", water: "#31568f", water_hi: "#d9e4ff", special: "#a25f9e", special2: "#f0afd9" } }
+    { name: "Moon", colors: { fg1: "#6874a0", fg2: "#c0bce8", bg1: "#11152b", bg2: "#25254b", water: "#31568f", water_hi: "#d9e4ff", special: "#a25f9e", special2: "#f0afd9" } },
+    { name: "Ice", colors: { fg1: "#73a9c2", fg2: "#d4f3f4", bg1: "#0b1a2a", bg2: "#17354a", water: "#277caa", water_hi: "#e4ffff", special: "#7e6eb7", special2: "#f1d9ff" } },
+    { name: "Dusk", colors: { fg1: "#a35f78", fg2: "#eab0a2", bg1: "#1c1025", bg2: "#41213b", water: "#34517e", water_hi: "#b8c9ed", special: "#d46a55", special2: "#f2d384" } },
+    { name: "Cavern", colors: { fg1: "#726759", fg2: "#c4aa7d", bg1: "#100f12", bg2: "#292329", water: "#264f58", water_hi: "#9fc8bd", special: "#784a62", special2: "#d69b69" } }
   ];
   var CATEGORY_ORDER = ["Solid terrain", "Hazards & water", "Goals & items", "Animated scenery", "Background art", "Empty & utility"];
+  var SCRIPT_COMPLETIONS = [
+    { label: "map.on_enter", snippet: "map.on_enter(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run when an object enters a tile sensor." },
+    { label: "map.on_contact", snippet: "map.on_contact(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run while an object contacts a tile." },
+    { label: "map.on_leave", snippet: "map.on_leave(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run when an object leaves a tile." },
+    { label: "map.on_tick", snippet: "map.on_tick(function()\n  \nend)", detail: "Run once per deterministic map tick." },
+    { label: "map.sensor", snippet: "map.sensor(\"tile_id\", {\n  tile_box = { left = 0, top = 0, right = 1, bottom = 1 },\n  object_box = \"body\",\n  objects = { \"alive_player\" },\n  contact_scope = \"cell\",\n  mirror_with_room = true,\n})", detail: "Configure contact geometry and object filters." },
+    { label: "map.state", snippet: "map.state", detail: "Persistent table for this match." },
+    { label: "map.tick", snippet: "map.tick()", detail: "Current deterministic map tick." },
+    { label: "map.random", snippet: "map.random(1, 10)", detail: "Deterministic map RNG." },
+    { label: "object:set_velocity", snippet: "object:set_velocity(0, 0)", detail: "Set an object's velocity." },
+    { label: "object:add_velocity", snippet: "object:add_velocity(0, -1)", detail: "Add to an object's velocity." },
+    { label: "object:set_velocity_limits", snippet: "object:set_velocity_limits({ max_x = 4, max_y = 4 }, 60)", detail: "Temporarily clamp velocity." },
+    { label: "object:clear_velocity_limits", snippet: "object:clear_velocity_limits()", detail: "Clear scripted velocity limits." },
+    { label: "tile:set_sprite", snippet: "tile:set_sprite(0, 30, { frame_count = 1, frame_ticks = 1 })", detail: "Temporarily change a tile sprite." },
+    { label: "tile:reset_sprite", snippet: "tile:reset_sprite()", detail: "Restore a tile's declarative sprite." }
+  ];
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {};
   [
-    "project-title", "save-label", "new-map-button", "import-button", "export-button", "help-button",
+    "project-title", "save-label", "new-map-button", "import-button", "preview-button", "export-button", "help-button",
     "palette-panel", "tile-count", "tile-search", "tile-catalog", "selected-tile-preview", "selected-tile-name",
     "selected-tile-description", "selected-tile-glyph", "undo-button", "redo-button", "symmetry-toggle",
-    "mirror-view-button", "grid-toggle-button", "zoom-out-button", "zoom-label", "zoom-in-button", "arena-summary",
+    "grid-toggle-button", "zoom-out-button", "zoom-label", "zoom-in-button", "arena-summary",
     "arena-track", "map-scroll", "map-stage", "room-atmosphere", "column-ruler", "row-ruler", "map-grid",
     "room-render-canvas", "coordinate-label", "tool-status", "validation-summary", "duplicate-room-button",
     "add-room-button", "room-tabs", "inspector-panel", "map-tab", "room-tab", "validation-tab", "validation-count",
     "map-inspector", "room-inspector", "validation-inspector", "map-name", "map-author", "map-id", "map-description",
-    "description-count", "sort-order", "score-target", "respawn-limit", "room-inspector-title", "room-position-copy",
-    "room-id", "room-ambient", "reset-colors-button", "preview-mirror-colors-button", "palette-presets", "primary-color-fields",
+    "description-count", "sort-order", "score-target", "respawn-limit", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
+    "room-id", "room-ambient", "reset-colors-button", "preview-mirror-colors-button", "palette-presets", "palette-name", "save-palette-button", "random-palette-button", "saved-palettes", "primary-color-fields",
     "custom-mirror-colors", "mirror-color-fields", "move-room-in-button", "move-room-out-button", "delete-room-button",
     "spawn-meter-fill", "spawn-budget-label", "spawn-budget-detail", "validation-heading", "validation-list",
-    "fact-source-rooms", "fact-final-rooms", "mobile-rooms-button", "new-map-dialog", "new-map-author",
+    "fact-source-rooms", "fact-final-rooms", "mobile-rooms-button", "mobile-preview-button", "mobile-export-button", "new-map-dialog", "new-map-author",
     "confirm-new-map", "import-dialog", "drop-zone", "choose-files-button", "choose-folder-button", "package-file-input",
     "package-folder-input", "import-result", "confirm-import-button", "export-dialog", "export-dialog-copy", "package-tree",
     "export-ready-title", "export-ready-summary", "download-json-button", "download-map-button", "copy-map-button",
-    "download-package-button", "help-dialog", "toast-region", "live-region"
+    "download-package-button", "help-dialog", "toast-region", "live-region",
+    "tile-lab-dialog", "close-tile-lab-button", "tile-lab-done-button", "new-v2-tile-button", "duplicate-v2-tile-button", "move-v2-tile-up", "move-v2-tile-down", "delete-v2-tile-button", "v2-tile-list", "v2-asset-list", "tile-pixel-canvas", "pixel-frame-timeline", "tile-paint-color", "tile-paint-color-button", "tile-paint-color-swatch", "tile-paint-color-label", "tile-paint-color-popover", "tile-paint-color-plane", "tile-paint-color-hue", "pixel-undo-button", "pixel-redo-button", "pixel-flip-x", "pixel-flip-y", "pixel-rotate", "pixel-onion-skin", "tile-seed-art-button", "tile-clear-button", "tile-png-input", "tile-asset-status", "tile-lab-status", "tile-frame-prev", "tile-frame-next", "tile-frame-add", "tile-frame-duplicate", "tile-frame-delete", "tile-frame-move-left", "tile-frame-move-right", "tile-frame-label", "tile-animation-canvas", "tile-animation-tick", "tile-animation-playing", "tile-animation-readout", "tile-hitbox-canvas", "tile-hitbox-details",
+    "v2-tile-id", "v2-tile-symbol", "v2-tile-name", "v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-frame-count", "v2-frame-ticks", "v2-animation", "v2-collision", "v2-native-glyph", "v2-layer", "v2-native-visual", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle", "v2-tint", "v2-tint-button", "v2-tint-swatch", "v2-tint-label", "v2-tint-popover", "v2-tint-plane", "v2-tint-hue", "v2-tint-alpha", "v2-force-x", "v2-force-y", "v2-force-mode", "v2-max-speed-x", "v2-max-speed-y", "v2-mirror-with-room", "v2-random-phase",
+    "script-dialog", "close-script-button", "script-done-button", "script-template-button", "script-format-button", "map-lua-editor", "script-autocomplete", "script-reference-list", "script-byte-count", "remove-script-button", "script-builder-tile", "script-builder-event", "script-builder-objects", "script-builder-action", "script-builder-insert", "script-api-search", "script-sensor-left", "script-sensor-top", "script-sensor-right", "script-sensor-bottom", "script-sensor-object-box", "script-sensor-scope"
   ].forEach(function (id) { els[id] = $(id); });
 
   var state = {
@@ -59,7 +83,7 @@
     selectedGlyph: "@",
     tool: "pencil",
     symmetry: false,
-    mirrorView: false,
+    previewMirrored: false,
     showGrid: true,
     zoom: 1,
     autoFitZoom: true,
@@ -76,12 +100,61 @@
     paletteAppearanceKey: null,
     appearancePreviewBank: "primary",
     validation: { valid: false, errors: [], warnings: [], issues: [] },
-    idWasEdited: false
+    idWasEdited: false,
+    tileLabIndex: -1,
+    tileLabSnapshot: null,
+    tilePixels: null,
+    tileArtFrame: 0,
+    tilePainting: false,
+    tileEraser: false,
+    pixelTool: "pencil",
+    pixelStart: null,
+    pixelPreview: null,
+    pixelUndo: [],
+    pixelRedo: [],
+    hitboxRenderRequest: 0,
+    hitboxLastTime: 0,
+    scriptSnapshot: null,
+    colorPickers: {},
+    savedPalettes: []
   };
 
   function clone(value) {
     if (Core.deepClone) return Core.deepClone(value);
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function normalizedPalette(colors) {
+    var normalized = {};
+    COLOR_KEYS.forEach(function (key) {
+      normalized[key] = Core.colorToHex && Core.colorToHex(colors && colors[key]) || FALLBACK_COLORS[key];
+    });
+    return normalized;
+  }
+
+  function loadSavedPalettes() {
+    try {
+      var parsed = JSON.parse(localStorage.getItem(PALETTE_STORAGE_KEY) || "[]");
+      if (!Array.isArray(parsed)) return [];
+      return parsed.slice(0, 24).filter(function (entry) {
+        return entry && typeof entry.name === "string" && entry.name.trim() && entry.colors && typeof entry.colors === "object";
+      }).map(function (entry) {
+        return { name: entry.name.trim().slice(0, 32), colors: normalizedPalette(entry.colors) };
+      });
+    } catch (ignore) {
+      return [];
+    }
+  }
+
+  function savePaletteLibrary() {
+    try { localStorage.setItem(PALETTE_STORAGE_KEY, JSON.stringify(state.savedPalettes)); }
+    catch (error) { toast("Palette was not saved", "Browser local storage is unavailable.", "warning"); }
+  }
+
+  function escapeHtml(value) {
+    return String(value === undefined || value === null ? "" : value).replace(/[&<>"']/g, function (character) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[character];
+    });
   }
 
   function rooms() {
@@ -110,6 +183,53 @@
   function utf8Length(value) {
     if (window.TextEncoder) return new TextEncoder().encode(String(value || "")).length;
     return unescape(encodeURIComponent(String(value || ""))).length;
+  }
+
+  function hsvToHex(hue, saturation, value) {
+    var c = value * saturation; var part = ((hue % 360) + 360) % 360 / 60; var x = c * (1 - Math.abs(part % 2 - 1)); var rgb;
+    if (part < 1) rgb = [c, x, 0]; else if (part < 2) rgb = [x, c, 0]; else if (part < 3) rgb = [0, c, x]; else if (part < 4) rgb = [0, x, c]; else if (part < 5) rgb = [x, 0, c]; else rgb = [c, 0, x];
+    var m = value - c;
+    return "#" + rgb.map(function (channel) { return Math.round((channel + m) * 255).toString(16).padStart(2, "0"); }).join("");
+  }
+
+  function hexToHsv(hex) {
+    var match = /^#?([0-9a-f]{6})$/i.exec(String(hex || "")); if (!match) return null;
+    var value = parseInt(match[1], 16); var r = ((value >> 16) & 255) / 255; var g = ((value >> 8) & 255) / 255; var b = (value & 255) / 255;
+    var max = Math.max(r, g, b); var min = Math.min(r, g, b); var delta = max - min; var hue = 0;
+    if (delta) { if (max === r) hue = 60 * (((g - b) / delta) % 6); else if (max === g) hue = 60 * ((b - r) / delta + 2); else hue = 60 * ((r - g) / delta + 4); }
+    if (hue < 0) hue += 360;
+    return { h: hue, s: max ? delta / max : 0, v: max };
+  }
+
+  function setupCustomColorPicker(name, onChange) {
+    var prefix = name === "paint" ? "tile-paint-color" : "v2-tint";
+    var input = els[prefix]; var button = els[prefix + "-button"]; var swatch = els[prefix + "-swatch"]; var label = els[prefix + "-label"];
+    var popover = els[prefix + "-popover"]; var plane = els[prefix + "-plane"]; var hue = els[prefix + "-hue"]; var stateValue = hexToHsv(input.value) || { h: 0, s: 0, v: 1 };
+    var picker = { input: input, button: button, swatch: swatch, label: label, popover: popover, plane: plane, hue: hue, hsv: stateValue, onChange: onChange };
+    state.colorPickers[name] = picker;
+    function drawPlane() {
+      var context = plane.getContext("2d"); context.clearRect(0, 0, plane.width, plane.height); context.fillStyle = hsvToHex(picker.hsv.h, 1, 1); context.fillRect(0, 0, plane.width, plane.height);
+      var white = context.createLinearGradient(0, 0, plane.width, 0); white.addColorStop(0, "#fff"); white.addColorStop(1, "rgba(255,255,255,0)"); context.fillStyle = white; context.fillRect(0, 0, plane.width, plane.height);
+      var black = context.createLinearGradient(0, 0, 0, plane.height); black.addColorStop(0, "rgba(0,0,0,0)"); black.addColorStop(1, "#000"); context.fillStyle = black; context.fillRect(0, 0, plane.width, plane.height);
+      context.strokeStyle = picker.hsv.v > 0.55 ? "#000" : "#fff"; context.lineWidth = 3; context.beginPath(); context.arc(picker.hsv.s * (plane.width - 1), (1 - picker.hsv.v) * (plane.height - 1), 6, 0, Math.PI * 2); context.stroke();
+    }
+    function apply(hex, speak) {
+      var hsv = hexToHsv(hex); if (!hsv) { input.setAttribute("aria-invalid", "true"); return; }
+      input.removeAttribute("aria-invalid"); picker.hsv = hsv; hue.value = String(Math.round(hsv.h)); input.value = hex.toLowerCase(); label.textContent = input.value; swatch.style.background = input.value; drawPlane();
+      if (speak !== false && picker.onChange) picker.onChange(input.value);
+    }
+    function chooseFromPlane(event) {
+      var rect = plane.getBoundingClientRect(); picker.hsv.s = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)); picker.hsv.v = 1 - Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)); apply(hsvToHex(picker.hsv.h, picker.hsv.s, picker.hsv.v));
+    }
+    button.addEventListener("click", function () { var open = popover.hidden; document.querySelectorAll(".custom-color-popover").forEach(function (entry) { entry.hidden = true; }); document.querySelectorAll(".custom-color-button").forEach(function (entry) { entry.setAttribute("aria-expanded", "false"); }); popover.hidden = !open; button.setAttribute("aria-expanded", open ? "true" : "false"); if (open) drawPlane(); });
+    plane.addEventListener("pointerdown", function (event) { plane.setPointerCapture(event.pointerId); chooseFromPlane(event); }); plane.addEventListener("pointermove", function (event) { if (event.buttons) chooseFromPlane(event); });
+    plane.addEventListener("keydown", function (event) { var changed = true; if (event.key === "ArrowLeft") picker.hsv.s -= .01; else if (event.key === "ArrowRight") picker.hsv.s += .01; else if (event.key === "ArrowUp") picker.hsv.v += .01; else if (event.key === "ArrowDown") picker.hsv.v -= .01; else changed = false; if (changed) { event.preventDefault(); picker.hsv.s = Math.max(0, Math.min(1, picker.hsv.s)); picker.hsv.v = Math.max(0, Math.min(1, picker.hsv.v)); apply(hsvToHex(picker.hsv.h, picker.hsv.s, picker.hsv.v)); } });
+    hue.addEventListener("input", function () { picker.hsv.h = Number(hue.value); apply(hsvToHex(picker.hsv.h, picker.hsv.s, picker.hsv.v)); });
+    input.addEventListener("input", function () { if (/^#[0-9a-f]{6}$/i.test(input.value)) apply(input.value); else input.setAttribute("aria-invalid", "true"); });
+    var presetHost = document.querySelector('[data-color-presets="' + name + '"]');
+    ["#ffffff", "#808080", "#111111", "#ff5945", "#ffd166", "#77cf99", "#36a6d9", "#8267d8", "#d45aa5", "#8b5a3c"].forEach(function (color) { var preset = document.createElement("button"); preset.type = "button"; preset.style.background = color; preset.title = color; preset.setAttribute("aria-label", "Choose " + color); preset.addEventListener("click", function () { apply(color); }); presetHost.appendChild(preset); });
+    picker.set = function (hex) { apply(hex, false); };
+    apply(input.value, false);
   }
 
   function normalizeId(value) {
@@ -184,7 +304,7 @@
     };
   }
 
-  function makeNewDocument(template, author) {
+  function makeNewDocument(author) {
     var doc = ensureDocumentShape(Core.createDefaultDocument ? Core.createDefaultDocument() : null);
     doc.format = "eggnogg-map/v1";
     doc.id = "untitled_map";
@@ -193,13 +313,7 @@
     doc.description = "";
     doc.sortOrder = 0;
     doc.rules = { mode: "swords", roundEndRooms: "inner_only", scoreTarget: null, armedRespawnLimit: 4 };
-    if (template === "single") doc.rooms = [newRoom("center", true)];
-    else doc.rooms = [newRoom("center", template !== "blank"), newRoom("outer_1", template !== "blank")];
-    if (template === "arena") {
-      doc.rooms[0].grid[9][16] = "E";
-      doc.rooms[0].grid[8][16] = "^";
-      doc.rooms[1].grid[6][16] = "*";
-    }
+    doc.rooms = [newRoom("center", false), newRoom("outer_1", false)];
     doc.layout = { kind: "mirrored_source_rooms", roomFormat: "vanilla_33x12", order: doc.rooms.map(function (r) { return r.id; }) };
     return doc;
   }
@@ -306,6 +420,15 @@
 
   function tileMeta(glyph) {
     var lookup = Core.TILE_BY_GLYPH || {};
+    var custom = state.document && state.document.tileset && Array.isArray(state.document.tileset.tiles) &&
+      state.document.tileset.tiles.find(function (tile) { return tile && tile.symbol === glyph; });
+    if (custom) return {
+      glyph: glyph,
+      label: custom.name || custom.id || "Custom V2 tile",
+      category: "animated-scenery",
+      description: "V2 built-in atlas tile " + (custom.sprite_sheet || "builtin:tiles") + " #" + (custom.sprite_index || 0) + ".",
+      physics: (custom.collision || "native").replace(/_/g, " ")
+    };
     return lookup[glyph] || (Core.TILE_METADATA || Core.TILES || []).find(function (item) { return item.glyph === glyph; }) || {
       glyph: glyph, label: glyph === " " ? "Erase / open" : "Glyph " + glyph, category: "utility", description: "Native map glyph."
     };
@@ -383,6 +506,7 @@
         Promise.resolve(Atlas.renderGlyph(canvas, glyph, {
           size: size || 40,
           appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank),
+          tileset: state.document && state.document.tileset,
           time: previewTicks()
         })).catch(fallback);
         return;
@@ -396,6 +520,11 @@
     var tiles = (Core.TILE_METADATA || Core.TILES || []).filter(function (item, index, list) {
       return item && typeof item.glyph === "string" && list.findIndex(function (other) { return other.glyph === item.glyph; }) === index;
     });
+    if (state.document && state.document.tileset && Array.isArray(state.document.tileset.tiles)) {
+      state.document.tileset.tiles.forEach(function (tile) {
+        if (tile && typeof tile.symbol === "string" && tile.symbol.length === 1) tiles.push(tileMeta(tile.symbol));
+      });
+    }
     if (!tiles.length && Core.GLYPHS) tiles = Core.GLYPHS.map(tileMeta);
     tiles = tiles.filter(function (item) {
       var haystack = [item.glyph, item.label, item.description, item.category, item.physics].join(" ").toLowerCase();
@@ -560,8 +689,8 @@
     if (!room) return;
     var sourceRooms = rooms();
     var centreRoomIndex = sourceRooms.length - 1;
-    var worldRoomIndex = state.mirrorView ?
-      centreRoomIndex + state.roomIndex : centreRoomIndex - state.roomIndex;
+    /* The editor always paints the authored source room. */
+    var worldRoomIndex = state.previewMirrored ? centreRoomIndex + state.roomIndex : centreRoomIndex - state.roomIndex;
     var canvas = els["room-render-canvas"];
     var appearance = resolvedAppearance(room, state.appearancePreviewBank);
     var request = ++state.roomRenderRequest;
@@ -580,7 +709,8 @@
           grid: room.grid,
           appearance: appearance,
           ambient: room.ambient,
-          mirrored: state.mirrorView,
+          tileset: state.document && state.document.tileset,
+          mirrored: state.previewMirrored,
           /* Native terrain variation is seeded from the destination room and
            * column, not from the glyph. Source rooms are stored centre-out;
            * their authored copies run left from centre, while their mirrored
@@ -612,7 +742,7 @@
       if (issue.severity === "error" && issue.roomId === room.id && Number.isInteger(issue.row) && Number.isInteger(issue.col)) errorCells[issue.row + ":" + issue.col] = true;
     });
     els["map-grid"].classList.toggle("show-grid", state.showGrid);
-    els["map-grid"].classList.toggle("is-mirrored", state.mirrorView);
+    els["map-grid"].classList.toggle("is-mirrored", state.previewMirrored);
     els["map-grid"].querySelectorAll(".map-cell").forEach(function (cell) {
       var row = Number(cell.dataset.row);
       var col = Number(cell.dataset.col);
@@ -1039,6 +1169,8 @@
     els["validation-summary"].append(icon, copy);
     els["validation-heading"].textContent = errors ? "Fix " + errors + (errors === 1 ? " error" : " errors") : warnings ? "Ready with warnings" : "Ready to export";
     els["export-button"].disabled = errors > 0;
+    els["preview-button"].disabled = errors > 0 || state.document.format !== "eggnogg-map/v1";
+    els["mobile-preview-button"].disabled = errors > 0 || state.document.format !== "eggnogg-map/v1";
     if (!total) {
       var empty = document.createElement("div");
       empty.className = "validation-empty";
@@ -1115,6 +1247,7 @@
       button.append(number, thumbnail(room), copy);
       button.addEventListener("click", function () {
         state.roomIndex = index;
+        state.previewMirrored = false;
         renderAll();
         announce("Editing source room " + room.id);
       });
@@ -1133,13 +1266,14 @@
     finalRooms.forEach(function (entry) {
       var button = document.createElement("button");
       button.type = "button";
-      button.className = "arena-segment" + (entry.sourceIndex === 0 ? " is-center" : "") + (entry.mirrored ? " is-mirrored" : "") + (entry.sourceIndex === state.roomIndex ? " is-active" : "");
-      button.title = (entry.mirrored ? "Spatially mirrored copy of " : "Source ") + entry.room.id + " · " + entry.bank + " appearance bank";
+      button.className = "arena-segment" + (entry.sourceIndex === 0 ? " is-center" : "") + (entry.mirrored ? " is-mirrored" : "") + (entry.sourceIndex === state.roomIndex && entry.mirrored === state.previewMirrored ? " is-active" : "");
+      button.title = entry.room.id + " · " + entry.bank + " appearance bank";
       var label = document.createElement("span");
       label.textContent = entry.room.id;
       button.appendChild(label);
       button.addEventListener("click", function () {
         state.roomIndex = entry.sourceIndex;
+        state.previewMirrored = entry.mirrored;
         state.appearancePreviewBank = entry.bank;
         renderAll();
       });
@@ -1165,6 +1299,8 @@
 
   function renderMapFields() {
     var doc = state.document;
+    var isV2 = doc.format === "eggnogg-map/v2";
+    var v2Tiles = isV2 && doc.tileset && Array.isArray(doc.tileset.tiles) ? doc.tileset.tiles : [];
     els["project-title"].textContent = doc.name || "Untitled Map";
     setControlValue(els["map-name"], doc.name);
     setControlValue(els["map-author"], doc.author);
@@ -1176,13 +1312,658 @@
     document.querySelectorAll('input[name="round-end"]').forEach(function (input) { input.checked = input.value === doc.rules.roundEndRooms; });
     setControlValue(els["score-target"], doc.rules.scoreTarget);
     setControlValue(els["respawn-limit"], doc.rules.armedRespawnLimit);
+    els["format-badge"].textContent = isV2 ? "V2" : "V1";
+    els["format-title"].textContent = isV2 ? "Custom-content package" : "Native map package";
+    els["format-copy"].textContent = isV2 ?
+      "V2 enables custom PNG tiles and deterministic map.lua behavior. Tile Lab edits the declarative tile definitions; scripting mode never executes code in the browser." :
+      "Uses EGGNOGG+’s built-in tiles and produces data.json plus data.map.";
+    els["format-v2-toggle"].checked = isV2;
+    els["header-tile-lab-button"].disabled = !isV2;
+    els["header-script-button"].disabled = !isV2;
+    els["v2-tile-summary"].hidden = !isV2;
+    if (isV2) {
+      var assetCount = Object.keys(doc.assets || {}).length;
+      els["v2-tile-summary"].textContent = v2Tiles.length + " / 64 tile" + (v2Tiles.length === 1 ? "" : "s") + " · " + assetCount + " PNG asset" + (assetCount === 1 ? "" : "s") + " · map.lua " + (doc.mapLuaPresent ? "enabled" : "off") + ".";
+    }
+  }
+
+  function nextV2Symbol() {
+    var used = Object.create(null);
+    var candidates = "$%&/<>[]{}~";
+    ((state.document.tileset && state.document.tileset.tiles) || []).forEach(function (tile) { if (tile && tile.symbol) used[tile.symbol] = true; });
+    for (var index = 0; index < candidates.length; index += 1) if (!used[candidates.charAt(index)]) return candidates.charAt(index);
+    return null;
+  }
+
+  function enableV2TileLab() {
+    els["format-v2-toggle"].checked = false;
+    toast("V1 maps only", "V2 object authoring is intentionally disabled until its editor workflow is redesigned.", "warning");
+  }
+
+  function disableV2() {
+    var tiles = state.document.tileset && state.document.tileset.tiles || [];
+    if (tiles.length || Object.keys(state.document.assets || {}).length || state.document.mapLuaPresent) {
+      els["format-v2-toggle"].checked = true;
+      toast("V2 content is in use", "Delete custom tiles and map.lua before switching this project back to V1.", "warning");
+      return;
+    }
+    commit("Switch to V1", function () {
+      state.document.format = "eggnogg-map/v1";
+      delete state.document.tileset;
+      delete state.document.assets;
+      delete state.document._tileArt;
+      delete state.document.mapLua;
+      delete state.document.mapLuaPresent;
+    });
+  }
+
+  function v2Tiles() {
+    if (!state.document.tileset || !Array.isArray(state.document.tileset.tiles)) state.document.tileset = { tiles: [] };
+    return state.document.tileset.tiles;
+  }
+
+  function selectedV2Tile() {
+    var list = v2Tiles();
+    if (!list.length) return null;
+    state.tileLabIndex = Math.max(0, Math.min(state.tileLabIndex, list.length - 1));
+    return list[state.tileLabIndex];
+  }
+
+  function uniqueTileId(base, exceptIndex) {
+    var stem = String(base || "custom_tile").toLowerCase().replace(/[^a-z0-9._-]+/g, "_").replace(/^[.-]+/, "").slice(0, 47) || "custom_tile";
+    var used = v2Tiles().map(function (tile, index) { return index === exceptIndex ? "" : String(tile.id || "").toLowerCase(); });
+    var value = stem;
+    var number = 2;
+    while (used.indexOf(value) >= 0) { value = (stem.slice(0, 42) + "_" + number).slice(0, 47); number += 1; }
+    return value;
+  }
+
+  function newV2Tile() {
+    if (v2Tiles().length >= 64) { toast("Tile limit reached", "Yule accepts at most 64 declarative tiles.", "warning"); return; }
+    var symbol = nextV2Symbol();
+    if (!symbol) { toast("Choose a symbol", "No unused quick symbol remains. Change an existing tile symbol first.", "warning"); return; }
+    var tile = {
+      id: uniqueTileId("custom_tile"), symbol: symbol, name: "Custom tile", sprite_sheet: "builtin:tiles",
+      sprite_index: 45, frame_count: 1, frame_ticks: 1, animation: "loop", layer: 0,
+      native_visual: "replace", collision: "pass_through", mirror_with_room: false, random_phase: false
+    };
+    v2Tiles().push(tile);
+    state.tileLabIndex = v2Tiles().length - 1;
+    state.document._tileArt = state.document._tileArt || {};
+    state.document._tileArt[tile.id] = { frames: [new Array(256).fill(null)], dirty: false };
+    state.tileArtFrame = 0;
+    renderTileLab();
+    markChanged();
+  }
+
+  function deleteV2Tile() {
+    var tile = selectedV2Tile();
+    if (!tile) return;
+    var used = rooms().some(function (room) { return room.grid.some(function (row) { return (Array.isArray(row) ? row.join("") : String(row || "")).indexOf(tile.symbol) >= 0; }); });
+    if (used) {
+      if (!window.confirm("Delete “" + (tile.name || tile.id) + "” and erase every “" + tile.symbol + "” occurrence from all rooms?")) return;
+      rooms().forEach(function (room) { room.grid = room.grid.map(function (row) { var chars = Array.isArray(row) ? row : String(row || "").split(""); return chars.map(function (glyph) { return glyph === tile.symbol ? " " : glyph; }); }); });
+    }
+    var art = state.document._tileArt && state.document._tileArt[tile.id]; var assetName = art && art.assetName;
+    v2Tiles().splice(state.tileLabIndex, 1);
+    if (state.selectedGlyph === tile.symbol) state.selectedGlyph = "@";
+    if (state.document._tileArt) delete state.document._tileArt[tile.id];
+    if (assetName && state.document.assets && !v2Tiles().some(function (entry) { return entry.sprite_sheet === assetName; })) delete state.document.assets[assetName];
+    state.tileLabIndex = Math.min(state.tileLabIndex, v2Tiles().length - 1);
+    renderTileLab(); renderPalette(); markChanged();
+  }
+
+  function duplicateV2Tile() {
+    var tile = selectedV2Tile(); var symbol = nextV2Symbol();
+    if (!tile || !symbol || v2Tiles().length >= 64) { toast("Cannot duplicate tile", "A free symbol and tile slot are required.", "warning"); return; }
+    var copy = clone(tile); copy.id = uniqueTileId(tile.id + "_copy"); copy.symbol = symbol; copy.name = (tile.name || tile.id) + " copy";
+    v2Tiles().splice(state.tileLabIndex + 1, 0, copy); state.tileLabIndex += 1;
+    if (state.document._tileArt && state.document._tileArt[tile.id]) { state.document._tileArt[copy.id] = clone(state.document._tileArt[tile.id]); delete state.document._tileArt[copy.id].assetName; state.document._tileArt[copy.id].dirty = true; }
+    renderTileLab(); renderPalette(); markChanged();
+  }
+
+  function moveV2Tile(delta) {
+    var list = v2Tiles(); var target = state.tileLabIndex + delta;
+    if (state.tileLabIndex < 0 || target < 0 || target >= list.length) return;
+    var tile = list.splice(state.tileLabIndex, 1)[0]; list.splice(target, 0, tile); state.tileLabIndex = target; renderTileLab(); markChanged();
+  }
+
+  function renderAssetList() {
+    var host = els["v2-asset-list"]; host.textContent = "";
+    var names = Object.keys(state.document.assets || {}).sort();
+    if (!names.length) { var empty = document.createElement("small"); empty.textContent = "No package-owned PNGs"; host.appendChild(empty); return; }
+    names.forEach(function (name) {
+      var row = document.createElement("div"); var label = document.createElement("span"); label.textContent = name;
+      var remove = document.createElement("button"); remove.type = "button"; remove.className = "text-button"; remove.textContent = "Remove";
+      remove.addEventListener("click", function () {
+        if (v2Tiles().some(function (tile) { return tile.sprite_sheet === name; })) { toast("PNG is still in use", "Choose another sheet for every tile before removing " + name + ".", "warning"); return; }
+        delete state.document.assets[name]; renderAssetList(); refreshSheetOptions(); markChanged();
+      });
+      row.append(label, remove); host.appendChild(row);
+    });
+  }
+
+  function assetSources() {
+    var output = {};
+    Object.keys(state.document.assets || {}).forEach(function (name) { output[name] = state.document.assets[name]; });
+    return output;
+  }
+
+  function refreshExternalAssets() {
+    if (!Atlas || !Atlas.loadAssets) return Promise.resolve();
+    return Atlas.loadAssets({ external: assetSources() }).then(function () { state.atlasReady = true; renderRoomCanvas(); renderPalette(); });
+  }
+
+  function renderTilePixels() {
+    var canvas = els["tile-pixel-canvas"];
+    var context = canvas.getContext("2d");
+    var tile = selectedV2Tile();
+    state.document._tileArt = state.document._tileArt || {};
+    var art = tile && state.document._tileArt[tile.id];
+    if (Array.isArray(art)) art = { frames: [art] };
+    if (!art || !Array.isArray(art.frames) || !art.frames.length) art = { frames: [new Array(256).fill(null)] };
+    state.tileArtFrame = Math.max(0, Math.min(state.tileArtFrame, art.frames.length - 1));
+    var pixels = art.frames[state.tileArtFrame];
+    if (!Array.isArray(pixels) || pixels.length !== 256) art.frames[state.tileArtFrame] = pixels = new Array(256).fill(null);
+    var drawPixels = state.pixelPreview || pixels;
+    if (tile) state.document._tileArt[tile.id] = art;
+    state.tilePixels = pixels;
+    context.clearRect(0, 0, 16, 16);
+    if (els["pixel-onion-skin"] && els["pixel-onion-skin"].checked && state.tileArtFrame > 0) {
+      context.globalAlpha = 0.28;
+      art.frames[state.tileArtFrame - 1].forEach(function (color, index) { if (!color) return; context.fillStyle = color; context.fillRect(index % 16, Math.floor(index / 16), 1, 1); });
+      context.globalAlpha = 1;
+    }
+    drawPixels.forEach(function (color, index) {
+      if (!color) return;
+      context.fillStyle = color;
+      context.fillRect(index % 16, Math.floor(index / 16), 1, 1);
+    });
+    els["tile-frame-label"].textContent = "Frame " + (state.tileArtFrame + 1) + " / " + art.frames.length;
+    els["tile-frame-prev"].disabled = state.tileArtFrame <= 0; els["tile-frame-next"].disabled = state.tileArtFrame >= art.frames.length - 1;
+    els["tile-frame-delete"].disabled = art.frames.length <= 1;
+    els["tile-frame-move-left"].disabled = state.tileArtFrame <= 0; els["tile-frame-move-right"].disabled = state.tileArtFrame >= art.frames.length - 1;
+    if (!state.tilePainting) renderPixelTimeline(art);
+    els["pixel-undo-button"].disabled = !state.pixelUndo.length; els["pixel-redo-button"].disabled = !state.pixelRedo.length;
+  }
+
+  function renderPixelTimeline(art) {
+    var host = els["pixel-frame-timeline"]; if (!host) return; host.textContent = "";
+    art.frames.forEach(function (frame, frameIndex) {
+      var button = document.createElement("button"); button.type = "button"; button.className = frameIndex === state.tileArtFrame ? "is-active" : ""; button.title = "Edit frame " + (frameIndex + 1);
+      var canvas = document.createElement("canvas"); canvas.width = 16; canvas.height = 16; var context = canvas.getContext("2d");
+      frame.forEach(function (color, pixelIndex) { if (!color) return; context.fillStyle = color; context.fillRect(pixelIndex % 16, Math.floor(pixelIndex / 16), 1, 1); });
+      var label = document.createElement("span"); label.textContent = String(frameIndex + 1); button.append(canvas, label);
+      button.addEventListener("click", function () { state.pixelPreview = null; state.tileArtFrame = frameIndex; renderTilePixels(); }); host.appendChild(button);
+    });
+  }
+
+  function renderTileAnimation() {
+    var tile = selectedV2Tile(); var canvas = els["tile-animation-canvas"];
+    if (!tile || !canvas) return;
+    var tick = els["tile-animation-playing"].checked ? previewTicks() : Number(els["tile-animation-tick"].value);
+    var count = Math.max(1, Number(tile.frame_count) || 1); var speed = Math.max(1, Number(tile.frame_ticks) || 1);
+    var rawFrame = Math.floor(tick / speed); var frame;
+    if (tile.animation === "once") frame = Math.min(count - 1, rawFrame);
+    else if (tile.animation === "ping_pong" && count > 1) { var cycle = count * 2 - 2; var phase = rawFrame % cycle; frame = phase < count ? phase : cycle - phase; }
+    else frame = rawFrame % count;
+    els["tile-animation-readout"].textContent = "Frame " + (frame + 1) + " of " + count + " · tick " + Math.floor(tick);
+    if (els["tile-animation-playing"].checked) els["tile-animation-tick"].value = String(Math.floor(tick) % 3601);
+    var art = state.document._tileArt && state.document._tileArt[tile.id];
+    if (Array.isArray(art)) art = { frames: [art] };
+    if (art && Array.isArray(art.frames) && art.frames.length) {
+      var context = canvas.getContext("2d"); context.imageSmoothingEnabled = false; context.clearRect(0, 0, 192, 192); drawPreviewChecker(context, 192);
+      if (!drawPixelArtPreview(context, art, frame, 192, tile) && Atlas && Atlas.renderGlyph) Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: tick });
+    } else if (Atlas && Atlas.renderGlyph) Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: tick });
+  }
+
+  function tileArtRecord() {
+    var tile = selectedV2Tile(); if (!tile) return null;
+    state.document._tileArt = state.document._tileArt || {};
+    var art = state.document._tileArt[tile.id];
+    if (Array.isArray(art)) art = { frames: [art] };
+    if (!art || !Array.isArray(art.frames) || !art.frames.length) art = { frames: [new Array(256).fill(null)] };
+    state.document._tileArt[tile.id] = art; return art;
+  }
+
+  function changeTileArtFrame(delta) { var art = tileArtRecord(); if (!art) return; state.tileArtFrame = Math.max(0, Math.min(art.frames.length - 1, state.tileArtFrame + delta)); renderTilePixels(); }
+  function addTileArtFrame(duplicate) {
+    var art = tileArtRecord(); var tile = selectedV2Tile(); if (!art || !tile || art.frames.length >= 256) return;
+    var frame = duplicate ? art.frames[state.tileArtFrame].slice() : new Array(256).fill(null);
+    art.frames.splice(state.tileArtFrame + 1, 0, frame); art.dirty = true; state.tileArtFrame += 1; tile.frame_count = art.frames.length; renderTileLab(); markChanged();
+  }
+  function deleteTileArtFrame() {
+    var art = tileArtRecord(); var tile = selectedV2Tile(); if (!art || !tile || art.frames.length <= 1) return;
+    art.frames.splice(state.tileArtFrame, 1); art.dirty = true; state.tileArtFrame = Math.min(state.tileArtFrame, art.frames.length - 1); tile.frame_count = art.frames.length; renderTileLab(); markChanged();
+  }
+  function moveTileArtFrame(delta) {
+    var art = tileArtRecord(); if (!art) return; var target = state.tileArtFrame + delta;
+    if (target < 0 || target >= art.frames.length) return;
+    var frame = art.frames.splice(state.tileArtFrame, 1)[0]; art.frames.splice(target, 0, frame); art.dirty = true; state.tileArtFrame = target; renderTilePixels(); markChanged();
+  }
+
+  function drawPreviewChecker(context, size) {
+    var step = size / 12; context.fillStyle = "#100a0c"; context.fillRect(0, 0, size, size); context.fillStyle = "#1d1417";
+    for (var y = 0; y < 12; y += 1) for (var x = 0; x < 12; x += 1) if ((x + y) % 2) context.fillRect(x * step, y * step, step, step);
+  }
+
+  function drawPixelArtPreview(context, art, frame, size, tile) {
+    if (!art || !Array.isArray(art.frames) || !art.frames.length) return false;
+    var pixels = art.frames[Math.max(0, frame % art.frames.length)];
+    if (!Array.isArray(pixels)) return false;
+    if (!pixels.some(function (color) { return !!color; }) && !art.assetName && !art.dirty) return false;
+    var source = document.createElement("canvas"); source.width = 16; source.height = 16; var sourceContext = source.getContext("2d");
+    pixels.forEach(function (color, index) { if (!color) return; sourceContext.fillStyle = color; sourceContext.fillRect(index % 16, Math.floor(index / 16), 1, 1); });
+    tile = tile || {}; var tint = tile.tint || [1, 1, 1, 1];
+    sourceContext.globalCompositeOperation = "multiply"; sourceContext.fillStyle = Core.colorToHex ? Core.colorToHex(tint.slice(0, 3)) : "#ffffff"; sourceContext.fillRect(0, 0, 16, 16); sourceContext.globalCompositeOperation = "source-over";
+    context.save(); context.imageSmoothingEnabled = false; context.globalAlpha = tint[3] === undefined ? 1 : Number(tint[3]);
+    context.translate(size / 2 + (Number(tile.offset_x) || 0) * size / 16, size / 2 + (Number(tile.offset_y) || 0) * size / 16); context.rotate((Number(tile.angle_degrees) || 0) * Math.PI / 180); context.scale(Number(tile.scale_x) || 1, Number(tile.scale_y) || 1);
+    context.drawImage(source, -size / 2, -size / 2, size, size); context.restore();
+    return true;
+  }
+
+  function drawHitboxOverlay(context, tile, collision) {
+    var size = 192; var hazard = collision === "hazard"; var solid = collision === "solid";
+    if (solid || hazard) {
+      context.fillStyle = hazard ? "rgba(255,83,64,.25)" : "rgba(119,207,153,.20)"; context.fillRect(2, 2, size - 4, size - 4);
+      context.strokeStyle = hazard ? "#ff7770" : "#77cf99"; context.lineWidth = 5; context.strokeRect(4, 4, size - 8, size - 8);
+      if (hazard) {
+        context.strokeStyle = "rgba(255,119,112,.58)"; context.lineWidth = 2;
+        for (var slash = -size; slash < size * 2; slash += 24) { context.beginPath(); context.moveTo(slash, 0); context.lineTo(slash + size, size); context.stroke(); }
+      }
+    } else if (collision === "pass_through") {
+      context.strokeStyle = "rgba(242,233,230,.45)"; context.lineWidth = 3; context.setLineDash([9, 7]); context.strokeRect(5, 5, size - 10, size - 10); context.setLineDash([]);
+    } else {
+      context.strokeStyle = "#ffd166"; context.lineWidth = 4; context.setLineDash([12, 7]); context.strokeRect(4, 4, size - 8, size - 8); context.setLineDash([]);
+    }
+    context.strokeStyle = "rgba(255,255,255,.10)"; context.lineWidth = 1;
+    for (var line = 0; line <= 16; line += 1) { var pos = line * 12; context.beginPath(); context.moveTo(pos, 0); context.lineTo(pos, size); context.stroke(); context.beginPath(); context.moveTo(0, pos); context.lineTo(size, pos); context.stroke(); }
+    var forceX = Number(tile && tile.force_x); var forceY = Number(tile && tile.force_y);
+    if (Number.isFinite(forceX) || Number.isFinite(forceY)) {
+      forceX = Number.isFinite(forceX) ? forceX : 0; forceY = Number.isFinite(forceY) ? forceY : 0;
+      var magnitude = Math.max(1, Math.abs(forceX), Math.abs(forceY)); var endX = 96 + forceX / magnitude * 64; var endY = 96 + forceY / magnitude * 64;
+      context.strokeStyle = "#36a6d9"; context.fillStyle = "#36a6d9"; context.lineWidth = 5; context.beginPath(); context.moveTo(96, 96); context.lineTo(endX, endY); context.stroke();
+      var angle = Math.atan2(endY - 96, endX - 96); context.beginPath(); context.moveTo(endX, endY); context.lineTo(endX - 14 * Math.cos(angle - .55), endY - 14 * Math.sin(angle - .55)); context.lineTo(endX - 14 * Math.cos(angle + .55), endY - 14 * Math.sin(angle + .55)); context.closePath(); context.fill();
+    }
+  }
+
+  function renderHitboxPreview() {
+    var canvas = els["tile-hitbox-canvas"]; var context = canvas && canvas.getContext("2d"); var tile = selectedV2Tile();
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height); context.fillStyle = "#120c0e"; context.fillRect(0, 0, canvas.width, canvas.height);
+    if (!tile) { els["tile-hitbox-details"].textContent = "Create or select a tile to inspect its collision."; return; }
+    var request = ++state.hitboxRenderRequest; var collision = tile && (tile.collision || "native");
+    var art = state.document._tileArt && state.document._tileArt[tile.id]; if (Array.isArray(art)) art = { frames: [art] };
+    var frame = Math.floor(previewTicks() / Math.max(1, Number(tile.frame_ticks) || 1));
+    var finish = function () { if (request === state.hitboxRenderRequest && selectedV2Tile() === tile) drawHitboxOverlay(context, tile, collision); };
+    if (drawPixelArtPreview(context, art, frame, 192, tile)) finish();
+    else if (Atlas && Atlas.renderGlyph) {
+      Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: previewTicks() }).then(finish, finish);
+    } else finish();
+    var labels = { solid: "Solid cell", pass_through: "No hitbox", hazard: "Lethal cell", native: "Native collision" };
+    var fallback = collision === "native" ? (tile.native_glyph || tile.symbol || "?") : collision === "solid" ? "@" : collision === "hazard" ? "X" : "x";
+    var force = (tile.force_x !== undefined || tile.force_y !== undefined) ? ((tile.force_mode || "add") + " (" + (Number(tile.force_x) || 0) + ", " + (Number(tile.force_y) || 0) + ")") : "None";
+    els["tile-hitbox-details"].innerHTML = "<div><strong>" + labels[collision] + "</strong><span>Runtime fallback <code>" + escapeHtml(fallback) + "</code></span></div><div><strong>Force</strong><span>" + escapeHtml(force) + "</span></div><div><strong>Draw layer</strong><span>" + (Number(tile.layer) === 1 ? "Background" : "Normal") + (tile.mirror_with_room ? " Â· mirrors" : "") + "</span></div>";
+    document.querySelectorAll("[data-hitbox]").forEach(function (button) { button.classList.toggle("is-active", button.dataset.hitbox === collision); });
+  }
+
+  function setTileControl(id, value) {
+    var control = els[id];
+    if (!control) return;
+    if (control.type === "checkbox") control.checked = !!value;
+    else control.value = value === undefined || value === null ? "" : String(value);
+    if (id === "v2-tint" && state.colorPickers.tint && /^#[0-9a-f]{6}$/i.test(control.value)) state.colorPickers.tint.set(control.value);
+  }
+
+  function refreshSheetOptions(selected) {
+    var select = els["v2-sprite-sheet"];
+    while (select.options.length > 4) select.remove(4);
+    Object.keys(state.document.assets || {}).sort().forEach(function (name) {
+      var option = document.createElement("option"); option.value = name; option.textContent = name; select.appendChild(option);
+    });
+    select.value = selected || "builtin:tiles";
+  }
+
+  function renderTileLab() {
+    var list = v2Tiles();
+    els["v2-tile-list"].textContent = "";
+    list.forEach(function (tile, index) {
+      var button = document.createElement("button");
+      button.type = "button"; button.className = "v2-tile-item" + (index === state.tileLabIndex ? " is-selected" : "");
+      button.setAttribute("role", "option"); button.setAttribute("aria-selected", index === state.tileLabIndex ? "true" : "false");
+      var glyph = document.createElement("strong"); glyph.textContent = tile.symbol || "?";
+      var copy = document.createElement("span"); copy.textContent = tile.name || tile.id || "Unnamed tile";
+      var small = document.createElement("small"); small.textContent = tile.id || "missing id";
+      copy.appendChild(small); button.append(glyph, copy);
+      button.addEventListener("click", function () { state.tileLabIndex = index; state.tileArtFrame = 0; state.pixelPreview = null; state.pixelUndo = []; state.pixelRedo = []; renderTileLab(); });
+      els["v2-tile-list"].appendChild(button);
+    });
+    var tile = selectedV2Tile();
+    els["delete-v2-tile-button"].disabled = !tile;
+    els["duplicate-v2-tile-button"].disabled = !tile || list.length >= 64;
+    els["move-v2-tile-up"].disabled = !tile || state.tileLabIndex <= 0;
+    els["move-v2-tile-down"].disabled = !tile || state.tileLabIndex >= list.length - 1;
+    renderAssetList();
+    document.querySelectorAll(".tile-fields input, .tile-fields select").forEach(function (control) { control.disabled = !tile; });
+    if (!tile) {
+      els["tile-lab-status"].textContent = "Create a tile to start drawing or importing a PNG.";
+      renderTilePixels();
+      return;
+    }
+    refreshSheetOptions(tile.sprite_sheet);
+    setTileControl("v2-tile-id", tile.id); setTileControl("v2-tile-symbol", tile.symbol); setTileControl("v2-tile-name", tile.name);
+    setTileControl("v2-sprite-index", tile.sprite_index === undefined ? 0 : tile.sprite_index);
+    setTileControl("v2-cell-w", tile.cell_w === undefined ? 16 : tile.cell_w); setTileControl("v2-cell-h", tile.cell_h === undefined ? 16 : tile.cell_h); setTileControl("v2-padding", tile.padding || 0);
+    setTileControl("v2-frame-count", tile.frame_count === undefined ? 1 : tile.frame_count);
+    setTileControl("v2-frame-ticks", tile.frame_ticks === undefined ? 1 : tile.frame_ticks);
+    setTileControl("v2-animation", tile.animation || "loop"); setTileControl("v2-collision", tile.collision || "native");
+    setTileControl("v2-native-glyph", tile.native_glyph || ""); setTileControl("v2-layer", tile.layer || 0);
+    setTileControl("v2-native-visual", tile.native_visual || "replace"); setTileControl("v2-offset-x", tile.offset_x || 0);
+    setTileControl("v2-offset-y", tile.offset_y || 0); setTileControl("v2-scale-x", tile.scale_x === undefined ? 1 : tile.scale_x);
+    setTileControl("v2-scale-y", tile.scale_y === undefined ? 1 : tile.scale_y); setTileControl("v2-angle", tile.angle_degrees || 0);
+    setTileControl("v2-tint", tile.tint ? (Core.colorToHex ? Core.colorToHex(tile.tint.slice(0, 3)) : "#ffffff") : "#ffffff");
+    setTileControl("v2-tint-alpha", tile.tint ? tile.tint[3] : 1);
+    setTileControl("v2-force-x", tile.force_x); setTileControl("v2-force-y", tile.force_y);
+    setTileControl("v2-force-mode", tile.force_mode || "add"); setTileControl("v2-max-speed-x", tile.max_speed_x); setTileControl("v2-max-speed-y", tile.max_speed_y);
+    setTileControl("v2-mirror-with-room", tile.mirror_with_room); setTileControl("v2-random-phase", tile.random_phase);
+    els["tile-asset-status"].textContent = /^builtin:/.test(tile.sprite_sheet || "") ? "Using an original built-in game atlas" : "Using packaged PNG: " + tile.sprite_sheet;
+    els["tile-lab-status"].textContent = "Editing “" + (tile.name || tile.id) + "” · paint symbol “" + tile.symbol + "”.";
+    renderTilePixels();
+    renderTileAnimation(); renderHitboxPreview();
+  }
+
+  function openTileLab() {
+    state.tileLabSnapshot = historySnapshot("Edit V2 tiles");
+    if (!v2Tiles().length) state.tileLabIndex = -1;
+    else state.tileLabIndex = Math.max(0, state.tileLabIndex);
+    renderTileLab();
+    document.body.classList.add("tile-mode-open");
+    els["map-mode-button"].classList.remove("is-active"); els["map-mode-button"].setAttribute("aria-pressed", "false");
+    els["header-tile-lab-button"].classList.add("is-active");
+    openDialog(els["tile-lab-dialog"]);
+  }
+
+  function closeTileLab() {
+    var artChanged = commitAllTileArt();
+    if (state.tileLabSnapshot && JSON.stringify(state.tileLabSnapshot.document) !== JSON.stringify(state.document)) pushHistory(state.tileLabSnapshot, "Edit V2 tiles");
+    state.tileLabSnapshot = null; document.body.classList.remove("tile-mode-open");
+    els["header-tile-lab-button"].classList.remove("is-active"); els["map-mode-button"].classList.add("is-active"); els["map-mode-button"].setAttribute("aria-pressed", "true");
+    closeDialog(els["tile-lab-dialog"]); renderAll(); if (artChanged) refreshExternalAssets().then(renderAll);
+  }
+
+  function updateSelectedTileField(key, value, optional) {
+    var tile = selectedV2Tile();
+    if (!tile) return;
+    if (optional && (value === "" || value === null || value === undefined || Number.isNaN(value))) delete tile[key];
+    else tile[key] = value;
+    markChanged(); validate(); renderPalette(); renderRoomCanvas();
+  }
+
+  function pixelPoint(event) {
+    var rect = els["tile-pixel-canvas"].getBoundingClientRect();
+    return { x: Math.max(0, Math.min(15, Math.floor((event.clientX - rect.left) / rect.width * 16))), y: Math.max(0, Math.min(15, Math.floor((event.clientY - rect.top) / rect.height * 16))) };
+  }
+
+  function pushPixelHistory(before) {
+    if (!before || JSON.stringify(before) === JSON.stringify(state.tilePixels)) return;
+    state.pixelUndo.push({ tileId: selectedV2Tile().id, frame: state.tileArtFrame, pixels: before }); if (state.pixelUndo.length > 100) state.pixelUndo.shift(); state.pixelRedo = [];
+    var art = tileArtRecord(); if (art) art.dirty = true; markChanged();
+  }
+
+  function pixelUndo(direction) {
+    var source = direction < 0 ? state.pixelUndo : state.pixelRedo; var target = direction < 0 ? state.pixelRedo : state.pixelUndo; var entry = source.pop(); var tile = selectedV2Tile(); if (!entry || !tile || entry.tileId !== tile.id) return;
+    var art = tileArtRecord(); target.push({ tileId: tile.id, frame: entry.frame, pixels: art.frames[entry.frame].slice() }); art.frames[entry.frame] = entry.pixels.slice(); art.dirty = true; state.tileArtFrame = entry.frame; state.pixelPreview = null; renderTilePixels(); markChanged();
+  }
+
+  function floodPixel(pixels, x, y, replacement) {
+    var original = pixels[y * 16 + x] || null; if (original === replacement) return; var queue = [[x, y]]; var seen = {};
+    while (queue.length) { var point = queue.pop(); var key = point[0] + "," + point[1]; if (seen[key] || point[0] < 0 || point[0] > 15 || point[1] < 0 || point[1] > 15) continue; seen[key] = true; var index = point[1] * 16 + point[0]; if ((pixels[index] || null) !== original) continue; pixels[index] = replacement; queue.push([point[0] - 1, point[1]], [point[0] + 1, point[1]], [point[0], point[1] - 1], [point[0], point[1] + 1]); }
+  }
+
+  function linePixels(pixels, start, end, color) {
+    var x0 = start.x; var y0 = start.y; var x1 = end.x; var y1 = end.y; var dx = Math.abs(x1 - x0); var sx = x0 < x1 ? 1 : -1; var dy = -Math.abs(y1 - y0); var sy = y0 < y1 ? 1 : -1; var error = dx + dy;
+    while (true) { pixels[y0 * 16 + x0] = color; if (x0 === x1 && y0 === y1) break; var twice = 2 * error; if (twice >= dy) { error += dy; x0 += sx; } if (twice <= dx) { error += dx; y0 += sy; } }
+  }
+
+  function shapePixels(base, start, end, tool, color) {
+    var pixels = base.slice();
+    if (tool === "line") linePixels(pixels, start, end, color);
+    else { var left = Math.min(start.x, end.x); var right = Math.max(start.x, end.x); var top = Math.min(start.y, end.y); var bottom = Math.max(start.y, end.y); for (var x = left; x <= right; x += 1) { pixels[top * 16 + x] = color; pixels[bottom * 16 + x] = color; } for (var y = top; y <= bottom; y += 1) { pixels[y * 16 + left] = color; pixels[y * 16 + right] = color; } }
+    return pixels;
+  }
+
+  function beginPixelDraw(event) {
+    if (!state.tilePixels || !selectedV2Tile()) return;
+    var point = pixelPoint(event); var tool = event.button === 2 ? "eraser" : state.pixelTool; var before = state.tilePixels.slice(); state.pixelStart = { point: point, before: before, tool: tool };
+    if (tool === "eyedropper") { var color = state.tilePixels[point.y * 16 + point.x]; if (color && state.colorPickers.paint) state.colorPickers.paint.set(/^#/.test(color) ? color : rgbStringToHex(color)); state.pixelStart = null; return; }
+    if (tool === "fill") { floodPixel(state.tilePixels, point.x, point.y, els["tile-paint-color"].value); pushPixelHistory(before); state.pixelStart = null; renderTilePixels(); return; }
+    if (tool === "line" || tool === "rectangle") { state.pixelPreview = shapePixels(before, point, point, tool, els["tile-paint-color"].value); renderTilePixels(); return; }
+    state.tilePixels[point.y * 16 + point.x] = tool === "eraser" ? null : els["tile-paint-color"].value; renderTilePixels();
+  }
+
+  function continuePixelDraw(event) {
+    if (!state.pixelStart) return; var point = pixelPoint(event); var tool = state.pixelStart.tool;
+    if (tool === "line" || tool === "rectangle") state.pixelPreview = shapePixels(state.pixelStart.before, state.pixelStart.point, point, tool, els["tile-paint-color"].value);
+    else state.tilePixels[point.y * 16 + point.x] = tool === "eraser" ? null : els["tile-paint-color"].value;
+    renderTilePixels();
+  }
+
+  function endPixelDraw() {
+    if (!state.pixelStart) return; var before = state.pixelStart.before;
+    if (state.pixelPreview) { var art = tileArtRecord(); art.frames[state.tileArtFrame] = state.pixelPreview.slice(); state.tilePixels = art.frames[state.tileArtFrame]; state.pixelPreview = null; }
+    state.pixelStart = null; pushPixelHistory(before); renderTilePixels();
+  }
+
+  function rgbStringToHex(value) {
+    var match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/i.exec(value); if (!match) return "#ffffff";
+    return "#" + [match[1], match[2], match[3]].map(function (number) { return Number(number).toString(16).padStart(2, "0"); }).join("");
+  }
+
+  function transformPixelFrame(kind) {
+    var art = tileArtRecord(); if (!art) return; var before = art.frames[state.tileArtFrame].slice(); var after = new Array(256).fill(null);
+    for (var y = 0; y < 16; y += 1) for (var x = 0; x < 16; x += 1) { var nx = kind === "flipX" ? 15 - x : kind === "rotate" ? 15 - y : x; var ny = kind === "flipY" ? 15 - y : kind === "rotate" ? x : y; after[ny * 16 + nx] = before[y * 16 + x]; }
+    art.frames[state.tileArtFrame] = after; state.tilePixels = after; pushPixelHistory(before); renderTilePixels();
+  }
+
+  function seedArtFromCurrentSprite() {
+    var tile = selectedV2Tile(); var art = tileArtRecord(); if (!tile || !art || !Atlas || !Atlas.renderGlyph) return;
+    var preview = document.createElement("canvas"); var before = art.frames[state.tileArtFrame].slice();
+    Atlas.renderGlyph(preview, tile.symbol, { size: 16, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: Number(els["tile-animation-tick"].value) || 0 }).then(function () {
+      var data = preview.getContext("2d").getImageData(0, 0, 16, 16).data; var pixels = []; var visible = 0;
+      for (var index = 0; index < 256; index += 1) { var offset = index * 4; if (!data[offset + 3]) pixels.push(null); else { visible += 1; pixels.push("rgba(" + data[offset] + "," + data[offset + 1] + "," + data[offset + 2] + "," + (data[offset + 3] / 255) + ")"); } }
+      if (!visible) { toast("Nothing to copy", "The current sprite rendered as a transparent frame.", "warning"); return; }
+      art.frames[state.tileArtFrame] = pixels; art.dirty = true; state.tilePixels = pixels; pushPixelHistory(before); renderTilePixels(); renderTileAnimation(); markChanged(); toast("Sprite copied", "The rendered game sprite is now editable pixel art.");
+    }, function () { toast("Sprite unavailable", "The selected atlas frame could not be copied.", "error"); });
+  }
+
+  function safeAssetName(value) {
+    var name = String(value || "tile.png").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[.-]+/, "");
+    if (!/\.png$/i.test(name)) name += ".png";
+    return name.slice(-120) || "tile.png";
+  }
+
+  function uniqueAssetName(value) {
+    var base = safeAssetName(value); var name = base; var count = 2;
+    while (state.document.assets && state.document.assets[name] !== undefined) { name = base.replace(/\.png$/i, "_" + count + ".png"); count += 1; }
+    return name;
+  }
+
+  function writeTileArtAsset(tile, art, force) {
+    if (!tile || !art || !Array.isArray(art.frames) || (!force && !art.dirty)) return false;
+    var existing = art.assetName || (!/^builtin:/.test(tile.sprite_sheet || "") && state.document.assets && state.document.assets[tile.sprite_sheet] ? tile.sprite_sheet : "");
+    var name = existing || uniqueAssetName((tile.id || "tile") + ".png");
+    var sheet = document.createElement("canvas"); sheet.width = art.frames.length * 16; sheet.height = 16;
+    var sheetContext = sheet.getContext("2d");
+    art.frames.forEach(function (frame, frameIndex) { frame.forEach(function (color, pixelIndex) { if (!color) return; sheetContext.fillStyle = color; sheetContext.fillRect(frameIndex * 16 + pixelIndex % 16, Math.floor(pixelIndex / 16), 1, 1); }); });
+    state.document.assets = state.document.assets || {};
+    state.document.assets[name] = sheet.toDataURL("image/png");
+    tile.sprite_sheet = name; tile.sprite_index = 0; tile.frame_count = art.frames.length; tile.cell_w = 16; tile.cell_h = 16; tile.padding = 0;
+    art.assetName = name; art.dirty = false;
+    return true;
+  }
+
+  function commitAllTileArt() {
+    var changed = false; var artById = state.document._tileArt || {};
+    v2Tiles().forEach(function (tile) { if (writeTileArtAsset(tile, artById[tile.id], false)) changed = true; });
+    return changed;
+  }
+
+  function importTilePng(file) {
+    if (!file) return;
+    if (file.size > 64 * 1024 * 1024) { toast("PNG too large", "Yule limits each external sheet to 64 MiB.", "error"); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var tile = selectedV2Tile(); if (!tile) return;
+      var name = uniqueAssetName(file.name);
+      state.document.assets = state.document.assets || {}; state.document.assets[name] = reader.result;
+      tile.sprite_sheet = name; tile.sprite_index = 0; tile.cell_w = 16; tile.cell_h = 16; tile.padding = 0;
+      var image = new Image();
+      image.onload = function () {
+        var columns = Math.max(1, Math.floor(image.naturalWidth / 16)); var rows = Math.max(1, Math.floor(image.naturalHeight / 16)); var count = Math.min(256, columns * rows);
+        var source = document.createElement("canvas"); source.width = image.naturalWidth; source.height = image.naturalHeight; var context = source.getContext("2d"); context.drawImage(image, 0, 0);
+        var frames = [];
+        for (var frameIndex = 0; frameIndex < count; frameIndex += 1) {
+          var data = context.getImageData((frameIndex % columns) * 16, Math.floor(frameIndex / columns) * 16, 16, 16).data; var pixels = [];
+          for (var pixel = 0; pixel < 256; pixel += 1) { var offset = pixel * 4; pixels.push(data[offset + 3] ? "rgba(" + data[offset] + "," + data[offset + 1] + "," + data[offset + 2] + "," + (data[offset + 3] / 255) + ")" : null); }
+          frames.push(pixels);
+        }
+        state.document._tileArt = state.document._tileArt || {}; state.document._tileArt[tile.id] = { frames: frames, assetName: name, dirty: false }; state.tileArtFrame = 0; tile.frame_count = frames.length;
+        refreshExternalAssets().then(renderTileLab); markChanged();
+      };
+      image.onerror = function () { refreshExternalAssets().then(renderTileLab); markChanged(); };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function bytesToPngDataUrl(bytes) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(reader.error || new Error("PNG could not be read.")); };
+      reader.readAsDataURL(new Blob([bytes], { type: "image/png" }));
+    });
+  }
+
+  function scriptStarter() {
+    var tile = v2Tiles()[0];
+    var symbol = tile && tile.symbol || "?";
+    return "-- Greggnogg map.lua\n-- The Yule runtime is deterministic; use map.random(), not math.random().\n\nmap.state.contacts = map.state.contacts or 0\n\nmap.on_enter(\"" + symbol + "\", function(object, tile)\n  map.state.contacts = map.state.contacts + 1\n  -- object:add_velocity(0, -1)\nend)\n";
+  }
+
+  function scriptDiagnostics() {
+    var source = els["map-lua-editor"].value;
+    var count = utf8Length(source);
+    var notes = [];
+    if (source.indexOf("\0") >= 0) notes.push("NUL characters are not allowed");
+    if (count > 262144) notes.push("over the 256 KiB runtime limit");
+    if (/\b(?:require|dofile|loadfile|loadstring)\s*\(/.test(source) || /\b(?:io|os|package|debug|ffi|jit)\s*\./.test(source)) notes.push("contains APIs unavailable in the sandbox");
+    if (/\bmath\.random\s*\(/.test(source)) notes.push("use map.random() for deterministic behavior");
+    if (/\^/.test(source.replace(/--[^\n]*/g, "").replace(/\"(?:\\.|[^\"])*\"/g, ""))) notes.push("the power operator is rejected for cross-CPU rollback stability");
+    var registrations = Object.create(null);
+    source.replace(/map\.(on_enter|on_contact|on_leave)\s*\(\s*(["'])(.)\2/g, function (_, eventName, quote, symbol) { var key = eventName + ":" + symbol; registrations[key] = (registrations[key] || 0) + 1; return _; });
+    if (Object.keys(registrations).some(function (key) { return registrations[key] > 1; })) notes.push("contains a duplicate event/tile registration that Yule rejects");
+    els["script-byte-count"].textContent = count + " / 262144 bytes" + (notes.length ? " · " + notes.join(" · ") : " · syntax is checked by Yule on load");
+    els["script-byte-count"].classList.toggle("is-error", count > 262144 || source.indexOf("\0") >= 0);
+  }
+
+  function renderScriptReference() {
+    els["script-reference-list"].textContent = "";
+    var query = String(els["script-api-search"].value || "").toLowerCase();
+    SCRIPT_COMPLETIONS.filter(function (entry) { return !query || (entry.label + " " + entry.detail).toLowerCase().indexOf(query) >= 0; }).forEach(function (entry) {
+      var button = document.createElement("button"); button.type = "button"; button.className = "script-reference-item";
+      var code = document.createElement("code"); code.textContent = entry.label;
+      var small = document.createElement("small"); small.textContent = entry.detail;
+      button.append(code, small); button.addEventListener("click", function () { insertScript(entry.snippet); });
+      els["script-reference-list"].appendChild(button);
+    });
+  }
+
+  function renderScriptBuilder() {
+    var select = els["script-builder-tile"]; var previous = select.value; select.textContent = "";
+    v2Tiles().forEach(function (tile) { var option = document.createElement("option"); option.value = tile.id; option.textContent = (tile.symbol || "?") + " · " + (tile.name || tile.id); select.appendChild(option); });
+    if (previous) select.value = previous;
+    els["script-builder-insert"].disabled = !v2Tiles().length && els["script-builder-event"].value !== "on_tick";
+  }
+
+  function buildScriptHandler() {
+    var eventName = els["script-builder-event"].value;
+    var tile = v2Tiles().filter(function (entry) { return entry.id === els["script-builder-tile"].value; })[0];
+    if (eventName !== "on_tick" && !tile) { toast("Create a tile first", "Tile event handlers need a V2 tile binding.", "warning"); return; }
+    var objects = els["script-builder-objects"].value;
+    var objectList = objects === "all" ? "{ \"alive_player\", \"dead_body\", \"sword\", \"hazard\" }" : "{ \"" + objects + "\" }";
+    var action = els["script-builder-action"].value; var body;
+    if (action === "launch") body = "  object:add_velocity(0, -2)";
+    else if (action === "set_velocity") body = "  object:set_velocity(0, -4)";
+    else if (action === "sprite") body = "  tile:set_sprite(" + (Number(tile && tile.sprite_index) || 0) + ", 30, { offset_y = 0 })";
+    else if (action === "counter") body = "  map.state.activations = (map.state.activations or 0) + 1";
+    else body = "  -- Add deterministic behavior here";
+    var snippet;
+    if (eventName === "on_tick") snippet = "map.on_tick(function()\n" + (action === "counter" ? body : "  -- map.tick() and map.random() are safe here") + "\nend)";
+    else {
+      var edges = ["left", "top", "right", "bottom"].map(function (edge) { return Number(els["script-sensor-" + edge].value); });
+      if (edges.some(function (value) { return !Number.isFinite(value); }) || edges[2] <= edges[0] || edges[3] <= edges[1]) { toast("Invalid sensor box", "Right/bottom must be greater than left/top.", "error"); return; }
+      snippet = "map.sensor(\"" + tile.symbol + "\", {\n  tile_box = { left = " + edges[0] + ", top = " + edges[1] + ", right = " + edges[2] + ", bottom = " + edges[3] + " },\n  object_box = \"" + els["script-sensor-object-box"].value + "\",\n  objects = " + objectList + ",\n  contact_scope = \"" + els["script-sensor-scope"].value + "\",\n  mirror_with_room = true,\n})\n\nmap." + eventName + "(\"" + tile.symbol + "\", function(object, tile)\n" + body + "\nend)";
+    }
+    insertScript((els["map-lua-editor"].value ? "\n\n" : "") + snippet);
+  }
+
+  function insertScript(text) {
+    var editor = els["map-lua-editor"];
+    var start = editor.selectionStart; var end = editor.selectionEnd;
+    editor.setRangeText(text, start, end, "end");
+    editor.focus();
+    state.document.mapLua = editor.value; state.document.mapLuaPresent = true;
+    markChanged(); scriptDiagnostics();
+  }
+
+  function showScriptAutocomplete() {
+    var editor = els["map-lua-editor"];
+    var prefix = editor.value.slice(0, editor.selectionStart).match(/[A-Za-z0-9_.:]*$/);
+    var query = prefix ? prefix[0].toLowerCase() : "";
+    var tileCompletions = v2Tiles().map(function (tile) { return { label: "tile " + tile.id, snippet: "\"" + tile.symbol + "\"", detail: "Binding “" + tile.symbol + "” · map." + state.document.id.toLowerCase() + ":" + tile.id.toLowerCase() }; });
+    var matches = SCRIPT_COMPLETIONS.concat(tileCompletions).filter(function (entry) { return !query || (entry.label + " " + entry.detail).toLowerCase().indexOf(query) >= 0; });
+    els["script-autocomplete"].textContent = "";
+    matches.forEach(function (entry) {
+      var button = document.createElement("button"); button.type = "button"; button.setAttribute("role", "option");
+      var code = document.createElement("code"); code.textContent = entry.label;
+      var small = document.createElement("small"); small.textContent = entry.detail;
+      button.append(code, small);
+      button.addEventListener("click", function () {
+        if (query) editor.setSelectionRange(editor.selectionStart - query.length, editor.selectionStart);
+        insertScript(entry.snippet); els["script-autocomplete"].hidden = true;
+      });
+      els["script-autocomplete"].appendChild(button);
+    });
+    els["script-autocomplete"].hidden = !matches.length;
+    if (matches.length) els["script-autocomplete"].querySelector("button").focus();
+  }
+
+  function openScriptingMode() {
+    state.scriptSnapshot = historySnapshot("Edit map.lua");
+    els["map-lua-editor"].value = state.document.mapLuaPresent ? String(state.document.mapLua || "") : "";
+    renderScriptReference(); renderScriptBuilder(); scriptDiagnostics(); document.body.classList.add("script-mode-open");
+    els["map-mode-button"].classList.remove("is-active"); els["map-mode-button"].setAttribute("aria-pressed", "false"); els["header-script-button"].classList.add("is-active");
+    openDialog(els["script-dialog"]);
+  }
+
+  function closeScriptingMode() {
+    if (state.scriptSnapshot && JSON.stringify(state.scriptSnapshot.document) !== JSON.stringify(state.document)) pushHistory(state.scriptSnapshot, "Edit map.lua");
+    state.scriptSnapshot = null; els["script-autocomplete"].hidden = true; document.body.classList.remove("script-mode-open");
+    els["header-script-button"].classList.remove("is-active"); els["map-mode-button"].classList.add("is-active"); els["map-mode-button"].setAttribute("aria-pressed", "true");
+    closeDialog(els["script-dialog"]); renderAll();
+  }
+
+  function removeScript() {
+    delete state.document.mapLua; delete state.document.mapLuaPresent;
+    els["map-lua-editor"].value = ""; scriptDiagnostics(); markChanged();
   }
 
   function renderRoomFields() {
     var room = activeRoom();
     if (!room) return;
     els["room-inspector-title"].textContent = room.id;
-    els["room-position-copy"].textContent = state.roomIndex === 0 ? "The center of the final arena." : "Source distance " + state.roomIndex + "; Yule creates a mirrored copy on the other side.";
+    els["room-position-copy"].textContent = state.roomIndex === 0 ? "Center room" : "Distance " + state.roomIndex + " from center";
     setControlValue(els["room-id"], room.id);
     var ambientValue = Number.isInteger(room.ambient) ? (Core.AMBIENTS || ["none", "bugs", "clouds", "art", "flies", "drips", "dust", "bats", "bubbles", "boil"])[room.ambient] : room.ambient;
     setControlValue(els["room-ambient"], ambientValue === "fumes" ? "boil" : ambientValue);
@@ -1452,13 +2233,125 @@
     els["tile-search"].addEventListener("input", renderPalette);
     els["undo-button"].addEventListener("click", undo);
     els["redo-button"].addEventListener("click", redo);
-    els["symmetry-toggle"].addEventListener("change", function () { state.symmetry = this.checked; announce("Symmetry brush " + (state.symmetry ? "on" : "off")); });
-    els["mirror-view-button"].addEventListener("click", function () {
-      state.mirrorView = !state.mirrorView;
-      this.setAttribute("aria-pressed", state.mirrorView ? "true" : "false");
-      renderGrid();
-      announce(state.mirrorView ? "Showing spatially mirrored geometry with the primary palette" : "Showing source room geometry");
+    els["format-v2-toggle"].addEventListener("change", function () { if (this.checked) enableV2TileLab(); else disableV2(); });
+    els["header-tile-lab-button"].addEventListener("click", openTileLab);
+    els["header-script-button"].addEventListener("click", openScriptingMode);
+    els["new-v2-tile-button"].addEventListener("click", newV2Tile);
+    els["duplicate-v2-tile-button"].addEventListener("click", duplicateV2Tile);
+    els["move-v2-tile-up"].addEventListener("click", function () { moveV2Tile(-1); });
+    els["move-v2-tile-down"].addEventListener("click", function () { moveV2Tile(1); });
+    els["delete-v2-tile-button"].addEventListener("click", deleteV2Tile);
+    els["close-tile-lab-button"].addEventListener("click", closeTileLab);
+    els["tile-lab-done-button"].addEventListener("click", closeTileLab);
+    els["tile-lab-dialog"].addEventListener("cancel", function (event) { event.preventDefault(); closeTileLab(); });
+    document.querySelectorAll("[data-pixel-tool]").forEach(function (button) { button.addEventListener("click", function () { state.pixelTool = button.dataset.pixelTool; document.querySelectorAll("[data-pixel-tool]").forEach(function (entry) { entry.classList.toggle("is-active", entry === button); }); }); });
+    els["tile-clear-button"].addEventListener("click", function () { if (state.tilePixels) { var before = state.tilePixels.slice(); state.tilePixels.fill(null); pushPixelHistory(before); renderTilePixels(); } });
+    els["pixel-undo-button"].addEventListener("click", function () { pixelUndo(-1); }); els["pixel-redo-button"].addEventListener("click", function () { pixelUndo(1); });
+    els["pixel-flip-x"].addEventListener("click", function () { transformPixelFrame("flipX"); }); els["pixel-flip-y"].addEventListener("click", function () { transformPixelFrame("flipY"); }); els["pixel-rotate"].addEventListener("click", function () { transformPixelFrame("rotate"); });
+    els["pixel-onion-skin"].addEventListener("change", renderTilePixels);
+    els["tile-seed-art-button"].addEventListener("click", seedArtFromCurrentSprite);
+    els["tile-frame-prev"].addEventListener("click", function () { changeTileArtFrame(-1); });
+    els["tile-frame-next"].addEventListener("click", function () { changeTileArtFrame(1); });
+    els["tile-frame-add"].addEventListener("click", function () { addTileArtFrame(false); });
+    els["tile-frame-duplicate"].addEventListener("click", function () { addTileArtFrame(true); });
+    els["tile-frame-delete"].addEventListener("click", deleteTileArtFrame);
+    els["tile-frame-move-left"].addEventListener("click", function () { moveTileArtFrame(-1); });
+    els["tile-frame-move-right"].addEventListener("click", function () { moveTileArtFrame(1); });
+    els["tile-png-input"].addEventListener("change", function () { importTilePng(this.files && this.files[0]); this.value = ""; });
+    setupCustomColorPicker("paint", function () {});
+    setupCustomColorPicker("tint", function (hex) { var rgb = Core.hexToColor(hex); updateSelectedTileField("tint", [rgb[0], rgb[1], rgb[2], Number(els["v2-tint-alpha"].value)]); renderTileAnimation(); renderHitboxPreview(); });
+    document.addEventListener("pointerdown", function (event) {
+      if (event.target.closest && event.target.closest(".custom-color-control")) return;
+      document.querySelectorAll(".custom-color-popover").forEach(function (popover) { popover.hidden = true; });
+      document.querySelectorAll(".custom-color-button").forEach(function (button) { button.setAttribute("aria-expanded", "false"); });
     });
+    els["tile-pixel-canvas"].addEventListener("contextmenu", function (event) { event.preventDefault(); });
+    els["tile-pixel-canvas"].addEventListener("pointerdown", function (event) { state.tilePainting = true; this.setPointerCapture(event.pointerId); beginPixelDraw(event); });
+    els["tile-pixel-canvas"].addEventListener("pointermove", function (event) { if (state.tilePainting) continuePixelDraw(event); });
+    els["tile-pixel-canvas"].addEventListener("pointerup", function () { state.tilePainting = false; endPixelDraw(); });
+    els["tile-pixel-canvas"].addEventListener("pointercancel", function () { state.tilePainting = false; endPixelDraw(); });
+    els["tile-pixel-canvas"].addEventListener("keydown", function (event) { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); pixelUndo(event.shiftKey ? 1 : -1); } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); pixelUndo(1); } else if (event.key === "[") changeTileArtFrame(-1); else if (event.key === "]") changeTileArtFrame(1); });
+    document.querySelectorAll("[data-tile-workspace]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        document.querySelectorAll("[data-tile-workspace]").forEach(function (entry) { entry.classList.toggle("is-active", entry === button); });
+        document.querySelectorAll("[data-tile-view]").forEach(function (view) { view.hidden = view.dataset.tileView !== button.dataset.tileWorkspace; });
+        var settingsGroup = button.dataset.tileWorkspace === "animation" ? "animation" : button.dataset.tileWorkspace === "hitbox" ? "physics" : "source";
+        var details = document.querySelector('[data-tile-field-group="' + settingsGroup + '"]'); if (details) details.open = true;
+        renderTileAnimation(); renderHitboxPreview();
+      });
+    });
+    document.querySelectorAll("[data-hitbox]").forEach(function (button) {
+      button.addEventListener("click", function () { updateSelectedTileField("collision", button.dataset.hitbox); setTileControl("v2-collision", button.dataset.hitbox); renderHitboxPreview(); });
+    });
+    els["tile-animation-tick"].addEventListener("input", function () { els["tile-animation-playing"].checked = false; renderTileAnimation(); });
+    els["tile-animation-playing"].addEventListener("change", renderTileAnimation);
+
+    [
+      ["v2-tile-name", "name", "text"], ["v2-sprite-sheet", "sprite_sheet", "text"],
+      ["v2-sprite-index", "sprite_index", "number"], ["v2-cell-w", "cell_w", "number"], ["v2-cell-h", "cell_h", "number"], ["v2-padding", "padding", "number"], ["v2-frame-count", "frame_count", "number"], ["v2-frame-ticks", "frame_ticks", "number"],
+      ["v2-animation", "animation", "text"], ["v2-collision", "collision", "text"], ["v2-native-glyph", "native_glyph", "optionalText"],
+      ["v2-layer", "layer", "number"], ["v2-native-visual", "native_visual", "text"], ["v2-offset-x", "offset_x", "number"], ["v2-offset-y", "offset_y", "number"],
+      ["v2-scale-x", "scale_x", "number"], ["v2-scale-y", "scale_y", "number"], ["v2-angle", "angle_degrees", "number"],
+      ["v2-force-x", "force_x", "optionalNumber"], ["v2-force-y", "force_y", "optionalNumber"], ["v2-force-mode", "force_mode", "text"],
+      ["v2-max-speed-x", "max_speed_x", "optionalNumber"], ["v2-max-speed-y", "max_speed_y", "optionalNumber"]
+    ].forEach(function (binding) {
+      els[binding[0]].addEventListener("input", function () {
+        var value = this.value;
+        if (binding[2] === "number" || binding[2] === "optionalNumber") value = value === "" ? "" : Number(value);
+        updateSelectedTileField(binding[1], value, binding[2].indexOf("optional") === 0);
+        if (binding[0] === "v2-sprite-sheet") renderTileLab();
+        if (["v2-collision", "v2-native-glyph", "v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-layer", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle", "v2-force-x", "v2-force-y", "v2-force-mode", "v2-max-speed-x", "v2-max-speed-y"].indexOf(binding[0]) >= 0) renderHitboxPreview();
+        if (["v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-frame-count", "v2-frame-ticks", "v2-animation", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle"].indexOf(binding[0]) >= 0) renderTileAnimation();
+      });
+    });
+    els["v2-tile-id"].addEventListener("change", function () {
+      var tile = selectedV2Tile(); if (!tile) return; var old = tile.id; var next = uniqueTileId(this.value, state.tileLabIndex);
+      tile.id = next; if (state.document._tileArt && state.document._tileArt[old]) { state.document._tileArt[next] = state.document._tileArt[old]; delete state.document._tileArt[old]; }
+      if (state.document.mapLuaPresent && old !== next) {
+        var oldKey = "map." + state.document.id.toLowerCase() + ":" + old.toLowerCase(); var newKey = "map." + state.document.id.toLowerCase() + ":" + next.toLowerCase();
+        state.document.mapLua = String(state.document.mapLua || "").split(oldKey).join(newKey);
+      }
+      renderTileLab(); markChanged();
+    });
+    els["v2-tile-symbol"].addEventListener("change", function () {
+      var tile = selectedV2Tile(); if (!tile) return; var symbol = this.value.charAt(0);
+      if (!symbol || symbol.charCodeAt(0) < 32 || symbol.charCodeAt(0) > 126 || v2Tiles().some(function (other) { return other !== tile && other.symbol === symbol; })) {
+        toast("Invalid tile symbol", "Use one unique printable ASCII character.", "error"); renderTileLab(); return;
+      }
+      var oldSymbol = tile.symbol;
+      rooms().forEach(function (room) { room.grid = room.grid.map(function (row) { var chars = Array.isArray(row) ? row : String(row || "").split(""); return chars.map(function (glyph) { return glyph === oldSymbol ? symbol : glyph; }); }); });
+      if (state.document.mapLuaPresent && oldSymbol) {
+        var escaped = oldSymbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        var bindingPattern = new RegExp("(map\\.(?:sensor|on_enter|on_contact|on_leave)\\s*\\(\\s*[\\\"'])" + escaped + "([\\\"'])", "g");
+        state.document.mapLua = String(state.document.mapLua || "").replace(bindingPattern, "$1" + symbol + "$2");
+      }
+      tile.symbol = symbol; state.selectedGlyph = symbol; renderTileLab(); renderPalette(); markChanged();
+    });
+    els["v2-tint-alpha"].addEventListener("input", function () { var rgb = Core.hexToColor(els["v2-tint"].value); updateSelectedTileField("tint", [rgb[0], rgb[1], rgb[2], Number(this.value)]); renderTileAnimation(); renderHitboxPreview(); });
+    els["v2-mirror-with-room"].addEventListener("change", function () { updateSelectedTileField("mirror_with_room", this.checked); renderHitboxPreview(); });
+    els["v2-random-phase"].addEventListener("change", function () { updateSelectedTileField("random_phase", this.checked); });
+
+    els["close-script-button"].addEventListener("click", closeScriptingMode);
+    els["script-done-button"].addEventListener("click", closeScriptingMode);
+    els["script-dialog"].addEventListener("cancel", function (event) { event.preventDefault(); closeScriptingMode(); });
+    els["remove-script-button"].addEventListener("click", removeScript);
+    els["script-template-button"].addEventListener("click", function () { insertScript((els["map-lua-editor"].value ? "\n\n" : "") + scriptStarter()); });
+    els["script-builder-insert"].addEventListener("click", buildScriptHandler);
+    els["script-builder-event"].addEventListener("change", renderScriptBuilder);
+    els["script-api-search"].addEventListener("input", renderScriptReference);
+    els["script-format-button"].addEventListener("click", function () {
+      var editor = els["map-lua-editor"]; var start = editor.selectionStart; var end = editor.selectionEnd;
+      var selected = editor.value.slice(start, end) || editor.value; var formatted = selected.split("\n").map(function (line) { return line.trim() ? "  " + line : line; }).join("\n");
+      if (start === end) { editor.value = formatted; state.document.mapLua = editor.value; state.document.mapLuaPresent = true; markChanged(); scriptDiagnostics(); }
+      else insertScript(formatted);
+    });
+    els["map-lua-editor"].addEventListener("input", function () { state.document.mapLua = this.value; state.document.mapLuaPresent = true; markChanged(); scriptDiagnostics(); });
+    els["map-lua-editor"].addEventListener("keydown", function (event) {
+      if ((event.ctrlKey || event.metaKey) && event.code === "Space") { event.preventDefault(); showScriptAutocomplete(); }
+      else if (event.key === "Tab") { event.preventDefault(); insertScript("  "); }
+      else if (event.key === "Escape") els["script-autocomplete"].hidden = true;
+    });
+    els["symmetry-toggle"].addEventListener("change", function () { state.symmetry = this.checked; announce("Symmetry brush " + (state.symmetry ? "on" : "off")); });
     els["grid-toggle-button"].addEventListener("click", function () {
       state.showGrid = !state.showGrid;
       this.setAttribute("aria-pressed", state.showGrid ? "true" : "false");
@@ -1484,7 +2377,11 @@
       }
     });
     bindTextField(els["map-author"], "Edit author", function () { return state.document.author; }, function (value) { state.document.author = value; });
-    bindTextField(els["map-id"], "Edit map ID", function () { return state.document.id; }, function (value) { state.document.id = value; state.idWasEdited = true; });
+    bindTextField(els["map-id"], "Edit map ID", function () { return state.document.id; }, function (value) {
+      var old = state.document.id;
+      if (state.document.mapLuaPresent && old && old !== value) state.document.mapLua = String(state.document.mapLua || "").split("map." + old.toLowerCase() + ":").join("map." + String(value).toLowerCase() + ":");
+      state.document.id = value; state.idWasEdited = true;
+    });
     bindTextField(els["map-description"], "Edit description", function () { return state.document.description; }, function (value) {
       state.document.description = value;
       els["description-count"].textContent = utf8Length(value) + " / 255 bytes";
@@ -1526,6 +2423,24 @@
     });
     els["preview-mirror-colors-button"].addEventListener("click", function () {
       setAppearancePreviewBank(state.appearancePreviewBank === "mirror" ? "primary" : "mirror");
+    });
+    els["save-palette-button"].addEventListener("click", function () {
+      var name = els["palette-name"].value.trim() || "Palette " + (state.savedPalettes.length + 1);
+      var existing = state.savedPalettes.findIndex(function (preset) { return preset.name.toLowerCase() === name.toLowerCase(); });
+      var preset = { name: name.slice(0, 32), colors: normalizedPalette(resolvedAppearance(activeRoom(), "primary")) };
+      if (existing >= 0) state.savedPalettes[existing] = preset;
+      else if (state.savedPalettes.length >= 24) {
+        toast("Palette library is full", "Delete a saved palette before adding another.", "warning");
+        return;
+      } else state.savedPalettes.push(preset);
+      els["palette-name"].value = preset.name;
+      savePaletteLibrary();
+      renderPresets();
+      toast(existing >= 0 ? "Palette updated" : "Palette saved", preset.name + " is available in this browser.");
+    });
+    els["random-palette-button"].addEventListener("click", function () {
+      applyRoomPalette({ name: "random", colors: randomPalette() });
+      toast("Random palette applied", "Use Save current if you want to keep it.");
     });
     els["move-room-in-button"].addEventListener("click", function () {
       if (state.roomIndex <= 0) return;
@@ -1590,17 +2505,18 @@
       button.addEventListener("click", function () { document.body.classList.remove(button.dataset.closePanel + "-open"); });
     });
     els["mobile-rooms-button"].addEventListener("click", function () { document.querySelector(".room-rail").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+    els["mobile-preview-button"].addEventListener("click", launchPreview);
+    els["mobile-export-button"].addEventListener("click", openExport);
 
     els["new-map-button"].addEventListener("click", function () { els["new-map-author"].value = state.document.author || ""; openDialog(els["new-map-dialog"]); });
     els["confirm-new-map"].addEventListener("click", function (event) {
       event.preventDefault();
-      var template = document.querySelector('input[name="map-template"]:checked').value;
       var before = historySnapshot("Create new map");
-      state.document = makeNewDocument(template, els["new-map-author"].value.trim());
+      state.document = makeNewDocument(els["new-map-author"].value.trim());
       state.roomIndex = 0; state.idWasEdited = false;
       pushHistory(before, "Create new map");
       renderAll(); closeDialog(els["new-map-dialog"]);
-      toast("New map created", rooms().length + " source rooms are ready.");
+      toast("New map created", "Two empty rooms are ready.");
     });
 
     els["import-button"].addEventListener("click", function () { resetImportResult(); openDialog(els["import-dialog"]); });
@@ -1627,6 +2543,7 @@
       state.pendingImport = null;
     });
 
+    els["preview-button"].addEventListener("click", launchPreview);
     els["export-button"].addEventListener("click", openExport);
     els["download-json-button"].addEventListener("click", function () { var data = compilePackage(); if (data) downloadBlob("data.json", data.json, "application/json"); });
     els["download-map-button"].addEventListener("click", function () { var data = compilePackage(); if (data) downloadBlob("data.map", data.map, "text/plain"); });
@@ -1681,26 +2598,72 @@
     setZoom(Math.max(window.innerWidth <= 650 ? 1 : 0.5, Math.min(2, Math.floor(ratio * 4) / 4)), true);
   }
 
+  function applyRoomPalette(preset) {
+    commit("Apply " + preset.name + " palette", function () {
+      var room = activeRoom();
+      room.appearance = room.appearance || {};
+      room.appearance.primary = normalizedPalette(preset.colors);
+    });
+  }
+
+  function paletteButton(preset) {
+    var button = document.createElement("button");
+    var strip = document.createElement("span");
+    var label = document.createElement("small");
+    button.type = "button";
+    button.className = "palette-preset";
+    button.title = "Use " + preset.name + " palette";
+    button.setAttribute("aria-label", "Use " + preset.name + " room palette");
+    strip.className = "palette-swatch-strip";
+    [preset.colors.bg1, preset.colors.fg1, preset.colors.water, preset.colors.special2].forEach(function (color) {
+      var swatch = document.createElement("i");
+      swatch.style.background = Core.colorToHex ? Core.colorToHex(color) : color;
+      strip.appendChild(swatch);
+    });
+    label.textContent = preset.name;
+    button.append(strip, label);
+    button.addEventListener("click", function () { applyRoomPalette(preset); });
+    return button;
+  }
+
   function renderPresets() {
     els["palette-presets"].textContent = "";
-    PRESETS.forEach(function (preset) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "palette-preset";
-      button.title = "Use " + preset.name + " palette";
-      button.setAttribute("aria-label", "Use " + preset.name + " room palette");
-      [preset.colors.bg1, preset.colors.fg1, preset.colors.water, preset.colors.special2].forEach(function (color) {
-        var swatch = document.createElement("span"); swatch.style.background = Core.colorToHex ? Core.colorToHex(color) : color; button.appendChild(swatch);
+    PRESETS.forEach(function (preset) { els["palette-presets"].appendChild(paletteButton(preset)); });
+    els["saved-palettes"].textContent = "";
+    els["saved-palettes"].hidden = state.savedPalettes.length === 0;
+    state.savedPalettes.forEach(function (preset, index) {
+      var item = document.createElement("div");
+      var remove = document.createElement("button");
+      item.className = "saved-palette-item";
+      remove.type = "button";
+      remove.className = "saved-palette-delete";
+      remove.textContent = "×";
+      remove.title = "Delete " + preset.name;
+      remove.setAttribute("aria-label", "Delete saved palette " + preset.name);
+      remove.addEventListener("click", function () {
+        state.savedPalettes.splice(index, 1);
+        savePaletteLibrary();
+        renderPresets();
+        toast("Palette deleted", preset.name + " was removed from this browser.");
       });
-      button.addEventListener("click", function () {
-        commit("Apply " + preset.name + " palette", function () {
-          var room = activeRoom();
-          room.appearance = room.appearance || {};
-          room.appearance.primary = clone(preset.colors);
-        });
-      });
-      els["palette-presets"].appendChild(button);
+      item.append(paletteButton(preset), remove);
+      els["saved-palettes"].appendChild(item);
     });
+  }
+
+  function randomPalette() {
+    var hue = Math.floor(Math.random() * 360);
+    var complement = (hue + 145 + Math.random() * 40) % 360;
+    return {
+      bg1: hsvToHex(hue, 0.58, 0.12),
+      bg2: hsvToHex((hue + 18) % 360, 0.52, 0.24),
+      fg1: hsvToHex((hue + 350) % 360, 0.48, 0.58),
+      fg2: hsvToHex((hue + 22) % 360, 0.42, 0.86),
+      water: hsvToHex(complement, 0.68, 0.58),
+      water_hi: hsvToHex((complement + 12) % 360, 0.24, 0.94),
+      special: hsvToHex((hue + 65) % 360, 0.72, 0.82),
+      special2: hsvToHex((hue + 105) % 360, 0.42, 0.98)
+    };
   }
 
   function resetImportResult() {
@@ -1887,7 +2850,7 @@
         var parsedMap = Core.parseMapText(mapText);
         if (!parsedMap.valid) parsed = parsedMap;
         else {
-          var rawDoc = makeNewDocument("blank", state.document.author);
+          var rawDoc = makeNewDocument(state.document.author);
           rawDoc.name = "Imported Map";
           rawDoc.id = normalizeId(dirname(mapEntry.name).split("/").pop() || "imported_map");
           rawDoc.rooms = parsedMap.rooms.map(function (room) { return { id: room.id, grid: room.grid, ambient: "none" }; });
@@ -1904,13 +2867,24 @@
         throw new Error(first + (errors.length > 1 ? " (and " + (errors.length - 1) + " more)" : ""));
       }
       var unknownFields = warnings.filter(function (warning) { return warning.code === "unknown_key"; });
-      if (unknownFields.length) throw new Error("This V1 manifest contains compatibility fields Greggnogg cannot round-trip safely. Nothing was imported: " + unknownFields[0].message);
-      if (documentValue.format && documentValue.format !== "eggnogg-map/v1") throw new Error("Only V1 native packages can be edited safely in this version.");
+      if (unknownFields.length) throw new Error("This manifest contains compatibility fields Greggnogg cannot round-trip safely. Nothing was imported: " + unknownFields[0].message);
+      if (documentValue.format === "eggnogg-map/v2" && documentValue._preserved) {
+        var editableAssets = {};
+        var preservedNames = Object.keys(documentValue._preserved.assets || {});
+        for (var assetIndex = 0; assetIndex < preservedNames.length; assetIndex += 1) {
+          var preservedName = preservedNames[assetIndex];
+          editableAssets[preservedName] = await bytesToPngDataUrl(documentValue._preserved.assets[preservedName]);
+        }
+        documentValue.assets = editableAssets;
+        documentValue.mapLuaPresent = !!documentValue._preserved.mapLuaPresent;
+        if (documentValue.mapLuaPresent) documentValue.mapLua = documentValue._preserved.mapLua;
+        delete documentValue._preserved;
+      }
       if (typeof documentValue.id !== "string" || !documentValue.id.trim()) {
         documentValue.id = normalizeId(dirname(mapEntry.name).split("/").pop() || documentValue.name || "imported_map");
       }
       state.pendingImport = ensureDocumentShape(documentValue);
-      showImportResult("V1 package ready", state.pendingImport.rooms.length + " source rooms found" + (warnings.length ? " · " + warnings.length + " warnings" : "") + ". Import is one undoable action; export canonicalizes both text files and therefore changes their raw-byte online key.", false, true);
+      showImportResult((state.pendingImport.format === "eggnogg-map/v2" ? "V2" : "V1") + " package ready", state.pendingImport.rooms.length + " source rooms found" + (warnings.length ? " · " + warnings.length + " warnings" : "") + ". Import is one undoable action; editing/export canonicalizes the package and changes its raw-byte online key.", false, true);
     } catch (error) {
       if (request === state.importRequest) showImportResult("Package not imported", error.message, true, false);
     }
@@ -1928,6 +2902,11 @@
   }
 
   function compilePackage() {
+    if (state.document.format !== "eggnogg-map/v1") {
+      toast("V1 maps only", "This Greggnogg build does not author or export V2 packages.", "error");
+      return null;
+    }
+    commitAllTileArt();
     var validation = validate();
     if (validation.errors.length) {
       jumpToIssue(validation.errors[0]);
@@ -1935,13 +2914,44 @@
       return null;
     }
     try {
-      var json = Core.serializeDataJson ? Core.serializeDataJson(state.document) : JSON.stringify(Core.buildDataObject(state.document), null, 2) + "\n";
-      var map = Core.serializeMapText(state.document);
+      var files = Core.exportProjectFiles ? Core.exportProjectFiles(state.document) : null;
+      var json = files ? files["data.json"] : (Core.serializeDataJson ? Core.serializeDataJson(state.document) : JSON.stringify(Core.buildDataObject(state.document), null, 2) + "\n");
+      var map = files ? files["data.map"] : Core.serializeMapText(state.document);
       var id = normalizeId(state.document.id || state.document.name);
-      return { id: id, json: json, map: map };
+      return { id: id, json: json, map: map, files: files || { "data.json": json, "data.map": map } };
     } catch (error) {
       toast("Export failed", error.message, "error");
       return null;
+    }
+  }
+
+  function launchPreview() {
+    var validation;
+    var uri;
+    var link;
+    if (state.document.format !== "eggnogg-map/v1") {
+      toast("V1 maps only", "Preview links currently support V1 packages.", "error");
+      return;
+    }
+    commitAllTileArt();
+    validation = validate();
+    if (validation.errors.length) {
+      jumpToIssue(validation.errors[0]);
+      toast("Preview blocked", validation.errors[0].message, "error");
+      return;
+    }
+    try {
+      uri = Core.buildPreviewUri(state.document);
+      link = document.createElement("a");
+      link.href = uri;
+      link.hidden = true;
+      link.setAttribute("aria-hidden", "true");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast("Opening Yule", "Your browser may ask for permission to open EGGNOGG+.");
+    } catch (error) {
+      toast("Preview failed", error.message, "error");
     }
   }
 
@@ -1949,8 +2959,8 @@
     var data = compilePackage();
     if (!data) return;
     els["package-tree"].textContent = "";
-    [data.id + "/", "data.json", "data.map"].forEach(function (name) { var span = document.createElement("span"); span.textContent = name; els["package-tree"].appendChild(span); });
-    els["export-ready-title"].textContent = "Valid V1 package";
+    [data.id + "/"].concat(Object.keys(data.files)).forEach(function (name) { var span = document.createElement("span"); span.textContent = name; els["package-tree"].appendChild(span); });
+    els["export-ready-title"].textContent = state.document.format === "eggnogg-map/v2" ? "Valid V2 package" : "Valid V1 package";
     els["export-ready-summary"].textContent = rooms().length + " source rooms become " + (rooms().length * 2 - 1) + " mirrored rooms in game.";
     els["export-dialog-copy"].textContent = state.validation.warnings.length ? "The package passes loader checks with " + state.validation.warnings.length + " playability warning(s)." : "Download a ready-to-extract map package or either source file.";
     openDialog(els["export-dialog"]);
@@ -1987,8 +2997,7 @@
     if (!data) return;
     try {
       var entries = {};
-      entries[data.id + "/data.json"] = data.json;
-      entries[data.id + "/data.map"] = data.map;
+      Object.keys(data.files).forEach(function (name) { entries[data.id + "/" + name] = data.files[name]; });
       var bytes = Core.buildStoredZip(entries);
       downloadBlob(data.id + ".zip", bytes, "application/zip");
       state.dirtySinceExport = false;
@@ -2006,7 +3015,11 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         var value = JSON.parse(raw);
-        if (value && value.format === "eggnogg-map/v1") {
+        if (value && value.format === "eggnogg-map/v2") {
+          localStorage.setItem(V2_BACKUP_KEY, raw);
+          localStorage.removeItem(STORAGE_KEY);
+          els["save-label"].textContent = "V2 draft archived · New V1 map";
+        } else if (value && value.format === "eggnogg-map/v1" && !value._preserved) {
           state.idWasEdited = true;
           els["save-label"].textContent = "Restored local draft · Not exported";
           return ensureDocumentShape(value);
@@ -2016,17 +3029,18 @@
       console.warn("Greggnogg could not restore its local draft.", error);
     }
     state.idWasEdited = false;
-    return makeNewDocument("arena", "Mapmaker");
+    return makeNewDocument("Mapmaker");
   }
 
   async function startAtlas() {
     Atlas = window.GregAtlas || Atlas;
     if (!Atlas || !Atlas.loadAssets) { renderRoomCanvas(); return; }
     try {
-      await Atlas.loadAssets();
+      await Atlas.loadAssets({ external: assetSources() });
       state.atlasReady = true;
       renderPalette();
       renderRoomCanvas();
+      if (els["tile-lab-dialog"].open && els["tile-animation-playing"].checked) renderTileAnimation();
       toast("Game atlases loaded", "Previews use the original PNGs shipped in data/.");
     } catch (error) {
       state.atlasReady = false;
@@ -2042,6 +3056,12 @@
       /* requestAnimationFrame already follows the display refresh rate. A
        * second 60 Hz threshold aliases against 16.6 ms timestamps and can
        * accidentally reduce a 60 Hz browser to roughly 30 fps. */
+      if (els["tile-lab-dialog"].open) {
+        var animationView = document.querySelector('[data-tile-view="animation"]'); var hitboxView = document.querySelector('[data-tile-view="hitbox"]');
+        if (animationView && !animationView.hidden && els["tile-animation-playing"].checked) renderTileAnimation();
+        if (hitboxView && !hitboxView.hidden && performance.now() - state.hitboxLastTime >= 50) { state.hitboxLastTime = performance.now(); renderHitboxPreview(); }
+        return;
+      }
       renderRoomCanvas();
     }
     window.requestAnimationFrame(frame);
@@ -2049,6 +3069,7 @@
 
   function init() {
     state.document = loadDraft();
+    state.savedPalettes = loadSavedPalettes();
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.document)); }
     catch (error) { els["save-label"].textContent = "Local save unavailable"; }
     createGridControls();

@@ -230,15 +230,30 @@ Feature backlog:
       completed below intentionally does not mutate native sprite-derived combat boxes.
     - Expand the UI library heavily, including reusable responsive layout, controls,
       focus/navigation, scrolling, theming, accessibility, and robust hitbox scaling.
-    - Build a separate custom map creator/editor, either as its own desktop application
-      or a website, around the documented V2 format and content registry. It will not be
-      built into the game client.
+    - Greggnogg is the separate, standalone V1 map editor website; it is deliberately
+      not built into the game client. V2 switching, Tile Lab, and map.lua authoring are
+      retired from the shipped UI. V2 packages are detected and refused without
+      mutation, and an older browser V2 draft is archived locally before a fresh V1
+      document is created. The native crowd preview still reconstructs the executable's
+      sparse spectator masks from original `sprites.png` gray-mask pixels.
+    - Redesign Greggnogg V2 authoring before implementing it again:
+      - [ ] Write and review a complete object-authoring interaction design before
+        exposing another V2 toggle. Cover asset import, drawing, animation timelines,
+        collision/native fallback, forces, scripting, deletion, package identity,
+        validation, error recovery, and the relationship between tile and map behavior.
+      - [ ] Decide whether V2 belongs in a separate application/mode with its own
+        document model instead of extending the compact V1 room editor.
+      - [ ] Prototype the chosen workflow separately and run full map-creation usability
+        tests before connecting it to real package export.
+      - [ ] Keep arbitrary custom-entity bodies, sensors, combat hitboxes, and hurtboxes
+        out of the tile UI until the runtime has an explicit validated geometry model.
     - Clean up the framework source without changing behavior: split oversized files,
       use consistent formatting and names, remove duplication, document tricky module
       boundaries, and keep the build and tests updated as code moves.
     - add linux and mac support.
     - make the admin panel update live
     - allow custom maps to have custom heights/widths
+    - heavily expand map.lua functions and make it easier to script/create mods and map lua scripts
 
 
 # Completed (source implementation and focused automated coverage)

@@ -6,6 +6,7 @@ HOOKS = (ROOT / "hooks.c").read_text(encoding="utf-8")
 DLLMAIN = (ROOT / "dllmain.c").read_text(encoding="utf-8")
 PARSER = (ROOT / "launch_request.c").read_text(encoding="utf-8")
 IPC = (ROOT / "launch_ipc.c").read_text(encoding="utf-8")
+CUSTOM_MAPS = (ROOT / "custom_maps.c").read_text(encoding="utf-8")
 BUILD = (ROOT / "compile.sh").read_text(encoding="utf-8")
 INSTALLER = (ROOT / "installer" / "install.ps1").read_text(encoding="utf-8")
 
@@ -56,11 +57,19 @@ assert "argc > 128" in parse_process
 assert "launch_request_parse_args" in parse_process
 assert "LocalFree(wide_args)" in parse_process
 
-# External intents route through existing authenticated UI actions. They never
-# accept raw endpoints, tokens, credentials, or direct match setup.
+# Online intents route through existing authenticated UI actions. The separate
+# V1 preview intent is decoded, loader-validated, and started locally before
+# any hub navigation. No intent accepts endpoints, credentials, or paths.
 assert "online_server_send_queue" in launch_pump
 assert "online_try_send_friend_challenge" in launch_pump
 assert "online_hub_open();" in launch_pump
+assert "LAUNCH_REQUEST_PREVIEW_V1" in launch_pump
+assert "launch_request_decode_preview" in launch_pump
+assert "custom_maps_install_preview_text" in launch_pump
+assert "hooks_start_native_match(selector)" in launch_pump
+assert launch_pump.index("LAUNCH_REQUEST_PREVIEW_V1") < launch_pump.index(
+    "online_hub_open();"
+)
 assert '"online.launch: completed requests intent"' in launch_pump
 assert '"online.launch: completed %s intent"' in launch_pump
 assert "start_ggpo_net_join" not in launch_pump
@@ -71,6 +80,14 @@ for forbidden in ("'?'","'#'","'%'","'\\\\'","'@'"):
     assert forbidden in PARSER
 assert '"yule://join/' not in PARSER
 assert '"yule://queue/' not in PARSER  # parsed structurally, never via loose substring
+assert '"preview/v1/"' in PARSER
+assert "launch_request_preview_target_valid" in IPC
+assert "preview files cannot contain NUL bytes" in PARSER
+assert '"_greggnogg_preview"' in CUSTOM_MAPS
+assert "if (map->is_preview) continue;" in CUSTOM_MAPS
+assert "parse_v2_tileset" not in body(
+    CUSTOM_MAPS, "int custom_maps_install_preview_text"
+)
 
 # Pending intents are bounded and user-cancellable; challenge execution waits
 # for the server's complete friend snapshot.

@@ -26,6 +26,8 @@
   var MAX_TEXT_BYTES = 4 * 1024 * 1024;
   var MAX_SCRIPT_BYTES = 256 * 1024;
   var MAX_PARSED_ROOMS = 32;
+  var PREVIEW_TARGET_CAP = 24576;
+  var PREVIEW_FILE_MAX_BYTES = 12288;
 
   var COLOR_DEFAULTS = {
     fg1: "#808080",
@@ -332,6 +334,20 @@
     return normalizeMapId(value).slice(0, 43).replace(/[._-]+$/g, "") || "custom_map";
   }
 
+  /* This intentionally starts with an empty declarative tileset. It is a
+   * safe format upgrade for a native-only project, not a conversion of an
+   * imported V2 package whose unknown fields/assets must stay byte-preserved. */
+  function upgradeToV2(value) {
+    var document = deepClone(unwrapDocument(value) || createDefaultDocument());
+    if (document.format === FORMAT_V2 && document._preserved) throw new Error("Imported V2 packages stay preserve-only until their Tile Lab fields are implemented.");
+    document.format = FORMAT_V2;
+    document.id = normalizeV2Id(document.id || document.name);
+    document.tileset = isPlainObject(document.tileset) ? document.tileset : { tiles: [] };
+    if (!Array.isArray(document.tileset.tiles)) document.tileset.tiles = [];
+    delete document._preserved;
+    return document;
+  }
+
   function makeIssue(severity, code, message, details) {
     details = details || {};
     return {
@@ -531,13 +547,11 @@
     var rooms = Array.isArray(document) ? document : roomList(document);
     var format = document.format || FORMAT_V1;
     var chunks;
-    if (format === FORMAT_V2) {
-      if (document._preserved && typeof document._preserved.dataMapText === "string" && !(options && options.forceRebuild)) {
-        return document._preserved.dataMapText;
-      }
-      throw new Error("Greggnogg preserves V2 data.map bytes but does not rebuild V2 maps in the native-tile editor.");
+    if (format === FORMAT_V2 && document._preserved && typeof document._preserved.dataMapText === "string" && !(options && options.forceRebuild)) {
+      return document._preserved.dataMapText;
     }
-    chunks = ["; " + FORMAT_V1, ""];
+    if (format !== FORMAT_V1 && format !== FORMAT_V2) throw new Error("Unsupported map format.");
+    chunks = ["; " + format, ""];
     if (!rooms.length) throw new Error("Cannot serialize data.map without at least one room.");
     rooms.forEach(function (room, roomIndex) {
       var id = room && typeof room.id === "string" ? room.id : "";
@@ -550,7 +564,7 @@
         var text = rowString(row);
         if (utf8Bytes(text).length !== COLS || text.length !== COLS) throw new Error("Room \"" + id + "\" row " + (rowIndex + 1) + " must have exactly " + COLS + " ASCII glyphs.");
         for (var col = 0; col < text.length; col += 1) {
-          if (!GLYPH_SET[text.charAt(col)]) throw new Error("Room \"" + id + "\" row " + (rowIndex + 1) + " contains invalid glyph \"" + text.charAt(col) + "\".");
+          if (!GLYPH_SET[text.charAt(col)] && format !== FORMAT_V2) throw new Error("Room \"" + id + "\" row " + (rowIndex + 1) + " contains invalid glyph \"" + text.charAt(col) + "\".");
         }
         chunks.push("\"" + text + "\"");
       });
@@ -602,16 +616,13 @@
 
   function buildDataObject(value) {
     var document = unwrapDocument(value) || {};
-    if (document.format === FORMAT_V2) {
-      if (document._preserved && document._preserved.dataObject) return deepClone(document._preserved.dataObject);
-      throw new Error("Greggnogg will not synthesize a V2 manifest from a lossy editor model.");
-    }
+    if (document.format === FORMAT_V2 && document._preserved && document._preserved.dataObject) return deepClone(document._preserved.dataObject);
     var rooms = roomList(document);
     var rules = document.rules || {};
     var defaults = document.defaults && document.defaults.room ? document.defaults.room : (document.defaults || {});
     var layout = document.layout || {};
     var data = {
-      format: FORMAT_V1,
+      format: document.format === FORMAT_V2 ? FORMAT_V2 : FORMAT_V1,
       name: typeof document.name === "string" ? document.name : "",
       author: typeof document.author === "string" ? document.author : "",
       description: typeof document.description === "string" ? document.description : "",
@@ -642,6 +653,7 @@
      * imported id changes selector/online identity, so retain it verbatim. */
     var id = typeof document.id === "string" ? document.id : "";
     if (id) data.id = id;
+    if (data.format === FORMAT_V2) data.tileset = deepClone(document.tileset || { tiles: [] });
     /* Preserve an explicit, valid room order when it describes exactly these rooms. */
     var requestedOrder = layout.order;
     if (Array.isArray(requestedOrder) && requestedOrder.length === rooms.length) {
@@ -1166,7 +1178,15 @@
 
   function assetBytes(value) {
     if (value && value.data !== undefined && !(value instanceof Uint8Array)) return assetBytes(value.data);
+    if (value && value.bytes !== undefined && !(value instanceof Uint8Array)) return assetBytes(value.bytes);
     if (value instanceof Uint8Array) return value;
+    if (Array.isArray(value)) return new Uint8Array(value);
+    if (typeof value === "string" && /^data:image\/png;base64,/i.test(value) && typeof atob === "function") {
+      var raw = atob(value.slice(value.indexOf(",") + 1));
+      var decoded = new Uint8Array(raw.length);
+      for (var dataIndex = 0; dataIndex < raw.length; dataIndex += 1) decoded[dataIndex] = raw.charCodeAt(dataIndex) & 0xff;
+      return decoded;
+    }
     if (typeof ArrayBuffer !== "undefined" && value instanceof ArrayBuffer) return new Uint8Array(value);
     if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     return null;
@@ -1415,9 +1435,6 @@
     }
     format = document.format;
     if (format !== FORMAT_V1 && format !== FORMAT_V2) errors.push(makeIssue("error", "format", "format must be \"" + FORMAT_V1 + "\" or \"" + FORMAT_V2 + "\".", { path: "format" }));
-    if (format === FORMAT_V2 && (!document._preserved || typeof document._preserved.dataJsonText !== "string" || typeof document._preserved.dataMapText !== "string")) {
-      errors.push(makeIssue("error", "v2_not_preserved", "A V2 document must retain its original data.json and data.map bytes; the native-tile editor cannot safely synthesize them.", { path: "format" }));
-    }
     if (typeof document.name !== "string" || !document.name) errors.push(makeIssue("error", "name_required", "Map name is required.", { path: "name" }));
     else if (document.name.indexOf("\0") >= 0) errors.push(makeIssue("error", "name_nul", "Map name contains an embedded NUL character.", { path: "name" }));
     else if (utf8Bytes(document.name).length > 127) errors.push(makeIssue("error", "name_bytes", "Map name exceeds 127 UTF-8 bytes.", { path: "name" }));
@@ -1584,11 +1601,16 @@
         if (!separated) warnings.push(makeIssue("warning", "respawn_separation", "The center room's obvious spawn candidates are not separated by at least one column.", { path: "rooms." + centerId + ".grid", roomId: centerId }));
       }
     }
-    var roundEndMode = rules ? camelOrSnake(rules, "roundEndRooms", "round_end_rooms", "inner_only") : "inner_only";
-    if (roundEndMode === "inner_only") {
-      if (!centerRoom || !roomMetrics[centerId] || roomMetrics[centerId].goals === 0) warnings.push(makeIssue("warning", "missing_inner_goal", "round_end_rooms is inner_only, but the center source room has no active E or ^ goal tile.", { path: "rules.round_end_rooms", roomId: centerId }));
-    } else if (stats.goals === 0) warnings.push(makeIssue("warning", "missing_goal", "No active E or ^ round-goal tile exists in any source room.", { path: "rooms" }));
     var scoreTarget = rules ? camelOrSnake(rules, "scoreTarget", "score_target", null) : null;
+    var roundEndMode = rules ? camelOrSnake(rules, "roundEndRooms", "round_end_rooms", "inner_only") : "inner_only";
+    /* Native game_is_win_condition treats the two arena endpoints as automatic
+     * wins in inner_only mode. It does not require the center (or any particular
+     * inner room) to contain E/^, so warning about a missing center goal was a
+     * false assumption. In any mode the endpoint shortcut is disabled; without
+     * either an Eggnogg goal or score target, no normal round-end trigger exists. */
+    if (roundEndMode === "any" && stats.goals === 0 && scoreTarget === null) {
+      warnings.push(makeIssue("warning", "missing_round_end_trigger", "Goal-required mode has no E or ^ goal and no score target, so the round has no normal end trigger.", { path: "rules.round_end_rooms" }));
+    }
     if (scoreTarget !== null) {
       var hasTeamTile = rooms.some(function (room) { return (getGrid(room) || []).some(function (row) { return /[12]/.test(rowString(row)); }); });
       if (!hasTeamTile) warnings.push(makeIssue("warning", "score_target_without_team_tiles", "A score target is set, but no 1 or 2 team hazard/score tiles are authored.", { path: "rules.score_target" }));
@@ -1597,6 +1619,18 @@
     if (defaults) {
       if (defaults.ambient !== undefined && !validAmbient(defaults.ambient)) errors.push(makeIssue("error", "default_ambient", "Default room ambient must be a supported name or integer from 0 to 9.", { path: "defaults.room.ambient" }));
       validateAppearance(defaults.appearance, "defaults.room.appearance", errors, null);
+    }
+    if (format === FORMAT_V2) {
+      validateV2Manifest(buildDataObject(document), document.assets || (document._preserved && document._preserved.assets) || {}, errors, warnings);
+      if (document.mapLuaPresent || document.mapLua !== undefined) {
+        if (typeof document.mapLua !== "string") errors.push(makeIssue("error", "script_text_type", "map.lua must be text.", { path: "map.lua" }));
+        else {
+          if (utf8Bytes(document.mapLua).length > MAX_SCRIPT_BYTES) errors.push(makeIssue("error", "script_size", "map.lua exceeds the 256 KiB limit.", { path: "map.lua" }));
+          if (document.mapLua.indexOf("\0") >= 0) errors.push(makeIssue("error", "script_nul", "map.lua contains an embedded NUL byte.", { path: "map.lua" }));
+        }
+      }
+    } else if (document.mapLuaPresent || document.mapLua !== undefined) {
+      errors.push(makeIssue("error", "v1_script", "map.lua requires eggnogg-map/v2.", { path: "map.lua" }));
     }
     return { valid: errors.length === 0, errors: errors, warnings: warnings, issues: errors.concat(warnings), stats: stats };
   }
@@ -1684,6 +1718,55 @@
     var output = new Uint8Array(escaped.length);
     for (var index = 0; index < escaped.length; index += 1) output[index] = escaped.charCodeAt(index);
     return output;
+  }
+
+  function base64UrlEncode(value) {
+    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    var bytes = utf8Bytes(value);
+    var output = "";
+    var index;
+    for (index = 0; index + 2 < bytes.length; index += 3) {
+      var value24 = (bytes[index] << 16) | (bytes[index + 1] << 8) | bytes[index + 2];
+      output += alphabet.charAt(value24 >>> 18 & 63) +
+        alphabet.charAt(value24 >>> 12 & 63) +
+        alphabet.charAt(value24 >>> 6 & 63) +
+        alphabet.charAt(value24 & 63);
+    }
+    if (bytes.length - index === 1) {
+      var value8 = bytes[index];
+      output += alphabet.charAt(value8 >>> 2) + alphabet.charAt((value8 & 3) << 4);
+    } else if (bytes.length - index === 2) {
+      var value16 = (bytes[index] << 8) | bytes[index + 1];
+      output += alphabet.charAt(value16 >>> 10) +
+        alphabet.charAt(value16 >>> 4 & 63) +
+        alphabet.charAt((value16 & 15) << 2);
+    }
+    return output;
+  }
+
+  function buildPreviewUri(value) {
+    var document = unwrapDocument(value) || {};
+    var validation;
+    var json;
+    var map;
+    var jsonBytes;
+    var mapBytes;
+    var target;
+    if (document.format !== FORMAT_V1) throw new Error("Preview links currently support V1 maps only.");
+    validation = validateDocument(document);
+    if (!validation.valid) throw new Error("Map has validation errors; fix them before previewing.");
+    json = serializeDataJson(document);
+    map = serializeMapText(document);
+    jsonBytes = utf8Bytes(json);
+    mapBytes = utf8Bytes(map);
+    if (!jsonBytes.length || !mapBytes.length ||
+        jsonBytes.length > PREVIEW_FILE_MAX_BYTES ||
+        mapBytes.length > PREVIEW_FILE_MAX_BYTES) {
+      throw new Error("The preview package exceeds Yule's link size limit.");
+    }
+    target = base64UrlEncode(jsonBytes) + "/" + base64UrlEncode(mapBytes);
+    if (target.length >= PREVIEW_TARGET_CAP) throw new Error("The preview link is too large for Yule.");
+    return "yule://preview/v1/" + target;
   }
 
   var CRC_TABLE = (function () {
@@ -1935,6 +2018,14 @@
         files[name] = document._preserved.assets[name];
       });
       if (document._preserved.mapLuaPresent) files["map.lua"] = document._preserved.mapLuaBytes ? copyBytes(document._preserved.mapLuaBytes) : document._preserved.mapLua;
+    } else if (document.format === FORMAT_V2) {
+      Object.keys(document.assets || {}).forEach(function (name) {
+        if (!name || /[\\\/:]/.test(name) || !/\.png$/i.test(name)) throw new Error("Unsafe V2 asset name: " + name);
+        var bytes = copyBytes(document.assets[name]);
+        if (!bytes) throw new Error("V2 asset could not be decoded: " + name);
+        files[name] = bytes;
+      });
+      if (document.mapLuaPresent || document.mapLua !== undefined) files["map.lua"] = String(document.mapLua || "");
     }
     return files;
   }
@@ -1972,6 +2063,8 @@
     MAX_PARSED_ROOMS: MAX_PARSED_ROOMS,
     MAX_TEXT_BYTES: MAX_TEXT_BYTES,
     MAX_SCRIPT_BYTES: MAX_SCRIPT_BYTES,
+    PREVIEW_TARGET_CAP: PREVIEW_TARGET_CAP,
+    PREVIEW_FILE_MAX_BYTES: PREVIEW_FILE_MAX_BYTES,
     LAYOUT_KIND: LAYOUT_KIND,
     ROOM_FORMAT: ROOM_FORMAT,
     GLYPHS: GLYPHS,
@@ -1999,6 +2092,7 @@
     createRoom: createRoom,
     createDefaultDocument: createDefaultDocument,
     createProject: createDefaultDocument,
+    upgradeToV2: upgradeToV2,
     normalizeMapId: normalizeMapId,
     normalizeV2Id: normalizeV2Id,
     normalizeFolderId: normalizeFolderId,
@@ -2006,6 +2100,8 @@
     makeIssue: makeIssue,
     utf8Bytes: utf8Bytes,
     utf8Text: utf8Text,
+    base64UrlEncode: base64UrlEncode,
+    buildPreviewUri: buildPreviewUri,
     parseMapText: parseMapText,
     serializeMapText: serializeMapText,
     buildDataObject: buildDataObject,

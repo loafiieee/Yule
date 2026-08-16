@@ -13,6 +13,17 @@ void custom_maps_init(void);
 void custom_maps_shutdown(void);
 void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void));
 
+/*
+ * Validate and install a V1 package carried by a local preview launch. The
+ * package is process-local, never written to maps/, and excluded from online
+ * manifests. On success out_selector receives its immediately usable selector.
+ */
+int custom_maps_install_preview_text(const char* json_text,
+                                     const char* map_text,
+                                     int* out_selector,
+                                     char* err,
+                                     size_t err_cap);
+
 /* Build a JSON array suitable for the online control server:
    [{key,selector,label,kind}, ...]. Returns bytes that would have been written,
    excluding the trailing NUL. */

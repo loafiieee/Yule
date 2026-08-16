@@ -1,0 +1,135 @@
+{
+  "format": "eggnogg-map/v1",
+  "name": "Flooded Caves",
+  "author": "AtraxiA",
+  "description": "Redeem yourself in the eggnogg to escape",
+  "sort_order": 0,
+  "rules": {
+    "mode": "karate",
+    "round_end_rooms": "inner_only",
+    "score_target": null,
+    "armed_respawn_limit": 4
+  },
+  "layout": {
+    "kind": "mirrored_source_rooms",
+    "room_format": "vanilla_33x12",
+    "order": [
+      "center",
+      "outer_1",
+      "outer_2",
+      "outer_3",
+      "outer_4"
+    ]
+  },
+  "defaults": {
+    "room": {
+      "ambient": "none"
+    }
+  },
+  "rooms": {
+    "center": {
+      "ambient": "bats",
+      "appearance": {
+        "primary": {
+          "fg1": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "fg2": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "bg1": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "bg2": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "water": [
+            0,
+            0.5,
+            0.75
+          ],
+          "water_hi": [
+            0.9,
+            0.9,
+            0.9
+          ],
+          "special": [
+            0,
+            0.5,
+            0.75
+          ],
+          "special2": [
+            0.9,
+            0.9,
+            0.9
+          ]
+        }
+      }
+    },
+    "outer_1": {
+      "ambient": "drips",
+      "appearance": {
+        "primary": {
+          "fg1": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "fg2": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "bg1": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "bg2": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "water": [
+            0,
+            0.5,
+            0.75
+          ],
+          "water_hi": [
+            0.9,
+            0.9,
+            0.9
+          ],
+          "special": [
+            0,
+            0.5,
+            0.75
+          ],
+          "special2": [
+            0.9,
+            0.9,
+            0.9
+          ]
+        }
+      }
+    },
+    "outer_2": {
+      "ambient": "flies"
+    },
+    "outer_3": {
+      "ambient": "dust"
+    },
+    "outer_4": {
+      "ambient": "dust"
+    }
+  },
+  "id": "flooded_caves"
+}

@@ -70,6 +70,7 @@
     "outer": {"ambient": "bubbles"}
   }
 }</code></pre>
+<p><code>round_end_rooms</code> has legacy names: <code>inner_only</code> keeps the classic automatic win at either outermost final room, while <code>E</code>/<code>^</code> goals can end the round between them. <code>any</code> removes that outer-room shortcut, so those rooms need a goal or completed score target too. It does not specifically require a goal in the center room.</p>
 <p>Room appearance banks are <code>primary</code> and <code>mirror</code>. Each may override <code>fg1</code>, <code>fg2</code>, <code>bg1</code>, <code>bg2</code>, <code>water</code>, <code>water_hi</code>, <code>special</code>, and <code>special2</code> with RGB triples in 0..1. Appearance is visual; actual water and hazards still come from glyphs.</p></section>
 
 <section id="tileset"><h2>5. Give the whole map a tileset</h2>

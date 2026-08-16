@@ -54,6 +54,13 @@ The native default values for both banks are:
 
 Ambience accepts integers `0..9` or the aliases `none`, `bugs`, `clouds`,
 `art`, `flies`, `drips`, `dust`, `bats`, `bubbles`, and `boil`/`fumes`.
+Native ambience is particle emission, not one looping backdrop: bugs emit on
+16-tick boundaries with a one-in-five gate; clouds and art emit every four
+ticks; flies every two; drips/dust/bubbles use sparse random gates; bats are
+short-lived side-to-side particles; and boil/fumes samples random map positions
+and only emits when it hits native shallow water `w`. The editor keeps these as
+deterministic visual approximations because the game uses presentation RNG, but
+retains native sheets, frame families, layers, and cadence boundaries.
 Ambience and appearance are visual; collision and hazards come from map glyphs.
 
 ## Strict text model
@@ -143,6 +150,15 @@ instructions:
 - `O` draws no marker-local tile. It emits a `misc[0x11]` sun and trail stack at
   the room's horizontal center and one-quarter height, regardless of the
   marker's authored position.
+- `i` begins as backdrop frame `tiles[0x3e]`. During `load_gfx`, Yule creates
+  runtime sprite cells `0x80..0xff` by copying only pixels that decode to exact
+  RGB `(128,128,128)` from the shipped `sprites.png` into opaque-white masks.
+  `_crowd_action` draws four full-size tinted spectator masks from the idle
+  `0xb0..0xb4`/`0xb0..0xb2` ranges: a left/right pair at the cell and another
+  pair eight pixels above, with seeded position/pose/flip variation. Greggnogg
+  reconstructs those masks from original source cells `0x30..`; it does not draw
+  the visible character artwork in those cells. Match-only cheering states are
+  intentionally not fabricated in the room editor.
 - `G`, `L`, `N`, and `Y` expand to multi-cell structures in the three rows
   strictly above their source marker. `G` is centered on the marker; the
   two-column art extends toward source-left and reverses on the mirrored side.
@@ -168,7 +184,12 @@ the verified crash condition is treated separately.
 The `armed_respawn_limit` rule counts held and loose swords and forces an
 unarmed respawn only when the count is greater than the configured limit.
 `round_end_rooms` accepts exactly `inner_only` or `any`; the older-looking name
-`any_room` is not valid.
+`any_room` is not valid. The names are easy to misread. `inner_only` preserves
+the classic route where either outermost final room is automatically a win
+condition and authored `E`/`^` goals can finish the round between those
+endpoints. `any` removes that endpoint shortcut, so the outer rooms need a goal
+or completed score target as well. The center room is never singled out by this
+rule.
 
 The palette's hitbox labels come from native tile definitions, not visual
 shape. Only the terrain types produced by `!`, `@`, `_`, `X`, `v`, and `m`
@@ -260,9 +281,10 @@ Package identity includes exact `data.json` and `data.map` bytes, external PNG
 digests, and exact `map.lua` bytes. JSON declaration order can also affect the
 script binding identity. A visual editor that rewrites whitespace, reorders
 definitions, drops an unrecognized field, or converts an empty Lua script to
-“absent” can therefore change compatibility or behavior. This is why the
-current Greggnogg UI detects V2 and refuses it without changing the active V1
-draft. It never executes `map.lua` in the browser.
+“absent” can therefore change compatibility or behavior. Greggnogg accepts only
+strictly parsed V2 packages, preserves imported PNG/script content while staging
+it, then clearly treats the result as an editable canonical project. It never
+executes `map.lua` in the browser.
 
 ## Evidence trail
 

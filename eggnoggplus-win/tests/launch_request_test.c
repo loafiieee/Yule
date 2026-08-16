@@ -1,6 +1,7 @@
 #include "../launch_request.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int g_failures = 0;
@@ -91,8 +92,25 @@ int main(void) {
     const char* double_slash[] = {"game.exe", "yule://hub//"};
     const char* bad_switch[] = {"game.exe", "--online=queue"};
     const char* bad_envelope[] = {"game.exe", "--yule-uri"};
+    const char* preview[] = {
+        "game.exe", "--yule-uri=yule://preview/v1/e30/eA"
+    };
+    const char* preview_empty_json[] = {
+        "game.exe", "yule://preview/v1//eA"
+    };
+    const char* preview_extra_part[] = {
+        "game.exe", "yule://preview/v1/e30/eA/extra"
+    };
+    const char* preview_padding[] = {
+        "game.exe", "yule://preview/v1/e30=/eA"
+    };
+    const char* preview_bad_tail[] = {
+        "game.exe", "yule://preview/v1/e31/eA"
+    };
     LaunchRequest request;
     char error[160];
+    char* preview_json = NULL;
+    char* preview_map = NULL;
 
     CHECK(parse(3, none, &request, error) == LAUNCH_REQUEST_PARSE_NONE);
     CHECK(request.action == LAUNCH_REQUEST_NONE);
@@ -112,6 +130,15 @@ int main(void) {
                   LAUNCH_REQUEST_CHALLENGE, "player_1");
     expect_action(3, duplicate, LAUNCH_REQUEST_QUEUE_CASUAL, "");
     expect_action(2, enveloped, LAUNCH_REQUEST_QUEUE_COMPETITIVE, "");
+    expect_action(2, preview, LAUNCH_REQUEST_PREVIEW_V1, "e30/eA");
+    CHECK(parse(2, preview, &request, error) == LAUNCH_REQUEST_PARSE_OK);
+    CHECK(launch_request_preview_target_valid(request.target));
+    CHECK(launch_request_decode_preview(&request, &preview_json, &preview_map,
+                                        error, sizeof(error)));
+    CHECK(preview_json && strcmp(preview_json, "{}") == 0);
+    CHECK(preview_map && strcmp(preview_map, "x") == 0);
+    free(preview_json);
+    free(preview_map);
 
     expect_error(3, conflict);
     expect_error(2, bad_queue);
@@ -128,9 +155,15 @@ int main(void) {
     expect_error(2, bad_switch);
     expect_error(2, bad_envelope);
     expect_error(3, injected_envelope);
+    expect_error(2, preview_empty_json);
+    expect_error(2, preview_extra_part);
+    expect_error(2, preview_padding);
+    expect_error(2, preview_bad_tail);
 
     CHECK(strcmp(launch_request_action_name(LAUNCH_REQUEST_CHALLENGE),
                  "challenge") == 0);
+    CHECK(strcmp(launch_request_action_name(LAUNCH_REQUEST_PREVIEW_V1),
+                 "preview/v1") == 0);
     CHECK(strcmp(launch_request_action_name((LaunchRequestAction)99),
                  "none") == 0);
 

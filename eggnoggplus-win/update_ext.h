@@ -5,7 +5,7 @@
 
 /* This is the version of the injected framework, not the base game.  Release
  * manifests use dot-separated numeric versions (for example 1.12.3). */
-#define FRAMEWORK_VERSION "1.9"
+#define FRAMEWORK_VERSION "1.91"
 
 #define UPDATE_MAX_FILES 32
 #define UPDATE_MAX_PATH  240

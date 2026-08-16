@@ -52,6 +52,8 @@ static int launch_ipc_request_valid(const LaunchRequest* request) {
             return target_len == 0u;
         case LAUNCH_REQUEST_CHALLENGE:
             return online_control_username_is_canonical(request->target);
+        case LAUNCH_REQUEST_PREVIEW_V1:
+            return launch_request_preview_target_valid(request->target);
         default:
             return 0;
     }
@@ -161,7 +163,7 @@ static LaunchRequestParseResult launch_ipc_parse_process_request(
         int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
                                         wide_args[i], -1,
                                         NULL, 0, NULL, NULL);
-        if (bytes <= 0 || bytes > 4096) {
+        if (bytes <= 0 || bytes > (int)(LAUNCH_REQUEST_TARGET_CAP + 64u)) {
             conversion_ok = 0;
             break;
         }

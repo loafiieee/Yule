@@ -106,6 +106,13 @@
   var roundTrip = core.parsePackage(jsonText, nativeMapText);
   assert(roundTrip.valid, "serialized V1 package parses and validates");
   assert(roundTrip.document.rooms.length === 2, "V1 room bijection round-trips");
+  var v2Fresh = core.upgradeToV2(fresh);
+  assert(v2Fresh.format === core.FORMAT_V2 && core.validateDocument(v2Fresh).valid, "a native project can upgrade to a valid canonical V2 shell");
+  v2Fresh.tileset.tiles.push({ id: "decor", symbol: "$", name: "Decor", sprite_sheet: "builtin:tiles", sprite_index: 0x2d, collision: "pass_through" });
+  v2Fresh.rooms[0].grid[0][0] = "$";
+  assert(core.validateDocument(v2Fresh).valid, "a V2 built-in decorative tile validates and can be painted");
+  assert(JSON.parse(core.serializeDataJson(v2Fresh)).format === core.FORMAT_V2, "generated V2 manifests serialize as V2");
+  assert(core.serializeMapText(v2Fresh).indexOf("; " + core.FORMAT_V2) === 0, "generated V2 map text receives the V2 marker");
   var opaqueId = core.deepClone(fresh);
   opaqueId.id = "  opaque id  ";
   assert(JSON.parse(core.serializeDataJson(opaqueId)).id === opaqueId.id, "V1 stable ids are serialized verbatim instead of being trimmed");
@@ -223,7 +230,43 @@
   var badRule = core.deepClone(fresh);
   badRule.rules.roundEndRooms = "any_room";
   assert(hasIssue(core.validateDocument(badRule), "round_end_rooms"), "legacy any_room spelling is rejected");
+  var classicWithoutGoal = core.deepClone(fresh);
+  classicWithoutGoal.rooms.forEach(function (room) {
+    room.grid.forEach(function (row) {
+      for (var goalCol = 0; goalCol < row.length; goalCol += 1) if (row[goalCol] === "E" || row[goalCol] === "^") row[goalCol] = " ";
+    });
+  });
+  assert(!hasIssue(core.validateDocument(classicWithoutGoal), "missing_inner_goal"), "classic route does not falsely require a center-room Eggnogg goal");
+  var goalRequired = core.deepClone(classicWithoutGoal);
+  goalRequired.rules.roundEndRooms = "any";
+  assert(hasIssue(core.validateDocument(goalRequired), "missing_round_end_trigger"), "goal-required mode warns when no normal round-end trigger exists");
+  goalRequired.rules.scoreTarget = 3;
+  assert(!hasIssue(core.validateDocument(goalRequired), "missing_round_end_trigger"), "a score target is a valid round-end trigger in goal-required mode");
   assert(core.packageFacts(fresh).finalWidthPixels === 1584, "final arena pixel width follows (2n-1)*33*16");
+
+  var previewUri = core.buildPreviewUri(fresh);
+  assert(previewUri.indexOf("yule://preview/v1/") === 0 &&
+    previewUri.indexOf("=") < 0 && previewUri.indexOf("%") < 0,
+    "V1 preview compiles to a strict unpadded base64url launch link");
+  var previewTarget = previewUri.slice("yule://preview/v1/".length);
+  assert(previewTarget.split("/").length === 2 && previewTarget.length < core.PREVIEW_TARGET_CAP,
+    "preview link contains exactly the two bounded package files");
+  var previewV2Rejected = false;
+  try { core.buildPreviewUri(core.upgradeToV2(fresh)); } catch (previewError) { previewV2Rejected = true; }
+  assert(previewV2Rejected, "preview URI refuses V2 packages at the authoring boundary");
+
+  var authoredV2 = core.upgradeToV2(fresh);
+  authoredV2.tileset.tiles.push({ id: "painted", symbol: ">", name: "Painted", sprite_sheet: "painted.png", sprite_index: 0, cell_w: 16, cell_h: 16, padding: 0, collision: "pass_through" });
+  authoredV2.assets = { "painted.png": tinyPng };
+  authoredV2.mapLuaPresent = true;
+  authoredV2.mapLua = "map.on_tick(function() map.state.t = map.tick() end)\n";
+  authoredV2.rooms[0].grid[5][5] = ">";
+  var authoredValidation = core.validateDocument(authoredV2);
+  assert(authoredValidation.valid, "generated editable V2 projects validate custom PNG tiles and map.lua together");
+  var authoredFiles = core.exportProjectFiles(authoredV2);
+  assert(bytesEqual(authoredFiles["painted.png"], tinyPng) && authoredFiles["map.lua"] === authoredV2.mapLua, "generated V2 export includes package-owned PNGs and map.lua");
+  var authoredZip = core.parseStoredZip(core.buildPackageZip(authoredV2).bytes);
+  assert(bytesEqual(authoredZip[authoredV2.id + "/painted.png"], tinyPng) && bytesEqual(authoredZip[authoredV2.id + "/map.lua"], core.utf8Bytes(authoredV2.mapLua)), "generated V2 assets and script survive ZIP packaging");
 
   var message = "Greggnogg editor-core tests passed: " + passed;
   if (typeof WScript !== "undefined") WScript.Echo(message);

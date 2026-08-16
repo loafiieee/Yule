@@ -994,7 +994,7 @@ if (-not $syncOk -or -not (Test-Path -LiteralPath $sdl -PathType Leaf) -or
     $steps['deep_links'] = 'skipped-incomplete-framework'
 } elseif ($SkipProtocol) {
     $steps['deep_links'] = 'skipped-switch'
-} elseif (Ask-YN 'Open safe yule:// hub, queue, request, and challenge links with EGGNOGG+?') {
+} elseif (Ask-YN 'Open safe yule:// hub, queue, request, challenge, and map-preview links with EGGNOGG+?') {
     $protocolCommand = Get-YuleProtocolCommand $gameDir
     $existingCommand = Get-RegistryDefault $protocolCommandPath
     $previousOwned = $manifest -and $manifest.deep_link_protocol -and

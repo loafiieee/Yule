@@ -128,6 +128,7 @@
   var externalAssets = dictionary();
   var externalSources = dictionary();
   var tintedCache = dictionary();
+  var crowdMaskCache = dictionary();
   var surfaceSerial = 1;
   var imageSerial = typeof WeakMap !== "undefined" ? new WeakMap() : null;
 
@@ -227,6 +228,7 @@
       builtinKey = key;
       builtinAssets = null;
       tintedCache = dictionary();
+      crowdMaskCache = dictionary();
       builtinPromise = Promise.all([
         loadImage(sources.tiles, "tiles"),
         loadImage(sources.sprites, "sprites"),
@@ -457,6 +459,52 @@
     return true;
   }
 
+  /* load_gfx creates runtime sprites 0x80..0xff by scanning the shipped
+   * sprites.png and copying only exact RGB(128,128,128) pixels into a white,
+   * opaque second half. Crowd sprites 0xb0.. therefore are masks derived from
+   * shipped cells 0x30.., not the visible character art in those cells. */
+  function crowdMaskSurface(image, sourceIndex) {
+    var key = imageId(image) + ":crowd-mask:" + sourceIndex;
+    var surface = crowdMaskCache[key];
+    if (surface) return surface;
+    var region = frameCoordinates(image, sourceIndex, CELL, CELL, 0);
+    if (!region) return null;
+    surface = makeSurface(CELL, CELL);
+    var context = surface.getContext("2d");
+    context.clearRect(0, 0, CELL, CELL);
+    context.drawImage(image, region.x, region.y, CELL, CELL, 0, 0, CELL, CELL);
+    try {
+      var pixels = context.getImageData(0, 0, CELL, CELL);
+      for (var offset = 0; offset < pixels.data.length; offset += 4) {
+        if (pixels.data[offset] === 128 && pixels.data[offset + 1] === 128 && pixels.data[offset + 2] === 128) {
+          pixels.data[offset] = 255; pixels.data[offset + 1] = 255; pixels.data[offset + 2] = 255; pixels.data[offset + 3] = 255;
+        } else pixels.data[offset + 3] = 0;
+      }
+      context.putImageData(pixels, 0, 0);
+    } catch (ignore) {
+      /* A supplied cross-origin preview asset cannot be pixel-inspected. The
+       * packaged original is same-origin, so this is only a defensive path. */
+      context.clearRect(0, 0, CELL, CELL);
+    }
+    crowdMaskCache[key] = surface;
+    return surface;
+  }
+
+  function drawCrowdMask(context, assets, sourceIndex, x, y, colour, flipX) {
+    var mask;
+    try {
+      mask = assets.sprites && crowdMaskSurface(assets.sprites, sourceIndex);
+      if (!mask) return false;
+      drawRegion(context, mask, { x: 0, y: 0, w: CELL, h: CELL }, x, y, CELL, CELL,
+        { colour: colour, flipX: !!flipX });
+      return true;
+    } catch (ignore) {
+      /* Crowd masks are a browser-side reconstruction of load_gfx's generated
+       * sprite half. A missing/tainted canvas must not abort the room draw. */
+      return false;
+    }
+  }
+
   /* The native f and waterfall actions animate by changing the source rectangle
    * of an atlas sprite, then drawing that half-size source at 2x. They are not
    * frame animations. Keeping the crop inside the original 16px atlas cell
@@ -607,7 +655,7 @@
       q: q,
       bulb: bulb,
       flare: [bulb[0] * remainder, bulb[1] * 0.75 * remainder,
-        bulb[2] * 0.5 * remainder, 1]
+        bulb[2] * 0.375 * remainder, 1]
     };
   }
 
@@ -898,6 +946,7 @@
     else if (glyph === "i") {
       cell = makeCell(glyph, "crowd", false, 1);
       cell.nativeFrameByte = 0x3e;
+      cell.nativeByte2 = (hashCell(worldX, y, "crowd-seed") & 0xff) - 128;
     }
     else if (glyph === "l") {
       cell = makeCell(glyph, "score-light", false, 0);
@@ -989,6 +1038,33 @@
 
   function paletteColour(palette, name) {
     return palette[name] || [1, 1, 1, 1];
+  }
+
+  function colourLuminance(colour) {
+    var parsed = parseColour(colour, [0, 0, 0, 1]);
+    function channel(value) {
+      value = clamp(finite(value, 0), 0, 1);
+      return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+    }
+    return 0.2126 * channel(parsed[0]) + 0.7152 * channel(parsed[1]) + 0.0722 * channel(parsed[2]);
+  }
+
+  function previewEnemyColour(palette) {
+    var backgrounds = [paletteColour(palette || {}, "bg1"), paletteColour(palette || {}, "bg2")];
+    var dark = [0.12, 0.14, 0.18, 1];
+    var light = [0.96, 0.92, 0.82, 1];
+    function weakestContrast(candidate) {
+      var candidateLuminance = colourLuminance(candidate);
+      var weakest = Infinity;
+      backgrounds.forEach(function (background) {
+        var backgroundLuminance = colourLuminance(background);
+        var ratio = (Math.max(candidateLuminance, backgroundLuminance) + 0.05) /
+          (Math.min(candidateLuminance, backgroundLuminance) + 0.05);
+        weakest = Math.min(weakest, ratio);
+      });
+      return weakest;
+    }
+    return weakestContrast(light) >= weakestContrast(dark) ? light : dark;
   }
 
   function renderFloor(context, assets, x, y, palette, settings, baseColour) {
@@ -1143,8 +1219,9 @@
       "1": [0.95, 0.28, 0.22, 1],
       "2": [0.25, 0.55, 1.0, 1]
     };
-    var enemyColour = parseColour(options.enemyColour || options.enemyColor || teamColours.enemy,
-      [0.5, 0.5, 0.5, 1]);
+    var suppliedEnemyColour = options.enemyColour || options.enemyColor || teamColours.enemy;
+    var enemyColour = suppliedEnemyColour ? parseColour(suppliedEnemyColour, previewEnemyColour(palette)) :
+      previewEnemyColour(palette);
 
     if (cell.nativeMirror && options.mirrored) settings.flipX = true;
     switch (cell.kind) {
@@ -1260,8 +1337,30 @@
         return;
       case "crowd":
         drawFrame(context, assets, "tiles", 0x3e, x, y, paletteColour(palette, "bg1"), settings);
-        drawFontGlyph(context, assets, String.fromCharCode(33 + (hash % 92)), x, y,
-          paletteColour(palette, "fg2"), { alpha: 0.78 });
+        /* Native mode 2 draws two left/right mask figures at the cell centre,
+         * then another pair eight pixels above. They are full-size synthesized
+         * masks, not four scaled character sprites and not a looping jump.
+         * crowd_timer changes their seeded pose range during match events; the
+         * editor shows the ordinary idle state. */
+        var crowdSeed = cell.nativeByte2 || 1;
+        var crowdColourA = scaledColour(nativeChandelierColour(crowdSeed,
+          unitHash(crowdSeed, cell.nativeWorldX, "crowd-sat-a"), 1, 1), 0.5, 1);
+        var crowdColourB = scaledColour(nativeChandelierColour(crowdSeed * 123,
+          unitHash(crowdSeed, cell.y, "crowd-sat-b"), 1, 1), 0.5, 1);
+        for (var crowdRow = 0; crowdRow < 2; crowdRow += 1) {
+          var rowHash = hashCell(cell.nativeWorldX + crowdRow * 17, cell.y, "crowd-idle");
+          var leftSprite = 0x30 + (rowHash % 5);
+          var rightSprite = 0x30 + ((rowHash >>> 5) % 3);
+          var leftJitterX = ((rowHash >>> 9) % 5) - 2;
+          var rightJitterX = ((rowHash >>> 13) % 5) - 2;
+          var leftJitterY = ((rowHash >>> 17) % 3) - 1;
+          var rightJitterY = ((rowHash >>> 19) % 3) - 1;
+          var rowY = y - crowdRow * 8;
+          drawCrowdMask(context, assets, leftSprite, x - 4 + leftJitterX,
+            rowY + leftJitterY, crowdColourA, !!(rowHash & 0x400000));
+          drawCrowdMask(context, assets, rightSprite, x + 4 + rightJitterX,
+            rowY + rightJitterY, crowdColourB, !!(rowHash & 0x800000));
+        }
         return;
       case "score-light":
         frame = Math.floor(time / 30) & 1 ? 0x5c : 0x5b;
@@ -1353,9 +1452,11 @@
     var waterCells;
 
     if (ambient === 1 && layer === 1) {
-      /* Native bugs: sparse misc[0x1e] motes falling from the top. */
-      for (i = 0; i < 8; i += 1) {
-        phase = loopPhase(time, 250, unitHash(i, 1, "bug-phase") * 250);
+      /* Native bugs emit on ticks divisible by 16 with a one-in-five gate.
+       * Keep a small deterministic set of those long-lived particles rather
+       * than the old always-on swarm. */
+      for (i = 0; i < 3; i += 1) {
+        phase = loopPhase(time, 320, unitHash(i, 1, "bug-phase") * 320);
         px = unitHash(i, 2, "bug-x") * width + Math.sin((time + i * 31) * 0.04) * 10;
         py = phase * (height + 24) - 16;
         drawFrame(context, assets, "misc", 0x1e, px - 8, py - 8, [1, 1, 1, 1], {
@@ -1370,15 +1471,17 @@
 
     if (ambient === 2 && (layer === 3 || layer === 4)) {
       /* Cloud size controls whether the native particle uses layer 3 or 4. */
-      for (i = 0; i < 6; i += 1) {
+      for (i = 0; i < 10; i += 1) {
         scale = 2 + unitHash(i, 3, "cloud-size") * 2;
         if ((scale >= 3 ? 4 : 3) !== layer) continue;
-        direction = i & 1 ? 1 : -1;
+        /* Source-room previews are the left/centre runtime occurrence, where
+         * cloud_particle always enters from the left and travels right. */
+        direction = 1;
         speed = 0.75 * scale;
         phase = loopPhase(time * speed, width + 180, unitHash(i, 4, "cloud-phase") * (width + 180));
         px = direction > 0 ? phase * (width + 180) - 90 : width + 90 - phase * (width + 180);
         py = 18 + unitHash(i, 5, "cloud-y") * (height - 52);
-        tint = mixColour(paletteColour(palette, "bg1"), paletteColour(palette, "bg2"), 0.5, 0.56);
+        tint = mixColour(paletteColour(palette, "bg1"), paletteColour(palette, "bg2"), 0.5, 0.62);
         drawFrame(context, assets, "tiles", 0x2f, px - 8, py - 8, tint, {
           scaleX: scale,
           scaleY: 1 + unitHash(i, 6, "cloud-height") * 0.5,
@@ -1391,13 +1494,15 @@
 
     if (ambient === 3 && layer === 3) {
       tint = scaledColour(mixColour(paletteColour(palette, "bg1"), paletteColour(palette, "bg2"), 0.5), 0.78, 0.52);
-      for (i = 0; i < 6; i += 1) {
+      for (i = 0; i < 8; i += 1) {
         direction = i & 1 ? 1 : -1;
-        phase = loopPhase(time, 220, unitHash(i, 7, "art-phase") * 220);
+        phase = loopPhase(time, 260, unitHash(i, 7, "art-phase") * 260);
         px = unitHash(i, 8, "art-x") * width;
         py = direction > 0 ? height + 18 - phase * (height + 36) : -18 + phase * (height + 36);
-        frame = direction > 0 ? 0x1a + ((Math.floor(time / 12) + i) & 1) :
-          0x1c + ((Math.floor(time / 12) + i) & 1);
+        /* art_particle_draw alternates the 1A/1B and 1C/1D pairs while the
+         * particle travels vertically; it is not a static decorative tile. */
+        frame = direction > 0 ? 0x1a + ((Math.floor(time / 8) + i) & 1) :
+          0x1c + ((Math.floor(time / 8) + i) & 1);
         drawFrame(context, assets, "tiles", frame, px - 8, py - 8, tint, {
           flipX: !!(i & 2),
           angle: Math.sin((time + i * 20) * 0.025) * 8,
@@ -1409,10 +1514,10 @@
 
     if (ambient === 4 && layer === 2) {
       tint = paletteColour(palette, "bg1");
-      for (i = 0; i < 10; i += 1) {
+      for (i = 0; i < 14; i += 1) {
         px = unitHash(i, 9, "fly-x") * width + Math.sin((time + i * 29) * 0.11) * 12;
         py = unitHash(i, 10, "fly-y") * height + Math.cos((time + i * 41) * 0.09) * 9;
-        frame = 0x22 + ((Math.floor(time / 5) + i) & 1);
+        frame = 0x22 + ((Math.floor(time / 3) + i) & 1);
         drawFrame(context, assets, "misc", frame, px - 8, py - 8, tint, { scaleX: 0.55, scaleY: 0.55, alpha: 0.76 });
         drawFrame(context, assets, "misc", 0x24, px - 8, py - 8, [1, 1, 1, 1], { scaleX: 0.55, scaleY: 0.55, alpha: 0.55 });
       }
@@ -1421,28 +1526,28 @@
 
     if ((ambient === 5 && layer === 1) || (ambient === 6 && layer === 2)) {
       tint = ambient === 5 ? paletteColour(palette, "water") : [0.05, 0.04, 0.04, 0.58];
-      for (i = 0; i < 9; i += 1) {
-        phase = loopPhase(time * (ambient === 5 ? 1.8 : 0.42), height + 28,
+      for (i = 0; i < (ambient === 5 ? 4 : 5); i += 1) {
+        phase = loopPhase(time * (ambient === 5 ? 1.2 : 0.42), height + 28,
           unitHash(i, 11, ambient === 5 ? "drip-phase" : "dust-phase") * (height + 28));
         px = unitHash(i, 12, ambient === 5 ? "drip-x" : "dust-x") * width;
         py = phase * (height + 28) - 14;
         drawFrame(context, assets, "misc", 0x08, px - 8, py - 8, tint, {
           scaleX: ambient === 5 ? 0.42 : 0.3,
           scaleY: ambient === 5 ? 0.75 : 0.3,
-          alpha: ambient === 5 ? 0.88 : 0.58
+          alpha: ambient === 5 ? 0.88 : 0.42
         });
       }
       return;
     }
 
     if (ambient === 7 && layer === 2) {
-      for (i = 0; i < 5; i += 1) {
+      for (i = 0; i < 3; i += 1) {
         direction = i & 1 ? 1 : -1;
         phase = loopPhase(time * (0.9 + unitHash(i, 13, "bat-speed") * 0.6), width + 80,
           unitHash(i, 14, "bat-phase") * (width + 80));
         px = direction > 0 ? phase * (width + 80) - 40 : width + 40 - phase * (width + 80);
         py = 28 + unitHash(i, 15, "bat-y") * (height * 0.55) + Math.sin((time + i * 53) * 0.12) * 8;
-        frame = 0x4e + ((Math.floor(time / 5) + i) & 1);
+        frame = 0x4e + ((Math.floor(time / 4) + i) & 1);
         drawFrame(context, assets, "tiles", frame, px - 8, py - 8, paletteColour(palette, "fg2"), {
           flipX: direction < 0,
           scaleX: 0.8 + unitHash(i, 16, "bat-scale") * 0.5,
@@ -1454,7 +1559,7 @@
     }
 
     if (ambient === 8 && layer === 2) {
-      for (i = 0; i < 9; i += 1) {
+      for (i = 0; i < 7; i += 1) {
         phase = loopPhase(time * (0.45 + unitHash(i, 17, "bubble-speed") * 0.3), 260,
           unitHash(i, 18, "bubble-phase") * 260);
         px = unitHash(i, 19, "bubble-x") * width + Math.sin((time + i * 47) * 0.055) * 7;
@@ -1474,18 +1579,22 @@
       for (y = 0; y < ROWS; y += 1) {
         for (x = 0; x < COLS; x += 1) if (grid[y][x] === "w") waterCells.push({ x: x, y: y });
       }
-      waterCells.forEach(function (position, index) {
-        phase = loopPhase(time * 0.8, 90, unitHash(index, 22, "boil-phase") * 90);
-        if (phase > 0.58) return;
-        px = position.x * CELL + 8 + Math.sin((time + index * 43) * 0.09) * 4;
+      /* The game samples one random map coordinate each tick and only emits
+       * when it happens to hit native shallow water. It does not animate every
+       * w cell at once. Keep a handful of short-lived deterministic samples. */
+      for (i = 0; i < Math.min(5, waterCells.length); i += 1) {
+        var position = waterCells[Math.floor(unitHash(i, 22, "boil-cell") * waterCells.length)];
+        phase = loopPhase(time, 60, unitHash(i, 23, "boil-phase") * 60);
+        if (phase > 0.35) continue;
+        px = position.x * CELL + 8 + Math.sin((time + i * 43) * 0.09) * 4;
         py = position.y * CELL + 8 - phase * 30;
-        frame = unitHash(index, 23, "boil-kind") < 0.8 ? 0x70 : 0x71 + ((Math.floor(time / 6) + index) & 1);
+        frame = unitHash(i, 24, "boil-kind") < 0.8 ? 0x70 : 0x71 + ((Math.floor(time / 6) + i) & 1);
         drawFrame(context, assets, "tiles", frame, px - 8, py - 8, paletteColour(palette, "water_hi"), {
           scaleX: frame === 0x70 ? 0.45 : 0.7,
           scaleY: frame === 0x70 ? 0.45 : 0.7,
           alpha: 0.8 * (1 - phase)
         });
-      });
+      }
     }
   }
 
@@ -1772,6 +1881,7 @@
     externalAssets = dictionary();
     externalSources = dictionary();
     tintedCache = dictionary();
+    crowdMaskCache = dictionary();
   }
 
   function copyNativeFrameRecipes() {
@@ -1811,6 +1921,7 @@
     _nativeCompositeFlips: nativeCompositeFlips,
     _nativeChandelierGeometry: nativeChandelierGeometry,
     _nativeChandelierGlow: nativeChandelierGlow,
-    _nativeSunPosition: nativeSunPosition
+    _nativeSunPosition: nativeSunPosition,
+    _previewEnemyColour: previewEnemyColour
   };
 }));

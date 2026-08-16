@@ -219,6 +219,15 @@ So in `v1`:
 - `round_end_rooms`: optional
   - `"inner_only"` or `"any"`
   - default: `"inner_only"`
+  - the legacy field name describes where an authored round-end trigger is
+    consulted, not which source room must contain a goal
+  - `"inner_only"` is the classic route: reaching either outermost final room
+    is already a win condition; `E`/`^` (or score completion) can end the round
+    in any room between those endpoints
+  - `"any"` removes the automatic outermost-room win, so the outer rooms also
+    need an `E`/`^` goal or a completed score target
+  - neither value specifically requires the center source room to contain `E`
+    or `^`
 - `score_target`: optional
   - integer greater than `0`, or `null`
   - if set, this is a score-target map

@@ -130,6 +130,23 @@ int main(void) {
         launch_ipc_shutdown();
         return 7;
     }
+    if (!spawn_child(L"protocol",
+                     L"--yule-uri=yule://preview/v1/e30/eA",
+                     &exit_code) ||
+        exit_code != 0u) {
+        fprintf(stderr, "preview protocol child failed: %lu\n",
+                (unsigned long)exit_code);
+        launch_ipc_shutdown();
+        return 8;
+    }
+    memset(&request, 0, sizeof(request));
+    if (!poll_request(&request) ||
+        request.action != LAUNCH_REQUEST_PREVIEW_V1 ||
+        strcmp(request.target, "e30/eA") != 0) {
+        fprintf(stderr, "preview request was not forwarded exactly\n");
+        launch_ipc_shutdown();
+        return 9;
+    }
     launch_ipc_shutdown();
     puts("launch IPC tests passed");
     return 0;

@@ -3,6 +3,7 @@
 #include "online_control.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void set_error(char* error, size_t error_cap, const char* message) {
@@ -59,7 +60,7 @@ static int request_merge(LaunchRequest* aggregate,
         return 1;
     }
     if (request_equal(aggregate, candidate)) return 1;
-    set_error(error, error_cap, "conflicting online launch actions");
+    set_error(error, error_cap, "conflicting launch actions");
     return 0;
 }
 
@@ -109,6 +110,122 @@ static int uri_has_forbidden_syntax(const char* uri) {
     return 0;
 }
 
+static int base64url_value(unsigned char c) {
+    if (c >= (unsigned char)'A' && c <= (unsigned char)'Z') return (int)(c - 'A');
+    if (c >= (unsigned char)'a' && c <= (unsigned char)'z') return 26 + (int)(c - 'a');
+    if (c >= (unsigned char)'0' && c <= (unsigned char)'9') return 52 + (int)(c - '0');
+    if (c == (unsigned char)'-') return 62;
+    if (c == (unsigned char)'_') return 63;
+    return -1;
+}
+
+static int preview_segment_valid(const char* text, size_t length) {
+    size_t i;
+    size_t decoded;
+    int tail;
+    if (!text || length == 0u || (length & 3u) == 1u) return 0;
+    decoded = (length / 4u) * 3u;
+    if ((length & 3u) == 2u) decoded += 1u;
+    if ((length & 3u) == 3u) decoded += 2u;
+    if (decoded == 0u || decoded > LAUNCH_PREVIEW_FILE_MAX_BYTES) return 0;
+    for (i = 0u; i < length; i++) {
+        if (base64url_value((unsigned char)text[i]) < 0) return 0;
+    }
+    /* Reject alternate encodings with non-zero unused tail bits. */
+    tail = base64url_value((unsigned char)text[length - 1u]);
+    if ((length & 3u) == 2u && (tail & 15) != 0) return 0;
+    if ((length & 3u) == 3u && (tail & 3) != 0) return 0;
+    return 1;
+}
+
+int launch_request_preview_target_valid(const char* target) {
+    const char* separator;
+    size_t total;
+    if (!target) return 0;
+    total = strlen(target);
+    if (total == 0u || total >= LAUNCH_REQUEST_TARGET_CAP) return 0;
+    separator = strchr(target, '/');
+    if (!separator || strchr(separator + 1, '/')) return 0;
+    return preview_segment_valid(target, (size_t)(separator - target)) &&
+           preview_segment_valid(separator + 1, strlen(separator + 1));
+}
+
+static char* decode_preview_segment(const char* text,
+                                    size_t length,
+                                    char* error,
+                                    size_t error_cap) {
+    size_t decoded_length = (length / 4u) * 3u +
+        ((length & 3u) == 2u ? 1u : (length & 3u) == 3u ? 2u : 0u);
+    char* decoded = (char*)malloc(decoded_length + 1u);
+    size_t source = 0u;
+    size_t dest = 0u;
+    if (!decoded) {
+        set_error(error, error_cap, "out of memory decoding preview map");
+        return NULL;
+    }
+    while (source + 4u <= length) {
+        unsigned value = ((unsigned)base64url_value((unsigned char)text[source]) << 18) |
+                         ((unsigned)base64url_value((unsigned char)text[source + 1u]) << 12) |
+                         ((unsigned)base64url_value((unsigned char)text[source + 2u]) << 6) |
+                         (unsigned)base64url_value((unsigned char)text[source + 3u]);
+        decoded[dest++] = (char)((value >> 16) & 0xffu);
+        decoded[dest++] = (char)((value >> 8) & 0xffu);
+        decoded[dest++] = (char)(value & 0xffu);
+        source += 4u;
+    }
+    if (length - source == 2u) {
+        unsigned value = ((unsigned)base64url_value((unsigned char)text[source]) << 6) |
+                         (unsigned)base64url_value((unsigned char)text[source + 1u]);
+        decoded[dest++] = (char)((value >> 4) & 0xffu);
+    } else if (length - source == 3u) {
+        unsigned value = ((unsigned)base64url_value((unsigned char)text[source]) << 12) |
+                         ((unsigned)base64url_value((unsigned char)text[source + 1u]) << 6) |
+                         (unsigned)base64url_value((unsigned char)text[source + 2u]);
+        decoded[dest++] = (char)((value >> 10) & 0xffu);
+        decoded[dest++] = (char)((value >> 2) & 0xffu);
+    }
+    decoded[dest] = '\0';
+    if (memchr(decoded, '\0', decoded_length)) {
+        free(decoded);
+        set_error(error, error_cap, "preview files cannot contain NUL bytes");
+        return NULL;
+    }
+    return decoded;
+}
+
+int launch_request_decode_preview(const LaunchRequest* request,
+                                  char** out_json,
+                                  char** out_map,
+                                  char* error,
+                                  size_t error_cap) {
+    const char* separator;
+    char* json;
+    char* map;
+    if (out_json) *out_json = NULL;
+    if (out_map) *out_map = NULL;
+    if (error && error_cap > 0u) error[0] = '\0';
+    if (!request || !out_json || !out_map ||
+        request->action != LAUNCH_REQUEST_PREVIEW_V1 ||
+        !launch_request_preview_target_valid(request->target)) {
+        set_error(error, error_cap, "invalid preview payload");
+        return 0;
+    }
+    separator = strchr(request->target, '/');
+    json = decode_preview_segment(request->target,
+                                  (size_t)(separator - request->target),
+                                  error, error_cap);
+    if (!json) return 0;
+    map = decode_preview_segment(separator + 1, strlen(separator + 1),
+                                 error, error_cap);
+    if (!map) {
+        free(json);
+        return 0;
+    }
+    *out_json = json;
+    *out_map = map;
+    return 1;
+}
+
 static int parse_uri(const char* uri,
                      LaunchRequest* out,
                      char* error,
@@ -124,6 +241,21 @@ static int parse_uri(const char* uri,
     }
     route = uri + sizeof(scheme) - 1u;
     route_len = strlen(route);
+    if (ascii_starts_ci(route, "preview/v1/")) {
+        const char* target = route + 11u;
+        size_t target_len = strlen(target);
+        if (!launch_request_preview_target_valid(target)) {
+            set_error(error, error_cap, "invalid V1 preview payload");
+            return 0;
+        }
+        if (target_len >= sizeof(out->target)) {
+            set_error(error, error_cap, "preview payload is too long");
+            return 0;
+        }
+        out->action = LAUNCH_REQUEST_PREVIEW_V1;
+        memcpy(out->target, target, target_len + 1u);
+        return 1;
+    }
     if (route_len >= sizeof(normalized_route)) {
         set_error(error, error_cap, "yule URI action is too long");
         return 0;
@@ -282,6 +414,7 @@ const char* launch_request_action_name(LaunchRequestAction action) {
         case LAUNCH_REQUEST_QUEUE_CASUAL: return "queue/casual";
         case LAUNCH_REQUEST_QUEUE_COMPETITIVE: return "queue/competitive";
         case LAUNCH_REQUEST_CHALLENGE: return "challenge";
+        case LAUNCH_REQUEST_PREVIEW_V1: return "preview/v1";
         default: return "none";
     }
 }

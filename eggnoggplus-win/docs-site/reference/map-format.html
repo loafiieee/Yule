@@ -54,7 +54,7 @@
   <tr><td><code>description</code></td><td>Optional free text.</td></tr>
   <tr><td><code>sort_order</code></td><td>Optional integer, default 0. Custom sort is order, name, folder id.</td></tr>
   <tr><td><code>rules.mode</code></td><td><code>swords</code> or <code>karate</code>; changes natural spawn loadout only. Map-authored <code>*</code> pickups remain.</td></tr>
-  <tr><td><code>rules.round_end_rooms</code></td><td><code>inner_only</code> (default) or <code>any</code>.</td></tr>
+  <tr><td><code>rules.round_end_rooms</code></td><td><code>inner_only</code> (default) keeps the classic automatic win at either outermost final room; authored <code>E</code>/<code>^</code> goals can end the round between them. <code>any</code> removes that endpoint shortcut, so outer rooms need a goal or completed score target too. Neither value specifically requires a goal in the center room.</td></tr>
   <tr><td><code>rules.score_target</code></td><td>Positive integer or null.</td></tr>
   <tr><td><code>rules.armed_respawn_limit</code></td><td>Integer, default 4.</td></tr>
   <tr><td><code>layout.kind</code></td><td>Required <code>mirrored_source_rooms</code>.</td></tr>

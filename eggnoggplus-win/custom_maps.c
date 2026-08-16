@@ -232,6 +232,8 @@ typedef struct CustomMap {
     unsigned char* script_source;
     size_t script_size;
     uint64_t script_id;
+    int is_preview;
+    uint64_t preview_revision;
 } CustomMap;
 
 typedef struct CustomMapRegistry {
@@ -259,6 +261,9 @@ typedef struct EngineRoomdef {
 
 static int g_custom_maps_inited = 0;
 static CustomMapRegistry g_custom_registry = { 0 };
+static CustomMap g_preview_map;
+static int g_preview_active = 0;
+static uint64_t g_preview_revision = 0;
 static RetiredRegistryBuffer* g_retired_registry_buffers = NULL;
 /* Native roomdefs retain pointers into the registry that most recently
  * supplied a custom map (name/author and room glyph rows). A hot reload may
@@ -3610,6 +3615,14 @@ static void rebuild_custom_map_registry(CustomMapRegistry* registry) {
     if (registry->count > 1) {
         qsort(registry->maps, (size_t)registry->count, sizeof(*registry->maps), custom_map_compare);
     }
+    if (g_preview_active) {
+        if (!registry_reserve(registry, registry->count + 1)) {
+            registry->rejected_count++;
+            LOG_ERROR("%s failed to append in-memory preview map", MAPS_PREFIX);
+            return;
+        }
+        registry->maps[registry->count++] = g_preview_map;
+    }
 }
 
 static void custom_maps_reload_registry_if_needed(int force_reload) {
@@ -3691,6 +3704,9 @@ void custom_maps_shutdown(void) {
     free_retired_registry_maps();
     g_custom_maps_signature = 0;
     g_custom_maps_failed_signature = 0;
+    memset(&g_preview_map, 0, sizeof(g_preview_map));
+    g_preview_active = 0;
+    g_preview_revision = 0;
     g_custom_maps_inited = 0;
     g_custom_maps_generation++;
 }
@@ -3802,6 +3818,7 @@ int custom_maps_build_manifest_json(char* out, size_t out_sz) {
     }
     for (int i = 0; i < g_custom_registry.count; i++) {
         const CustomMap* map = &g_custom_registry.maps[i];
+        if (map->is_preview) continue;
         if (!first) appendf_counted(out, out_sz, &pos, ",");
         first = 0;
         appendf_counted(out, out_sz, &pos, "{\"key\":");
@@ -3846,6 +3863,7 @@ int custom_maps_selector_for_key(const char* key, int* out_selector) {
     custom_maps_reload_registry_if_needed(0);
     for (int i = 0; i < g_custom_registry.count; i++) {
         char map_key[160];
+        if (g_custom_registry.maps[i].is_preview) continue;
         p = g_custom_registry.maps[i].online_key;
         copy_lower_ascii(map_key, sizeof(map_key), p && p[0] ? p : g_custom_registry.maps[i].id);
         if (strcmp(norm_key, map_key) == 0) {
@@ -4210,4 +4228,110 @@ done:
     map.script_source = NULL;
     json_free_value(root);
     return ok && diag.error_count == 0;
+}
+
+static void custom_maps_preview_set_error(char* err, size_t err_cap,
+                                          const char* message) {
+    if (!err || err_cap == 0u) return;
+    snprintf(err, err_cap, "%s", message ? message : "preview map is invalid");
+    err[err_cap - 1u] = '\0';
+}
+
+int custom_maps_install_preview_text(const char* json_text,
+                                     const char* map_text,
+                                     int* out_selector,
+                                     char* err,
+                                     size_t err_cap) {
+    static const char preview_id[] = "_greggnogg_preview";
+    enum { PREVIEW_TEXT_MAX_BYTES = 12288 };
+    MapDiagnostics diag;
+    JsonValue* root = NULL;
+    ParsedMapFile parsed_map;
+    CustomMap candidate;
+    CustomMap previous;
+    char owner[CONTENT_OWNER_MAX];
+    int format_version = 0;
+    int max_native_room_spawns = 0;
+    int native_k_marker_count = 0;
+    int previous_active;
+    uint64_t revision;
+    int installed = 0;
+
+    if (out_selector) *out_selector = -1;
+    if (err && err_cap > 0u) err[0] = '\0';
+    if (!json_text || !map_text || !out_selector ||
+        strlen(json_text) == 0u || strlen(map_text) == 0u ||
+        strlen(json_text) > PREVIEW_TEXT_MAX_BYTES ||
+        strlen(map_text) > PREVIEW_TEXT_MAX_BYTES) {
+        custom_maps_preview_set_error(err, err_cap,
+                                      "preview files are empty or exceed the preview limit");
+        return 0;
+    }
+
+    memset(&diag, 0, sizeof(diag));
+    memset(&parsed_map, 0, sizeof(parsed_map));
+    memset(&candidate, 0, sizeof(candidate));
+    memset(owner, 0, sizeof(owner));
+    diag.map_id = preview_id;
+
+    root = json_parse_document(&diag, "data.json", json_text);
+    if (!root) goto done;
+    if (!parse_map_format_and_owner(&diag, root, preview_id,
+                                    &format_version, owner)) goto done;
+    if (format_version != 1) {
+        diag_log(&diag, 1,
+                 "[data.json][format] error: preview links currently accept eggnogg-map/v1 only");
+        goto done;
+    }
+    parse_map_file(&diag, map_text, NULL, &parsed_map);
+    validate_room_glyph_footprints(&diag, &parsed_map);
+    validate_native_room_spawn_budget(&diag, &parsed_map,
+                                      &max_native_room_spawns,
+                                      &native_k_marker_count);
+    if (diag.error_count != 0) goto done;
+    if (!build_custom_map(&diag, &parsed_map, root, preview_id,
+                          format_version, NULL, &candidate)) goto done;
+    if (diag.error_count != 0) goto done;
+
+    candidate.max_native_room_spawns = max_native_room_spawns;
+    candidate.native_k_marker_count = native_k_marker_count;
+    snprintf(candidate.folder_id, sizeof(candidate.folder_id), "%s", preview_id);
+    snprintf(candidate.id, sizeof(candidate.id), "%s", preview_id);
+    candidate.online_key[0] = '\0';
+    candidate.online_sig[0] = '\0';
+    candidate.is_preview = 1;
+    revision = ++g_preview_revision;
+    if (revision == 0u) revision = ++g_preview_revision;
+    candidate.preview_revision = revision;
+
+    if (!g_custom_maps_inited) custom_maps_init();
+    previous = g_preview_map;
+    previous_active = g_preview_active;
+    g_preview_map = candidate;
+    g_preview_active = 1;
+    custom_maps_reload_registry_if_needed(1);
+    if (g_custom_registry.count > 0 &&
+        g_custom_registry.maps[g_custom_registry.count - 1].is_preview &&
+        g_custom_registry.maps[g_custom_registry.count - 1].preview_revision == revision) {
+        *out_selector = VANILLA_MAP_COUNT + g_custom_registry.count - 1;
+        installed = 1;
+        LOG_INFO("%s installed in-memory preview map \"%s\" at selector %d",
+                 MAPS_PREFIX,
+                 candidate.name[0] ? candidate.name : preview_id,
+                 *out_selector);
+    } else {
+        g_preview_map = previous;
+        g_preview_active = previous_active;
+        custom_maps_reload_registry_if_needed(1);
+        custom_maps_preview_set_error(err, err_cap,
+                                      "preview map could not be installed atomically");
+    }
+
+done:
+    if (!installed && (!err || err_cap == 0u || !err[0])) {
+        custom_maps_preview_set_error(err, err_cap,
+                                      "preview map failed loader validation; see modframework.log");
+    }
+    json_free_value(root);
+    return installed;
 }

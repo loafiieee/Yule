@@ -26,8 +26,8 @@
 
       <h2 id="requirements">Requirements</h2>
       <ul>
-        <li>Windows and a working copy of <code>eggnoggplus.exe</code>.</li>
-        <li>The Yule installer ZIP for the release you want to install.</li>
+        <li>Windows, or Linux with Wine, and a working Windows copy of <code>eggnoggplus.exe</code>.</li>
+        <li>The Windows or Linux/Wine Yule installer ZIP for the release you want to install.</li>
         <li>Internet access while the installer retrieves and verifies release files.</li>
         <li>Permission to write to the chosen game folder and to register optional shortcuts and <code>yule://</code> links.</li>
       </ul>
@@ -35,12 +35,18 @@
 
       <h2 id="install">Install</h2>
       <ol class="steps">
-        <li><strong>Extract the complete installer ZIP.</strong> Do not run the scripts from inside the ZIP preview.</li>
+        <li><strong>Extract the complete Windows installer ZIP.</strong> Do not run the scripts from inside the ZIP preview.</li>
         <li><strong>Run <code>INSTALL.bat</code>.</strong> The script first looks beside itself and in a previous install receipt. If it cannot find the game, it asks you to locate <code>eggnoggplus.exe</code>.</li>
         <li><strong>Review the detected folder.</strong> Follow the prompts for the install location, shortcuts, and Steam integration. You can decline optional integration without disabling the framework.</li>
         <li><strong>Let verification finish.</strong> On a vanilla copy, the installer renames the original <code>SDL2.dll</code> to <code>SDL2_real.dll</code>, then installs the verified proxy and its required runtime files.</li>
         <li><strong>Launch <code>eggnoggplus.exe</code>.</strong> The updater helper is not a launcher; the game executable remains the normal entry point.</li>
       </ol>
+
+      <h2 id="linux-wine">Linux with Wine</h2>
+      <p>Extract the Linux/Wine installer ZIP, install Wine plus <code>python3</code>, <code>sha256sum</code>, <code>curl</code> or <code>wget</code>, and <code>xdg-mime</code>, then run <code>bash install-linux.sh</code>. Yule still targets the Windows game; the Linux installer copies it to <code>~/.local/share/yule/EGGNOGG+</code> by default and launches it through Wine.</p>
+      <p>The generated desktop entry and wrapper use one recorded Wine prefix for ordinary launches and <code>yule://</code> links. That includes Greggnogg preview links and existing-instance forwarding. Pass <code>--wine-prefix /path/to/prefix</code> for a non-default prefix or <code>--skip-protocol</code> to omit desktop integration.</p>
+      <pre><code>bash install-linux.sh --game-path /path/to/eggnoggplus.exe
+bash install-linux.sh --uninstall</code></pre>
 
       <h2 id="verify">Verify the install</h2>
       <p>A healthy root contains these roles:</p>
@@ -64,7 +70,7 @@
       <h2 id="uninstall">Uninstall safely</h2>
       <ol>
         <li>Close Eggnogg+ and the update helper.</li>
-        <li>Run <code>UNINSTALL.bat</code> from the installer package.</li>
+        <li>On Windows, run <code>UNINSTALL.bat</code>. On Linux, run <code>bash UNINSTALL-LINUX.sh</code>.</li>
         <li>Confirm the recorded target. The uninstaller removes installer-owned integration and restores the original <code>SDL2.dll</code> from <code>SDL2_real.dll</code>.</li>
       </ol>
       <p>If the framework proxy exists but <code>SDL2_real.dll</code> is missing, the uninstaller deliberately stops. Restore an original SDL DLL from a clean copy as <code>SDL2_real.dll</code>, then retry. Guessing or deleting the proxy would leave the game unbootable.</p>
@@ -81,4 +87,3 @@
   </div>
 </body>
 </html>
-

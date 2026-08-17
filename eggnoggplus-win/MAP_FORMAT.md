@@ -454,7 +454,7 @@ Some names below are exact because the callback is named in Ghidra. Some plain-E
 | `P` | `tile 0x0C`, `puzzley_action`, `frame 0x08`, `arg 0x00` | changing art tile. |
 | `Q` | `tile 0x1A`, `colouring_action`, `frame 0x46 or 0x47`, `arg = random byte` | skull on a stick |
 | `S` | `tile 0x14`, `colouring_action`, `frame 0x07`, `arg 0x00` | Eye tile. |
-| `T` | emits a tentacle column using `tile 0x13`, `tentacle_action` | large tentacle |
+| `T` | emits a 4-tile tentacle column using `tile 0x13`, `tentacle_action` | large tentacle; needs 3 tiles of headroom |
 | `W` | `tile 0x0E`, `high_water_action`, `frame 0x05`, `arg 0x00` | High/deep water tile. |
 | `X` | `tile 0x05`, `spikes_action`, `frame 0x01`, `arg = random byte` | ground spikes |
 | `Y` | emits a `2x3` block of `tile 0x0D`, `arty_action` | person art block. expands upwards from glyph, 2x3 |
@@ -469,8 +469,8 @@ Some names below are exact because the callback is named in Ghidra. Some plain-E
 | `l` | `tile 0x1F`, `score_light_action`, `frame 0x02`, `arg 0x00` | score light |
 | `m` | `tile 0x06`, `mine_action`, `frame 0x01`, `arg 0x00` | mine tile |
 | `q` | `tile 0x1A`, `colouring_action`, `frame 0x6F`, `arg = random byte` | hanging skeleton |
-| `s` | emits a tentacle column using `tile 0x13`, `tentacle_action` | small tentacle |
-| `t` | emits a tentacle column using `tile 0x13`, `tentacle_action` | large tentacle |
+| `s` | emits a 2-tile tentacle column using `tile 0x13`, `tentacle_action` | small tentacle; needs 1 tile of headroom |
+| `t` | emits a 3-tile tentacle column using `tile 0x13`, `tentacle_action` | large tentacle; needs 2 tiles of headroom |
 | `u` | `tile 0x14`, `colouring_action`, `frame 0x6C`, `arg 0x00` | arch |
 | `v` | `tile 0x05`, `spikes_action`, `frame 0x02`, `arg 0x00` | hanging spikes |
 | `w` | `tile 0x0F`, `water_action`, `frame 0x05`, `arg 0x00` | shallow water tile |
@@ -574,6 +574,7 @@ A map is invalid if any of the following are true:
   - confirmed `v1` hard errors:
   - `G` on the top 3 rows or either side edge
   - `L`, `N`, or `Y` on the top 3 rows or either side edge
+  - `T` on the top 3 rows, `t` on the top 2 rows, or `s` on the top row
 - a colour array is not exactly 3 numeric values
 - a colour channel is outside `0.0..1.0`
 - `mode` is not `swords` or `karate`

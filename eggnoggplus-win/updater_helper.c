@@ -401,7 +401,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous,
 #endif
 
 #ifndef UPDATE_EXT_HELPER_TEST
-    if (wait_pid == 0u) {
+    /* The installer may invoke a closed-game, recovery-only maintenance pass
+     * before it replaces any managed files. Normal update application still
+     * requires the initiating game PID so the helper cannot race the game. */
+    if (wait_pid == 0u && !recover_only) {
         LocalFree(argv);
         free(forward);
         free(command);

@@ -200,6 +200,8 @@ try {
     foreach ($script in @(
         'tests\compile_sources_static_test.py',
         'tests\release_packaging_static_test.py',
+        'tests\linux_installer_static_test.py',
+        'tests\linux_installer_integration_test.py',
         'tests\public_source_export_static_test.py',
         'tests\credential_hooks_static_test.py',
         'tests\online_control_hooks_static_test.py',

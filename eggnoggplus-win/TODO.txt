@@ -456,6 +456,19 @@ Feature backlog:
       tooling and registration logs. Generic `native_glyph: "K"` remains excluded because
       non-map registry owners do not pass this package audit. Guarded parser/runtime-fixture
       tests cover the exact limit, over-limit K, combined spawners, and compatibility.
+    - Native custom-map crash containment: package validation now rejects `T`, `t`, and `s`
+      anchors whose upward expansion would leave the 33x12 room, preventing the recovered
+      `tentacle()` null write. The native reset-spawn action is also detoured at its exact
+      six-byte boundary and checks failed sword/hazard allocations before the original
+      unchecked write at `0x43CA88`; an exhausted fixed thing pool now skips that spawn and
+      records a warning instead of terminating the game. Guarded C and static hook tests
+      cover both paths.
+    - Greggnogg preview state-boundary safety: an accepted in-memory preview now ends the
+      former menu/game update immediately after `game_reset` and the state switch. The
+      recovered crash dump proved the old callback resumed into `reset_room`, duplicated
+      the center room's eight `K` hazards, and exhausted the thing pool on the second pass.
+      Preview launch now reports its destructive transition to both native and custom-state
+      callers, with static ordering coverage; installed-map startup behavior is unchanged.
     - Privacy-bounded Discord LFG bridge: the Node control server waits two seconds, then
       posts one configured channel embed only for a player who is still in a public casual/
       competitive queue after normal matchmaking. Challenges never create posts. HTTPS
@@ -514,8 +527,14 @@ Feature backlog:
       it revalidates pristine staging and original
       preconditions, owns write-through swaps, whole-set commit/rollback, legacy V1/V2 and
       no-journal `.old` recovery, cleanup, regular-file checks, privacy-safe logging, and
-      shell-free exact argument forwarding. Unsafe/corrupt/changed evidence blocks relaunch
-      without guessing. The installer records hash ownership and removes only an unchanged
+      shell-free exact argument forwarding. A pristine transaction with no mutation evidence
+      is safely discarded and restaged if its download or original precondition changed;
+      once swaps/backups/quarantines exist, unsafe or ambiguous evidence still blocks relaunch
+      without guessing. The mod scanner ignores the updater-owned staging directory. The
+      maintenance installer refuses a running same-install helper and invokes the bundled,
+      verified helper in recovery-only mode before replacing release files whenever staging
+      or legacy backups exist; it aborts rather than writing across unresolved evidence. The
+      installer records hash ownership and removes only an unchanged
       helper; the release builder requires byte identity with the verified build artifact,
       exact agreement between requested/source/compiled framework versions, payload-first/
       atomic-manifest-last publication, and rejects a helper that imports any replaceable
@@ -524,10 +543,18 @@ Feature backlog:
       game executable.
       This prevents both self-locking `libwinpthread-1.dll.old` cleanup failures and
       multi-client mapped-DLL commits. Guarded disposable-root
-      tests cover partial and complete power-cut states, valid/corrupt commits, changed
-      originals, corrupt staging/journals, legacy backup restoration, forwarding edge cases,
+      tests cover partial and complete power-cut states, valid/corrupt commits, safe stale-
+      pristine restaging, changed originals, corrupt staging/journals, legacy backup restoration, forwarding edge cases,
       verified install/routing/uninstall, and the existing updater recovery/loopback matrix;
       production HTTPS and abrupt-machine acceptance remain above.
+    - Linux/Wine installer: the release ZIP now includes a native Bash installer and safe
+      uninstall wrapper for the existing Windows game build. It validates the HTTPS channel,
+      exact sizes and SHA-256 hashes, preserves vanilla SDL, installs the same updater helper,
+      records hash ownership, and creates an XDG desktop launcher plus `yule://` handler bound
+      to one Wine prefix. Uninstall restores SDL and removes only unchanged owned files while
+      preserving maps, mods, saves, and local modifications. POSIX integration coverage uses
+      a fake game, local signed channel, Wine command, and MIME database without launching the
+      game; native Linux builds and distro packages remain future work.
     - Online player palette synchronization: host/P1 and join/P2 capture their local
       built-in skin/clothing choices before every socket attempt, exchange only those two
       bounded IDs through a dedicated fixed-size authenticated packet, and require exact

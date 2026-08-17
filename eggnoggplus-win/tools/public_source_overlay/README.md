@@ -17,7 +17,7 @@ legitimate Eggnogg installation to run the framework.
 - Lua/mod API and examples: `mods/`
 - V1/V2 map examples: `maps/`
 - Online services: `online_server/`
-- Installer/updater: `installer/`, `update_ext.c`, `updater_helper.c`,
+- Installer/updater: `dist/installer/{windows,linux}/`, `update_ext.c`, `updater_helper.c`,
   `tools/update_repository.sh`
 - Developer reference: `docs-site/`
 - Detailed design/reference documents: root Markdown files and `docs/`

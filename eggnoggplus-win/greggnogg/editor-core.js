@@ -1744,6 +1744,92 @@
     return output;
   }
 
+  function writeU32Le(output, offset, value) {
+    output[offset] = value & 0xFF;
+    output[offset + 1] = value >>> 8 & 0xFF;
+    output[offset + 2] = value >>> 16 & 0xFF;
+    output[offset + 3] = value >>> 24 & 0xFF;
+  }
+
+  /*
+   * Small deterministic LZSS stream used only by yule://preview/v1z. Each
+   * flag byte describes up to eight following tokens (low bit first): zero is
+   * one literal byte; one is a 12-bit backward distance and 4-bit length.
+   * Keeping this codec here avoids a dependency and lets Yule reject malformed
+   * links before allocating their declared output.
+   */
+  function packPreviewBytes(jsonBytes, mapBytes) {
+    var input = new Uint8Array(jsonBytes.length + mapBytes.length);
+    /* Plain arrays keep the dependency-free WSH regression harness usable. */
+    var head = new Array(65536);
+    var previous = new Array(input.length);
+    var compressed = [];
+    var position = 0;
+    var i;
+    input.set(jsonBytes, 0);
+    input.set(mapBytes, jsonBytes.length);
+    for (i = 0; i < head.length; i += 1) head[i] = -1;
+    for (i = 0; i < previous.length; i += 1) previous[i] = -1;
+
+    function hashAt(index) {
+      if (index + 2 >= input.length) return -1;
+      return ((input[index] * 251) ^ (input[index + 1] * 31) ^ input[index + 2]) & 65535;
+    }
+
+    function insert(index) {
+      var hash = hashAt(index);
+      if (hash < 0) return;
+      previous[index] = head[hash];
+      head[hash] = index;
+    }
+
+    while (position < input.length) {
+      var flagIndex = compressed.length;
+      var flags = 0;
+      var bit;
+      compressed.push(0);
+      for (bit = 0; bit < 8 && position < input.length; bit += 1) {
+        var hash = hashAt(position);
+        var candidate = hash < 0 ? -1 : head[hash];
+        var bestLength = 0;
+        var bestDistance = 0;
+        var checked = 0;
+        while (candidate >= 0 && position - candidate <= 4096 && checked < 128) {
+          var length = 0;
+          while (length < 18 && position + length < input.length &&
+                 input[candidate + length] === input[position + length]) length += 1;
+          if (length > bestLength && length >= 3) {
+            bestLength = length;
+            bestDistance = position - candidate;
+            if (length === 18) break;
+          }
+          candidate = previous[candidate];
+          checked += 1;
+        }
+        if (bestLength >= 3) {
+          var encodedDistance = bestDistance - 1;
+          flags |= 1 << bit;
+          compressed.push(encodedDistance & 0xFF);
+          compressed.push((encodedDistance >>> 8 & 0x0F) | ((bestLength - 3) << 4));
+          for (i = 0; i < bestLength; i += 1) insert(position + i);
+          position += bestLength;
+        } else {
+          compressed.push(input[position]);
+          insert(position);
+          position += 1;
+        }
+      }
+      compressed[flagIndex] = flags;
+    }
+
+    var packed = new Uint8Array(12 + compressed.length);
+    packed[0] = 0x47; packed[1] = 0x47; packed[2] = 0x50; packed[3] = 0x31;
+    writeU32Le(packed, 4, jsonBytes.length);
+    writeU32Le(packed, 8, mapBytes.length);
+    packed.set(compressed, 12);
+    return packed;
+  }
+
   function buildPreviewUri(value) {
     var document = unwrapDocument(value) || {};
     var validation;
@@ -1752,6 +1838,7 @@
     var jsonBytes;
     var mapBytes;
     var target;
+    var packed;
     if (document.format !== FORMAT_V1) throw new Error("Preview links currently support V1 maps only.");
     validation = validateDocument(document);
     if (!validation.valid) throw new Error("Map has validation errors; fix them before previewing.");
@@ -1764,9 +1851,13 @@
         mapBytes.length > PREVIEW_FILE_MAX_BYTES) {
       throw new Error("The preview package exceeds Yule's link size limit.");
     }
-    target = base64UrlEncode(jsonBytes) + "/" + base64UrlEncode(mapBytes);
-    if (target.length >= PREVIEW_TARGET_CAP) throw new Error("The preview link is too large for Yule.");
-    return "yule://preview/v1/" + target;
+    packed = packPreviewBytes(jsonBytes, mapBytes);
+    target = base64UrlEncode(packed);
+    if (packed.length > PREVIEW_FILE_MAX_BYTES || target.length >= PREVIEW_TARGET_CAP ||
+        target.length + 19 > 8000) {
+      throw new Error("This map is too large for a reliable preview link. Export it as a map package instead.");
+    }
+    return "yule://preview/v1z/" + target;
   }
 
   var CRC_TABLE = (function () {
@@ -2101,6 +2192,7 @@
     utf8Bytes: utf8Bytes,
     utf8Text: utf8Text,
     base64UrlEncode: base64UrlEncode,
+    packPreviewBytes: packPreviewBytes,
     buildPreviewUri: buildPreviewUri,
     parseMapText: parseMapText,
     serializeMapText: serializeMapText,

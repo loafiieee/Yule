@@ -40,6 +40,8 @@ body_for_object = body("static uintptr_t hooks_map_script_body_for_object")
 kind_for_body = body("static int hooks_map_script_kind_for_body")
 read_radius = body("static int hooks_map_script_read_contact_radius")
 thing_new = body("static void* __cdecl hooked_thing_new")
+spawn_thing = body("static int __cdecl hooked_spawn_thing_action")
+tile_action = body("static int __cdecl hooked_tile_action_ex")
 map_build = body("static void __cdecl hooked_mapgen_build_map(void)")
 draw_override = body("static int content_bridge_map_script_visual_override")
 hooks_init = body("void hooks_init(void)")
@@ -144,6 +146,29 @@ assert "#define ADDR_THING_NEW                0x41FD40u" in source
 assert "&g_thing_new_detour" in hooks_init
 assert "(void*)&hooked_thing_new" in hooks_init
 assert "10" in hooks_init[hooks_init.index("&g_thing_new_detour"):]
+
+# Native spawn_thing_action dereferences a failed thing_new/sword_new result at
+# 0x43CA88. The framework replacement must test allocation before any thing
+# field write and retain the exact six-byte entry detour boundary.
+assert "ADDR_SPAWN_THING_ACTION       0x43CA20u" in source
+assert "if (!thing)" in spawn_thing
+assert spawn_thing.index("if (!thing)") < spawn_thing.index(
+    "thing + THING_OFS_SPRITE"
+)
+assert "thing pool exhausted" in spawn_thing
+assert "&g_spawn_thing_action_detour" in hooks_init
+assert "(void*)&hooked_spawn_thing_action" in hooks_init
+spawn_install = hooks_init[hooks_init.index("&g_spawn_thing_action_detour") :]
+assert "6" in spawn_install[:500]
+# The native dispatcher invokes the registered action pointer internally, so
+# reset-mode sword/K tiles must be intercepted before the generic trampoline;
+# otherwise that call bypasses the entry detour above.
+assert "mode == 9" in tile_action
+assert "((const unsigned char*)tile)[0] == 0x1cu" in tile_action
+assert "return hooked_spawn_thing_action(tile, mode, x, y, arg5);" in tile_action
+assert tile_action.index("return hooked_spawn_thing_action") < tile_action.index(
+    "result = real(tile, mode, x, y, arg5);"
+)
 
 # A synthesized leave for an old occupant is allowed to run, but its staged
 # physics must not be written onto a newer occupant of the same pool slot.

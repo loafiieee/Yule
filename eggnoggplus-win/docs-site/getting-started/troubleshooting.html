@@ -75,6 +75,8 @@
     <h2 id="updater">Updater or recovery problem</h2>
     <p>Read <code>mods/updater.log</code>. If recovery says a committed cleanup is incomplete, retain the journal, <code>.old</code>, <code>.update-recovery</code>, and <code>mods/update_staging</code> evidence. Do not delete pieces until the installed and backup hashes are understood.</p>
     <ul>
+      <li>A current build automatically discards and redownloads a stale <em>pristine</em> transaction when no updater mutation exists. The log names the changed target.</li>
+      <li>Re-running the complete current installer is safe after a failed update: before replacing managed files it asks the bundled helper to reconcile pending staging. If evidence is ambiguous, installation stops and preserves it.</li>
       <li>Close every process running the same installed <code>eggnoggplus.exe</code>.</li>
       <li>Verify the folder is writable and security software is not holding a payload.</li>
       <li>Use a complete release package for repair. Do not advertise a release before every manifest payload is publicly available and hash-correct.</li>
@@ -101,4 +103,3 @@ Network route (if relevant):</code></pre>
   </article></main></div>
 </body>
 </html>
-

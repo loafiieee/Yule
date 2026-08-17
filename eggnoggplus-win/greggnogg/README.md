@@ -86,8 +86,8 @@ arrow keys for grid navigation, and the normal undo/redo shortcuts.
 ## Preview in Yule
 
 Choose **Preview** to open the current valid V1 draft in EGGNOGG+. Greggnogg
-puts the canonical `data.json` and `data.map` bytes into one bounded
-`yule://preview/v1/...` link. The installed Yule protocol handler may prompt for
+packs the canonical `data.json` and `data.map` bytes into one bounded
+`yule://preview/v1z/...` link. The installed Yule protocol handler may prompt for
 browser permission before opening the game.
 
 The framework decodes and validates both files again with the real custom-map

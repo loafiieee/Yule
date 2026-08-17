@@ -32,6 +32,10 @@ required = (
     "'YULE_FRAMEWORK_VERSION=([0-9]+(?:\\.[0-9]+)*)'",
     "if ($binaryVersion -cne $Version)",
     "the deployed SDL2.dll was compiled",
+    "$windowsInstallerSource = Join-Path $installerSourceRoot 'windows'",
+    "$linuxInstallerSource = Join-Path $installerSourceRoot 'linux'",
+    "$requiredInstallerSources",
+    "missing installer source",
 )
 for text in required:
     assert text in preflight, f"release publisher is missing fail-closed check: {text}"
@@ -41,14 +45,29 @@ assert "Copy-Item $built $sdl" not in SCRIPT
 assert "Move-Item $built $sdl" not in SCRIPT
 assert "Start-Process" not in SCRIPT
 assert "Copy-Item" not in preflight and "Move-Item" not in preflight
-assert "installer\\UNINSTALL.bat" in SCRIPT
-assert (ROOT / "installer" / "UNINSTALL.bat").is_file()
-assert "Copy-Item $updater (Join-Path $instDir 'YuleUpdater.exe') -Force" in SCRIPT
+WINDOWS = ROOT / "dist" / "installer" / "windows"
+LINUX = ROOT / "dist" / "installer" / "linux"
+assert "$windowsInstallerSource 'UNINSTALL.bat'" in SCRIPT
+assert (WINDOWS / "UNINSTALL.bat").is_file()
+for linux_installer_file in (
+    "install-linux.sh",
+    "UNINSTALL-LINUX.sh",
+    "README.md",
+):
+    assert (LINUX / linux_installer_file).is_file()
+    assert f"$linuxInstallerSource '{linux_installer_file}'" in SCRIPT
+assert "assets\\steam_icon.png" in SCRIPT
+assert SCRIPT.count("Copy-Item $updater") == 2
+assert "EGGNOGG+_framework_installer_windows.zip" in SCRIPT
+assert "EGGNOGG+_framework_installer_linux.zip" in SCRIPT
+assert ".installer-staging-" in SCRIPT
+assert "Set-Content -LiteralPath (Join-Path $windowsStage 'install.ps1')" in SCRIPT
 assert "'YuleUpdater.exe'" not in SCRIPT[SCRIPT.index("$ReleaseFiles = @"):SCRIPT.index("# --- sanity")], (
     "the one-shot updater must not be included in its own replaceable update manifest"
 )
 assert "Publish releases\\$Version first" in SCRIPT
 assert "Publish releases\\latest.json atomically LAST" in SCRIPT
+assert "publish both installer zips" in SCRIPT
 
 UPDATE_SOURCE = (ROOT / "update_ext.c").read_text(encoding="utf-8")
 assert '"YULE_FRAMEWORK_VERSION=" FRAMEWORK_VERSION' in UPDATE_SOURCE

@@ -8,7 +8,7 @@ PARSER = (ROOT / "launch_request.c").read_text(encoding="utf-8")
 IPC = (ROOT / "launch_ipc.c").read_text(encoding="utf-8")
 CUSTOM_MAPS = (ROOT / "custom_maps.c").read_text(encoding="utf-8")
 BUILD = (ROOT / "compile.sh").read_text(encoding="utf-8")
-INSTALLER = (ROOT / "installer" / "install.ps1").read_text(encoding="utf-8")
+INSTALLER = (ROOT / "dist" / "installer" / "windows" / "install.ps1").read_text(encoding="utf-8")
 
 
 def body(source: str, marker: str) -> str:
@@ -26,7 +26,7 @@ def body(source: str, marker: str) -> str:
 
 
 parse_process = body(HOOKS, "static void online_launch_parse_process_args")
-launch_pump = body(HOOKS, "static void online_launch_pump")
+launch_pump = body(HOOKS, "static int online_launch_pump")
 main_update = body(HOOKS, "static int __cdecl hooked_main_update_with_buttons")
 hub_update = body(HOOKS, "static void __cdecl online_hub_update(void) {")
 process_attach = body(DLLMAIN, "BOOL WINAPI DllMain")
@@ -40,17 +40,20 @@ assert "normalize_process_working_directory();" in process_attach
 assert process_attach.index("normalize_process_working_directory();") < (
     process_attach.index("install_crash_handler();")
 )
-assert "online_launch_pump();" in main_update
-assert main_update.index("online_launch_pump();") < main_update.index(
+assert "if (online_launch_pump())" in main_update
+assert main_update.index("if (online_launch_pump())") < main_update.index(
     "int result = real_update"
+)
+assert main_update.index("if (online_launch_pump())") < main_update.index(
+    "return 0;"
 )
 # Opening the custom hub leaves the native menu update path. The hub must keep
 # ownership of the pending intent and resume it immediately after auth traffic
 # is processed, including when the user had to enter credentials manually.
 assert "online_server_update();" in hub_update
-assert "online_launch_pump();" in hub_update
+assert "if (online_launch_pump()) return;" in hub_update
 assert hub_update.index("online_server_update();") < hub_update.index(
-    "online_launch_pump();"
+    "if (online_launch_pump())"
 )
 assert "CommandLineToArgvW(GetCommandLineW(), &argc)" in parse_process
 assert "argc > 128" in parse_process
@@ -67,6 +70,7 @@ assert "LAUNCH_REQUEST_PREVIEW_V1" in launch_pump
 assert "launch_request_decode_preview" in launch_pump
 assert "custom_maps_install_preview_text" in launch_pump
 assert "hooks_start_native_match(selector)" in launch_pump
+assert "return 1;" in launch_pump
 assert launch_pump.index("LAUNCH_REQUEST_PREVIEW_V1") < launch_pump.index(
     "online_hub_open();"
 )
@@ -81,7 +85,10 @@ for forbidden in ("'?'","'#'","'%'","'\\\\'","'@'"):
 assert '"yule://join/' not in PARSER
 assert '"yule://queue/' not in PARSER  # parsed structurally, never via loose substring
 assert '"preview/v1/"' in PARSER
+assert '"preview/v1z/"' in PARSER
 assert "launch_request_preview_target_valid" in IPC
+assert "launch_request_preview_packed_target_valid" in IPC
+assert "packed preview data is corrupt or truncated" in PARSER
 assert "preview files cannot contain NUL bytes" in PARSER
 assert '"_greggnogg_preview"' in CUSTOM_MAPS
 assert "if (map->is_preview) continue;" in CUSTOM_MAPS

@@ -147,6 +147,23 @@ int main(void) {
         launch_ipc_shutdown();
         return 9;
     }
+    if (!spawn_child(L"protocol",
+                     L"--yule-uri=yule://preview/v1z/R0dQMQIAAAABAAAAAHt9eA",
+                     &exit_code) ||
+        exit_code != 0u) {
+        fprintf(stderr, "compressed preview protocol child failed: %lu\n",
+                (unsigned long)exit_code);
+        launch_ipc_shutdown();
+        return 10;
+    }
+    memset(&request, 0, sizeof(request));
+    if (!poll_request(&request) ||
+        request.action != LAUNCH_REQUEST_PREVIEW_V1_PACKED ||
+        strcmp(request.target, "R0dQMQIAAAABAAAAAHt9eA") != 0) {
+        fprintf(stderr, "compressed preview request was not forwarded exactly\n");
+        launch_ipc_shutdown();
+        return 11;
+    }
     launch_ipc_shutdown();
     puts("launch IPC tests passed");
     return 0;

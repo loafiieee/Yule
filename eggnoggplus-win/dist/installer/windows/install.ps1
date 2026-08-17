@@ -287,7 +287,7 @@ function Test-IsProxyDll([string]$path) {
     return $false
 }
 
-function Test-GameRunning([string[]]$TargetExecutables) {
+function Test-ExecutableRunning([string]$ProcessName, [string[]]$TargetExecutables) {
     $targets = @{}
     foreach ($target in $TargetExecutables) {
         if (-not $target) { continue }
@@ -298,7 +298,7 @@ function Test-GameRunning([string[]]$TargetExecutables) {
             # preflight; do not broaden this process check to unrelated copies.
         }
     }
-    foreach ($process in @(Get-Process -Name 'eggnoggplus' -ErrorAction SilentlyContinue)) {
+    foreach ($process in @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)) {
         try {
             if ($process.Path -and $targets.ContainsKey(
                     [IO.Path]::GetFullPath($process.Path))) {
@@ -311,6 +311,10 @@ function Test-GameRunning([string[]]$TargetExecutables) {
         }
     }
     return $false
+}
+
+function Test-GameRunning([string[]]$TargetExecutables) {
+    return (Test-ExecutableRunning 'eggnoggplus' $TargetExecutables)
 }
 
 # Wraps the embedded icon PNG into a real .ico (single 256x256 PNG-compressed
@@ -665,6 +669,14 @@ while (Test-GameRunning $protectedGameExecutables) {
     Say 'EGGNOGG+ is currently running - please close it.' 'Yellow'
     if (-not (Ask-YN 'Check again?')) { Say 'Aborted.'; exit 1 }
 }
+$protectedUpdaterExecutables = @(
+    (Join-Path $gameDir $UpdaterName),
+    (Join-Path $InstallDir $UpdaterName)
+)
+while (Test-ExecutableRunning 'YuleUpdater' $protectedUpdaterExecutables) {
+    Say 'The Yule update helper is still running - please let it finish.' 'Yellow'
+    if (-not (Ask-YN 'Check again?')) { Say 'Aborted.'; exit 1 }
+}
 
 if ($Uninstall) {
     Head 'Removing the Yule framework'
@@ -799,11 +811,60 @@ if (-not (Test-Path -LiteralPath $updaterSource -PathType Leaf) -and
     $updaterSource = $updater
 }
 $syncOk = $true
+$maintenanceUpdaterReceipt = $null
+$maintenanceUpdaterWasMissing = $false
 if (-not (Test-Path -LiteralPath $updaterSource -PathType Leaf)) {
     Say "The installer package is missing $UpdaterName; no framework files were changed." 'Red'
     $steps['sync'] = 'error-no-updater'
     $syncOk = $false
 }
+
+# A maintenance install must never write across an updater transaction. Run
+# the bundled, hash-verified helper first; it either completes/rolls back an
+# interrupted swap, discards untouched stale staging, or fails closed.
+$pendingUpdateRoot = Join-Path $gameDir 'mods\update_staging'
+$legacyUpdateBackups = @(
+    "$sdl.old",
+    (Join-Path $gameDir 'lua51.dll.old'),
+    (Join-Path $gameDir 'libgcc_s_dw2-1.dll.old'),
+    (Join-Path $gameDir 'libwinpthread-1.dll.old'),
+    (Join-Path $gameDir 'SDL2_mixer.dll.old')
+)
+$hasLegacyUpdateBackup = @($legacyUpdateBackups | Where-Object {
+    Test-Path -LiteralPath $_
+}).Count -gt 0
+if ($syncOk -and
+    ((Test-Path -LiteralPath $pendingUpdateRoot) -or
+     $hasLegacyUpdateBackup)) {
+    try {
+        Say 'Recovering the pending framework update before installation...'
+        $maintenanceUpdaterWasMissing = -not (Test-Path -LiteralPath $updater -PathType Leaf)
+        $maintenanceUpdaterReceipt = Install-VerifiedLocalFile $updaterSource $updater
+        $recovery = Start-Process -FilePath $updater -ArgumentList '--recover-only' `
+            -Wait -PassThru -WindowStyle Hidden
+        if ($recovery.ExitCode -ne 0) {
+            throw "update helper exited with code $($recovery.ExitCode); see mods\updater.log"
+        }
+        if (Test-Path -LiteralPath $pendingUpdateRoot) {
+            throw 'update helper reported success but private staging still exists'
+        }
+        foreach ($legacyUpdateBackup in $legacyUpdateBackups) {
+            if (Test-Path -LiteralPath $legacyUpdateBackup) {
+                throw "update helper reported success but a legacy backup still exists: $legacyUpdateBackup"
+            }
+        }
+        $steps['recovery'] = 'ok'
+        Say 'Pending framework update recovered safely.' 'Green'
+    } catch {
+        $steps['recovery'] = 'blocked'
+        Say "Pending update recovery was blocked ($($_.Exception.Message))." 'Red'
+        Say 'No release files were installed. Keep the update files and ask for help with mods\updater.log.' 'Red'
+        exit 1
+    }
+} else {
+    $steps['recovery'] = 'none'
+}
+
 if ($syncOk -and -not (Test-Path -LiteralPath $sdlReal)) {
     if ((Test-Path -LiteralPath $sdl) -and -not (Test-IsProxyDll $sdl)) {
         Rename-Item -LiteralPath $sdl -NewName 'SDL2_real.dll'
@@ -837,6 +898,20 @@ if ($manifest -and $manifest.managed_files) {
                 size = $priorSize
             }
         }
+    }
+}
+if ($maintenanceUpdaterReceipt) {
+    if ($maintenanceUpdaterWasMissing) {
+        $newFilesInstalled += [ordered]@{
+            path = $updater
+            relative = $UpdaterName
+            sha256 = $maintenanceUpdaterReceipt.hash
+        }
+    }
+    $managedFileMap[$UpdaterName.ToLowerInvariant()] = [ordered]@{
+        path = $UpdaterName
+        sha256 = $maintenanceUpdaterReceipt.hash
+        size = $maintenanceUpdaterReceipt.size
     }
 }
 if ($syncOk) {

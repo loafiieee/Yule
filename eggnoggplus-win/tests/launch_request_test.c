@@ -95,6 +95,15 @@ int main(void) {
     const char* preview[] = {
         "game.exe", "--yule-uri=yule://preview/v1/e30/eA"
     };
+    const char* packed_preview[] = {
+        "game.exe", "--yule-uri=yule://preview/v1z/R0dQMQIAAAABAAAAAHt9eA"
+    };
+    const char* packed_preview_bad_tail[] = {
+        "game.exe", "yule://preview/v1z/e31"
+    };
+    const char* packed_preview_match[] = {
+        "game.exe", "yule://preview/v1z/R0dQMQIAAAAKAAAACHt9eABg"
+    };
     const char* preview_empty_json[] = {
         "game.exe", "yule://preview/v1//eA"
     };
@@ -139,6 +148,28 @@ int main(void) {
     CHECK(preview_map && strcmp(preview_map, "x") == 0);
     free(preview_json);
     free(preview_map);
+    preview_json = NULL;
+    preview_map = NULL;
+    CHECK(parse(2, packed_preview_match, &request, error) ==
+          LAUNCH_REQUEST_PARSE_OK);
+    CHECK(launch_request_decode_preview(&request, &preview_json, &preview_map,
+                                        error, sizeof(error)));
+    CHECK(preview_json && strcmp(preview_json, "{}") == 0);
+    CHECK(preview_map && strcmp(preview_map, "xxxxxxxxxx") == 0);
+    free(preview_json);
+    free(preview_map);
+    preview_json = NULL;
+    preview_map = NULL;
+    expect_action(2, packed_preview, LAUNCH_REQUEST_PREVIEW_V1_PACKED,
+                  "R0dQMQIAAAABAAAAAHt9eA");
+    CHECK(parse(2, packed_preview, &request, error) == LAUNCH_REQUEST_PARSE_OK);
+    CHECK(launch_request_preview_packed_target_valid(request.target));
+    CHECK(launch_request_decode_preview(&request, &preview_json, &preview_map,
+                                        error, sizeof(error)));
+    CHECK(preview_json && strcmp(preview_json, "{}") == 0);
+    CHECK(preview_map && strcmp(preview_map, "x") == 0);
+    free(preview_json);
+    free(preview_map);
 
     expect_error(3, conflict);
     expect_error(2, bad_queue);
@@ -159,11 +190,14 @@ int main(void) {
     expect_error(2, preview_extra_part);
     expect_error(2, preview_padding);
     expect_error(2, preview_bad_tail);
+    expect_error(2, packed_preview_bad_tail);
 
     CHECK(strcmp(launch_request_action_name(LAUNCH_REQUEST_CHALLENGE),
                  "challenge") == 0);
     CHECK(strcmp(launch_request_action_name(LAUNCH_REQUEST_PREVIEW_V1),
                  "preview/v1") == 0);
+    CHECK(strcmp(launch_request_action_name(LAUNCH_REQUEST_PREVIEW_V1_PACKED),
+                 "preview/v1z") == 0);
     CHECK(strcmp(launch_request_action_name((LaunchRequestAction)99),
                  "none") == 0);
 

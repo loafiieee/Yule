@@ -11,6 +11,8 @@
 
 <section id="install"><h2>Install and uninstall</h2>
 <p>Use the packaged <code>INSTALL.bat</code>/<code>install.ps1</code> beside or pointed at a valid Eggnogg+ copy. The installer can locate a prior receipt, move/install the game, preserve the original SDL library, install framework/runtime files, optionally register per-user <code>yule://</code>, create shortcuts/Steam entry, and write <code>install.json</code> for maintenance.</p>
+<p>On Linux, <code>bash install-linux.sh</code> installs the same verified Windows payload for Wine. It records the Wine prefix, creates an XDG desktop launcher and <code>x-scheme-handler/yule</code> association, ships the same one-shot Windows updater, and writes a hash-bound Linux receipt for conservative uninstall. The release remains a Windows build; this is host integration rather than a native Linux port.</p>
+<p>On a maintenance install, the installer closes the same-install game/updater boundary and checks for <code>mods/update_staging</code> or adjacent legacy backups before downloading release files. It installs the bundled verified helper first and runs a recovery-only pass: interrupted swaps finish or roll back, untouched stale staging is discarded, and ambiguous evidence aborts the installer without writing across it.</p>
 <p>Use the packaged uninstaller rather than deleting files. It restores the original <code>SDL2.dll</code>, removes only installer-owned files/protocol/shortcuts, and preserves externally modified or externally owned registrations. Uninstall refuses to guess if the proxy exists but <code>SDL2_real.dll</code> is missing.</p></section>
 
 <section id="runtime"><h2>How in-game updates work</h2>
@@ -58,7 +60,7 @@
 
 <section id="recovery"><h2>Recovery behavior</h2>
 <p>Journal V3 records expected replacement and original size/SHA-256 (or absence) for every file. Before moving, the helper rehashes both sides and rejects changed originals/reparse paths. It uses write-through target-to-<code>.old</code> and staged-to-target moves, then validates the whole installed set before commit/backup deletion.</p>
-<p>A partial swap rolls the <em>whole set</em> back. Complete interrupted sets can finish forward. Ambiguous/corrupt/missing evidence is retained and blocks launch rather than guessing. Legacy journal and adjacent <code>.old</code> recovery remain supported.</p>
+<p>Before any swap exists, a stale pristine transaction whose download or original target changed is discarded and downloaded again against the current installation. A partial swap rolls the <em>whole set</em> back. Complete interrupted sets can finish forward. Once backup, quarantine, or replacement evidence exists, ambiguous/corrupt/missing evidence is retained and blocks launch rather than guessing. Legacy journal and adjacent <code>.old</code> recovery remain supported.</p>
 <div class="callout danger">If a recovery dialog appears, do not delete <code>.old</code>, <code>.update-recovery</code>, or <code>mods/update_staging</code>. Preserve <code>mods/updater.log</code> and transaction evidence, then repair from a complete matching release package.</div></section>
 
 <section id="test"><h2>Safe verification</h2>

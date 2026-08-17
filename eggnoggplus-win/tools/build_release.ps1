@@ -2,8 +2,10 @@
 # Produces the uploadable channel tree + the distributable installer zip:
 #   dist/releases/latest.json
 #   dist/releases/<version>/{SDL2.dll, lua51.dll, libgcc_s_dw2-1.dll, SDL2_mixer.dll}
-#   dist/installer/{INSTALL.bat, UNINSTALL.bat, install.ps1(artwork embedded)}
-#   dist/EGGNOGG+_framework_installer.zip
+#   dist/installer/windows/  (canonical Windows installer sources)
+#   dist/installer/linux/    (canonical Linux/Wine installer sources)
+#   dist/EGGNOGG+_framework_installer_windows.zip
+#   dist/EGGNOGG+_framework_installer_linux.zip
 # Upload the contents of dist/releases/ to https://loafiieee.com/yule/releases/ .
 param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -12,7 +14,7 @@ param(
     [string]$ChannelBase = 'https://loafiieee.com/yule/releases',
     [string]$ArtworkDir = 'C:\Program Files (x86)\Steam\userdata\1423819074\config\grid',
     [string]$ArtworkAppId = '2231133229',
-    [string]$IconPath = '',   # default: installer\assets\steam_icon.png (resolved below)
+    [string]$IconPath = '',   # default: dist\installer\windows\assets\steam_icon.png
     [string]$Notes = ''
 )
 
@@ -23,7 +25,27 @@ $toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoDir = Split-Path -Parent $toolsDir       # eggnoggplus-win/
 if (-not $GameDir)  { $GameDir = $repoDir }
 if (-not $OutDir)   { $OutDir = Join-Path $repoDir 'dist' }
-if (-not $IconPath) { $IconPath = Join-Path $repoDir 'installer\assets\steam_icon.png' }
+$installerSourceRoot = Join-Path $repoDir 'dist\installer'
+$windowsInstallerSource = Join-Path $installerSourceRoot 'windows'
+$linuxInstallerSource = Join-Path $installerSourceRoot 'linux'
+if (-not $IconPath) {
+    $IconPath = Join-Path $windowsInstallerSource 'assets\steam_icon.png'
+}
+$windowsTemplate = Join-Path $windowsInstallerSource 'install.ps1'
+$requiredInstallerSources = @(
+    (Join-Path $windowsInstallerSource 'INSTALL.bat'),
+    (Join-Path $windowsInstallerSource 'UNINSTALL.bat'),
+    $windowsTemplate,
+    (Join-Path $windowsInstallerSource 'README.md'),
+    (Join-Path $linuxInstallerSource 'install-linux.sh'),
+    (Join-Path $linuxInstallerSource 'UNINSTALL-LINUX.sh'),
+    (Join-Path $linuxInstallerSource 'README.md')
+)
+foreach ($installerSource in $requiredInstallerSources) {
+    if (-not (Test-Path -LiteralPath $installerSource -PathType Leaf)) {
+        throw "missing installer source: $installerSource"
+    }
+}
 
 if ($Version -notmatch '^[0-9]+(?:\.[0-9]+)*$') {
     throw "invalid release version '$Version' (expected dot-separated decimal components)"
@@ -179,8 +201,10 @@ $latestPath = Join-Path $OutDir 'releases\latest.json'
 $latest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $latestPath
 Write-Host "channel:   $latestPath (+ $($fileEntries.Count) files under releases\$Version\)"
 
-# --- installer with embedded artwork -----------------------------------------
-$tpl = Get-Content -LiteralPath (Join-Path $repoDir 'installer\install.ps1') -Raw
+# --- platform-specific installer archives ------------------------------------
+# Canonical templates live below dist/installer/{windows,linux}. Build in a
+# unique staging directory so embedding artwork never rewrites those sources.
+$tpl = Get-Content -LiteralPath $windowsTemplate -Raw
 $slotFiles = [ordered]@{
     grid    = "$ArtworkAppId.png"
     gridp   = "$ArtworkAppId" + 'p.png'
@@ -214,17 +238,44 @@ $pattern = '(?s)# ==ARTWORK-BEGIN==.*?# ==ARTWORK-END=='
 if ($tpl -notmatch $pattern) { throw 'installer template is missing the ARTWORK markers' }
 $tpl = [regex]::Replace($tpl, $pattern, "# ==ARTWORK-BEGIN== (embedded by build_release.ps1)`r`n$artBlock`r`n# ==ARTWORK-END==")
 
-$instDir = Join-Path $OutDir 'installer'
-New-Item -ItemType Directory -Path $instDir -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $instDir 'install.ps1') -Value $tpl
-Copy-Item (Join-Path $repoDir 'installer\INSTALL.bat') (Join-Path $instDir 'INSTALL.bat') -Force
-Copy-Item (Join-Path $repoDir 'installer\UNINSTALL.bat') (Join-Path $instDir 'UNINSTALL.bat') -Force
-Copy-Item $updater (Join-Path $instDir 'YuleUpdater.exe') -Force
+$stageRoot = Join-Path $OutDir ('.installer-staging-' + [Guid]::NewGuid().ToString('N'))
+$windowsStage = Join-Path $stageRoot 'windows'
+$linuxStage = Join-Path $stageRoot 'linux'
+$windowsZip = Join-Path $OutDir 'EGGNOGG+_framework_installer_windows.zip'
+$linuxZip = Join-Path $OutDir 'EGGNOGG+_framework_installer_linux.zip'
+try {
+    New-Item -ItemType Directory -Path $windowsStage, $linuxStage -Force | Out-Null
 
-$zipPath = Join-Path $OutDir 'EGGNOGG+_framework_installer.zip'
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $instDir '*') -DestinationPath $zipPath
-Write-Host "installer: $zipPath"
+    Set-Content -LiteralPath (Join-Path $windowsStage 'install.ps1') -Value $tpl
+    Copy-Item (Join-Path $windowsInstallerSource 'INSTALL.bat') $windowsStage -Force
+    Copy-Item (Join-Path $windowsInstallerSource 'UNINSTALL.bat') $windowsStage -Force
+    Copy-Item (Join-Path $windowsInstallerSource 'README.md') $windowsStage -Force
+    Copy-Item $updater (Join-Path $windowsStage 'YuleUpdater.exe') -Force
+
+    Copy-Item (Join-Path $linuxInstallerSource 'install-linux.sh') $linuxStage -Force
+    Copy-Item (Join-Path $linuxInstallerSource 'UNINSTALL-LINUX.sh') $linuxStage -Force
+    Copy-Item (Join-Path $linuxInstallerSource 'README.md') $linuxStage -Force
+    Copy-Item $updater (Join-Path $linuxStage 'YuleUpdater.exe') -Force
+
+    foreach ($platformStage in @($windowsStage, $linuxStage)) {
+        $assetStage = Join-Path $platformStage 'assets'
+        New-Item -ItemType Directory -Path $assetStage -Force | Out-Null
+        if ($IconPath -and (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
+            Copy-Item $IconPath (Join-Path $assetStage 'steam_icon.png') -Force
+        }
+    }
+
+    if (Test-Path -LiteralPath $windowsZip) { Remove-Item -LiteralPath $windowsZip -Force }
+    if (Test-Path -LiteralPath $linuxZip) { Remove-Item -LiteralPath $linuxZip -Force }
+    Compress-Archive -Path (Join-Path $windowsStage '*') -DestinationPath $windowsZip
+    Compress-Archive -Path (Join-Path $linuxStage '*') -DestinationPath $linuxZip
+} finally {
+    if (Test-Path -LiteralPath $stageRoot) {
+        Remove-Item -LiteralPath $stageRoot -Recurse -Force
+    }
+}
+Write-Host "windows:   $windowsZip"
+Write-Host "linux:     $linuxZip"
 Write-Host ''
 Write-Host "Publish releases\$Version first and verify every payload URL/hash."
-Write-Host "Publish releases\latest.json atomically LAST; then publish the installer zip."
+Write-Host "Publish releases\latest.json atomically LAST; then publish both installer zips."

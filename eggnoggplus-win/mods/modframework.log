@@ -1,71 +1,103 @@
-[17:09:06] [INFO] Mod framework initializing...
-[17:09:06] [INFO] Mod framework API version: 1
-[17:09:06] [INFO] Scanning mods/ folder...
-[17:09:06] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
-[17:09:06] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by Codex
-[17:09:06] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
-[17:09:06] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
-[17:09:06] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
-[17:09:06] [INFO] Loaded mod: flight
-[17:09:06] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
-[17:09:06] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
-[17:09:06] [INFO] [mod:options_demo] Loaded options demo
-[17:09:06] [INFO] [mod:options_demo] difficulty=normal greeting=hello
-[17:09:06] [INFO] Loaded mod: options_demo
-[17:09:06] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
-[17:09:06] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[17:09:06] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
-[17:09:06] [INFO] [mod:speedhack] speed=1
-[17:09:06] [INFO] Loaded mod: speedhack
-[17:09:06] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[17:09:06] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[17:09:06] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[17:09:06] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[17:09:06] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[17:09:06] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[17:09:06] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[17:09:06] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[17:09:06] [INFO] Loaded mod: texture_pack_test
-[17:09:06] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
-[17:09:06] [INFO] [maps] scanning maps/ for custom maps
-[17:09:06] [INFO] [maps][basketsword] scanning folder: maps\basketsword
-[17:09:06] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
-[17:09:06] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
-[17:09:06] [WARN] [maps][basketsword] warning: map has only one source room
-[17:09:06] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
-[17:09:06] [INFO] [maps][example_map] scanning folder: maps\example_map
-[17:09:06] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[17:09:06] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[17:09:06] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[17:09:06] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[17:09:06] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[17:09:06] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[17:09:06] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
-[17:09:06] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
-[17:09:06] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
-[17:09:06] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
-[17:09:06] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
-[17:09:06] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[17:09:06] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[17:09:06] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[17:09:06] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
-[17:09:06] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
-[17:09:06] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
-[17:09:06] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
-[17:09:06] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
-[17:09:06] [INFO] [maps] registry ready: 5 custom maps (was 0)
-[17:09:06] [INFO] hooks_init: custom MODS menu ready
-[17:09:06] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
-[17:09:06] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
-[17:09:06] [INFO] [maps][flooded_caves] applying custom map for selector index 6
-[17:09:06] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[17:09:07] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
-[17:09:07] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
-[17:09:07] [INFO] [discord] Rich Presence connected
-[17:09:07] [INFO] update: boot local=1.9 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
-[17:09:07] [INFO] update: current (local=1.9 channel=1.9)
-[17:09:08] [INFO] [mod:flight] Flight enabled for P1
-[17:09:28] [INFO] [maps][flooded_caves] applying custom map for selector index 6
-[17:48:10] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
-[17:48:10] [INFO] [mod:speedhack] Unloaded
-[17:48:10] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[23:58:09] [INFO] Mod framework initializing...
+[23:58:09] [INFO] Mod framework API version: 1
+[23:58:09] [INFO] Scanning mods/ folder...
+[23:58:09] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
+[23:58:10] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by Codex
+[23:58:10] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
+[23:58:10] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
+[23:58:10] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
+[23:58:10] [INFO] Loaded mod: flight
+[23:58:10] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[23:58:10] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[23:58:10] [INFO] [mod:options_demo] Loaded options demo
+[23:58:10] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[23:58:10] [INFO] Loaded mod: options_demo
+[23:58:10] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[23:58:10] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[23:58:10] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[23:58:10] [INFO] [mod:speedhack] speed=1
+[23:58:10] [INFO] Loaded mod: speedhack
+[23:58:10] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[23:58:10] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[23:58:10] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[23:58:10] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[23:58:10] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[23:58:10] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[23:58:10] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[23:58:10] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[23:58:10] [INFO] Loaded mod: texture_pack_test
+[23:58:10] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[23:58:10] [INFO] [maps] scanning maps/ for custom maps
+[23:58:10] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[23:58:10] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[23:58:10] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[23:58:10] [WARN] [maps][basketsword] warning: map has only one source room
+[23:58:10] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[23:58:10] [INFO] [maps][example_map] scanning folder: maps\example_map
+[23:58:10] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[23:58:10] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[23:58:10] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[23:58:10] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[23:58:10] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[23:58:10] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[23:58:10] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[23:58:10] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[23:58:10] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[23:58:10] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[23:58:10] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[23:58:10] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[23:58:10] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[23:58:10] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[23:58:10] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[23:58:10] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[23:58:10] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[23:58:10] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[23:58:10] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[23:58:10] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[23:58:10] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[23:58:10] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[23:58:10] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[23:58:10] [INFO] [maps] registry ready: 6 custom maps (was 0)
+[23:58:10] [INFO] hooks_init: custom MODS menu ready
+[23:58:10] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
+[23:58:10] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
+[23:58:10] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[23:58:10] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
+[23:58:10] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
+[23:58:10] [INFO] [discord] Rich Presence connected
+[23:58:10] [INFO] update: boot local=1.91 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[23:58:11] [INFO] update: current (local=1.91 channel=1.91)
+[23:58:12] [INFO] [maps][v2_symbolic_demo] applying custom map for selector index 10
+[23:58:12] [INFO] map script: selector=10 active id=ca7543b261b142fc
+[23:58:12] [INFO] content bridge: selector=10 source_cells=52 bound_cells=76 definitions=5 generation=2
+[23:58:12] [INFO] [maps][big_jump] applying custom map for selector index 9
+[23:58:13] [INFO] [maps][example_map] applying custom map for selector index 8
+[23:58:13] [INFO] [maps][leafy_greens] applying custom map for selector index 7
+[23:58:15] [INFO] [maps][leafy_greens] applying custom map for selector index 7
+[23:58:18] [INFO] [music] mixer output changed from 16000 Hz to 48000 Hz
+[23:58:18] [INFO] [music][tune10] Dollchan JavaScript active: SUNRISE ON MARS (44100 Hz, 0.25 volume)
+[23:58:19] [INFO] [maps][leafy_greens] applying custom map for selector index 7
+[00:00:41] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
+[00:00:41] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
+[00:00:42] [INFO] [music] mixer output changed from 16000 Hz to 48000 Hz
+[00:00:42] [INFO] [music][tune10] Dollchan JavaScript active: SUNRISE ON MARS (44100 Hz, 0.25 volume)
+[00:00:43] [INFO] [music][tune10] Dollchan JavaScript active: SUNRISE ON MARS (44100 Hz, 0.25 volume)
+[00:00:43] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
+[00:00:43] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
+[00:00:43] [INFO] [music] mixer output changed from 16000 Hz to 48000 Hz
+[00:00:43] [INFO] [music][tune8] Dollchan JavaScript active: STEADY ON TIM, IT'S ONLY A BUDGET GAME (44100 Hz, 0.25 volume)
+[00:01:42] [INFO] [maps][leafy_greens] applying custom map for selector index 7
+[00:01:42] [INFO] menu: mode -> ONLINE
+[00:01:43] [INFO] menu: mode -> PLAY
+[00:01:46] [INFO] [maps][example_map] applying custom map for selector index 8
+[00:01:46] [INFO] [maps][big_jump] applying custom map for selector index 9
+[00:01:47] [INFO] [maps][v2_symbolic_demo] applying custom map for selector index 10
+[00:01:47] [INFO] map script: selector=10 active id=ca7543b261b142fc
+[00:01:47] [INFO] content bridge: selector=10 source_cells=52 bound_cells=76 definitions=5 generation=2
+[00:01:48] [INFO] [maps][big_jump] applying custom map for selector index 9
+[00:01:49] [INFO] [maps][example_map] applying custom map for selector index 8
+[00:01:49] [INFO] [maps][leafy_greens] applying custom map for selector index 7
+[00:01:50] [INFO] [maps][flooded_caves] applying custom map for selector index 6
+[00:02:35] [INFO] [maps][flooded_caves] applying custom map for selector index 6
+[00:02:35] [INFO] [mod:speedhack] Unloaded
+[00:02:35] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

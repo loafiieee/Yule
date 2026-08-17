@@ -2809,6 +2809,7 @@ static void update_reconcile_legacy_backups(void) {
 typedef enum UpdateStagedTransactionState {
     UPDATE_STAGED_NONE = 0,
     UPDATE_STAGED_PRISTINE,
+    UPDATE_STAGED_STALE,
     UPDATE_STAGED_INTERRUPTED,
     UPDATE_STAGED_BLOCKED
 } UpdateStagedTransactionState;
@@ -2925,9 +2926,21 @@ update_classify_staged_transaction(UpdateJournal* out_journal,
             mutation_evidence = 1;
         }
         if (!staged_exists ||
-            !update_file_matches(entries[i].staged, &entries[i].spec) ||
-            !update_entry_original_matches(&entries[i])) {
+            !update_file_matches(entries[i].staged, &entries[i].spec)) {
             invalid_pristine = 1;
+            if (error && error_cap && !error[0]) {
+                snprintf(error, error_cap,
+                         "staged file is missing or changed: %s",
+                         journal.files[i].path);
+            }
+        }
+        if (!update_entry_original_matches(&entries[i])) {
+            invalid_pristine = 1;
+            if (error && error_cap && !error[0]) {
+                snprintf(error, error_cap,
+                         "original target changed since staging: %s",
+                         journal.files[i].path);
+            }
         }
     }
     if (mutation_evidence) {
@@ -2935,11 +2948,13 @@ update_classify_staged_transaction(UpdateJournal* out_journal,
         return UPDATE_STAGED_INTERRUPTED;
     }
     if (invalid_pristine) {
-        if (error && error_cap) {
-            snprintf(error, error_cap,
-                     "staged update or original target changed");
-        }
-        return UPDATE_STAGED_BLOCKED;
+        /* No backup, quarantine, or installed replacement exists, so the
+         * updater has not touched the installation. A target changed by an
+         * external installer (or a damaged staged download) cannot be applied
+         * against its old fingerprint, but retaining this pristine journal
+         * forever only bricks future updates. Discard it and let the normal
+         * verified download path fingerprint the current installation again. */
+        return UPDATE_STAGED_STALE;
     }
     if (out_journal) *out_journal = journal;
     if (out_entries) memcpy(out_entries, entries, sizeof(entries));
@@ -2962,6 +2977,12 @@ static int update_recover_under_mutex(void) {
     if (staged_state == UPDATE_STAGED_PRISTINE) {
         InterlockedExchange(&g_update_helper_pending, 1);
         InterlockedExchange(&g_update_recovery_restart, 1);
+        ok = 1;
+    } else if (staged_state == UPDATE_STAGED_STALE) {
+        LOG_WARN("update: discarding stale pristine transaction (%s)",
+                 classify_error[0] ? classify_error :
+                     "staged inputs changed before installation");
+        InterlockedExchange(&g_update_helper_pending, 0);
         ok = 1;
     } else if (staged_state == UPDATE_STAGED_BLOCKED) {
         LOG_ERROR("update: %s; retaining staged transaction",
@@ -3429,6 +3450,14 @@ UpdateHelperResult update_ext_helper_service(char* status, size_t status_cap) {
             completed_forward
                 ? "interrupted verified update completed"
                 : "interrupted update rolled back safely");
+    } else if (staged_state == UPDATE_STAGED_STALE) {
+        char stale_status[UPDATE_STATUS_CAP];
+        result = UPDATE_HELPER_READY;
+        snprintf(stale_status, sizeof(stale_status),
+                 "stale staged update discarded: %.150s",
+                 classify_error[0] ? classify_error :
+                     "staged inputs changed before installation");
+        update_helper_status(status, status_cap, stale_status);
     } else {
         result = UPDATE_HELPER_READY;
         update_helper_status(status, status_cap, "ready");
@@ -3965,6 +3994,29 @@ static void update_test_storage(void) {
     assert(update_copy(entry.backup, sizeof(entry.backup), backup));
     entry.had_original = 1;
     update_test_set_expected(&entry, "replacement");
+
+    /* A journal can remain pristine while an external installer, manual
+     * repair, or antivirus replaces one original target. No updater-owned
+     * backup/replacement exists at that point, so discard the stale download
+     * and allow the next check to stage against the current installation. */
+    update_test_prepare_swap(target, staged, backup,
+                             "stale-original", "replacement");
+    assert(update_journal_write(&entry, 1, 0));
+    update_test_write(target, "externally-replaced");
+    {
+        UpdateStagedTransactionState state;
+        char classify_error[UPDATE_STATUS_CAP];
+        state = update_classify_staged_transaction(
+            NULL, NULL, NULL, classify_error, sizeof(classify_error));
+        assert(state == UPDATE_STAGED_STALE);
+        assert(strstr(classify_error,
+                      "original target changed since staging: sample.dll") != NULL);
+    }
+    assert(update_recover_under_mutex());
+    update_test_expect_file(target, "externally-replaced");
+    assert(!update_path_exists(staging, NULL));
+    assert(!update_path_exists(journal_path, NULL));
+    assert(update_create_directory(staging));
 
     /* A V3 applying journal whose entire installed set matches is completed
      * forward. This avoids rolling an already-installed mapped DLL backward. */

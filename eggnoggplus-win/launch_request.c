@@ -3,6 +3,7 @@
 #include "online_control.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -150,15 +151,28 @@ int launch_request_preview_target_valid(const char* target) {
            preview_segment_valid(separator + 1, strlen(separator + 1));
 }
 
-static char* decode_preview_segment(const char* text,
-                                    size_t length,
-                                    char* error,
-                                    size_t error_cap) {
+int launch_request_preview_packed_target_valid(const char* target) {
+    size_t length;
+    if (!target) return 0;
+    length = strlen(target);
+    return length > 0u && length < LAUNCH_REQUEST_TARGET_CAP &&
+           preview_segment_valid(target, length) &&
+           ((length / 4u) * 3u +
+            ((length & 3u) == 2u ? 1u : (length & 3u) == 3u ? 2u : 0u))
+               <= LAUNCH_PREVIEW_PACKED_MAX_BYTES;
+}
+
+static unsigned char* decode_preview_bytes(const char* text,
+                                           size_t length,
+                                           size_t* out_length,
+                                           char* error,
+                                           size_t error_cap) {
     size_t decoded_length = (length / 4u) * 3u +
         ((length & 3u) == 2u ? 1u : (length & 3u) == 3u ? 2u : 0u);
-    char* decoded = (char*)malloc(decoded_length + 1u);
+    unsigned char* decoded = (unsigned char*)malloc(decoded_length ? decoded_length : 1u);
     size_t source = 0u;
     size_t dest = 0u;
+    if (out_length) *out_length = 0u;
     if (!decoded) {
         set_error(error, error_cap, "out of memory decoding preview map");
         return NULL;
@@ -168,29 +182,156 @@ static char* decode_preview_segment(const char* text,
                          ((unsigned)base64url_value((unsigned char)text[source + 1u]) << 12) |
                          ((unsigned)base64url_value((unsigned char)text[source + 2u]) << 6) |
                          (unsigned)base64url_value((unsigned char)text[source + 3u]);
-        decoded[dest++] = (char)((value >> 16) & 0xffu);
-        decoded[dest++] = (char)((value >> 8) & 0xffu);
-        decoded[dest++] = (char)(value & 0xffu);
+        decoded[dest++] = (unsigned char)((value >> 16) & 0xffu);
+        decoded[dest++] = (unsigned char)((value >> 8) & 0xffu);
+        decoded[dest++] = (unsigned char)(value & 0xffu);
         source += 4u;
     }
     if (length - source == 2u) {
         unsigned value = ((unsigned)base64url_value((unsigned char)text[source]) << 6) |
                          (unsigned)base64url_value((unsigned char)text[source + 1u]);
-        decoded[dest++] = (char)((value >> 4) & 0xffu);
+        decoded[dest++] = (unsigned char)((value >> 4) & 0xffu);
     } else if (length - source == 3u) {
         unsigned value = ((unsigned)base64url_value((unsigned char)text[source]) << 12) |
                          ((unsigned)base64url_value((unsigned char)text[source + 1u]) << 6) |
                          (unsigned)base64url_value((unsigned char)text[source + 2u]);
-        decoded[dest++] = (char)((value >> 10) & 0xffu);
-        decoded[dest++] = (char)((value >> 2) & 0xffu);
+        decoded[dest++] = (unsigned char)((value >> 10) & 0xffu);
+        decoded[dest++] = (unsigned char)((value >> 2) & 0xffu);
     }
-    decoded[dest] = '\0';
+    if (out_length) *out_length = dest;
+    return decoded;
+}
+
+static char* decode_preview_segment(const char* text,
+                                    size_t length,
+                                    char* error,
+                                    size_t error_cap) {
+    size_t decoded_length = 0u;
+    unsigned char* bytes = decode_preview_bytes(text, length, &decoded_length,
+                                                error, error_cap);
+    char* decoded;
+    if (!bytes) return NULL;
+    decoded = (char*)realloc(bytes, decoded_length + 1u);
+    if (!decoded) {
+        free(bytes);
+        set_error(error, error_cap, "out of memory decoding preview map");
+        return NULL;
+    }
+    decoded[decoded_length] = '\0';
     if (memchr(decoded, '\0', decoded_length)) {
         free(decoded);
         set_error(error, error_cap, "preview files cannot contain NUL bytes");
         return NULL;
     }
     return decoded;
+}
+
+static uint32_t read_u32_le(const unsigned char* bytes) {
+    return (uint32_t)bytes[0] |
+           ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) |
+           ((uint32_t)bytes[3] << 24);
+}
+
+static int decode_packed_preview(const char* target,
+                                 char** out_json,
+                                 char** out_map,
+                                 char* error,
+                                 size_t error_cap) {
+    unsigned char* packed;
+    unsigned char* output;
+    size_t packed_length = 0u;
+    size_t input_pos = 12u;
+    size_t output_pos = 0u;
+    size_t total_length;
+    uint32_t json_length;
+    uint32_t map_length;
+    char* json;
+    char* map;
+    if (!launch_request_preview_packed_target_valid(target)) {
+        set_error(error, error_cap, "invalid packed preview payload");
+        return 0;
+    }
+    packed = decode_preview_bytes(target, strlen(target), &packed_length,
+                                  error, error_cap);
+    if (!packed) return 0;
+    if (packed_length < 12u || memcmp(packed, "GGP1", 4u) != 0) {
+        free(packed);
+        set_error(error, error_cap, "packed preview header is invalid");
+        return 0;
+    }
+    json_length = read_u32_le(packed + 4u);
+    map_length = read_u32_le(packed + 8u);
+    if (json_length == 0u || map_length == 0u ||
+        json_length > LAUNCH_PREVIEW_FILE_MAX_BYTES ||
+        map_length > LAUNCH_PREVIEW_FILE_MAX_BYTES) {
+        free(packed);
+        set_error(error, error_cap, "packed preview file size is invalid");
+        return 0;
+    }
+    total_length = (size_t)json_length + (size_t)map_length;
+    output = (unsigned char*)malloc(total_length);
+    if (!output) {
+        free(packed);
+        set_error(error, error_cap, "out of memory unpacking preview map");
+        return 0;
+    }
+    while (output_pos < total_length) {
+        unsigned flags;
+        unsigned bit;
+        if (input_pos >= packed_length) goto corrupt;
+        flags = packed[input_pos++];
+        for (bit = 0u; bit < 8u && output_pos < total_length; bit++) {
+            if ((flags & (1u << bit)) != 0u) {
+                unsigned first;
+                unsigned second;
+                size_t distance;
+                size_t match_length;
+                size_t i;
+                if (input_pos + 2u > packed_length) goto corrupt;
+                first = packed[input_pos++];
+                second = packed[input_pos++];
+                distance = (size_t)(first | ((second & 15u) << 8)) + 1u;
+                match_length = (size_t)(second >> 4) + 3u;
+                if (distance > output_pos || match_length > total_length - output_pos) goto corrupt;
+                for (i = 0u; i < match_length; i++) {
+                    output[output_pos] = output[output_pos - distance];
+                    output_pos++;
+                }
+            } else {
+                if (input_pos >= packed_length) goto corrupt;
+                output[output_pos++] = packed[input_pos++];
+            }
+        }
+    }
+    if (input_pos != packed_length ||
+        memchr(output, '\0', (size_t)json_length) ||
+        memchr(output + json_length, '\0', (size_t)map_length)) goto corrupt;
+    json = (char*)malloc((size_t)json_length + 1u);
+    map = (char*)malloc((size_t)map_length + 1u);
+    if (!json || !map) {
+        free(json);
+        free(map);
+        free(output);
+        free(packed);
+        set_error(error, error_cap, "out of memory unpacking preview map");
+        return 0;
+    }
+    memcpy(json, output, (size_t)json_length);
+    json[json_length] = '\0';
+    memcpy(map, output + json_length, (size_t)map_length);
+    map[map_length] = '\0';
+    free(output);
+    free(packed);
+    *out_json = json;
+    *out_map = map;
+    return 1;
+
+corrupt:
+    free(output);
+    free(packed);
+    set_error(error, error_cap, "packed preview data is corrupt or truncated");
+    return 0;
 }
 
 int launch_request_decode_preview(const LaunchRequest* request,
@@ -204,8 +345,15 @@ int launch_request_decode_preview(const LaunchRequest* request,
     if (out_json) *out_json = NULL;
     if (out_map) *out_map = NULL;
     if (error && error_cap > 0u) error[0] = '\0';
-    if (!request || !out_json || !out_map ||
-        request->action != LAUNCH_REQUEST_PREVIEW_V1 ||
+    if (!request || !out_json || !out_map) {
+        set_error(error, error_cap, "invalid preview payload");
+        return 0;
+    }
+    if (request->action == LAUNCH_REQUEST_PREVIEW_V1_PACKED) {
+        return decode_packed_preview(request->target, out_json, out_map,
+                                     error, error_cap);
+    }
+    if (request->action != LAUNCH_REQUEST_PREVIEW_V1 ||
         !launch_request_preview_target_valid(request->target)) {
         set_error(error, error_cap, "invalid preview payload");
         return 0;
@@ -241,6 +389,17 @@ static int parse_uri(const char* uri,
     }
     route = uri + sizeof(scheme) - 1u;
     route_len = strlen(route);
+    if (ascii_starts_ci(route, "preview/v1z/")) {
+        const char* target = route + 12u;
+        size_t target_len = strlen(target);
+        if (!launch_request_preview_packed_target_valid(target)) {
+            set_error(error, error_cap, "invalid compressed V1 preview payload");
+            return 0;
+        }
+        out->action = LAUNCH_REQUEST_PREVIEW_V1_PACKED;
+        memcpy(out->target, target, target_len + 1u);
+        return 1;
+    }
     if (ascii_starts_ci(route, "preview/v1/")) {
         const char* target = route + 11u;
         size_t target_len = strlen(target);
@@ -415,6 +574,7 @@ const char* launch_request_action_name(LaunchRequestAction action) {
         case LAUNCH_REQUEST_QUEUE_COMPETITIVE: return "queue/competitive";
         case LAUNCH_REQUEST_CHALLENGE: return "challenge";
         case LAUNCH_REQUEST_PREVIEW_V1: return "preview/v1";
+        case LAUNCH_REQUEST_PREVIEW_V1_PACKED: return "preview/v1z";
         default: return "none";
     }
 }

@@ -103,12 +103,15 @@ Get-FileHash .\SDL2.dll -Algorithm SHA256</code></pre>
       libwinpthread-1.dll
       SDL2_mixer.dll
   installer/
-  EGGNOGG+_framework_installer.zip</code></pre>
+    windows/
+    linux/
+  EGGNOGG+_framework_installer_windows.zip
+  EGGNOGG+_framework_installer_linux.zip</code></pre>
 <ol>
 <li>Upload the complete versioned directory (<code>releases/1.2/</code>) to the channel.</li>
 <li>Fetch every public payload URL and independently verify size/SHA-256 against the generated manifest.</li>
 <li>Upload <code>latest.json</code> atomically <em>last</em>.</li>
-<li>Publish the installer zip only after the live channel is valid.</li>
+<li>Publish both platform-specific installer ZIPs only after the live channel is valid.</li>
 <li>Test an update from the immediately previous public version and a clean install.</li>
 </ol>
 <p>Do not delete an old version directory while supported clients could still be downloading it. Roll back by publishing a correctly built newer recovery release or a deliberate channel pointer backed by intact payloads; never leave the pointer referencing removed files.</p></section>

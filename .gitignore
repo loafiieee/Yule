@@ -1,6 +1,25 @@
 
 eggnoggplus-win/mods/ai_opponent/storage.cfg
-eggnoggplus-win/dist/
+eggnoggplus-win/dist/*
+!eggnoggplus-win/dist/installer/
+eggnoggplus-win/dist/installer/*
+!eggnoggplus-win/dist/installer/windows/
+!eggnoggplus-win/dist/installer/linux/
+eggnoggplus-win/dist/installer/windows/*
+!eggnoggplus-win/dist/installer/windows/INSTALL.bat
+!eggnoggplus-win/dist/installer/windows/UNINSTALL.bat
+!eggnoggplus-win/dist/installer/windows/install.ps1
+!eggnoggplus-win/dist/installer/windows/README.md
+!eggnoggplus-win/dist/installer/windows/assets/
+eggnoggplus-win/dist/installer/windows/assets/*
+!eggnoggplus-win/dist/installer/windows/assets/steam_icon.png
+eggnoggplus-win/dist/installer/linux/*
+!eggnoggplus-win/dist/installer/linux/install-linux.sh
+!eggnoggplus-win/dist/installer/linux/UNINSTALL-LINUX.sh
+!eggnoggplus-win/dist/installer/linux/README.md
+!eggnoggplus-win/dist/installer/linux/assets/
+eggnoggplus-win/dist/installer/linux/assets/*
+!eggnoggplus-win/dist/installer/linux/assets/steam_icon.png
 eggnoggplus-win/build/mod_api_test.exe
 eggnoggplus-win/build/mod_json_test.exe
 eggnoggplus-win/build/text_util_test.exe

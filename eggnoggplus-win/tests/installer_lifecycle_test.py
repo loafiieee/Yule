@@ -15,7 +15,7 @@ import winreg
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "installer" / "install.ps1"
+INSTALLER = ROOT / "dist" / "installer" / "windows" / "install.ps1"
 
 
 class QuietHandler(SimpleHTTPRequestHandler):

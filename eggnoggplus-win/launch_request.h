@@ -8,6 +8,7 @@ extern "C" {
 
 #define LAUNCH_REQUEST_TARGET_CAP 24576u
 #define LAUNCH_PREVIEW_FILE_MAX_BYTES 12288u
+#define LAUNCH_PREVIEW_PACKED_MAX_BYTES 12288u
 
 typedef enum LaunchRequestAction {
     LAUNCH_REQUEST_NONE = 0,
@@ -16,7 +17,8 @@ typedef enum LaunchRequestAction {
     LAUNCH_REQUEST_QUEUE_CASUAL,
     LAUNCH_REQUEST_QUEUE_COMPETITIVE,
     LAUNCH_REQUEST_CHALLENGE,
-    LAUNCH_REQUEST_PREVIEW_V1
+    LAUNCH_REQUEST_PREVIEW_V1,
+    LAUNCH_REQUEST_PREVIEW_V1_PACKED
 } LaunchRequestAction;
 
 typedef struct LaunchRequest {
@@ -42,11 +44,13 @@ LaunchRequestParseResult launch_request_parse_args(int argc,
                                                    size_t error_cap);
 
 /*
- * A preview target is exactly two unpadded base64url segments separated by a
- * slash: UTF-8 data.json followed by UTF-8 data.map. Decoding allocates both
- * NUL-terminated buffers; the caller owns them and must free them.
+ * The legacy preview target is two unpadded base64url segments separated by a
+ * slash. The compact target is one bounded base64url GGP1/LZSS envelope.
+ * Decoding either form allocates UTF-8 data.json and data.map buffers; the
+ * caller owns them and must free them.
  */
 int launch_request_preview_target_valid(const char* target);
+int launch_request_preview_packed_target_valid(const char* target);
 int launch_request_decode_preview(const LaunchRequest* request,
                                   char** out_json,
                                   char** out_map,

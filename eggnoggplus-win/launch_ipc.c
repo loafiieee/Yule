@@ -54,6 +54,8 @@ static int launch_ipc_request_valid(const LaunchRequest* request) {
             return online_control_username_is_canonical(request->target);
         case LAUNCH_REQUEST_PREVIEW_V1:
             return launch_request_preview_target_valid(request->target);
+        case LAUNCH_REQUEST_PREVIEW_V1_PACKED:
+            return launch_request_preview_packed_target_valid(request->target);
         default:
             return 0;
     }

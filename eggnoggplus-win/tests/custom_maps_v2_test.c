@@ -152,7 +152,8 @@ static int fixture_tile_sprite_index(const char* json, const char* tile_id,
     return 1;
 }
 
-static void build_one_room_map(char symbol, char* out, size_t out_size) {
+static void build_one_room_map_at(char symbol, int symbol_row, int symbol_col,
+                                  char* out, size_t out_size) {
     size_t position = 0;
     int row;
     int written = snprintf(out, out_size, "; parser test\n\n[center]\n");
@@ -162,11 +163,17 @@ static void build_one_room_map(char symbol, char* out, size_t out_size) {
         char cells[34];
         memset(cells, ' ', 33);
         cells[33] = '\0';
-        if (row == 0 && symbol) cells[0] = symbol;
+        if (row == symbol_row && symbol && symbol_col >= 0 && symbol_col < 33) {
+            cells[symbol_col] = symbol;
+        }
         written = snprintf(out + position, out_size - position, "\"%s\"\n", cells);
         if (written < 0) return;
         position += (size_t)written;
     }
+}
+
+static void build_one_room_map(char symbol, char* out, size_t out_size) {
+    build_one_room_map_at(symbol, 0, 0, out, out_size);
 }
 
 static void build_one_room_spawn_map(int k_count,
@@ -255,6 +262,32 @@ static void test_v1_compatibility(void) {
     CHECK(summary.source_room_count == 1);
     CHECK(summary.content_tile_count == 0);
     CHECK(summary.content_cell_count == 0);
+}
+
+static void test_native_tentacle_headroom(void) {
+    char map_text[1024];
+    CustomMapValidationSummary summary;
+
+    build_one_room_map_at('T', 2, 16, map_text, sizeof(map_text));
+    CHECK(!custom_maps_validate_package_text("legacy", ".", v1_json(),
+                                             map_text, &summary));
+    build_one_room_map_at('T', 3, 16, map_text, sizeof(map_text));
+    CHECK(custom_maps_validate_package_text("legacy", ".", v1_json(),
+                                            map_text, &summary));
+
+    build_one_room_map_at('t', 1, 16, map_text, sizeof(map_text));
+    CHECK(!custom_maps_validate_package_text("legacy", ".", v1_json(),
+                                             map_text, &summary));
+    build_one_room_map_at('t', 2, 16, map_text, sizeof(map_text));
+    CHECK(custom_maps_validate_package_text("legacy", ".", v1_json(),
+                                            map_text, &summary));
+
+    build_one_room_map_at('s', 0, 16, map_text, sizeof(map_text));
+    CHECK(!custom_maps_validate_package_text("legacy", ".", v1_json(),
+                                             map_text, &summary));
+    build_one_room_map_at('s', 1, 16, map_text, sizeof(map_text));
+    CHECK(custom_maps_validate_package_text("legacy", ".", v1_json(),
+                                            map_text, &summary));
 }
 
 static void test_in_memory_v1_preview(void) {
@@ -1238,6 +1271,7 @@ static void test_map_script_online_identity(void) {
 int main(void) {
     content_registry_shutdown();
     test_v1_compatibility();
+    test_native_tentacle_headroom();
     test_in_memory_v1_preview();
     test_native_room_spawn_budget();
     test_v2_symbolic_builtin();

@@ -114,16 +114,20 @@ int main(void) {
     assert(update_journal_path(journal_path));
     assert(!update_path_exists(journal_path, NULL));
 
-    /* The V3 original digest closes the stage-to-restart TOCTOU window. */
+    /* The V3 original digest closes the stage-to-restart TOCTOU window. A
+     * changed precondition with no updater mutation evidence is stale
+     * pristine staging: preserve the external target and discard only the
+     * transaction so the next boot can download and stage it again. */
     helper_reset_root(root);
     helper_entry(&one, root, "sample.dll", "original", "replacement");
     assert(update_journal_write(&one, 1u, 0));
     helper_write(one.target, "externally-changed");
     assert(update_ext_helper_service(status, sizeof(status)) ==
-           UPDATE_HELPER_BLOCKED);
+           UPDATE_HELPER_READY);
+    assert(strstr(status, "stale staged update discarded") != NULL);
     helper_expect(one.target, "externally-changed");
-    helper_expect(one.staged, "replacement");
-    assert(update_path_exists(journal_path, NULL));
+    assert(!update_path_exists(one.staged, NULL));
+    assert(!update_path_exists(journal_path, NULL));
 
     /* Power cut after target -> .old rolls the original back. */
     helper_reset_root(root);
@@ -194,16 +198,18 @@ int main(void) {
            UPDATE_HELPER_UPDATED);
     helper_expect(one.target, "new-file");
 
-    /* Missing/corrupt staging with no swap evidence is blocked, not guessed
-     * through or silently discarded. */
+    /* Missing/corrupt staging with no swap evidence is also stale pristine
+     * state. It is safe to discard because the original remains exact. */
     helper_reset_root(root);
     helper_entry(&one, root, "sample.dll", "original", "replacement");
     assert(update_journal_write(&one, 1u, 0));
     helper_write(one.staged, "corrupt");
     assert(update_ext_helper_service(status, sizeof(status)) ==
-           UPDATE_HELPER_BLOCKED);
+           UPDATE_HELPER_READY);
+    assert(strstr(status, "stale staged update discarded") != NULL);
     helper_expect(one.target, "original");
-    assert(update_path_exists(journal_path, NULL));
+    assert(!update_path_exists(one.staged, NULL));
+    assert(!update_path_exists(journal_path, NULL));
 
     /* Corrupt journal and an unsafe journal-as-directory both fail closed. */
     helper_reset_root(root);

@@ -199,6 +199,8 @@ extern void SDL_free(void* mem);
 #define ADDR_MAPGEN_BUILD_MAP         0x437DB0u
 #define ADDR_TILE_ACTION_EX           0x440250u
 #define ADDR_HIGH_WATER_ACTION        0x43C730u
+#define ADDR_SPAWN_THING_ACTION       0x43CA20u
+#define ADDR_SWORD_NEW                0x421C30u
 #define ADDR_GAME_WATER_HI_COLOUR     0x420100u
 #define ADDR_GAME_WATER_COLOUR        0x4201D0u
 #define ADDR_GAME_PLAYER_COLOUR_INDEX 0x41FE40u
@@ -208,6 +210,7 @@ extern void SDL_free(void* mem);
 #define ADDR_ANGLE_COLOUR             0x4180F0u
 #define ADDR_DRAW_PLAYER_BODY         0x41BDD0u
 #define ADDR_THING_NEW                0x41FD40u
+#define ADDR_NATIVE_TILE_ATLAS        0x547B80u
 #define ADDR_PLAYER_ARRAY             0x542058u
 #define ADDR_THINGS                   0x542080u
 #define ADDR_THING_INFO               0x543640u
@@ -286,6 +289,7 @@ extern void SDL_free(void* mem);
 #define THING_SLOT_COUNT              ((ADDR_THING_INFO - ADDR_THINGS) / THING_SIZE)
 #define THING_OFS_ACTIVE              0x00u
 #define THING_OFS_TYPE                0x01u
+#define THING_OFS_SPRITE              0x04u
 #define THING_OFS_X                   0x24u
 #define THING_OFS_Y                   0x28u
 #define THING_OFS_PREV_X              0x2Cu
@@ -293,6 +297,8 @@ extern void SDL_free(void* mem);
 #define THING_OFS_VX                  0x34u
 #define THING_OFS_VY                  0x38u
 #define THING_OFS_CONTACT_RADIUS      0x6Cu
+#define THING_OFS_MAP_SPAWNED         0x88u
+#define THING_OFS_SCALE_X             0xD8u
 #define THING_OFS_UPDATE_FN           0x158u
 #define THING_TYPE_PLAYER             0x01u
 #define THING_TYPE_SWORD              0x02u
@@ -718,6 +724,7 @@ typedef void  (__cdecl *fn_game_player_colour_t)(float*, uint32_t, int);
 typedef int   (__cdecl *fn_game_inc_player_colour_ex_t)(uint32_t, int, int);
 typedef void  (__cdecl *fn_angle_colour_t)(float*, float, float, float);
 typedef void* (__cdecl *fn_thing_new_t)(int);
+typedef void* (__cdecl *fn_sword_new_t)(void);
 typedef void (__cdecl *fn_glitch_audio_callback_t)(int16_t*, int, int);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
@@ -784,6 +791,7 @@ static fn_void_void_t                p_mapgen_init = (fn_void_void_t)(uintptr_t)
 static fn_void_void_t                p_mapgen_build_map = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_BUILD_MAP;
 static fn_tile_action_t              p_tile_action_ex = (fn_tile_action_t)(uintptr_t)ADDR_TILE_ACTION_EX;
 static fn_thing_new_t                p_thing_new_trampoline = NULL;
+static fn_sword_new_t                p_sword_new = (fn_sword_new_t)(uintptr_t)ADDR_SWORD_NEW;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
 static fn_void_void_t                p_mapgen_init_trampoline = NULL;
@@ -795,6 +803,7 @@ static fn_game_update_t              p_game_update_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
 static fn_tile_action_t              p_high_water_action_trampoline = NULL;
+static fn_tile_action_t              p_spawn_thing_action_trampoline = NULL;
 static fn_atlas_upload_t             p_atlas_upload_trampoline = NULL;
 static fn_colour_query_t             p_game_water_hi_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_HI_COLOUR;
 static fn_colour_query_t             p_game_water_colour = (fn_colour_query_t)(uintptr_t)ADDR_GAME_WATER_COLOUR;
@@ -878,6 +887,7 @@ static Detour g_mapgen_init_detour;
 static Detour g_mapgen_build_map_detour;
 static Detour g_tile_action_ex_detour;
 static Detour g_high_water_action_detour;
+static Detour g_spawn_thing_action_detour;
 static Detour g_atlas_upload_detour;
 static Detour g_game_player_colour_index_detour;
 static Detour g_game_set_player_colour_index_detour;
@@ -13056,7 +13066,11 @@ static void online_launch_select_first_inbox_row(void) {
     }
 }
 
-static void online_launch_pump(void) {
+/* Returns nonzero only when this call replaced the active state with a local
+ * preview match. The caller must end the old state's update immediately: a
+ * second native update after game_reset/state_switch reaches reset_room again
+ * and duplicates every center-room K/sword spawn in the fixed thing pool. */
+static int online_launch_pump(void) {
     LaunchRequestAction action;
     uint32_t now;
     int desired_queue;
@@ -13065,7 +13079,7 @@ static void online_launch_pump(void) {
     online_launch_parse_process_args();
     online_launch_poll_forwarded_requests();
     action = g_online_launch.request.action;
-    if (action == LAUNCH_REQUEST_NONE) return;
+    if (action == LAUNCH_REQUEST_NONE) return 0;
     now = (uint32_t)GetTickCount();
     if (online_control_deadline_reached(
             now, (uint32_t)g_online_launch.deadline_ms)) {
@@ -13075,15 +13089,16 @@ static void online_launch_pump(void) {
             online_hub_set_status("Launch request expired.");
         }
         online_launch_clear();
-        return;
+        return 0;
     }
     /*
      * A link activation is navigation, never an out-of-band forfeit button.
      * Keep the validated intent pending until the current match/setup has
      * reached its normal terminal state.
      */
-    if (g_online_pending_match.active || g_online_active_match.active) return;
-    if (action == LAUNCH_REQUEST_PREVIEW_V1) {
+    if (g_online_pending_match.active || g_online_active_match.active) return 0;
+    if (action == LAUNCH_REQUEST_PREVIEW_V1 ||
+        action == LAUNCH_REQUEST_PREVIEW_V1_PACKED) {
         char* json_text = NULL;
         char* map_text = NULL;
         char error[256];
@@ -13097,7 +13112,7 @@ static void online_launch_pump(void) {
             LOG_WARN("preview.launch: payload rejected (%s)",
                      error[0] ? error : "invalid payload");
             online_launch_clear();
-            return;
+            return 0;
         }
         if (!custom_maps_install_preview_text(json_text, map_text,
                                               &selector,
@@ -13107,27 +13122,29 @@ static void online_launch_pump(void) {
             free(json_text);
             free(map_text);
             online_launch_clear();
-            return;
+            return 0;
         }
         free(json_text);
         free(map_text);
         if (!hooks_start_native_match(selector)) {
             LOG_WARN("preview.launch: map installed but the local match could not start");
+            online_launch_clear();
+            return 0;
         } else {
             LOG_INFO("preview.launch: started selector %d", selector);
         }
         online_launch_clear();
-        return;
+        return 1;
     }
     if (!g_online_launch.hub_open_requested) {
         g_online_launch.hub_open_requested = 1;
         online_hub_open();
     }
-    if (!is_online_hub_state_active()) return;
+    if (!is_online_hub_state_active()) return 0;
     if (action == LAUNCH_REQUEST_HUB) {
         LOG_INFO("online.launch: completed hub intent");
         online_launch_clear();
-        return;
+        return 0;
     }
     if (!g_online_authed) {
         if (!g_online_launch.waiting_status_shown) {
@@ -13136,7 +13153,7 @@ static void online_launch_pump(void) {
                 : "Sign in to continue launch request.");
             g_online_launch.waiting_status_shown = 1;
         }
-        return;
+        return 0;
     }
 
     if (action == LAUNCH_REQUEST_REQUESTS) {
@@ -13145,7 +13162,7 @@ static void online_launch_pump(void) {
         online_launch_select_first_inbox_row();
         LOG_INFO("online.launch: completed requests intent");
         online_launch_clear();
-        return;
+        return 0;
     }
     if (action == LAUNCH_REQUEST_QUEUE_CASUAL ||
         action == LAUNCH_REQUEST_QUEUE_COMPETITIVE) {
@@ -13156,7 +13173,7 @@ static void online_launch_pump(void) {
                 ? "Already in competitive queue."
                 : "Already in casual queue.");
             online_launch_clear();
-            return;
+            return 0;
         }
         online_server_send_queue(desired_queue == 2
             ? "competitive" : "casual");
@@ -13167,7 +13184,7 @@ static void online_launch_pump(void) {
                         ? "queue/competitive" : "queue/casual");
             online_launch_clear();
         }
-        return;
+        return 0;
     }
     if (action == LAUNCH_REQUEST_CHALLENGE) {
         g_online_tab = ONLINE_TAB_FRIENDS;
@@ -13176,7 +13193,7 @@ static void online_launch_pump(void) {
                 online_hub_set_status("Loading friends for launch request...");
                 g_online_launch.waiting_status_shown = 1;
             }
-            return;
+            return 0;
         }
         online_hub_rebuild_rows();
         friend_index = online_launch_find_friend(
@@ -13190,13 +13207,14 @@ static void online_launch_pump(void) {
             LOG_INFO("online.launch: completed challenge intent; target %s unavailable",
                      g_online_launch.request.target);
             online_launch_clear();
-            return;
+            return 0;
         }
         (void)online_try_send_friend_challenge(friend_index);
         LOG_INFO("online.launch: completed challenge intent for %s",
                  g_online_launch.request.target);
         online_launch_clear();
     }
+    return 0;
 }
 
 /* Framework overlays are not stable Back destinations for the online hub. */
@@ -13314,7 +13332,7 @@ static void __cdecl online_hub_update(void) {
      * user at the hub's default Play page. Running after server_update lets an
      * auth_ok complete the requested action in the same hub tick.
      */
-    online_launch_pump();
+    if (online_launch_pump()) return;
     online_match_pump_launch();
     lua_manager_on_tick();
     lua_manager_on_tick_post();
@@ -15511,6 +15529,68 @@ static void* __cdecl hooked_thing_new(int type) {
         (void)map_script_object_lifecycle_advance(slot);
     }
     return result;
+}
+
+/* Native spawn_thing_action (0x43CA20) writes through the result of
+ * sword_new/thing_new without checking for NULL; the exact faulting write is
+ * 0x43CA88. A dense or stale room can exhaust the 15 allocatable thing slots.
+ * Reproduce the small mode-9 action with an allocation check so a malformed
+ * or unusually dense map loses only that reset spawn instead of crashing the
+ * process. Other action modes remain native. */
+static int __cdecl hooked_spawn_thing_action(void* tile, int mode,
+                                             int tile_x, int tile_y,
+                                             int arg5) {
+    uint8_t* thing;
+    int thing_type;
+    int tile_w;
+    int tile_h;
+    float x;
+    float y;
+    (void)arg5;
+
+    if (mode != 9) {
+        return p_spawn_thing_action_trampoline
+                   ? p_spawn_thing_action_trampoline(
+                         tile, mode, tile_x, tile_y, arg5)
+                   : 0;
+    }
+    if (!tile) {
+        LOG_WARN("[maps] native reset spawn skipped at %d,%d: tile is unavailable",
+                 tile_x, tile_y);
+        return 1;
+    }
+
+    thing_type = (int)(signed char)((const uint8_t*)tile)[2];
+    thing = thing_type == 2
+                ? (uint8_t*)(p_sword_new ? p_sword_new() : NULL)
+                : (uint8_t*)hooked_thing_new(thing_type);
+    if (!thing) {
+        LOG_WARN("[maps] native reset spawn skipped at %d,%d: thing pool exhausted (type=%d)",
+                 tile_x, tile_y, thing_type);
+        return 1;
+    }
+
+    tile_w = g_tile_width ? *g_tile_width : 16;
+    tile_h = g_tile_height ? *g_tile_height : 16;
+    if (tile_w <= 0) tile_w = 16;
+    if (tile_h <= 0) tile_h = 16;
+    x = (float)(tile_x * tile_w) + (float)tile_w * 0.5f;
+    y = (float)(tile_y * tile_h) + (float)tile_h * 1.25f;
+
+    *(uint32_t*)(thing + THING_OFS_SPRITE) = 0u;
+    *(float*)(thing + THING_OFS_X) = x;
+    *(float*)(thing + THING_OFS_Y) = y;
+    *(float*)(thing + THING_OFS_PREV_X) = x;
+    *(float*)(thing + THING_OFS_PREV_Y) = y;
+    *(float*)(thing + THING_OFS_SCALE_X) = 1.0f;
+    thing[THING_OFS_MAP_SPAWNED] = 1u;
+
+    if (thing[THING_OFS_TYPE] == THING_TYPE_HAZARD) {
+        uint32_t atlas = *(volatile uint32_t*)(uintptr_t)ADDR_NATIVE_TILE_ATLAS;
+        *(uint32_t*)(thing + THING_OFS_SPRITE) = atlas + 0x6du;
+        *(uint32_t*)(thing + THING_OFS_UPDATE_FN) = ADDR_HAZARD_ANIM;
+    }
+    return 1;
 }
 
 /* Apply V2 tile behavior as part of the deterministic native simulation tick.
@@ -18336,7 +18416,11 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
      * hook. This is the sole destructive window-policy pump, so queued key,
      * launch, and resize transitions cannot recreate a window mid-PollEvent. */
     hooks_window_pump();
-    online_launch_pump();
+    if (online_launch_pump()) {
+        /* The preview switch happened inside the former state's callback.
+         * Do not resume its native update against the replacement game. */
+        return 0;
+    }
 
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
@@ -19160,6 +19244,16 @@ static int __cdecl hooked_tile_action_ex(void* tile,
     int swapped_tiles = 0;
     int result = 0;
     int native_underlay_invoked = 0;
+
+    /* tile_action_ex calls the tile definition's action pointer directly.
+     * That bypasses an entry detour on spawn_thing_action, which is exactly
+     * what preview/reset dispatch does for native tile type 0x1c (* and K).
+     * Route those reset calls through the checked implementation explicitly so
+     * a repeated reset or dense room cannot dereference a failed allocation. */
+    if (mode == 9 && tile && !IsBadReadPtr(tile, 3u) &&
+        ((const unsigned char*)tile)[0] == 0x1cu) {
+        return hooked_spawn_thing_action(tile, mode, x, y, arg5);
+    }
     if (InterlockedCompareExchange(&g_content_bridge_enabled, 0, 0) != 0 &&
         mode == 2) {
         if (real && content_tiles_native_visual_underlay_for_action(tile, mode,
@@ -19348,6 +19442,20 @@ void hooks_init(void) {
     } else {
         p_thing_new_trampoline = (fn_thing_new_t)g_thing_new_detour.trampoline;
         InterlockedExchange(&g_thing_lifecycle_tracking_enabled, 1);
+    }
+
+    /* spawn_thing_action begins push ebx / xor eax,eax / sub esp,0x28.
+     * Six bytes is the first complete detour boundary. The replacement keeps
+     * native mode handling but null-checks its fixed-pool allocation before
+     * the original faulting write at 0x43CA88. */
+    if (!install_detour(&g_spawn_thing_action_detour,
+                        (void*)(uintptr_t)ADDR_SPAWN_THING_ACTION,
+                        (void*)&hooked_spawn_thing_action,
+                        6)) {
+        LOG_WARN("hooks_init: failed to guard spawn_thing_action (dense maps may exhaust the native thing pool)");
+    } else {
+        p_spawn_thing_action_trampoline =
+            (fn_tile_action_t)g_spawn_thing_action_detour.trampoline;
     }
 
     /* player_die prologue: push esi / push ebx / sub esp,0x34 = exactly 5 bytes */

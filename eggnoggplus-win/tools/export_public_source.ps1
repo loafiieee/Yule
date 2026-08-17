@@ -60,7 +60,7 @@ $allowedRootExtensions = @('.c', '.h', '.s')
 $allowedTrees = @(
     'docs/',
     'docs-site/',
-    'installer/',
+    'dist/installer/',
     'maps/',
     'mods/',
     'online_server/',

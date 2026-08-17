@@ -2797,6 +2797,20 @@ static void validate_room_glyph_footprints(MapDiagnostics* diag, const ParsedMap
                             );
                         }
                         break;
+                    case 'T':
+                    case 't':
+                    case 's': {
+                        int height = ch == 'T' ? 4 : (ch == 't' ? 3 : 2);
+                        if (row < height - 1) {
+                            diag_log(
+                                diag, 1,
+                                "[data.map][room=%s][line=%d][row=%d][col=%d] error: glyph \"%c\" expands upward into a %d-tile tentacle and needs %d tiles of headroom",
+                                room->id, file_line, row + 1, col + 1,
+                                ch, height, height - 1
+                            );
+                        }
+                        break;
+                    }
                     default:
                         break;
                 }

@@ -245,12 +245,23 @@
   assert(core.packageFacts(fresh).finalWidthPixels === 1584, "final arena pixel width follows (2n-1)*33*16");
 
   var previewUri = core.buildPreviewUri(fresh);
-  assert(previewUri.indexOf("yule://preview/v1/") === 0 &&
+  assert(core.base64UrlEncode(core.packPreviewBytes(core.utf8Bytes("{}"), core.utf8Bytes("xxxxxxxxxx"))) ===
+    "R0dQMQIAAAAKAAAACHt9eABg",
+    "preview compressor matches the native overlapping-match fixture");
+  assert(previewUri.indexOf("yule://preview/v1z/") === 0 &&
     previewUri.indexOf("=") < 0 && previewUri.indexOf("%") < 0,
-    "V1 preview compiles to a strict unpadded base64url launch link");
-  var previewTarget = previewUri.slice("yule://preview/v1/".length);
-  assert(previewTarget.split("/").length === 2 && previewTarget.length < core.PREVIEW_TARGET_CAP,
-    "preview link contains exactly the two bounded package files");
+    "V1 preview compiles to a compact unpadded base64url launch link");
+  var previewTarget = previewUri.slice("yule://preview/v1z/".length);
+  assert(previewTarget.indexOf("/") < 0 && previewTarget.length < core.PREVIEW_TARGET_CAP && previewUri.length < 8000,
+    "preview link contains one bounded compressed package payload");
+  var nineRoomPreview = core.deepClone(fresh);
+  while (nineRoomPreview.rooms.length < 9) {
+    var previewRoomId = "outer_" + nineRoomPreview.rooms.length;
+    nineRoomPreview.rooms.push(core.createRoom(previewRoomId));
+    nineRoomPreview.layout.order.push(previewRoomId);
+  }
+  assert(core.buildPreviewUri(nineRoomPreview).length < 8000,
+    "maximum-room ordinary maps remain within the reliable protocol-link budget");
   var previewV2Rejected = false;
   try { core.buildPreviewUri(core.upgradeToV2(fresh)); } catch (previewError) { previewV2Rejected = true; }
   assert(previewV2Rejected, "preview URI refuses V2 packages at the authoring boundary");

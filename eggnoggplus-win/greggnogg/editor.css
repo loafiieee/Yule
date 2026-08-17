@@ -1278,6 +1278,7 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 }
 
 .inspector-panel {
+  min-width: 0;
   overflow: hidden;
   border-left: 2px solid var(--black-line);
   box-shadow: -1px 0 0 var(--line) inset;
@@ -1335,12 +1336,16 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 }
 
 .inspector-content {
+  min-width: 0;
   height: calc(100% - 3.4rem);
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   scrollbar-color: var(--panel-hi) var(--panel);
 }
 
 .inspector-view {
+  min-width: 0;
   padding: 1rem;
 }
 
@@ -1688,6 +1693,7 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 
 .color-fields {
   display: grid;
+  min-width: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
 }
@@ -1696,7 +1702,8 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
   position: relative;
   display: grid;
   min-width: 0;
-  grid-template-columns: 2.15rem 1fr;
+  max-width: 100%;
+  grid-template-columns: 2.15rem minmax(0, 1fr);
   align-items: center;
   border: 1px solid var(--line);
   background: var(--bg-raised);
@@ -1760,6 +1767,8 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 .color-channel-editor {
   grid-column: 1 / -1;
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 0.38rem;
   padding: 0.52rem 0.45rem 0.6rem;
   border-top: 1px solid var(--line);
@@ -1772,7 +1781,9 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 
 .color-channel {
   display: grid;
-  grid-template-columns: 1rem minmax(4.5rem, 1fr) 3.5rem;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: 1rem minmax(0, 1fr) minmax(2.8rem, 3.5rem);
   align-items: center;
   gap: 0.4rem;
   color: var(--faint);
@@ -1782,6 +1793,7 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 
 .color-channel input[type="range"] {
   width: 100%;
+  min-width: 0;
   height: 0.55rem;
   margin: 0;
   appearance: none;
@@ -1813,12 +1825,28 @@ body.atlas-ready .map-cell[data-glyph]:not([data-glyph=" "]) {
 
 .color-channel input[type="number"] {
   grid-column: auto;
+  width: 100%;
+  min-width: 0;
   min-height: 1.75rem;
   padding: 0.2rem 0.25rem;
   font-family: var(--mono);
   font-size: 0.58rem;
   border: 1px solid var(--line-strong);
   background: var(--bg-raised);
+}
+
+@media (max-width: 420px) {
+  .color-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .color-field.is-expanded {
+    grid-column: auto;
+  }
+
+  .color-channel {
+    gap: 0.3rem;
+  }
 }
 
 .check-row {

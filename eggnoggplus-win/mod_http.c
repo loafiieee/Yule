@@ -22,6 +22,10 @@
 
 #define HTTP_MAX_SLOTS 8
 #define HTTP_MAX_BODY_BYTES (8u * 1024u * 1024u)
+#define HTTP_MAX_REDIRECTS 5u
+#define HTTP_FINAL_URL_WCHARS 4096
+#define HTTP_FINAL_URL_BYTES (HTTP_FINAL_URL_WCHARS * 4u)
+#define HTTP_HEADER_VALUE_BYTES 1024
 
 typedef struct {
     int            in_use;
@@ -34,10 +38,131 @@ typedef struct {
     size_t         body_len;
     char           error_msg[256];
     wchar_t        url[2048];
+    DWORD          status_code;
+    volatile LONG  redirect_count;
+    char           final_url[HTTP_FINAL_URL_BYTES];
+    char           status_text[128];
+    char           content_type[HTTP_HEADER_VALUE_BYTES];
+    char           content_length[64];
+    char           etag[HTTP_HEADER_VALUE_BYTES];
+    char           last_modified[HTTP_HEADER_VALUE_BYTES];
+    char           cache_control[HTTP_HEADER_VALUE_BYTES];
+    char           location[HTTP_HEADER_VALUE_BYTES];
 } HttpSlot;
 
 static HttpSlot g_http_slots[HTTP_MAX_SLOTS];
 static int g_http_next_handle = 1;
+
+static int http_handle_in_use(int handle) {
+    for (int i = 0; i < HTTP_MAX_SLOTS; i++) {
+        if (g_http_slots[i].in_use && g_http_slots[i].handle == handle) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int http_allocate_handle(void) {
+    /* At most eight handles are live, so nine probes are sufficient even at
+     * the INT_MAX wrap boundary. Do not collide with a concurrent request. */
+    for (int probe = 0; probe <= HTTP_MAX_SLOTS; probe++) {
+        int handle = g_http_next_handle;
+        g_http_next_handle =
+            (g_http_next_handle == INT_MAX) ? 1 : g_http_next_handle + 1;
+        if (!http_handle_in_use(handle)) return handle;
+    }
+    return 0;
+}
+
+static void CALLBACK http_status_callback(
+    HINTERNET handle,
+    DWORD_PTR context,
+    DWORD status,
+    LPVOID status_info,
+    DWORD status_info_length
+) {
+    HttpSlot *slot = (HttpSlot*)context;
+    (void)handle;
+    (void)status_info;
+    (void)status_info_length;
+    if (slot && status == WINHTTP_CALLBACK_STATUS_REDIRECT) {
+        InterlockedIncrement(&slot->redirect_count);
+    }
+}
+
+static int http_wide_to_utf8(const wchar_t *wide, char *output,
+                             size_t output_capacity) {
+    int result;
+    if (!wide || !output || output_capacity == 0 ||
+        output_capacity > (size_t)INT_MAX) {
+        return 0;
+    }
+    output[0] = '\0';
+    result = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, -1,
+                                 output, (int)output_capacity,
+                                 NULL, NULL);
+    if (result <= 0) {
+        output[0] = '\0';
+        return 0;
+    }
+    return 1;
+}
+
+static void http_query_header_utf8(HINTERNET request, DWORD query,
+                                   char *output, size_t output_capacity) {
+    wchar_t wide[HTTP_HEADER_VALUE_BYTES];
+    DWORD bytes = sizeof(wide);
+    if (!output || output_capacity == 0) return;
+    output[0] = '\0';
+    memset(wide, 0, sizeof(wide));
+    if (!WinHttpQueryHeaders(request, query,
+                             WINHTTP_HEADER_NAME_BY_INDEX,
+                             wide, &bytes, WINHTTP_NO_HEADER_INDEX)) {
+        return;
+    }
+    wide[(sizeof(wide) / sizeof(wide[0])) - 1] = L'\0';
+    http_wide_to_utf8(wide, output, output_capacity);
+}
+
+static void http_capture_response_metadata(HINTERNET request, HttpSlot *slot) {
+    wchar_t final_url[HTTP_FINAL_URL_WCHARS];
+    DWORD final_url_bytes = sizeof(final_url);
+    DWORD status_size = sizeof(slot->status_code);
+    if (!request || !slot) return;
+
+    slot->status_code = 0;
+    WinHttpQueryHeaders(request,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &slot->status_code, &status_size, WINHTTP_NO_HEADER_INDEX);
+
+    memset(final_url, 0, sizeof(final_url));
+    if (WinHttpQueryOption(request, WINHTTP_OPTION_URL,
+                           final_url, &final_url_bytes)) {
+        final_url[(sizeof(final_url) / sizeof(final_url[0])) - 1] = L'\0';
+        http_wide_to_utf8(final_url, slot->final_url,
+                          sizeof(slot->final_url));
+    }
+    if (!slot->final_url[0]) {
+        http_wide_to_utf8(slot->url, slot->final_url,
+                          sizeof(slot->final_url));
+    }
+
+    http_query_header_utf8(request, WINHTTP_QUERY_STATUS_TEXT,
+                           slot->status_text, sizeof(slot->status_text));
+    http_query_header_utf8(request, WINHTTP_QUERY_CONTENT_TYPE,
+                           slot->content_type, sizeof(slot->content_type));
+    http_query_header_utf8(request, WINHTTP_QUERY_CONTENT_LENGTH,
+                           slot->content_length, sizeof(slot->content_length));
+    http_query_header_utf8(request, WINHTTP_QUERY_ETAG,
+                           slot->etag, sizeof(slot->etag));
+    http_query_header_utf8(request, WINHTTP_QUERY_LAST_MODIFIED,
+                           slot->last_modified, sizeof(slot->last_modified));
+    http_query_header_utf8(request, WINHTTP_QUERY_CACHE_CONTROL,
+                           slot->cache_control, sizeof(slot->cache_control));
+    http_query_header_utf8(request, WINHTTP_QUERY_LOCATION,
+                           slot->location, sizeof(slot->location));
+}
 
 static void http_release_slot(HttpSlot *slot) {
     if (!slot) return;
@@ -202,6 +327,21 @@ static DWORD WINAPI http_worker_thread(LPVOID param) {
         return 0;
     }
 
+    {
+        DWORD_PTR context = (DWORD_PTR)slot;
+        DWORD redirect_policy =
+            WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
+        DWORD max_redirects = HTTP_MAX_REDIRECTS;
+        WinHttpSetOption(req, WINHTTP_OPTION_CONTEXT_VALUE,
+                         &context, sizeof(context));
+        WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY,
+                         &redirect_policy, sizeof(redirect_policy));
+        WinHttpSetOption(req, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
+                         &max_redirects, sizeof(max_redirects));
+        WinHttpSetStatusCallback(req, http_status_callback,
+                                 WINHTTP_CALLBACK_FLAG_REDIRECT, 0);
+    }
+
     if (!WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                             WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(req, NULL)) {
@@ -214,16 +354,13 @@ static DWORD WINAPI http_worker_thread(LPVOID param) {
         return 0;
     }
 
-    /* Verify HTTP status code */
-    DWORD status_code = 0;
-    DWORD status_size = sizeof(status_code);
-    WinHttpQueryHeaders(req,
-        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX,
-        &status_code, &status_size, WINHTTP_NO_HEADER_INDEX);
-    if (status_code != 200) {
+    /* Capture a deliberately bounded metadata subset before deciding whether
+     * this response is successful. Non-200 terminal polls receive the same
+     * status/URL/header table as successful polls. */
+    http_capture_response_metadata(req, slot);
+    if (slot->status_code != 200) {
         _snprintf(slot->error_msg, sizeof(slot->error_msg) - 1,
-            "HTTP %lu", status_code);
+            "HTTP %lu", slot->status_code);
         WinHttpCloseHandle(req);
         WinHttpCloseHandle(conn);
         WinHttpCloseHandle(session);
@@ -357,9 +494,13 @@ static int lua_http_get(lua_State *L) {
 
     slot->in_use = 1;
     slot->owner = owner;
-    slot->handle = g_http_next_handle;
-    g_http_next_handle =
-        (g_http_next_handle == INT_MAX) ? 1 : g_http_next_handle + 1;
+    slot->handle = http_allocate_handle();
+    if (slot->handle == 0) {
+        http_release_slot(slot);
+        lua_pushnil(L);
+        lua_pushstring(L, "HTTP handle space exhausted");
+        return 2;
+    }
     slot->done   = 0;
     slot->cancelled = 0;
     slot->thread = CreateThread(NULL, 0, http_worker_thread, slot, 0, NULL);
@@ -374,7 +515,43 @@ static int lua_http_get(lua_State *L) {
     return 1;
 }
 
-/* mod.http.poll(handle) -> "pending" | "done", body | "error", msg */
+static void lua_http_set_header(lua_State *L, const char *name,
+                                const char *value) {
+    if (!value || !value[0]) return;
+    lua_pushstring(L, value);
+    lua_setfield(L, -2, name);
+}
+
+static void lua_http_push_response(lua_State *L, const HttpSlot *slot) {
+    LONG redirects = slot->redirect_count;
+    lua_createtable(L, 0, 6);
+
+    lua_pushinteger(L, (lua_Integer)slot->status_code);
+    lua_setfield(L, -2, "status");
+    if (slot->status_text[0]) {
+        lua_pushstring(L, slot->status_text);
+        lua_setfield(L, -2, "status_text");
+    }
+    lua_pushstring(L, slot->final_url[0] ? slot->final_url : "");
+    lua_setfield(L, -2, "url");
+    lua_pushboolean(L, redirects > 0);
+    lua_setfield(L, -2, "redirected");
+    lua_pushinteger(L, (lua_Integer)redirects);
+    lua_setfield(L, -2, "redirect_count");
+
+    lua_createtable(L, 0, 6);
+    lua_http_set_header(L, "content-type", slot->content_type);
+    lua_http_set_header(L, "content-length", slot->content_length);
+    lua_http_set_header(L, "etag", slot->etag);
+    lua_http_set_header(L, "last-modified", slot->last_modified);
+    lua_http_set_header(L, "cache-control", slot->cache_control);
+    lua_http_set_header(L, "location", slot->location);
+    lua_setfield(L, -2, "headers");
+}
+
+/* mod.http.poll(handle) -> "pending" |
+ *   "done", body, response |
+ *   "error", message [, response] */
 static int lua_http_poll(lua_State *L) {
     void *owner = lua_touserdata(L, lua_upvalueindex(1));
     int handle = (int)luaL_checkinteger(L, 1);
@@ -395,13 +572,19 @@ static int lua_http_poll(lua_State *L) {
     if (d == 1) {
         lua_pushstring(L, "done");
         lua_pushlstring(L, slot->body ? slot->body : "", slot->body_len);
+        lua_http_push_response(L, slot);
         http_release_slot(slot);
-        return 2;
+        return 3;
     }
     lua_pushstring(L, "error");
     lua_pushstring(L, slot->error_msg[0]
         ? slot->error_msg
         : "request failed");
+    if (slot->status_code != 0) {
+        lua_http_push_response(L, slot);
+        http_release_slot(slot);
+        return 3;
+    }
     http_release_slot(slot);
     return 2;
 }

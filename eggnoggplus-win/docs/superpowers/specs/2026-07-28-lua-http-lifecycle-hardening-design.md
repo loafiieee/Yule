@@ -1,9 +1,9 @@
 # Lua HTTP Lifecycle Hardening Design
 
-**Date:** 2026-07-28  
-**Status:** Source implementation and focused static coverage complete  
+**Date:** 2026-07-28
+**Status:** Source implementation, live lifecycle tests, and static coverage complete
 **Primary code:** `mod_http.c/.h`, owner lifecycle calls in `lua_manager.c`,
-`tests/lua_http_lifecycle_static_test.py`
+`tests/mod_http_test.c`, `tests/lua_http_lifecycle_static_test.py`
 
 ## Problem
 
@@ -38,6 +38,20 @@ before body allocation, and the streaming loop independently enforces the same 8
 ceiling when the header is missing or false. HTTP status 200 remains the only success
 status in API 1.
 
+## Response metadata and redirects
+
+API revision 3 adds the `http.response_metadata` capability. A successful terminal
+poll remains `"done", body` for existing callers and appends a response table as its
+third value. A non-200 response remains `"error", "HTTP <status>"` and appends the
+same table; transport failures without a response retain the two-value error shape.
+The table reports the final status/status text, final URL, redirect flag/count, and a
+bounded allowlist of `content-type`, `content-length`, `etag`, `last-modified`,
+`cache-control`, and `location`. It never exposes cookies or authentication headers.
+
+WinHTTP automatic redirects are limited to five and HTTPS-to-HTTP downgrades are
+refused. Redirect callbacks only increment an atomic counter; all strings remain in
+fixed request-slot buffers and are published before the terminal `done` write.
+
 ## URL and request-target correctness
 
 The Lua boundary rejects empty/embedded-NUL/invalid-UTF-8 URLs. The worker accepts only
@@ -48,9 +62,11 @@ the worker now appends that extra component to the request target, while truncat
 concatenation is checked against the fixed wide request-target buffer before opening
 the request.
 
-## Compatibility and follow-up
+## Compatibility and coverage
 
-Handles were already documented as opaque integers and polling return shapes are
-unchanged. Cancellation still does not synchronously terminate WinHTTP. Status/header/
-redirect metadata is intentionally deferred as additive API work; it must not weaken
-the owner, concurrency, timeout, or body bounds.
+Handles remain opaque integers and the existing leading polling return values are
+unchanged, so callers that read one or two values continue to work. Cancellation still
+does not synchronously terminate WinHTTP. The live loopback test fills all eight slots,
+checks cross-owner isolation, cancellation and unload, waits for deferred cleanup,
+reuses retired slots, rejects stale handles, and exercises both redirected success and
+HTTP-error metadata.

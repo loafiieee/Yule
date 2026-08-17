@@ -24,6 +24,7 @@
 #include "cursor_ext.h"
 #include "bytebeat_ext.h"
 #include "mod_api.h"
+#include "mod_callbacks.h"
 #include "mod_fs.h"
 #include "mod_http.h"
 #include "mod_json.h"
@@ -543,13 +544,10 @@ typedef struct UiNativeButton {
 typedef struct LayoutHandler {
     char state_name[32];
     int  ref;
+    unsigned int subscription_id;
 } LayoutHandler;
 
-typedef struct LuaRefList {
-    int* refs;
-    int  count;
-    int  cap;
-} LuaRefList;
+typedef ModCallbackList LuaRefList;
 
 typedef struct AudioChunkCacheEntry {
     char path[MAX_PATH];
@@ -671,6 +669,7 @@ struct LoadedMod {
     int  gameplay_affecting;
     int  suspend_notice_logged;
     int  content_registered;
+    unsigned int next_subscription_id;
     char gameplay_reason[96];
 
     ModPerfCounter perf_frame;
@@ -2338,7 +2337,7 @@ static ConfigAction* mod_config_get_or_add_action(LoadedMod* mod, const char* ke
     memset(a, 0, sizeof(*a));
     strncpy(a->key, key, sizeof(a->key) - 1);
     a->key[sizeof(a->key) - 1] = '\0';
-    a->handlers.refs = NULL;
+    a->handlers.entries = NULL;
     a->handlers.count = 0;
     a->handlers.cap = 0;
     return a;
@@ -2998,44 +2997,17 @@ static int mod_texture_reg_record(LoadedMod* mod, const char* target, const char
 // Small helpers
 // =============================
 
-static void reflist_push(LuaRefList* list, int ref) {
-    if (list->count + 1 > list->cap) {
-        int newcap = (list->cap == 0) ? 8 : (list->cap * 2);
-        int* newrefs = (int*)realloc(list->refs, sizeof(int) * newcap);
-        if (!newrefs) return;
-        list->refs = newrefs;
-        list->cap = newcap;
-    }
-    list->refs[list->count++] = ref;
+static int reflist_push(LuaRefList* list, unsigned int id, int ref) {
+    return mod_callback_list_add(list, id, ref);
 }
 
 static void reflist_clear(lua_State* Ls, LuaRefList* list) {
-    if (!list || !list->refs) return;
-    for (int i = 0; i < list->count; i++) {
-        if (list->refs[i] != LUA_NOREF && list->refs[i] != LUA_REFNIL) {
-            luaL_unref(Ls, LUA_REGISTRYINDEX, list->refs[i]);
-        }
-    }
-    free(list->refs);
-    list->refs = NULL;
-    list->count = 0;
-    list->cap = 0;
+    mod_callback_list_clear(Ls, list);
 }
 
-static int reflist_snapshot(const LuaRefList* list, int** out_refs, int* out_count) {
-    if (out_refs) *out_refs = NULL;
-    if (out_count) *out_count = 0;
-    if (!list || list->count <= 0 || !list->refs) return 1;
-    if (!out_refs || !out_count) return 0;
-
-    int count = list->count;
-    int* refs = (int*)malloc(sizeof(int) * count);
-    if (!refs) return 0;
-
-    memcpy(refs, list->refs, sizeof(int) * count);
-    *out_refs = refs;
-    *out_count = count;
-    return 1;
+static int reflist_snapshot(const LuaRefList* list, unsigned int** out_ids,
+                            int* out_count) {
+    return mod_callback_list_snapshot(list, out_ids, out_count);
 }
 
 static int interop_find_index_by_ns(const char* ns) {
@@ -3122,6 +3094,7 @@ static LoadedMod* mods_add(void) {
     memset(m, 0, sizeof(*m));
     m->enabled = 1;
     m->error_count = 0;
+    m->next_subscription_id = 1;
     m->env_ref = LUA_NOREF;
     m->mod_ref = LUA_NOREF;
     m->on_load_ref = LUA_NOREF;
@@ -3201,6 +3174,130 @@ static void mod_set_single_ref(lua_State* Ls, int* slot, int newref) {
 
 static LoadedMod* mod_from_upvalue(lua_State* Ls) {
     return (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+}
+
+enum {
+    MOD_SUBSCRIPTION_FRAME = 1,
+    MOD_SUBSCRIPTION_TICK,
+    MOD_SUBSCRIPTION_TICK_POST,
+    MOD_SUBSCRIPTION_EVENT,
+    MOD_SUBSCRIPTION_LAYOUT,
+    MOD_SUBSCRIPTION_CONFIG_ACTION
+};
+
+static unsigned int mod_next_subscription_id(LoadedMod* mod) {
+    unsigned int id;
+    if (!mod) return 0;
+    id = mod->next_subscription_id++;
+    if (id == 0) {
+        id = mod->next_subscription_id++;
+    }
+    return id;
+}
+
+static int mod_remove_layout_subscription(lua_State* Ls, LoadedMod* mod,
+                                          unsigned int id) {
+    int index;
+    if (!mod || id == 0) return 0;
+    for (index = 0; index < mod->on_layout_count; index++) {
+        LayoutHandler* handler = &mod->on_layout[index];
+        if (handler->subscription_id != id) continue;
+        if (handler->ref != LUA_NOREF && handler->ref != LUA_REFNIL) {
+            luaL_unref(Ls, LUA_REGISTRYINDEX, handler->ref);
+        }
+        if (index + 1 < mod->on_layout_count) {
+            memmove(&mod->on_layout[index], &mod->on_layout[index + 1],
+                    sizeof(*mod->on_layout) *
+                    (size_t)(mod->on_layout_count - index - 1));
+        }
+        mod->on_layout_count--;
+        return 1;
+    }
+    return 0;
+}
+
+static int mod_remove_config_subscription(lua_State* Ls, LoadedMod* mod,
+                                          unsigned int id) {
+    int index;
+    if (!mod || id == 0) return 0;
+    for (index = 0; index < mod->cfg_action_count; index++) {
+        if (mod_callback_list_remove(Ls, &mod->cfg_actions[index].handlers,
+                                     id)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int lua_subscription_remove(lua_State* Ls) {
+    LoadedMod* mod =
+        (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
+    int kind = (int)lua_tointeger(Ls, lua_upvalueindex(2));
+    unsigned int id =
+        (unsigned int)lua_tointeger(Ls, lua_upvalueindex(3));
+    int removed = 0;
+    if (!mod || id == 0) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+    switch (kind) {
+        case MOD_SUBSCRIPTION_FRAME:
+            removed = mod_callback_list_remove(Ls, &mod->on_frame, id);
+            break;
+        case MOD_SUBSCRIPTION_TICK:
+            removed = mod_callback_list_remove(Ls, &mod->on_tick, id);
+            break;
+        case MOD_SUBSCRIPTION_TICK_POST:
+            removed = mod_callback_list_remove(Ls, &mod->on_tick_post, id);
+            break;
+        case MOD_SUBSCRIPTION_EVENT:
+            removed = mod_callback_list_remove(Ls, &mod->on_event, id);
+            break;
+        case MOD_SUBSCRIPTION_LAYOUT:
+            removed = mod_remove_layout_subscription(Ls, mod, id);
+            break;
+        case MOD_SUBSCRIPTION_CONFIG_ACTION:
+            removed = mod_remove_config_subscription(Ls, mod, id);
+            break;
+        default:
+            break;
+    }
+    lua_pushboolean(Ls, removed);
+    return 1;
+}
+
+static int lua_push_subscription(lua_State* Ls, LoadedMod* mod, int kind,
+                                 unsigned int id) {
+    if (!mod || id == 0) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "callback registration failed");
+        return 2;
+    }
+    lua_createtable(Ls, 0, 1);
+    lua_pushlightuserdata(Ls, mod);
+    lua_pushinteger(Ls, kind);
+    lua_pushinteger(Ls, (lua_Integer)id);
+    lua_pushcclosure(Ls, lua_subscription_remove, 3);
+    lua_setfield(Ls, -2, "remove");
+    return 1;
+}
+
+static int lua_register_subscription(lua_State* Ls, LoadedMod* mod,
+                                     LuaRefList* list, int kind,
+                                     int function_index) {
+    unsigned int id;
+    int ref;
+    luaL_checktype(Ls, function_index, LUA_TFUNCTION);
+    lua_pushvalue(Ls, function_index);
+    ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    id = mod_next_subscription_id(mod);
+    if (id == 0 || !reflist_push(list, id, ref)) {
+        luaL_unref(Ls, LUA_REGISTRYINDEX, ref);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "callback registration failed: out of memory");
+        return 2;
+    }
+    return lua_push_subscription(Ls, mod, kind, id);
 }
 
 static void log_mod(LoadedMod* mod, const char* level, const char* msg) {
@@ -3327,10 +3424,10 @@ static unsigned int mod_diag_estimate_memory_bytes(const LoadedMod* mod) {
     if (!mod) return 0;
 
     bytes += (unsigned long long)sizeof(*mod);
-    bytes += (unsigned long long)mod->on_frame.cap * (unsigned long long)sizeof(int);
-    bytes += (unsigned long long)mod->on_tick.cap * (unsigned long long)sizeof(int);
-    bytes += (unsigned long long)mod->on_tick_post.cap * (unsigned long long)sizeof(int);
-    bytes += (unsigned long long)mod->on_event.cap * (unsigned long long)sizeof(int);
+    bytes += (unsigned long long)mod_callback_list_reserved_bytes(&mod->on_frame);
+    bytes += (unsigned long long)mod_callback_list_reserved_bytes(&mod->on_tick);
+    bytes += (unsigned long long)mod_callback_list_reserved_bytes(&mod->on_tick_post);
+    bytes += (unsigned long long)mod_callback_list_reserved_bytes(&mod->on_event);
     bytes += (unsigned long long)mod->on_layout_cap * (unsigned long long)sizeof(LayoutHandler);
     bytes += (unsigned long long)mod->ui_hitbox_cap * (unsigned long long)sizeof(UiHitBox);
     bytes += (unsigned long long)mod->ui_native_cap * (unsigned long long)sizeof(UiNativeButton*);
@@ -3346,7 +3443,8 @@ static unsigned int mod_diag_estimate_memory_bytes(const LoadedMod* mod) {
 
     if (mod->cfg_actions) {
         for (int i = 0; i < mod->cfg_action_count; i++) {
-            bytes += (unsigned long long)mod->cfg_actions[i].handlers.cap * (unsigned long long)sizeof(int);
+            bytes += (unsigned long long)mod_callback_list_reserved_bytes(
+                &mod->cfg_actions[i].handlers);
         }
     }
     if (mod->ui_native_buttons) {
@@ -8139,40 +8237,28 @@ static int lua_mod_error(lua_State *Ls) {
 
 static int lua_mod_on_frame(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
-    luaL_checktype(Ls, 1, LUA_TFUNCTION);
-    lua_pushvalue(Ls, 1);
-    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
-    reflist_push(&mod->on_frame, ref);
-    return 0;
+    return lua_register_subscription(Ls, mod, &mod->on_frame,
+                                     MOD_SUBSCRIPTION_FRAME, 1);
 }
 
 static int lua_mod_on_tick(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     mod_mark_gameplay_affecting(mod, "mod.on_tick handler");
-    luaL_checktype(Ls, 1, LUA_TFUNCTION);
-    lua_pushvalue(Ls, 1);
-    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
-    reflist_push(&mod->on_tick, ref);
-    return 0;
+    return lua_register_subscription(Ls, mod, &mod->on_tick,
+                                     MOD_SUBSCRIPTION_TICK, 1);
 }
 
 static int lua_mod_on_tick_post(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     mod_mark_gameplay_affecting(mod, "mod.on_tick_post handler");
-    luaL_checktype(Ls, 1, LUA_TFUNCTION);
-    lua_pushvalue(Ls, 1);
-    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
-    reflist_push(&mod->on_tick_post, ref);
-    return 0;
+    return lua_register_subscription(Ls, mod, &mod->on_tick_post,
+                                     MOD_SUBSCRIPTION_TICK_POST, 1);
 }
 
 static int lua_mod_on_event(lua_State *Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
-    luaL_checktype(Ls, 1, LUA_TFUNCTION);
-    lua_pushvalue(Ls, 1);
-    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
-    reflist_push(&mod->on_event, ref);
-    return 0;
+    return lua_register_subscription(Ls, mod, &mod->on_event,
+                                     MOD_SUBSCRIPTION_EVENT, 1);
 }
 
 static int lua_mod_on_load(lua_State *Ls) {
@@ -8360,11 +8446,13 @@ static int lua_cfg_on_action(lua_State* Ls) {
     }
 
     ConfigAction* a = mod_config_get_or_add_action(mod, key);
-    if (!a) return 0;
-    lua_pushvalue(Ls, 2);
-    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
-    reflist_push(&a->handlers, ref);
-    return 0;
+    if (!a) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "config action registration failed: out of memory");
+        return 2;
+    }
+    return lua_register_subscription(Ls, mod, &a->handlers,
+                                     MOD_SUBSCRIPTION_CONFIG_ACTION, 2);
 }
 
 static void push_config_api_table(lua_State* Ls, LoadedMod* mod) {
@@ -12737,12 +12825,20 @@ static int lua_mod_on_layout(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     const char* state_name = luaL_checkstring(Ls, 1);
     luaL_checktype(Ls, 2, LUA_TFUNCTION);
-    if (!mod || !state_name || !state_name[0]) return 0;
+    if (!mod || !state_name || !state_name[0]) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "state name must not be empty");
+        return 2;
+    }
 
     if (mod->on_layout_count + 1 > mod->on_layout_cap) {
         int newcap = (mod->on_layout_cap == 0) ? 8 : (mod->on_layout_cap * 2);
         LayoutHandler* nh = (LayoutHandler*)realloc(mod->on_layout, sizeof(LayoutHandler) * newcap);
-        if (!nh) return 0;
+        if (!nh) {
+            lua_pushnil(Ls);
+            lua_pushstring(Ls, "layout callback registration failed: out of memory");
+            return 2;
+        }
         mod->on_layout = nh;
         mod->on_layout_cap = newcap;
     }
@@ -12751,7 +12847,9 @@ static int lua_mod_on_layout(lua_State* Ls) {
     h->state_name[sizeof(h->state_name) - 1] = '\0';
     lua_pushvalue(Ls, 2);
     h->ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
-    return 0;
+    h->subscription_id = mod_next_subscription_id(mod);
+    return lua_push_subscription(Ls, mod, MOD_SUBSCRIPTION_LAYOUT,
+                                 h->subscription_id);
 }
 
 /* ---- mod.net Lua bindings ----------------------------------------- */
@@ -15176,23 +15274,25 @@ double lua_manager_on_delta_time(double dt_seconds) {
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod_is_runtime_active(mod)) continue;
-        int* refs = NULL;
+        unsigned int* ids = NULL;
         int ref_count = 0;
-        if (!reflist_snapshot(&mod->on_event, &refs, &ref_count)) {
+        if (!reflist_snapshot(&mod->on_event, &ids, &ref_count)) {
             log_mod(mod, "ERROR", "on_event dispatch snapshot failed: out of memory");
             mod->error_count++;
             continue;
         }
 
         for (int i = 0; i < ref_count; i++) {
+            int ref = mod_callback_list_ref(&mod->on_event, ids[i]);
             double before = dt_seconds;
             int before_is_number = 0;
+            if (ref == LUA_NOREF || ref == LUA_REFNIL) continue;
             lua_getfield(L, -1, "value");
             before_is_number = lua_isnumber(L, -1);
             if (before_is_number) before = lua_tonumber(L, -1);
             lua_pop(L, 1);
 
-            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             lua_pushvalue(L, -2); // event table
             if (lua_pcall(L, 1, 1, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
@@ -15224,7 +15324,7 @@ double lua_manager_on_delta_time(double dt_seconds) {
             }
             if (mod_is_gameplay_suspended(mod)) break;
         }
-        free(refs);
+        free(ids);
     }
 
     // Read back (potentially modified) dt
@@ -15267,17 +15367,19 @@ void lua_manager_on_tick(void) {
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod_is_runtime_active(mod)) continue;
-        int* refs = NULL;
+        unsigned int* ids = NULL;
         int ref_count = 0;
-        if (!reflist_snapshot(&mod->on_tick, &refs, &ref_count)) {
+        if (!reflist_snapshot(&mod->on_tick, &ids, &ref_count)) {
             log_mod(mod, "ERROR", "on_tick dispatch snapshot failed: out of memory");
             mod->error_count++;
             continue;
         }
 
         for (int i = 0; i < ref_count; i++) {
+            int ref = mod_callback_list_ref(&mod->on_tick, ids[i]);
             double started_ms = perf_now_ms();
-            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
+            if (ref == LUA_NOREF || ref == LUA_REFNIL) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
                 char buf[512];
@@ -15288,7 +15390,7 @@ void lua_manager_on_tick(void) {
             }
             mod_perf_counter_record(&mod->perf_tick, perf_now_ms() - started_ms);
         }
-        free(refs);
+        free(ids);
     }
 }
 
@@ -15298,17 +15400,19 @@ void lua_manager_on_tick_post(void) {
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod_is_runtime_active(mod)) continue;
-        int* refs = NULL;
+        unsigned int* ids = NULL;
         int ref_count = 0;
-        if (!reflist_snapshot(&mod->on_tick_post, &refs, &ref_count)) {
+        if (!reflist_snapshot(&mod->on_tick_post, &ids, &ref_count)) {
             log_mod(mod, "ERROR", "on_tick_post dispatch snapshot failed: out of memory");
             mod->error_count++;
             continue;
         }
 
         for (int i = 0; i < ref_count; i++) {
+            int ref = mod_callback_list_ref(&mod->on_tick_post, ids[i]);
             double started_ms = perf_now_ms();
-            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
+            if (ref == LUA_NOREF || ref == LUA_REFNIL) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
                 char buf[512];
@@ -15319,7 +15423,7 @@ void lua_manager_on_tick_post(void) {
             }
             mod_perf_counter_record(&mod->perf_tick, perf_now_ms() - started_ms);
         }
-        free(refs);
+        free(ids);
     }
 }
 
@@ -15353,10 +15457,33 @@ void lua_manager_on_frame() {
         if (_stricmp(new_name, old_name) != 0) {
             for (int mi = 0; mi < g_mod_count; mi++) {
                 LoadedMod* mod = &g_mods[mi];
+                unsigned int* ids;
+                int layout_count;
                 if (!mod_is_runtime_active(mod)) continue;
-                for (int i = 0; i < mod->on_layout_count; i++) {
-                    LayoutHandler* h = &mod->on_layout[i];
+                layout_count = mod->on_layout_count;
+                if (layout_count <= 0) continue;
+                ids = (unsigned int*)malloc(
+                    sizeof(*ids) * (size_t)layout_count);
+                if (!ids) {
+                    log_mod(mod, "ERROR",
+                            "on_layout dispatch snapshot failed: out of memory");
+                    mod->error_count++;
+                    continue;
+                }
+                for (int i = 0; i < layout_count; i++) {
+                    ids[i] = mod->on_layout[i].subscription_id;
+                }
+                for (int i = 0; i < layout_count; i++) {
+                    LayoutHandler* h = NULL;
                     double started_ms;
+                    for (int current = 0;
+                         current < mod->on_layout_count; current++) {
+                        if (mod->on_layout[current].subscription_id == ids[i]) {
+                            h = &mod->on_layout[current];
+                            break;
+                        }
+                    }
+                    if (!h) continue;
                     if (_stricmp(h->state_name, new_name) != 0) continue;
                     if (h->ref == LUA_NOREF || h->ref == LUA_REFNIL) continue;
                     started_ms = perf_now_ms();
@@ -15373,6 +15500,7 @@ void lua_manager_on_frame() {
                     mod_perf_counter_record(&mod->perf_layout, perf_now_ms() - started_ms);
                     if (mod_is_gameplay_suspended(mod)) break;
                 }
+                free(ids);
             }
         }
         g_last_layout_state = state_ptr;
@@ -15405,17 +15533,19 @@ void lua_manager_on_frame() {
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
         if (!mod_is_runtime_active(mod)) continue;
-        int* refs = NULL;
+        unsigned int* ids = NULL;
         int ref_count = 0;
-        if (!reflist_snapshot(&mod->on_frame, &refs, &ref_count)) {
+        if (!reflist_snapshot(&mod->on_frame, &ids, &ref_count)) {
             log_mod(mod, "ERROR", "on_frame dispatch snapshot failed: out of memory");
             mod->error_count++;
             continue;
         }
 
         for (int i = 0; i < ref_count; i++) {
+            int ref = mod_callback_list_ref(&mod->on_frame, ids[i]);
             double started_ms = perf_now_ms();
-            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
+            if (ref == LUA_NOREF || ref == LUA_REFNIL) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
                 char buf[512];
@@ -15427,7 +15557,7 @@ void lua_manager_on_frame() {
             mod_perf_counter_record(&mod->perf_frame, perf_now_ms() - started_ms);
             if (mod_is_gameplay_suspended(mod)) break;
         }
-        free(refs);
+        free(ids);
     }
 
     // Always flush sprite batches after mod on_frame callbacks.  We fire from
@@ -15476,17 +15606,19 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
         LoadedMod* mod = &g_mods[mi];
         int mod_consumed = 0;
         if (!mod_is_runtime_active(mod)) continue;
-        int* refs = NULL;
+        unsigned int* ids = NULL;
         int ref_count = 0;
-        if (!reflist_snapshot(&mod->on_event, &refs, &ref_count)) {
+        if (!reflist_snapshot(&mod->on_event, &ids, &ref_count)) {
             log_mod(mod, "ERROR", "on_event dispatch snapshot failed: out of memory");
             mod->error_count++;
             continue;
         }
 
         for (int i = 0; i < ref_count; i++) {
+            int ref = mod_callback_list_ref(&mod->on_event, ids[i]);
             double started_ms = perf_now_ms();
-            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[i]);
+            if (ref == LUA_NOREF || ref == LUA_REFNIL) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             lua_pushvalue(L, -2); // event table
             if (lua_pcall(L, 1, 1, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
@@ -15507,7 +15639,7 @@ int lua_manager_on_event(const char* type, int sym, int scancode, int modmask, i
             mod_perf_counter_record(&mod->perf_event, perf_now_ms() - started_ms);
             if (mod_is_gameplay_suspended(mod)) break;
         }
-        free(refs);
+        free(ids);
         mod_trace_event_log(mod, type, sym, x, y, button, ref_count, mod_consumed);
     }
 
@@ -16920,19 +17052,24 @@ void lua_manager_config_trigger_action(int mod_index, int entry_index) {
 
         if (a->handlers.count <= 0) break;
 
-        int count = a->handlers.count;
-        int* refs = (int*)malloc(sizeof(int) * count);
-        if (!refs) {
+        int count = 0;
+        unsigned int* ids = NULL;
+        if (!mod_callback_list_snapshot(&a->handlers, &ids, &count)) {
             log_mod(m, "ERROR", "config action handler dispatch failed: out of memory");
             return;
         }
 
-        for (int i = 0; i < count; i++) {
-            refs[i] = a->handlers.refs[i];
-        }
-
         for (int hi = 0; hi < count; hi++) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, refs[hi]);
+            int ref = LUA_NOREF;
+            for (int current = 0; current < m->cfg_action_count; current++) {
+                if (_stricmp(m->cfg_actions[current].key, e->key) == 0) {
+                    ref = mod_callback_list_ref(
+                        &m->cfg_actions[current].handlers, ids[hi]);
+                    break;
+                }
+            }
+            if (ref == LUA_NOREF || ref == LUA_REFNIL) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
             if (lua_pcall(L, 0, 0, 0) != 0) {
                 const char* err = lua_tostring(L, -1);
                 char buf[512];
@@ -16944,7 +17081,7 @@ void lua_manager_config_trigger_action(int mod_index, int entry_index) {
             if (mod_is_gameplay_suspended(m)) break;
         }
 
-        free(refs);
+        free(ids);
         break;
     }
 }

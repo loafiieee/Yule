@@ -190,17 +190,9 @@ Runtime acceptance still required:
       cleanup, deployment docs, and guarded test integration are complete.
 
 Framework API release gate:
-    - P1: Extend the now owner-scoped, cancellation-safe, 8-MiB-bounded `mod.http` GET
-      surface with explicit redirect/status/header metadata and live concurrent
-      cancel/unload/reuse tests. Preserve its opaque owner-bound handles, eight-worker
-      ceiling, ten-second phase timeouts, and deferred canceled-worker cleanup.
     - P1: Add owner-scoped console command registration with namespaced commands, help/
       usage metadata, typed or raw arguments, duplicate detection, online suspension
       guards, unregister handles, unload cleanup, and console/help documentation.
-    - P1: Return removable subscription handles from append-only lifecycle/event/config
-      registrations, with idempotent `remove()` and automatic unload cleanup. This avoids
-      duplicate handlers when a mod dynamically reconfigures itself without requiring a
-      full hot reload.
     - P1: Finish explicit asset ownership/removal and repeated hot-reload memory tests for
       mod spritesheets, texture/font replacements, and retired atlases before promising
       long-running live authoring.
@@ -295,8 +287,7 @@ Feature backlog:
       preserve the query returned separately by `WinHttpCrackUrl`, strip client-only
       fragments, synthesize `/` only for a genuinely empty path, and bound the combined
       wide request target. Static lifecycle/request construction checks, API docs, and the
-      HTTP hardening spec pin the fix while the broader metadata/live-lifecycle P1 remains
-      open.
+      HTTP hardening spec pin the fix.
 
     - Bounded strict `mod.json`: deterministic encode and full-document decode now cover
       finite numbers, UTF-8/Unicode escapes and surrogate pairs, explicit null, preserved
@@ -316,6 +307,15 @@ Feature backlog:
       flat API-1 compatibility fields and the local-only mismatch escape remain. The
       deprecation/removal rules, schema, console diagnostics, native compatibility matrix,
       Lua/build integration checks, and full reference examples are pinned.
+
+    - Removable owner-scoped Lua subscriptions: `mod.on_frame`, `mod.on_tick`,
+      `mod.on_tick_post`, `mod.on_event`, `mod.on_layout`, and `config.on_action` now
+      return handles with idempotent `remove()`. Dispatch snapshots stable subscription
+      IDs, so callbacks can safely remove themselves or later callbacks and newly added
+      handlers wait until the next dispatch. Unload still clears every remaining registry
+      reference. API revision 4 exposes `events.removable`; a focused native callback-list
+      stress test, Lua wiring checks, full runtime link, and API documentation pin the
+      registration, removal, memory, and cleanup contract.
 
     - General owner-safe file picker: `mod.fs.pick_file(options)` provides bounded custom
       display-name/pattern filters, optional All-files exposure and initial filter choice,
@@ -384,8 +384,12 @@ Feature backlog:
       outstanding work is canceled on unload, canceled slots cannot be freed/reused until
       their WinHTTP worker actually publishes completion, worker response buffers remain
       private until publication, and both declared and streaming bodies are capped at
-      8 MiB. Ten-second phase timeouts and the eight-worker process ceiling remain; focused
-      lifecycle static coverage pins the race fix and bounds.
+      8 MiB. Successful and HTTP-error terminal polls now include bounded status, final
+      URL, redirect count, and allowlisted response-header metadata; automatic redirects
+      are capped at five and refuse HTTPS downgrades. Ten-second phase timeouts and the
+      eight-worker process ceiling remain. A real concurrent loopback WinHTTP test covers
+      redirect metadata, owner isolation, all eight slots, cancel/unload, deferred worker
+      cleanup, slot reuse, and stale handles; static coverage pins the limits and wiring.
 
     - Private-LAN online-server administration baseline: a separate default-loopback,
       dependency-free listener has no password/login page, refuses public/wildcard binds,

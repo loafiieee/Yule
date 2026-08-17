@@ -12,7 +12,7 @@ extern "C" {
  * within one major and therefore remain backward compatible.
  */
 #define MOD_API_MAJOR 1
-#define MOD_API_REVISION 2
+#define MOD_API_REVISION 4
 #define MOD_API_VERSION MOD_API_MAJOR
 
 #define MOD_API_CAPABILITY_NAME_MAX 64

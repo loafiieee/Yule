@@ -19,7 +19,7 @@ sources=(
   content_registry.c content_tiles.c content_bridge.c map_script.c
   cursor_ext.c
   credential_ext.c online_control.c launch_request.c launch_ipc.c
-  lua_manager.c mod_api.c mod_fs.c mod_http.c mod_json.c
+  lua_manager.c mod_api.c mod_callbacks.c mod_fs.c mod_http.c mod_json.c
   ggpo_ext.c ggpo_loopback.c ggpo_local.c ggpo_net.c
   fp_control.c rollback_schema.c
   image_util.c text_util.c console_catalog.c console_parse.c command_history.c

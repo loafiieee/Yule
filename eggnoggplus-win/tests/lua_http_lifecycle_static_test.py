@@ -50,6 +50,23 @@ assert "URL scheme must be http or https" in worker
 assert "URL credentials are not supported" in worker
 assert "WinHttpOpenRequest(conn, L\"GET\"" in worker
 assert "request_target," in worker
+assert "HTTP_MAX_REDIRECTS 5u" in SOURCE
+assert "WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS" in worker
+assert "WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP" in worker
+assert "http_capture_response_metadata(req, slot);" in worker
+assert "slot->status_code != 200" in worker
+assert "WINHTTP_CALLBACK_STATUS_REDIRECT" in SOURCE
+assert 'lua_setfield(L, -2, "redirect_count")' in SOURCE
+assert 'lua_setfield(L, -2, "headers")' in SOURCE
+for header in (
+    "content-type",
+    "content-length",
+    "etag",
+    "last-modified",
+    "cache-control",
+    "location",
+):
+    assert f'"{header}"' in SOURCE
 
 assert "owner_enabled" in get
 assert "!*owner_enabled" in get
@@ -57,10 +74,11 @@ assert "luaL_checklstring" in get
 assert "strlen(url_utf8) != url_bytes" in get
 assert "MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS" in get
 assert "slot->owner = owner;" in get
-assert "slot->handle = g_http_next_handle;" in get
+assert "slot->handle = http_allocate_handle();" in get
 assert "lua_pushinteger(L, slot->handle)" in get
 assert "http_find_slot(handle, owner)" in poll
 assert "http_release_slot(slot)" in poll
+assert "lua_http_push_response(L, slot)" in poll
 
 assert "InterlockedExchange(&slot->cancelled, 1)" in cancel
 assert "CloseHandle" not in cancel

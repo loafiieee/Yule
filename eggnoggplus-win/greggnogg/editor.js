@@ -2140,10 +2140,21 @@
       });
 
       swatch.addEventListener("click", function () {
-        editor.hidden = !editor.hidden;
-        field.classList.toggle("is-expanded", !editor.hidden);
-        swatch.setAttribute("aria-expanded", editor.hidden ? "false" : "true");
-        if (!editor.hidden) sliders[0].focus();
+        var opening = editor.hidden;
+        if (opening) {
+          host.querySelectorAll(".color-field.is-expanded").forEach(function (otherField) {
+            if (otherField === field) return;
+            otherField.classList.remove("is-expanded");
+            var otherEditor = otherField.querySelector(".color-channel-editor");
+            var otherSwatch = otherField.querySelector(".color-swatch-button");
+            if (otherEditor) otherEditor.hidden = true;
+            if (otherSwatch) otherSwatch.setAttribute("aria-expanded", "false");
+          });
+        }
+        editor.hidden = !opening;
+        field.classList.toggle("is-expanded", opening);
+        swatch.setAttribute("aria-expanded", opening ? "true" : "false");
+        if (opening) sliders[0].focus();
       });
       input.addEventListener("focus", begin);
       rgb.addEventListener("focus", begin);

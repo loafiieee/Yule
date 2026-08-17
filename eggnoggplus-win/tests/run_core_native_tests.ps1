@@ -72,6 +72,17 @@ try {
         'tests\mod_api_test.c', 'mod_api.c',
         '-o', 'build\mod_api_test.exe'
     )
+    Invoke-NativeTest 'removable mod callback list tests' '.\build\mod_callbacks_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\mod_callbacks_test.c', 'mod_callbacks.c',
+        '-o', 'build\mod_callbacks_test.exe', '-lluajit-5.1'
+    )
+    Invoke-NativeTest 'mod.http response/lifecycle tests' '.\build\mod_http_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        '-D_WIN32_WINNT=0x0601',
+        'tests\mod_http_test.c', 'mod_http.c',
+        '-o', 'build\mod_http_test.exe', '-lluajit-5.1', '-lwinhttp', '-lws2_32'
+    )
     Invoke-NativeTest 'bounded Lua JSON parser/encoder tests' '.\build\mod_json_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\mod_json_test.c', 'mod_json.c',
@@ -169,7 +180,7 @@ try {
         'third_party\quickjs-ng\quickjs-amalgam.c',
         '-w',
         'online_control.c', 'launch_request.c', 'launch_ipc.c',
-        'lua_manager.c', 'mod_api.c', 'mod_fs.c', 'mod_http.c', 'mod_json.c',
+        'lua_manager.c', 'mod_api.c', 'mod_callbacks.c', 'mod_fs.c', 'mod_http.c', 'mod_json.c',
         'ggpo_ext.c',
         'ggpo_loopback.c', 'ggpo_local.c', 'ggpo_net.c',
         'fp_control.c', 'rollback_schema.c',
@@ -212,6 +223,8 @@ try {
         'tests\discord_presence_static_test.py',
         'tests\bytebeat_lua_static_test.py',
         'tests\lua_http_lifecycle_static_test.py',
+        'tests\greggnogg_ui_static_test.py',
+        'tests\lua_subscription_static_test.py',
         'tests\lua_online_api_static_test.py',
         'tests\lua_fs_picker_static_test.py',
         'tests\mod_api_integration_static_test.py',

@@ -34,13 +34,16 @@
   const callback = (name, when, callbackSignature, example, options = {}) =>
     fn(name, `${name}(callback)`, `Registers the callback that runs ${when}.`,
       [p("callback", callbackSignature, "Function invoked by the framework.")],
-      "No values. Registration replaces the previous callback for this mod.",
+      options.single
+        ? "No values. Registration replaces the previous callback for this mod."
+        : "A subscription handle whose idempotent remove() method returns true once and false thereafter.",
       example,
       {
         ...options,
         details: options.details || "Register during the entry script so the lifecycle is established before the first frame.",
         notes: [
           ...(options.notes || []),
+          ...(options.single ? [] : ["Keep the handle when dynamically reconfiguring a mod; every remaining subscription is removed automatically on unload."]),
           "Callback failures are logged against the owning mod instead of escaping into the native game loop."
         ]
       });
@@ -62,10 +65,11 @@
       prop("mod.framework_api_revision", "integer", "Compatibility convenience field for the additive API revision.", "assert(mod.framework_api_revision == mod.api.revision)", { notes: ["Prefer mod.api.revision in new code."] }),
       callback("mod.on_load", "after the entry script finishes and the package becomes active", "function()", `mod.on_load(function()
   mod.log("initialization complete")
-end)`),
+end)`, { single: true }),
       callback("mod.on_unload", "before disable, hot reload, or framework shutdown", "function()", `mod.on_unload(function()
   mod.audio.stop_music()
 end)`, {
+        single: true,
         notes: ["Use this to release logical ownership and stop presentation work. Native resources registered to the mod are also owner-cleaned."]
       }),
       callback("mod.on_frame", "once per rendered frame", "function()", `mod.on_frame(function()
@@ -105,12 +109,13 @@ end)`, {
         "Registers a callback that runs while the named native or custom screen lays out its controls.",
         [p("state_name", "string", "State name such as main, options, options_paused, remap1, remap2, mods, game, or a custom state."),
          p("callback", "function()", "Layout mutation callback.")],
-        "No values. Multiple state-specific registrations may coexist.",
-        `mod.on_layout("main", function()
+        "A subscription handle whose idempotent remove() method returns true once and false thereafter.",
+        `local layout_subscription = mod.on_layout("main", function()
   local button = mod.ui.find_button_by_label("OPTIONS")
   if button then mod.ui.button_set_pos_ptr(button, 40, 420) end
-end)`,
-        { tags: ["cosmetic"], notes: ["Pointer-oriented button calls are native-build-sensitive; prefer owner-safe native_button helpers for new controls."] }),
+end)
+-- layout_subscription:remove()`,
+        { tags: ["cosmetic"], notes: ["Multiple state-specific registrations may coexist and are owner-cleaned on unload.", "Pointer-oriented button calls are native-build-sensitive; prefer owner-safe native_button helpers for new controls."] }),
       fn("mod.log", "mod.log(message)", "Writes an informational line tagged with this mod id.",
         [p("message", "any", "Value converted to text.")], "No values.",
         `mod.log("map count = " .. mod.game.map_count())`),
@@ -178,11 +183,11 @@ if not ok then mod.warn(err) end`, { errors: "Malformed identifiers raise a Lua 
         { notes: ["Use values representable by the line-based configuration format."] }),
       fn("config.on_action", "config.on_action(key, callback)", "Binds an action-type Mods menu row to a callback.",
         [p("key", "string", "Manifest configuration item key with type action."), p("callback", "function()", "Function invoked when the user activates the row.")],
-        "No values.",
-        `config.on_action("clear_cache", function()
+        "A subscription handle whose idempotent remove() method returns true once and false thereafter.",
+        `local clear_subscription = config.on_action("clear_cache", function()
   mod.audio.clear_generated()
 end)`,
-        { notes: ["Actions stop while a gameplay-affecting mod is suspended online."] })
+        { notes: ["Actions stop while a gameplay-affecting mod is suspended online.", "Action subscriptions are owner-cleaned on unload."] })
     ]
   });
 
@@ -752,9 +757,12 @@ if chunk == false then mod.net.close(slot) end`, { tags: ["read-only"], notes: [
     description: "Asynchronous WinHTTP GET requests for trusted bounded endpoints.",
     lifecycle: "Eight workers are shared process-wide, but handles and cleanup are owner-scoped. Cancel marks a request immediately; its slot is not freed or reused until the worker has actually finished.",
     entries: [
-      fn("mod.http.get", "mod.http.get(url)", "Starts an asynchronous HTTP or HTTPS GET.", [p("url", "string", "Strict UTF-8 HTTP(S) URL, at most the native 2,048-wide-character buffer.")], "Opaque owner-bound request handle; nil plus an error when invalid or capacity is exhausted.", `local request, err = mod.http.get("https://example.com/version.json?channel=stable")`, { notes: ["Query strings are preserved in the request target; client-only fragments are stripped.", "Embedded URL credentials and non-HTTP(S) schemes are rejected.", "Resolve/connect/send/receive timeouts are 10 seconds.", "Bodies larger than 8 MiB are rejected from Content-Length and while streaming.", "This general trusted-mod API does not enforce the updater's stricter host/redirect policy."] }),
-      fn("mod.http.poll", "mod.http.poll(handle)", "Polls one asynchronous request.", [p("handle", "integer", "Handle returned by get.")], "\"pending\"; or \"done\", body; or \"error\", message.", `local state, value = mod.http.poll(request)
-if state == "done" then consume(value) end`, { tags: ["read-only"], notes: ["Only HTTP status 200 is treated as success.", "A handle is valid only for the mod that created it and is retired after its terminal poll."] }),
+      fn("mod.http.get", "mod.http.get(url)", "Starts an asynchronous HTTP or HTTPS GET.", [p("url", "string", "Strict UTF-8 HTTP(S) URL, at most the native 2,048-wide-character buffer.")], "Opaque owner-bound request handle; nil plus an error when invalid or capacity is exhausted.", `local request, err = mod.http.get("https://example.com/version.json?channel=stable")`, { notes: ["Query strings are preserved in the request target; client-only fragments are stripped.", "Embedded URL credentials and non-HTTP(S) schemes are rejected.", "Resolve/connect/send/receive timeouts are 10 seconds.", "At most five redirects are followed, and HTTPS-to-HTTP downgrades are refused.", "Bodies larger than 8 MiB are rejected from Content-Length and while streaming.", "This general trusted-mod API does not enforce the updater's stricter host allowlist."] }),
+      fn("mod.http.poll", "mod.http.poll(handle)", "Polls one asynchronous request.", [p("handle", "integer", "Handle returned by get.")], "\"pending\"; or \"done\", body, response; or \"error\", message[, response].", `local state, value, response = mod.http.poll(request)
+if state == "done" then
+  mod.log(("HTTP %d from %s"):format(response.status, response.url))
+  consume(value, response.headers["content-type"])
+end`, { tags: ["read-only"], notes: ["Only HTTP status 200 is treated as success; other HTTP responses return error plus their response table.", "The response table contains status, status_text when supplied, final url, redirected, redirect_count, and a bounded headers table.", "Exposed headers are content-type, content-length, etag, last-modified, cache-control, and location; cookies and authentication headers are never exposed.", "A handle is valid only for the mod that created it and is retired after its terminal poll."] }),
       fn("mod.http.cancel", "mod.http.cancel(handle)", "Cancels an owned request without blocking the game thread.", [p("handle", "integer", "Request handle.")], "No values.", `mod.http.cancel(request)`, { notes: ["Cancellation does not synchronously kill a WinHTTP worker already executing; the framework defers memory/slot cleanup until that worker publishes completion.", "All outstanding requests are canceled automatically when their owning mod unloads."] })
     ]
   });

@@ -27,8 +27,10 @@ int main(void) {
     int i;
 
     CHECK(MOD_API_MAJOR == 1);
-    CHECK(MOD_API_REVISION >= 1);
+    CHECK(MOD_API_REVISION >= 4);
     CHECK(mod_api_capability_count() >= 10);
+    CHECK(mod_api_has_capability("events.removable"));
+    CHECK(mod_api_has_capability("http.response_metadata"));
 
     for (i = 0; i < mod_api_capability_count(); ++i) {
         const char* capability = mod_api_capability_at(i);

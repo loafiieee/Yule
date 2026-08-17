@@ -109,7 +109,9 @@ mod.on_unload(function() end)
 ### Per-frame callback
 
 ```lua
-mod.on_frame(function() end)
+local frame_subscription = mod.on_frame(function() end)
+-- Safe to call repeatedly; only the first call removes it.
+frame_subscription:remove()
 ```
 
 Called once per rendered frame (hooked from `SDL_GL_SwapWindow`). Good for UI, overlays, and presentation logic.
@@ -117,7 +119,7 @@ Called once per rendered frame (hooked from `SDL_GL_SwapWindow`). Good for UI, o
 ### Per-tick callback
 
 ```lua
-mod.on_tick(function() end)
+local tick_subscription = mod.on_tick(function() end)
 ```
 
 Called once per gameplay update (hooked from the native `game_update`) **before** the game consumes player commands for that tick. Use this for bots, deterministic control logic, and data capture.
@@ -125,7 +127,7 @@ Called once per gameplay update (hooked from the native `game_update`) **before*
 ### Event callback
 
 ```lua
-mod.on_event(function(e)
+local event_subscription = mod.on_event(function(e)
   -- return true to consume the event
 end)
 ```
@@ -147,6 +149,15 @@ The framework also emits a synthetic `delta_time` event once per rendered frame.
 Its `value` field is the elapsed time in seconds and may be changed for offline
 time-scale effects. Changing it classifies the mod as gameplay-affecting; online
 rollback always supplies and keeps the unmodified value.
+
+`mod.on_frame`, `mod.on_tick`, `mod.on_tick_post`, `mod.on_event`,
+`mod.on_layout`, and `config.on_action` each return a subscription handle.
+Calling `handle:remove()` unregisters that exact callback and returns `true`;
+later calls return `false`. Dispatch uses stable registration IDs, so a callback
+may safely remove itself or another callback without corrupting the current
+iteration. Registrations added during a dispatch begin on the next dispatch.
+All remaining handles are removed automatically when their mod unloads. The
+single `on_load` and `on_unload` registrations retain replacement semantics.
 
 ### Logging
 

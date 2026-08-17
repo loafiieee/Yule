@@ -295,6 +295,31 @@ if grid then local x = grid.snap(37) end`,
   }
 
   add({
+    id: "console",
+    label: "mod.console",
+    page: "api/runtime.html",
+    description: "Owner-scoped, namespaced commands integrated with the native console's autocomplete and help.",
+    lifecycle: "Each command belongs to its registering mod and is removed automatically on unload or reload.",
+    entries: [
+      fn("mod.console.register", "mod.console.register(local_name, spec)", "Registers mod.<mod-id>.<local-name> with help metadata and a raw or typed Lua handler.",
+        [p("local_name", "string", "Package-local command name using letters, numbers, dots, underscores, or hyphens."),
+         p("spec", "table", "help, optional usage, arguments='raw' or typed descriptors, gameplay flag, and handler function.")],
+        "A handle containing canonical name and idempotent remove(); nil plus an error for duplicate/allocation failure.",
+        `local command = mod.console.register("greet", {
+  help = "Greet a player.",
+  arguments = {
+    { name="name", type="string" },
+    { name="excited", type="boolean", optional=true },
+  },
+  handler = function(name, excited)
+    return "Hello, " .. name .. (excited and "!" or ".")
+  end,
+})`,
+        { notes: ["The console exposes this example as mod.<manifest-id>.greet.", "Typed values are validated before the handler runs; quoted string tokens may contain spaces.", "gameplay=true classifies and suspends the owning mod under managed online safety."] })
+    ]
+  });
+
+  add({
     id: "input",
     label: "mod.input",
     page: "api/runtime.html",

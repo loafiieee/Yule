@@ -28,4 +28,15 @@ assert 'otherField.classList.remove("is-expanded")' in EDITOR
 assert 'otherEditor.hidden = true' in EDITOR
 assert 'otherSwatch.setAttribute("aria-expanded", "false")' in EDITOR
 
+# Preview launch and sharing use one validated URI compiler, so copied links
+# cannot drift from links opened locally.
+assert "copy-preview-button" not in HTML
+assert 'els["preview-button"].addEventListener("contextmenu"' in EDITOR
+assert 'els["mobile-preview-button"].addEventListener("contextmenu"' in EDITOR
+assert "event.preventDefault();\n      copyPreviewLink();" in EDITOR
+assert "function compilePreviewUri()" in EDITOR
+assert EDITOR.count("var uri = compilePreviewUri();") == 2
+assert "await writeClipboardText(uri);" in EDITOR
+assert "document.execCommand(\"copy\")" in EDITOR
+
 print("Greggnogg responsive color-editor static checks: OK")

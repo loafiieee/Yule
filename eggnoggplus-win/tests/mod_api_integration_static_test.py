@@ -26,6 +26,7 @@ assert capabilities == sorted(capabilities)
 assert len(capabilities) == len(set(capabilities))
 for required in (
     "api.capabilities",
+    "console.commands",
     "content.tiles.v1",
     "fs.pick_file",
     "map.lua.v1",

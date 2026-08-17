@@ -190,9 +190,10 @@ Runtime acceptance still required:
       cleanup, deployment docs, and guarded test integration are complete.
 
 Framework API release gate:
-    - P1: Add owner-scoped console command registration with namespaced commands, help/
-      usage metadata, typed or raw arguments, duplicate detection, online suspension
-      guards, unregister handles, unload cleanup, and console/help documentation.
+    - Owner-scoped `mod.console.register` is complete: canonical `mod.<id>.*`
+      namespaces, console autocomplete/help integration, typed or raw arguments,
+      duplicate rejection, gameplay suspension, removable handles, unload cleanup,
+      API capability/revision discovery, documentation, and guarded coverage are in.
     - P1: Finish explicit asset ownership/removal and repeated hot-reload memory tests for
       mod spritesheets, texture/font replacements, and retired atlases before promising
       long-running live authoring.
@@ -246,6 +247,7 @@ Feature backlog:
     - make the admin panel update live
     - allow custom maps to have custom heights/widths
     - heavily expand map.lua functions and make it easier to script/create mods and map lua scripts
+    - be able to choose when an opponent spawns in certain rooms rather than just not spawning them in the end rooms or spawning them always
 
 
 # Completed (source implementation and focused automated coverage)

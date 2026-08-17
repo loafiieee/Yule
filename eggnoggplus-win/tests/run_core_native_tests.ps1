@@ -224,6 +224,7 @@ try {
         'tests\bytebeat_lua_static_test.py',
         'tests\lua_http_lifecycle_static_test.py',
         'tests\greggnogg_ui_static_test.py',
+        'tests\lua_console_commands_static_test.py',
         'tests\lua_subscription_static_test.py',
         'tests\lua_online_api_static_test.py',
         'tests\lua_fs_picker_static_test.py',

@@ -3909,6 +3909,15 @@ static void console_autocomplete(void) {
             text_copy(cands[ncand], CONSOLE_CAND_LEN, command);
             ncand++;
         }
+        {
+            int mod_total = lua_manager_console_command_count();
+            for (int i = 0; i < mod_total && ncand < CONSOLE_CAND_MAX; ++i) {
+                const char* command = lua_manager_console_command_at(i);
+                if (!command || !command[0]) continue;
+                text_copy(cands[ncand], CONSOLE_CAND_LEN, command);
+                ncand++;
+            }
+        }
     } else {
         ncand = console_build_arg_candidates(cands, CONSOLE_CAND_MAX,
                                              toks[0], arg_index,
@@ -4301,7 +4310,39 @@ static void console_show_help(const char* topic) {
         if (g_developer_mode) {
             console_push_line_rgb("  dev [on|off]  (developer mode is ON)", 0.72f, 0.90f, 1.00f);
         }
+        {
+            int mod_command_count = lua_manager_console_command_count();
+            if (mod_command_count > 0) {
+                console_push_line_rgb("Mod commands:", 0.72f, 0.90f, 1.00f);
+                for (int index = 0; index < mod_command_count; ++index) {
+                    const char* name = lua_manager_console_command_at(index);
+                    char help[193];
+                    char usage[161];
+                    char out[CONSOLE_LINE_TEXT];
+                    if (!name ||
+                        !lua_manager_console_command_help(name, help, sizeof(help),
+                                                          usage, sizeof(usage))) continue;
+                    snprintf(out, sizeof(out), "  %s%s%s", name,
+                             usage[0] ? " " : "", usage);
+                    console_push_line_rgb(out, 0.87f, 0.87f, 0.87f);
+                }
+            }
+        }
         return;
+    }
+
+    {
+        char help[193];
+        char usage[161];
+        if (lua_manager_console_command_help(t, help, sizeof(help),
+                                             usage, sizeof(usage))) {
+            char out[CONSOLE_LINE_TEXT];
+            snprintf(out, sizeof(out), "%s%s%s", t,
+                     usage[0] ? " " : "", usage);
+            console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+            console_push_line_rgb(help, 0.87f, 0.87f, 0.87f);
+            return;
+        }
     }
 
     if (_stricmp(t, "discord.app") == 0) {
@@ -8168,8 +8209,17 @@ static void console_execute_input(void) {
         console_close();
     } else {
         char out[CONSOLE_LINE_TEXT];
-        snprintf(out, sizeof(out), "Unknown command: %s (type 'help')", cmd);
-        console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        int result = lua_manager_console_execute_command(cmd, arg, out,
+                                                         (int)sizeof(out));
+        if (result == 0) {
+            snprintf(out, sizeof(out), "Unknown command: %s (type 'help')", cmd);
+            console_push_line_rgb(out, 0.98f, 0.45f, 0.45f);
+        } else if (result < 0) {
+            console_push_line_rgb(out[0] ? out : "Mod command failed",
+                                  0.98f, 0.45f, 0.45f);
+        } else if (out[0]) {
+            console_push_line_rgb(out, 0.60f, 0.88f, 0.72f);
+        }
     }
 
     console_set_input("");

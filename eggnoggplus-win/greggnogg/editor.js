@@ -2517,6 +2517,10 @@
     });
     els["mobile-rooms-button"].addEventListener("click", function () { document.querySelector(".room-rail").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
     els["mobile-preview-button"].addEventListener("click", launchPreview);
+    els["mobile-preview-button"].addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+      copyPreviewLink();
+    });
     els["mobile-export-button"].addEventListener("click", openExport);
 
     els["new-map-button"].addEventListener("click", function () { els["new-map-author"].value = state.document.author || ""; openDialog(els["new-map-dialog"]); });
@@ -2555,6 +2559,10 @@
     });
 
     els["preview-button"].addEventListener("click", launchPreview);
+    els["preview-button"].addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+      copyPreviewLink();
+    });
     els["export-button"].addEventListener("click", openExport);
     els["download-json-button"].addEventListener("click", function () { var data = compilePackage(); if (data) downloadBlob("data.json", data.json, "application/json"); });
     els["download-map-button"].addEventListener("click", function () { var data = compilePackage(); if (data) downloadBlob("data.map", data.map, "text/plain"); });
@@ -2936,23 +2944,32 @@
     }
   }
 
-  function launchPreview() {
+  function compilePreviewUri() {
     var validation;
-    var uri;
-    var link;
     if (state.document.format !== "eggnogg-map/v1") {
       toast("V1 maps only", "Preview links currently support V1 packages.", "error");
-      return;
+      return null;
     }
     commitAllTileArt();
     validation = validate();
     if (validation.errors.length) {
       jumpToIssue(validation.errors[0]);
       toast("Preview blocked", validation.errors[0].message, "error");
-      return;
+      return null;
     }
     try {
-      uri = Core.buildPreviewUri(state.document);
+      return Core.buildPreviewUri(state.document);
+    } catch (error) {
+      toast("Preview failed", error.message, "error");
+      return null;
+    }
+  }
+
+  function launchPreview() {
+    var uri = compilePreviewUri();
+    var link;
+    if (!uri) return;
+    try {
       link = document.createElement("a");
       link.href = uri;
       link.hidden = true;
@@ -2963,6 +2980,37 @@
       toast("Opening Yule", "Your browser may ask for permission to open EGGNOGG+.");
     } catch (error) {
       toast("Preview failed", error.message, "error");
+    }
+  }
+
+  async function writeClipboardText(value) {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(value);
+    } catch (error) {
+      var area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      if (!document.execCommand("copy")) {
+        area.remove();
+        throw error;
+      }
+      area.remove();
+    }
+  }
+
+  async function copyPreviewLink() {
+    var uri = compilePreviewUri();
+    if (!uri) return;
+    try {
+      await writeClipboardText(uri);
+      toast("Preview link copied", "Send it to anyone with this EGGNOGG+ build to open the map directly.");
+    } catch (error) {
+      toast("Could not copy link", "Your browser blocked clipboard access.", "error");
     }
   }
 
@@ -2993,13 +3041,10 @@
     var data = compilePackage();
     if (!data) return;
     try {
-      await navigator.clipboard.writeText(data.map);
+      await writeClipboardText(data.map);
       toast("data.map copied", "Spaces and fixed-width rows were preserved.");
     } catch (error) {
-      var area = document.createElement("textarea");
-      area.value = data.map; document.body.appendChild(area); area.select();
-      document.execCommand("copy"); area.remove();
-      toast("data.map copied", "Spaces and fixed-width rows were preserved.");
+      toast("Could not copy data.map", "Your browser blocked clipboard access.", "error");
     }
   }
 

@@ -14,6 +14,7 @@ static const char* const k_mod_api_capabilities[] = {
     "assets.spritesheets",
     "audio.bytebeat",
     "audio.dollchan_js",
+    "console.commands",
     "content.tiles.v1",
     "events.removable",
     "fs.pick_file",

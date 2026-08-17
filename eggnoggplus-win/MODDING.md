@@ -219,6 +219,61 @@ and must be called out in release notes.
 
 ---
 
+## Console commands (`mod.console`)
+
+Mods can add discoverable commands without claiming global names. The public
+name is always `mod.<mod-id>.<local-name>`; the framework adds that prefix,
+checks it against built-in and mod commands case-insensitively, and includes it
+in console autocomplete and `help`.
+
+```lua
+local raw = mod.console.register("say", {
+  help = "Print text from this mod.",
+  usage = "<text>",
+  arguments = "raw",
+  handler = function(text)
+    return text
+  end,
+})
+
+local teleport = mod.console.register("teleport", {
+  help = "Move a player to a room coordinate.",
+  arguments = {
+    { name = "player", type = "integer" },
+    { name = "x", type = "number" },
+    { name = "y", type = "number" },
+    { name = "quiet", type = "boolean", optional = true },
+  },
+  gameplay = true,
+  handler = function(player, x, y, quiet)
+    -- Apply the mod's gameplay operation here.
+    return quiet and nil or ("moved player " .. player)
+  end,
+})
+```
+
+`mod.console.register(local_name, spec)` returns a handle with the canonical
+`name` and an idempotent `remove()` method, or `nil, error` for a duplicate or
+allocation failure. Remaining commands and Lua references are removed on mod
+unload/reload.
+
+- `help` is required; `usage` is optional. Typed argument declarations generate
+  usage automatically when it is omitted.
+- `arguments = "raw"` passes the trimmed argument tail as one string.
+- A typed `arguments` array accepts `string`, `integer`, `number`, and `boolean`.
+  Descriptor tables may name arguments and make only trailing arguments
+  optional. Quoted console tokens preserve spaces.
+- A handler may return a string, number, or boolean to print it. `nil` produces
+  a short success line. Lua failures are logged against the owning mod.
+- Set `gameplay = true` for commands that can affect simulation. Registration
+  classifies that mod as gameplay-affecting, and its commands are refused while
+  managed online play suspends the mod. Do not hide gameplay work behind a
+  cosmetic command.
+
+The capability id for this surface is `console.commands` (API revision 5).
+
+---
+
 ## Config (in-game editable settings)
 
 If you add a `"config"` field to `mod.json`, the framework will read that file and automatically add settings to the in-game **Options → Mods** menu.

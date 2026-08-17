@@ -28,6 +28,8 @@
 #include "mod_fs.h"
 #include "mod_http.h"
 #include "mod_json.h"
+#include "console_catalog.h"
+#include "console_parse.h"
 
 static lua_State *L = NULL;
 
@@ -628,6 +630,7 @@ static LoadedMod* get_mod_by_index(int mod_index);
 static LoadedMod* get_mod_by_id_ci(const char* mod_id);
 static void mod_suspend_transient_state(LoadedMod* mod);
 static int lua_absindex_compat(lua_State* Ls, int idx);
+static void mod_mark_gameplay_affecting(LoadedMod* mod, const char* reason);
 
 
 #define MOD_ID_LIST_MAX 32
@@ -650,6 +653,41 @@ typedef struct ModDepList {
     ModDepSpec items[MOD_ID_LIST_MAX];
     int count;
 } ModDepList;
+
+#define MOD_CONSOLE_COMMAND_MAX 95
+#define MOD_CONSOLE_HELP_MAX 192
+#define MOD_CONSOLE_USAGE_MAX 160
+#define MOD_CONSOLE_ARG_MAX 8
+
+enum {
+    MOD_CONSOLE_ARGS_RAW = 0,
+    MOD_CONSOLE_ARGS_TYPED = 1
+};
+
+enum {
+    MOD_CONSOLE_ARG_STRING = 1,
+    MOD_CONSOLE_ARG_INTEGER,
+    MOD_CONSOLE_ARG_NUMBER,
+    MOD_CONSOLE_ARG_BOOLEAN
+};
+
+typedef struct ModConsoleArg {
+    char name[32];
+    int type;
+    int optional;
+} ModConsoleArg;
+
+typedef struct ModConsoleCommand {
+    unsigned int subscription_id;
+    char name[MOD_CONSOLE_COMMAND_MAX + 1];
+    char help[MOD_CONSOLE_HELP_MAX + 1];
+    char usage[MOD_CONSOLE_USAGE_MAX + 1];
+    int argument_mode;
+    ModConsoleArg arguments[MOD_CONSOLE_ARG_MAX];
+    int argument_count;
+    int gameplay;
+    int handler_ref;
+} ModConsoleCommand;
 
 struct LoadedMod {
     char id[64];
@@ -692,6 +730,10 @@ struct LoadedMod {
     LuaRefList on_tick;
     LuaRefList on_tick_post;
     LuaRefList on_event;
+
+    ModConsoleCommand* console_commands;
+    int console_command_count;
+    int console_command_cap;
 
     // Fired once per state entry, after the engine's button list is stable.
     LayoutHandler* on_layout;
@@ -3105,6 +3147,9 @@ static LoadedMod* mods_add(void) {
     m->on_layout = NULL;
     m->on_layout_count = 0;
     m->on_layout_cap = 0;
+    m->console_commands = NULL;
+    m->console_command_count = 0;
+    m->console_command_cap = 0;
 
     m->ui_hitboxes = NULL;
     m->ui_hitbox_count = 0;
@@ -3182,7 +3227,8 @@ enum {
     MOD_SUBSCRIPTION_TICK_POST,
     MOD_SUBSCRIPTION_EVENT,
     MOD_SUBSCRIPTION_LAYOUT,
-    MOD_SUBSCRIPTION_CONFIG_ACTION
+    MOD_SUBSCRIPTION_CONFIG_ACTION,
+    MOD_SUBSCRIPTION_CONSOLE_COMMAND
 };
 
 static unsigned int mod_next_subscription_id(LoadedMod* mod) {
@@ -3229,6 +3275,46 @@ static int mod_remove_config_subscription(lua_State* Ls, LoadedMod* mod,
     return 0;
 }
 
+static int mod_remove_console_command(lua_State* Ls, LoadedMod* mod,
+                                      unsigned int id) {
+    int index;
+    if (!mod || id == 0) return 0;
+    for (index = 0; index < mod->console_command_count; ++index) {
+        ModConsoleCommand* command = &mod->console_commands[index];
+        if (command->subscription_id != id) continue;
+        if (command->handler_ref != LUA_NOREF &&
+            command->handler_ref != LUA_REFNIL && Ls) {
+            luaL_unref(Ls, LUA_REGISTRYINDEX, command->handler_ref);
+        }
+        if (index + 1 < mod->console_command_count) {
+            memmove(&mod->console_commands[index],
+                    &mod->console_commands[index + 1],
+                    sizeof(*mod->console_commands) *
+                    (size_t)(mod->console_command_count - index - 1));
+        }
+        mod->console_command_count--;
+        return 1;
+    }
+    return 0;
+}
+
+static void mod_console_commands_clear(lua_State* Ls, LoadedMod* mod) {
+    int index;
+    if (!mod) return;
+    if (Ls) {
+        for (index = 0; index < mod->console_command_count; ++index) {
+            int ref = mod->console_commands[index].handler_ref;
+            if (ref != LUA_NOREF && ref != LUA_REFNIL) {
+                luaL_unref(Ls, LUA_REGISTRYINDEX, ref);
+            }
+        }
+    }
+    free(mod->console_commands);
+    mod->console_commands = NULL;
+    mod->console_command_count = 0;
+    mod->console_command_cap = 0;
+}
+
 static int lua_subscription_remove(lua_State* Ls) {
     LoadedMod* mod =
         (LoadedMod*)lua_touserdata(Ls, lua_upvalueindex(1));
@@ -3258,6 +3344,9 @@ static int lua_subscription_remove(lua_State* Ls) {
             break;
         case MOD_SUBSCRIPTION_CONFIG_ACTION:
             removed = mod_remove_config_subscription(Ls, mod, id);
+            break;
+        case MOD_SUBSCRIPTION_CONSOLE_COMMAND:
+            removed = mod_remove_console_command(Ls, mod, id);
             break;
         default:
             break;
@@ -8210,6 +8299,309 @@ static int __cdecl ui_native_button_filter(void* btn, int event_code) {
     return ret;
 }
 
+static int mod_console_local_name_valid(const char* name) {
+    size_t index;
+    size_t length;
+    int previous_dot = 0;
+    if (!name || !name[0]) return 0;
+    length = strlen(name);
+    if (length > 47 || !isalpha((unsigned char)name[0])) return 0;
+    for (index = 0; index < length; ++index) {
+        unsigned char c = (unsigned char)name[index];
+        if (!(isalnum(c) || c == '_' || c == '-' || c == '.')) return 0;
+        if (c == '.') {
+            if (previous_dot || index + 1 == length) return 0;
+            previous_dot = 1;
+        } else {
+            previous_dot = 0;
+        }
+    }
+    return 1;
+}
+
+static int mod_console_argument_name_valid(const char* name) {
+    size_t index;
+    size_t length;
+    if (!name || !name[0]) return 0;
+    length = strlen(name);
+    if (length >= sizeof(((ModConsoleArg*)0)->name) ||
+        !isalpha((unsigned char)name[0])) return 0;
+    for (index = 1; index < length; ++index) {
+        unsigned char c = (unsigned char)name[index];
+        if (!(isalnum(c) || c == '_')) return 0;
+    }
+    return 1;
+}
+
+static int mod_console_single_line_text_valid(const char* text,
+                                              size_t length) {
+    size_t index;
+    if (!text || strlen(text) != length) return 0;
+    for (index = 0; index < length; ++index) {
+        unsigned char c = (unsigned char)text[index];
+        if (c < 0x20 || c == 0x7f) return 0;
+    }
+    return 1;
+}
+
+static int mod_console_build_name(const LoadedMod* mod, const char* local,
+                                  char* out, size_t out_capacity) {
+    size_t index;
+    int written;
+    if (!mod || !local || !out || out_capacity == 0 ||
+        !mod_console_local_name_valid(local)) return 0;
+    written = snprintf(out, out_capacity, "mod.%s.%s", mod->id, local);
+    if (written < 0 || (size_t)written >= out_capacity ||
+        written > MOD_CONSOLE_COMMAND_MAX) return 0;
+    for (index = 0; out[index]; ++index) {
+        unsigned char c = (unsigned char)out[index];
+        if (c >= 'A' && c <= 'Z') out[index] = (char)(c - 'A' + 'a');
+    }
+    return 1;
+}
+
+static ModConsoleCommand* mod_console_find_command(const char* name,
+                                                    LoadedMod** out_owner) {
+    int mod_index;
+    if (out_owner) *out_owner = NULL;
+    if (!name || !name[0]) return NULL;
+    for (mod_index = 0; mod_index < g_mod_count; ++mod_index) {
+        LoadedMod* mod = &g_mods[mod_index];
+        int command_index;
+        for (command_index = 0;
+             command_index < mod->console_command_count;
+             ++command_index) {
+            ModConsoleCommand* command = &mod->console_commands[command_index];
+            if (_stricmp(command->name, name) != 0) continue;
+            if (out_owner) *out_owner = mod;
+            return command;
+        }
+    }
+    return NULL;
+}
+
+static int mod_console_commands_reserve(LoadedMod* mod, int needed) {
+    ModConsoleCommand* commands;
+    int capacity;
+    if (!mod || needed < 0) return 0;
+    if (needed <= mod->console_command_cap) return 1;
+    capacity = mod->console_command_cap ? mod->console_command_cap * 2 : 4;
+    while (capacity < needed) capacity *= 2;
+    commands = (ModConsoleCommand*)realloc(
+        mod->console_commands, sizeof(*commands) * (size_t)capacity);
+    if (!commands) return 0;
+    mod->console_commands = commands;
+    mod->console_command_cap = capacity;
+    return 1;
+}
+
+static int mod_console_arg_type(const char* name) {
+    if (!name) return 0;
+    if (_stricmp(name, "string") == 0) return MOD_CONSOLE_ARG_STRING;
+    if (_stricmp(name, "integer") == 0 || _stricmp(name, "int") == 0)
+        return MOD_CONSOLE_ARG_INTEGER;
+    if (_stricmp(name, "number") == 0 || _stricmp(name, "float") == 0)
+        return MOD_CONSOLE_ARG_NUMBER;
+    if (_stricmp(name, "boolean") == 0 || _stricmp(name, "bool") == 0)
+        return MOD_CONSOLE_ARG_BOOLEAN;
+    return 0;
+}
+
+static const char* mod_console_arg_type_name(int type) {
+    switch (type) {
+        case MOD_CONSOLE_ARG_STRING: return "string";
+        case MOD_CONSOLE_ARG_INTEGER: return "integer";
+        case MOD_CONSOLE_ARG_NUMBER: return "number";
+        case MOD_CONSOLE_ARG_BOOLEAN: return "boolean";
+        default: return "value";
+    }
+}
+
+static void mod_console_build_usage(ModConsoleCommand* command) {
+    int index;
+    size_t used = 0;
+    if (!command || command->argument_mode != MOD_CONSOLE_ARGS_TYPED ||
+        command->usage[0]) return;
+    for (index = 0; index < command->argument_count; ++index) {
+        ModConsoleArg* arg = &command->arguments[index];
+        int written = snprintf(command->usage + used,
+                               sizeof(command->usage) - used,
+                               "%s%c%s:%s%c",
+                               used ? " " : "",
+                               arg->optional ? '[' : '<', arg->name,
+                               mod_console_arg_type_name(arg->type),
+                               arg->optional ? ']' : '>');
+        if (written < 0 || (size_t)written >= sizeof(command->usage) - used) {
+            command->usage[sizeof(command->usage) - 1] = '\0';
+            return;
+        }
+        used += (size_t)written;
+    }
+}
+
+static int lua_mod_console_register(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    size_t local_length = 0;
+    const char* local = luaL_checklstring(Ls, 1, &local_length);
+    ModConsoleCommand command;
+    unsigned int id;
+    int spec_index;
+    int handler_ref;
+    int saw_optional = 0;
+    size_t length;
+
+    if (!mod || !mod->enabled) {
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "console registration is unavailable because its mod is disabled");
+        return 2;
+    }
+    luaL_checktype(Ls, 2, LUA_TTABLE);
+    memset(&command, 0, sizeof(command));
+    command.handler_ref = LUA_NOREF;
+    command.argument_mode = MOD_CONSOLE_ARGS_RAW;
+    if (strlen(local) != local_length ||
+        !mod_console_build_name(mod, local, command.name,
+                                sizeof(command.name))) {
+        return luaL_error(Ls, "console command names must start with a letter, use only letters, numbers, '.', '_' or '-', and fit the mod.<id> namespace");
+    }
+    if (console_catalog_is_known(command.name) ||
+        mod_console_find_command(command.name, NULL)) {
+        lua_pushnil(Ls);
+        lua_pushfstring(Ls, "console command is already registered: %s",
+                        command.name);
+        return 2;
+    }
+
+    spec_index = lua_absindex_compat(Ls, 2);
+    lua_getfield(Ls, spec_index, "help");
+    if (!lua_isstring(Ls, -1)) {
+        return luaL_error(Ls, "console command spec.help must be a non-empty string");
+    }
+    {
+        const char* help = lua_tolstring(Ls, -1, &length);
+        if (!help || length == 0 || length > MOD_CONSOLE_HELP_MAX ||
+            !mod_console_single_line_text_valid(help, length)) {
+            return luaL_error(Ls, "console command help must contain 1..%d bytes",
+                              MOD_CONSOLE_HELP_MAX);
+        }
+        snprintf(command.help, sizeof(command.help), "%s", help);
+    }
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, spec_index, "usage");
+    if (!lua_isnil(Ls, -1)) {
+        const char* usage;
+        if (!lua_isstring(Ls, -1))
+            return luaL_error(Ls, "console command spec.usage must be a string");
+        usage = lua_tolstring(Ls, -1, &length);
+        if (length > MOD_CONSOLE_USAGE_MAX ||
+            !mod_console_single_line_text_valid(usage, length))
+            return luaL_error(Ls, "console command usage exceeds %d bytes",
+                              MOD_CONSOLE_USAGE_MAX);
+        snprintf(command.usage, sizeof(command.usage), "%s", usage);
+    }
+    lua_pop(Ls, 1);
+
+    lua_getfield(Ls, spec_index, "arguments");
+    if (lua_istable(Ls, -1)) {
+        int arguments_index = lua_absindex_compat(Ls, -1);
+        int count = (int)lua_objlen(Ls, arguments_index);
+        int index;
+        if (count > MOD_CONSOLE_ARG_MAX)
+            return luaL_error(Ls, "console commands support at most %d typed arguments",
+                              MOD_CONSOLE_ARG_MAX);
+        command.argument_mode = MOD_CONSOLE_ARGS_TYPED;
+        command.argument_count = count;
+        for (index = 0; index < count; ++index) {
+            ModConsoleArg* arg = &command.arguments[index];
+            const char* type_name = NULL;
+            lua_rawgeti(Ls, arguments_index, index + 1);
+            if (lua_isstring(Ls, -1)) {
+                size_t type_length = 0;
+                type_name = lua_tolstring(Ls, -1, &type_length);
+                if (!type_name || strlen(type_name) != type_length)
+                    return luaL_error(Ls, "typed console argument %d has an invalid type", index + 1);
+                snprintf(arg->name, sizeof(arg->name), "arg%d", index + 1);
+            } else if (lua_istable(Ls, -1)) {
+                int arg_index = lua_absindex_compat(Ls, -1);
+                size_t name_length = 0;
+                size_t type_length = 0;
+                const char* argument_name;
+                lua_getfield(Ls, arg_index, "name");
+                argument_name = lua_tolstring(Ls, -1, &name_length);
+                if (!argument_name || strlen(argument_name) != name_length ||
+                    !mod_console_argument_name_valid(argument_name))
+                    return luaL_error(Ls, "typed console argument %d requires a name", index + 1);
+                snprintf(arg->name, sizeof(arg->name), "%s", argument_name);
+                lua_pop(Ls, 1);
+                lua_getfield(Ls, arg_index, "type");
+                type_name = lua_tolstring(Ls, -1, &type_length);
+                if (!type_name || strlen(type_name) != type_length)
+                    return luaL_error(Ls, "typed console argument %d requires a type", index + 1);
+                arg->type = mod_console_arg_type(type_name);
+                lua_pop(Ls, 1);
+                lua_getfield(Ls, arg_index, "optional");
+                arg->optional = lua_toboolean(Ls, -1) ? 1 : 0;
+                lua_pop(Ls, 1);
+            } else {
+                return luaL_error(Ls, "typed console argument %d must be a type string or descriptor table", index + 1);
+            }
+            if (!arg->type) arg->type = mod_console_arg_type(type_name);
+            if (!arg->type)
+                return luaL_error(Ls, "typed console argument %d has an unknown type", index + 1);
+            if (saw_optional && !arg->optional)
+                return luaL_error(Ls, "required console arguments cannot follow optional arguments");
+            if (arg->optional) saw_optional = 1;
+            lua_pop(Ls, 1);
+        }
+    } else if (!lua_isnil(Ls, -1)) {
+        size_t mode_length = 0;
+        const char* mode = lua_tolstring(Ls, -1, &mode_length);
+        if (!mode || strlen(mode) != mode_length || _stricmp(mode, "raw") != 0)
+            return luaL_error(Ls, "console command spec.arguments must be 'raw' or an argument array");
+    }
+    lua_pop(Ls, 1);
+    mod_console_build_usage(&command);
+
+    lua_getfield(Ls, spec_index, "gameplay");
+    command.gameplay = lua_toboolean(Ls, -1) ? 1 : 0;
+    lua_pop(Ls, 1);
+    lua_getfield(Ls, spec_index, "handler");
+    if (!lua_isfunction(Ls, -1))
+        return luaL_error(Ls, "console command spec.handler must be a function");
+    handler_ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+
+    if (!mod_console_commands_reserve(mod, mod->console_command_count + 1)) {
+        luaL_unref(Ls, LUA_REGISTRYINDEX, handler_ref);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "console command registration failed: out of memory");
+        return 2;
+    }
+    id = mod_next_subscription_id(mod);
+    if (id == 0) {
+        luaL_unref(Ls, LUA_REGISTRYINDEX, handler_ref);
+        lua_pushnil(Ls);
+        lua_pushstring(Ls, "console command registration failed: no handle id");
+        return 2;
+    }
+    command.subscription_id = id;
+    command.handler_ref = handler_ref;
+    mod->console_commands[mod->console_command_count++] = command;
+    if (command.gameplay)
+        mod_mark_gameplay_affecting(mod, "gameplay console command");
+    lua_push_subscription(Ls, mod, MOD_SUBSCRIPTION_CONSOLE_COMMAND, id);
+    lua_pushstring(Ls, command.name);
+    lua_setfield(Ls, -2, "name");
+    return 1;
+}
+
+static void push_console_api_table(lua_State* Ls, LoadedMod* mod) {
+    lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod);
+    lua_pushcclosure(Ls, lua_mod_console_register, 1);
+    lua_setfield(Ls, -2, "register");
+}
+
 // =============================
 // Lua API (per-mod; functions are closures with a LoadedMod* upvalue)
 // =============================
@@ -13020,6 +13412,10 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     push_input_api_table(Ls, mod);
     lua_setfield(Ls, -2, "input");
 
+    // Owner-scoped console commands with help, typed arguments, and removal.
+    push_console_api_table(Ls, mod);
+    lua_setfield(Ls, -2, "console");
+
     // Audio helpers (SFX + music playback from mod assets and built-in IDs).
     push_audio_api_table(Ls, mod);
     lua_setfield(Ls, -2, "audio");
@@ -14184,6 +14580,7 @@ static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     reflist_clear(L, &mod->on_tick);
     reflist_clear(L, &mod->on_tick_post);
     reflist_clear(L, &mod->on_event);
+    mod_console_commands_clear(L, mod);
     mod_ui_free(mod);
 
     if (mod->on_layout) {
@@ -14248,6 +14645,7 @@ static void unload_all_mods(void) {
     if (!L) {
         for (int i = 0; i < g_mod_count; i++) {
             mod_http_cancel_owner(&g_mods[i]);
+            mod_console_commands_clear(NULL, &g_mods[i]);
             mod_bind_clear(&g_mods[i]);
             mod_storage_clear(&g_mods[i]);
             mod_audio_clear(&g_mods[i]);
@@ -15798,6 +16196,215 @@ int lua_manager_framework_api_revision(void) {
 
 int lua_manager_framework_api_capability_count(void) {
     return mod_api_capability_count();
+}
+
+int lua_manager_console_command_count(void) {
+    int count = 0;
+    int mod_index;
+    for (mod_index = 0; mod_index < g_mod_count; ++mod_index) {
+        if (!g_mods[mod_index].enabled) continue;
+        count += g_mods[mod_index].console_command_count;
+    }
+    return count;
+}
+
+const char* lua_manager_console_command_at(int index) {
+    int mod_index;
+    if (index < 0) return NULL;
+    for (mod_index = 0; mod_index < g_mod_count; ++mod_index) {
+        LoadedMod* mod = &g_mods[mod_index];
+        if (!mod->enabled) continue;
+        if (index < mod->console_command_count)
+            return mod->console_commands[index].name;
+        index -= mod->console_command_count;
+    }
+    return NULL;
+}
+
+int lua_manager_console_command_help(const char* name,
+                                     char* help, int help_sz,
+                                     char* usage, int usage_sz) {
+    LoadedMod* owner = NULL;
+    ModConsoleCommand* command = mod_console_find_command(name, &owner);
+    if (help && help_sz > 0) help[0] = '\0';
+    if (usage && usage_sz > 0) usage[0] = '\0';
+    if (!command || !owner || !owner->enabled) return 0;
+    if (help && help_sz > 0)
+        snprintf(help, (size_t)help_sz, "%s", command->help);
+    if (usage && usage_sz > 0)
+        snprintf(usage, (size_t)usage_sz, "%s", command->usage);
+    return 1;
+}
+
+static int mod_console_parse_boolean(const char* value, int* out) {
+    if (!value) return 0;
+    if (_stricmp(value, "true") == 0 || _stricmp(value, "yes") == 0 ||
+        _stricmp(value, "on") == 0 || strcmp(value, "1") == 0) {
+        if (out) *out = 1;
+        return 1;
+    }
+    if (_stricmp(value, "false") == 0 || _stricmp(value, "no") == 0 ||
+        _stricmp(value, "off") == 0 || strcmp(value, "0") == 0) {
+        if (out) *out = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static void mod_console_usage_error(const ModConsoleCommand* command,
+                                    const char* detail,
+                                    char* out, int out_sz) {
+    if (!out || out_sz <= 0 || !command) return;
+    if (command->usage[0]) {
+        snprintf(out, (size_t)out_sz, "Usage: %s %s%s%s",
+                 command->name, command->usage,
+                 detail && detail[0] ? " (" : "",
+                 detail && detail[0] ? detail : "");
+        if (detail && detail[0]) {
+            size_t length = strlen(out);
+            if (length + 1 < (size_t)out_sz) {
+                out[length] = ')';
+                out[length + 1] = '\0';
+            }
+        }
+    } else {
+        snprintf(out, (size_t)out_sz, "Usage: %s%s%s%s",
+                 command->name,
+                 detail && detail[0] ? " (" : "",
+                 detail && detail[0] ? detail : "",
+                 detail && detail[0] ? ")" : "");
+    }
+}
+
+int lua_manager_console_execute_command(const char* name, const char* args,
+                                        char* out, int out_sz) {
+    LoadedMod* owner = NULL;
+    ModConsoleCommand* command;
+    ModConsoleCommand snapshot;
+    char argument_buffer[512];
+    char* cursor;
+    int argument_index;
+    int argument_count = 0;
+    int handler_ref;
+
+    if (out && out_sz > 0) out[0] = '\0';
+    command = mod_console_find_command(name, &owner);
+    if (!command || !owner) return 0;
+    if (!owner->enabled) {
+        if (out && out_sz > 0)
+            snprintf(out, (size_t)out_sz,
+                     "%s is unavailable because its mod is disabled", name);
+        return -1;
+    }
+    if (mod_is_gameplay_suspended(owner)) {
+        if (out && out_sz > 0)
+            snprintf(out, (size_t)out_sz,
+                     "%s is suspended during online play", name);
+        return -1;
+    }
+    if (!L || command->handler_ref == LUA_NOREF ||
+        command->handler_ref == LUA_REFNIL) {
+        if (out && out_sz > 0)
+            snprintf(out, (size_t)out_sz, "%s has no active handler", name);
+        return -1;
+    }
+
+    snapshot = *command;
+    handler_ref = snapshot.handler_ref;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, handler_ref);
+    if (snapshot.argument_mode == MOD_CONSOLE_ARGS_RAW) {
+        lua_pushstring(L, args ? args : "");
+        argument_count = 1;
+    } else {
+        snprintf(argument_buffer, sizeof(argument_buffer), "%s", args ? args : "");
+        cursor = argument_buffer;
+        for (argument_index = 0;
+             argument_index < snapshot.argument_count;
+             ++argument_index) {
+            ModConsoleArg* spec = &snapshot.arguments[argument_index];
+            char* token = console_parse_token(&cursor);
+            long integer_value;
+            double number_value;
+            int boolean_value;
+            if (!token) {
+                if (!spec->optional) {
+                    lua_pop(L, 1 + argument_count);
+                    mod_console_usage_error(&snapshot, "missing required argument",
+                                            out, out_sz);
+                    return -1;
+                }
+                lua_pushnil(L);
+                argument_count++;
+                continue;
+            }
+            switch (spec->type) {
+                case MOD_CONSOLE_ARG_STRING:
+                    lua_pushstring(L, token);
+                    break;
+                case MOD_CONSOLE_ARG_INTEGER:
+                    if (!console_try_parse_long(token, &integer_value)) {
+                        lua_pop(L, 1 + argument_count);
+                        mod_console_usage_error(&snapshot, "expected integer",
+                                                out, out_sz);
+                        return -1;
+                    }
+                    lua_pushinteger(L, (lua_Integer)integer_value);
+                    break;
+                case MOD_CONSOLE_ARG_NUMBER:
+                    if (!console_try_parse_double(token, &number_value)) {
+                        lua_pop(L, 1 + argument_count);
+                        mod_console_usage_error(&snapshot, "expected number",
+                                                out, out_sz);
+                        return -1;
+                    }
+                    lua_pushnumber(L, (lua_Number)number_value);
+                    break;
+                case MOD_CONSOLE_ARG_BOOLEAN:
+                    if (!mod_console_parse_boolean(token, &boolean_value)) {
+                        lua_pop(L, 1 + argument_count);
+                        mod_console_usage_error(&snapshot, "expected boolean",
+                                                out, out_sz);
+                        return -1;
+                    }
+                    lua_pushboolean(L, boolean_value);
+                    break;
+                default:
+                    lua_pop(L, 1 + argument_count);
+                    mod_console_usage_error(&snapshot, "invalid argument schema",
+                                            out, out_sz);
+                    return -1;
+            }
+            argument_count++;
+        }
+        if (console_parse_token(&cursor)) {
+            lua_pop(L, 1 + argument_count);
+            mod_console_usage_error(&snapshot, "too many arguments", out, out_sz);
+            return -1;
+        }
+    }
+
+    if (lua_pcall(L, argument_count, 1, 0) != 0) {
+        const char* error = lua_tostring(L, -1);
+        if (out && out_sz > 0)
+            snprintf(out, (size_t)out_sz, "%s failed: %s", snapshot.name,
+                     error ? error : "unknown Lua error");
+        log_mod(owner, "ERROR", out && out[0] ? out : "console command failed");
+        lua_pop(L, 1);
+        owner->error_count++;
+        return -1;
+    }
+    if (out && out_sz > 0) {
+        if (lua_isstring(L, -1)) {
+            snprintf(out, (size_t)out_sz, "%s", lua_tostring(L, -1));
+        } else if (lua_isboolean(L, -1)) {
+            snprintf(out, (size_t)out_sz, "%s",
+                     lua_toboolean(L, -1) ? "true" : "false");
+        } else {
+            snprintf(out, (size_t)out_sz, "%s: OK", snapshot.name);
+        }
+    }
+    lua_pop(L, 1);
+    return 1;
 }
 
 static int content_builtin_sprite_resolve(const char* local_id,

@@ -52,6 +52,10 @@ try {
         Remove-Item Env:EGGNOGGPLUS_CREDENTIAL_TEST_LIVE -ErrorAction SilentlyContinue
     }
 
+    Invoke-NativeTest 'native room reset lifecycle tests' '.\build\native_room_reset_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\native_room_reset_test.c', '-o', 'build\native_room_reset_test.exe'
+    )
     Invoke-NativeTest 'credential lifecycle tests' '.\build\credential_ext_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\credential_ext_test.c', 'credential_ext.c',
@@ -59,7 +63,7 @@ try {
     )
     Invoke-NativeTest 'nonblocking TCP transport tests' '.\build\net_ext_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
-        '-D_WIN32_WINNT=0x0601', 'tests\net_ext_test.c', 'net_ext.c',
+        '-D_WIN32_WINNT=0x0601', 'tests\net_ext_test.c', 'net_ext.c', 'online_control.c',
         '-o', 'build\net_ext_test.exe', '-lws2_32', '-liphlpapi'
     )
     Invoke-NativeTest 'online control parser/lifecycle tests' '.\build\online_control_test.exe' @(
@@ -71,6 +75,12 @@ try {
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\mod_api_test.c', 'mod_api.c',
         '-o', 'build\mod_api_test.exe'
+    )
+    Invoke-NativeTest 'asset ownership and validation tests' '.\build\asset_ext_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        '-D_WIN32_WINNT=0x0601', '-DASSET_EXT_TEST',
+        'tests\asset_ext_test.c', 'font_ext.c', 'texture_ext.c',
+        '-o', 'build\asset_ext_test.exe'
     )
     Invoke-NativeTest 'removable mod callback list tests' '.\build\mod_callbacks_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
@@ -192,7 +202,7 @@ try {
         '-lcomdlg32', '-lshell32', '-lole32', '-lm'
     )
 
-    & node --test 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
+    & node --test 'tests\online_server_storage_test.js' 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
     if ($LASTEXITCODE -ne 0) {
         throw "Discord LFG bot/redirect tests failed with exit code $LASTEXITCODE."
     }
@@ -211,6 +221,7 @@ try {
         'tests\online_menu_tick_static_test.py',
         'tests\online_troubleshooter_static_test.py',
         'tests\online_admin_integration_static_test.py',
+        'tests\online_server_control_safety_test.py',
         'tests\friend_challenge_map_picker_static_test.py',
         'tests\social_controls_static_test.py',
         'tests\private_rematch_static_test.py',
@@ -231,6 +242,7 @@ try {
         'tests\lua_online_api_static_test.py',
         'tests\lua_fs_picker_static_test.py',
         'tests\mod_api_integration_static_test.py',
+        'tests\asset_api_static_test.py',
         'tests\mod_json_integration_static_test.py',
         'tests\bytebeat_js_static_test.py',
         'tests\music_console_static_test.py',

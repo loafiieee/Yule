@@ -6,6 +6,7 @@ const dgram = require("dgram");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { loadUserStore, atomicWriteFile } = require("./storage");
 const { startAdminServerFromEnv } = require("./admin_server");
 const { createDiscordLfgBotFromEnv } = require("./discord_lfg_bot");
 const { startRedirectServerFromEnv } = require("./lfg_redirect");
@@ -142,42 +143,26 @@ function sanitizeHostHint(value) {
 }
 
 function loadDB() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const parsed = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-      if (parsed && typeof parsed === "object") return parsed;
-    }
-  } catch (err) {
-    console.error("[db] load failed:", err.message);
-  }
-  return { users: {} };
+  return loadUserStore(DB_FILE);
 }
 
 function saveDB() {
   try {
     fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
+    atomicWriteFile(DB_FILE, JSON.stringify(db, null, 2));
   } catch (err) {
     console.error("[db] save failed:", err.message);
   }
 }
 
 function loadRatings() {
-  try {
-    if (fs.existsSync(RATINGS_FILE)) {
-      const parsed = JSON.parse(fs.readFileSync(RATINGS_FILE, "utf8"));
-      if (parsed && typeof parsed === "object") return parsed;
-    }
-  } catch (err) {
-    console.error("[ratings] load failed:", err.message);
-  }
-  return { users: {} };
+  return loadUserStore(RATINGS_FILE);
 }
 
 function saveRatings() {
   try {
     fs.mkdirSync(path.dirname(RATINGS_FILE), { recursive: true });
-    fs.writeFileSync(RATINGS_FILE, JSON.stringify(ratings, null, 2), "utf8");
+    atomicWriteFile(RATINGS_FILE, JSON.stringify(ratings, null, 2));
   } catch (err) {
     console.error("[ratings] save failed:", err.message);
   }
@@ -190,16 +175,17 @@ function loadServerSecret() {
       const text = fs.readFileSync(SECRET_FILE, "utf8").trim();
       if (/^[0-9a-fA-F]{64}$/.test(text)) return Buffer.from(text, "hex");
       if (text.length >= 16) return Buffer.from(text, "utf8");
+      throw new Error("invalid existing rating secret");
     }
   } catch (err) {
-    console.error("[ratings] secret load failed:", err.message);
+    throw new Error(`[ratings] secret load failed: ${err.message}`);
   }
   const secret = crypto.randomBytes(32).toString("hex");
   try {
     fs.mkdirSync(path.dirname(SECRET_FILE), { recursive: true });
-    fs.writeFileSync(SECRET_FILE, secret, { encoding: "utf8", mode: 0o600 });
+    fs.writeFileSync(SECRET_FILE, secret, { encoding: "utf8", mode: 0o600, flag: "wx" });
   } catch (err) {
-    console.error("[ratings] secret save failed:", err.message);
+    throw new Error(`[ratings] secret save failed: ${err.message}`);
   }
   return Buffer.from(secret, "hex");
 }
@@ -735,7 +721,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     started_by: new Set(),
     committed: false,
     committed_at: 0,
-    p2p_tokens: {},
+    p2p_tokens: Object.create(null),
     p2p_auth_token: makeP2pAuthToken(),
     control_protocol: a.control_protocol,
     match_protocol: a.match_protocol,
@@ -744,7 +730,7 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     game_exe_id: a.game_exe_id,
     framework_dll_id: a.framework_dll_id,
     p2p_endpoints: new Map(),
-    p2p_notified: {},
+    p2p_notified: Object.create(null),
     player_by_index: [],
     force_relay: false,
   };
@@ -993,7 +979,7 @@ function registerP2pEndpoint(matchId, username, token, host, port, localPort, so
   }
   if (P2P_RELAY_ENABLED && generation >= 2 && !match.force_relay) {
     match.force_relay = true;
-    match.p2p_notified = {};
+    match.p2p_notified = Object.create(null);
     console.log(`[relay#${match.id}] direct path did not establish; enabling bounded UDP relay`);
   }
 
@@ -1202,6 +1188,7 @@ function authOk(client, username) {
 }
 
 function handleRegister(client, msg) {
+  if (client.username) return send(client, { type: "auth_fail", reason: "already authenticated; reconnect to change account" });
   const username = normalizeUsername(msg.username);
   const password = String(msg.password || "");
   if (!validUsername(username)) return send(client, { type: "auth_fail", reason: "username: a-z 0-9 _ only, max 24" });
@@ -1225,6 +1212,7 @@ function handleRegister(client, msg) {
 }
 
 function handleLogin(client, msg) {
+  if (client.username) return send(client, { type: "auth_fail", reason: "already authenticated; reconnect to change account" });
   const username = normalizeUsername(msg.username);
   const password = String(msg.password || "");
   const rec = ensureUserShape(username);
@@ -2051,11 +2039,9 @@ function destroyClient(client) {
   broadcastQueueCounts();
 }
 
-const ratingSecret = loadServerSecret();
 const db = loadDB();
-if (!db.users || typeof db.users !== "object") db.users = {};
 const ratings = loadRatings();
-if (!ratings.users || typeof ratings.users !== "object") ratings.users = {};
+const ratingSecret = loadServerSecret();
 for (const username of Object.keys(db.users)) {
   ensureRating(username);
   ensureUserShape(username);
@@ -2378,14 +2364,15 @@ const server = net.createServer((socket) => {
     client.buf += chunk;
     let nl;
     while ((nl = client.buf.indexOf("\n")) >= 0) {
-      const line = client.buf.slice(0, nl).trim();
+      const rawLine = client.buf.slice(0, nl);
+      const line = rawLine.trim();
       client.buf = client.buf.slice(nl + 1);
-      if (!line) continue;
-      if (line.length > MAX_LINE_BYTES) {
+      if (Buffer.byteLength(rawLine, "utf8") > MAX_LINE_BYTES) {
         sendError(client, "message too long");
         destroyClient(client);
         return;
       }
+      if (!line) continue;
       let msg = null;
       try {
         msg = JSON.parse(line);
@@ -2393,8 +2380,20 @@ const server = net.createServer((socket) => {
         sendError(client, "invalid JSON");
         continue;
       }
-      if (!msg || typeof msg !== "object" || !msg.type) continue;
-      dispatch(client, msg);
+      if (!msg || typeof msg !== "object" || Array.isArray(msg) || typeof msg.type !== "string") continue;
+      try {
+        dispatch(client, msg);
+      } catch (err) {
+        // Valid JSON can still contain objects that cannot be coerced to a
+        // string. A malformed request must not terminate everybody's match.
+        console.error("[control] request failed:", err.message);
+        sendError(client, "invalid request");
+      }
+      if (!clients.has(client)) return;
+    }
+    if (Buffer.byteLength(client.buf, "utf8") > MAX_LINE_BYTES) {
+      sendError(client, "message too long");
+      destroyClient(client);
     }
   });
   socket.on("close", () => destroyClient(client));

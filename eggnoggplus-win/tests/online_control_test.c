@@ -205,6 +205,20 @@ static void test_deadlines(void) {
 }
 
 int main(void) {
+    {
+        uint32_t value = 73u;
+        CHECK(online_control_json_get_uint32("{\"seq\":4294967295}", "seq", &value) == ONLINE_CONTROL_JSON_OK);
+        CHECK(value == UINT32_MAX);
+        const char* invalid[] = {
+            "{\"seq\":4294967296}", "{\"seq\":-1}", "{\"seq\":1.5}",
+            "{\"seq\":1e2}", "{\"seq\":1,\"seq\":2}", "{\"seq\":1}trailing"
+        };
+        for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+            value = 73u;
+            CHECK(online_control_json_get_uint32(invalid[i], "seq", &value) != ONLINE_CONTROL_JSON_OK);
+            CHECK(value == 73u);
+        }
+    }
     test_valid_object_and_getters();
     test_strings_and_capacity();
     test_rejected_json();

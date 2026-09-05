@@ -279,6 +279,24 @@
   var authoredZip = core.parseStoredZip(core.buildPackageZip(authoredV2).bytes);
   assert(bytesEqual(authoredZip[authoredV2.id + "/painted.png"], tinyPng) && bytesEqual(authoredZip[authoredV2.id + "/map.lua"], core.utf8Bytes(authoredV2.mapLua)), "generated V2 assets and script survive ZIP packaging");
 
+  var forcedGoal = core.deepClone(fresh);
+  assert(JSON.parse(core.serializeDataJson(forcedGoal)).rules.eggnogg_color === undefined, "automatic goal color remains omitted");
+  forcedGoal.rules.eggnoggColor = [0, 0.123456789, 1];
+  var forcedJson = core.serializeDataJson(forcedGoal);
+  var forcedParsed = core.parsePackage(forcedJson, core.serializeMapText(forcedGoal));
+  assert(forcedParsed.valid, "forced goal color package validates");
+  assert(JSON.stringify(forcedParsed.document.rules.eggnoggColor) === "[0,0.123456789,1]", "forced goal RGB round-trips without quantization");
+  assert(core.serializeDataJson(forcedParsed.document) === forcedJson, "forced color manifest round-trips canonically");
+  [null, "#ffffff", [0, 1], [0, 0, 0, 1], [-0.1, 0, 0], [1.1, 0, 0], ["0", 0, 0], [NaN, 0, 0]].forEach(function (invalid) {
+    forcedGoal.rules.eggnoggColor = invalid;
+    assert(!core.validateDocument(forcedGoal).valid, "invalid authored goal color rejected: " + String(invalid));
+    var invalidManifest = JSON.parse(forcedJson);
+    invalidManifest.rules.eggnogg_color = invalid;
+    assert(!core.parsePackage(JSON.stringify(invalidManifest), core.serializeMapText(forcedGoal)).valid, "invalid imported goal color rejected: " + String(invalid));
+  });
+  delete forcedGoal.rules.eggnoggColor;
+  assert(JSON.parse(core.serializeDataJson(forcedGoal)).rules.eggnogg_color === undefined, "resetting automatic removes manifest override");
+
   var message = "Greggnogg editor-core tests passed: " + passed;
   if (typeof WScript !== "undefined") WScript.Echo(message);
   else if (typeof console !== "undefined") console.log(message);

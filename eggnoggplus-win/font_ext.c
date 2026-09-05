@@ -18,8 +18,15 @@
 typedef unsigned char* (__cdecl *fn_stbi_load_t)(const char* filename, int* x, int* y, int* comp, int req_comp);
 typedef void (__cdecl *fn_stbi_image_free_t)(void* p);
 
+#ifdef ASSET_EXT_TEST
+extern unsigned char* __cdecl asset_test_load(const char*, int*, int*, int*, int);
+extern void __cdecl asset_test_free(void*);
+static fn_stbi_load_t p_stbi_load = asset_test_load;
+static fn_stbi_image_free_t p_stbi_image_free = asset_test_free;
+#else
 static fn_stbi_load_t       p_stbi_load       = (fn_stbi_load_t)(uintptr_t)ADDR_STBI_LOAD;
 static fn_stbi_image_free_t p_stbi_image_free = (fn_stbi_image_free_t)(uintptr_t)ADDR_STBI_IMAGE_FREE;
+#endif
 
 typedef struct GlyphSlot {
     int used;
@@ -137,12 +144,12 @@ static int find_alloc_cached(const char* owner, const char* relpath, uint8_t* ou
     return 0;
 }
 
-static void add_alloc_cache(const char* owner, const char* relpath, uint8_t byte_value) {
-    if (!owner || !relpath) return;
+static int add_alloc_cache(const char* owner, const char* relpath, uint8_t byte_value) {
+    if (!owner || !relpath) return 0;
     if (g_alloc_count + 1 > g_alloc_cap) {
         int nc = (g_alloc_cap == 0) ? 16 : (g_alloc_cap * 2);
         AllocKey* na = (AllocKey*)realloc(g_allocs, sizeof(AllocKey) * nc);
-        if (!na) return;
+        if (!na) return 0;
         g_allocs = na;
         g_alloc_cap = nc;
     }
@@ -151,6 +158,18 @@ static void add_alloc_cache(const char* owner, const char* relpath, uint8_t byte
     strncpy(a->owner, owner, sizeof(a->owner) - 1);
     strncpy(a->relpath, relpath, sizeof(a->relpath) - 1);
     a->byte_value = byte_value;
+    return 1;
+}
+
+void font_ext_forget_glyph_cache(const char* owner, uint8_t byte_value) {
+    if (!owner) return;
+    for (int i = g_alloc_count - 1; i >= 0; i--) {
+        if (_stricmp(g_allocs[i].owner, owner) != 0 ||
+            g_allocs[i].byte_value != byte_value) continue;
+        memmove(&g_allocs[i], &g_allocs[i + 1],
+                sizeof(*g_allocs) * (size_t)(g_alloc_count - i - 1));
+        g_alloc_count--;
+    }
 }
 
 /* Built-in framework glyphs (no file backing, so hot-reload polling skips them).
@@ -240,6 +259,12 @@ static int set_slot(
         safe_snprintf(err, err_sz, "missing icon path");
         return 0;
     }
+    if (strlen(owner_mod_id) >= sizeof(g_slots[0].owner) ||
+        strlen(rel_path) >= sizeof(g_slots[0].relpath) ||
+        strlen(owner_mod_folder) + 1u + strlen(rel_path) >= MAX_PATH) {
+        safe_snprintf(err, err_sz, "glyph owner or path is too long");
+        return 0;
+    }
 
     GlyphSlot* s = &g_slots[byte_value];
     if (s->used && _stricmp(s->owner, owner_mod_id) != 0 && !override_other) {
@@ -296,9 +321,19 @@ int font_ext_alloc_glyph(
         return 0;
     }
 
-    // Cache: same mod + same relpath returns same byte.
+    // A cached reservation is not proof that the active slot still belongs to
+    // this image: registry rebuilds clear slots and explicit overrides replace
+    // their owner/content. Never return another owner's glyph as our own.
     uint8_t cached = 0;
     if (find_alloc_cached(owner_mod_id, rel_path, &cached)) {
+        GlyphSlot* slot = &g_slots[cached];
+        if (slot->used && (_stricmp(slot->owner, owner_mod_id) != 0 ||
+                          _stricmp(slot->relpath, rel_path) != 0)) {
+            safe_snprintf(err, err_sz, "cached glyph 0x%02X was replaced; unregister it before reallocating", cached);
+            return 0;
+        }
+        if (!slot->used && !set_slot(owner_mod_id, owner_mod_folder, cached,
+                                     rel_path, 0, err, err_sz)) return 0;
         *out_byte = cached;
         return 1;
     }
@@ -307,10 +342,19 @@ int font_ext_alloc_glyph(
     for (int b = 0x80; b <= 0xFF; b++) {
         GlyphSlot* s = &g_slots[b];
         if (!s->used) {
+            int reserved = 0;
+            for (int i = 0; i < g_alloc_count; i++) {
+                if (g_allocs[i].byte_value == (uint8_t)b) reserved = 1;
+            }
+            if (reserved) continue;
             if (!set_slot(owner_mod_id, owner_mod_folder, (uint8_t)b, rel_path, 0, err, err_sz)) {
                 return 0;
             }
-            add_alloc_cache(owner_mod_id, rel_path, (uint8_t)b);
+            if (!add_alloc_cache(owner_mod_id, rel_path, (uint8_t)b)) {
+                memset(s, 0, sizeof(*s));
+                safe_snprintf(err, err_sz, "out of memory recording glyph ownership");
+                return 0;
+            }
             *out_byte = (uint8_t)b;
             return 1;
         }

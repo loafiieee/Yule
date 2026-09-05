@@ -367,6 +367,13 @@ try {
   loadRenderer();
   testExportedApi();
   testGoalPreviewContrast();
+  var forcedOptions = { eggnoggColor: [0, 0.25, 1], enemyColor: [1, 0, 0] };
+  assertEqual(GregAtlas._goalColour("E", {}, forcedOptions).slice(0, 3).join(","), "0,0.25,1", "forced E color overrides player-derived preview");
+  assertEqual(GregAtlas._goalColour("^", {}, forcedOptions).slice(0, 3).join(","), "0,0.25,1", "waving goals share forced color");
+  assertEqual(GregAtlas._goalColour("t", {}, forcedOptions)[0], 1, "tentacles retain player-derived color");
+  assertEqual(GregAtlas._goalColour("1", {}, forcedOptions)[0], 0.95, "team one ignores forced goal color");
+  assertEqual(GregAtlas._goalColour("2", {}, forcedOptions)[0], 0.25, "team two ignores forced goal color");
+  assertEqual(GregAtlas._goalColour("E", {}, { enemyColor: [1, 0, 0] })[0], 1, "automatic mode retains enemy color");
   testNativeTerrainSeed();
   testRecoveredFrameRecipes();
   testPersistedNativeFrameBytes();

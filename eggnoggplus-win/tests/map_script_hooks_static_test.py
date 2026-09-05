@@ -164,6 +164,12 @@ assert "6" in spawn_install[:500]
 # reset-mode sword/K tiles must be intercepted before the generic trampoline;
 # otherwise that call bypasses the entry detour above.
 assert "mode == 9" in tile_action
+assert "native_room_reset_is_duplicate_initial(" in tile_action
+assert "mode, *g_game_started, *g_game_old_active_room," in tile_action
+assert "*g_game_start_countdown" in tile_action
+assert tile_action.index("native_room_reset_is_duplicate_initial(") < tile_action.index(
+    "return hooked_spawn_thing_action"
+)
 assert "((const unsigned char*)tile)[0] == 0x1cu" in tile_action
 assert "return hooked_spawn_thing_action(tile, mode, x, y, arg5);" in tile_action
 assert tile_action.index("return hooked_spawn_thing_action") < tile_action.index(

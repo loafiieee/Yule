@@ -624,6 +624,7 @@ static void reflist_clear(lua_State* Ls, LuaRefList* list);
 static int ui_engine_button_exists(void* btn_ptr);
 static void ui_button_apply_flags_hidden(void* btn_ptr, int hidden);
 static int reload_engine_gfx_atlases(const char* reason);
+static int rebuild_registered_assets_from_enabled_mods(const char* reason);
 static void ui_reset_render_state(void);
 static int ptr_readable(const void* p, SIZE_T len);
 static LoadedMod* get_mod_by_index(int mod_index);
@@ -2985,6 +2986,25 @@ static void mod_resource_regs_clear(LoadedMod* mod) {
     mod->texture_regs = NULL;
     mod->texture_reg_count = 0;
     mod->texture_reg_cap = 0;
+}
+
+/* Reserve owner bookkeeping before mutating the image registry. Otherwise an
+ * allocation failure can leave an active replacement that unload/replay cannot
+ * see or remove. The backends bound successful registrations to their slots. */
+static int mod_resource_reg_prepare(LoadedMod* mod, int font) {
+    int count = font ? mod->font_reg_count : mod->texture_reg_count;
+    int cap = font ? mod->font_reg_cap : mod->texture_reg_cap;
+    size_t size = font ? sizeof(*mod->font_regs) : sizeof(*mod->texture_regs);
+    void* records = font ? (void*)mod->font_regs : (void*)mod->texture_regs;
+    if (count < cap) return 1;
+    if (cap > INT_MAX / 2) return 0;
+    int next = cap ? cap * 2 : 4;
+    if ((size_t)next > SIZE_MAX / size) return 0;
+    void* resized = realloc(records, (size_t)next * size);
+    if (!resized) return 0;
+    if (font) { mod->font_regs = resized; mod->font_reg_cap = next; }
+    else { mod->texture_regs = resized; mod->texture_reg_cap = next; }
+    return 1;
 }
 
 static int mod_font_reg_record(LoadedMod* mod, uint8_t byte_value, const char* relpath) {
@@ -7133,7 +7153,7 @@ static size_t full_state_blob_size_for_thing_count(int thing_count) {
 static int full_state_transient_range(uintptr_t addr, size_t len, size_t* out_off) {
     uintptr_t start = (uintptr_t)ADDR_TRANSIENT_GAME_STATE;
     uintptr_t end = start + (uintptr_t)TRANSIENT_GAME_STATE_SIZE;
-    if (addr < start || len > (size_t)(end - addr)) return 0;
+    if (addr < start || addr > end || len > (size_t)(end - addr)) return 0;
     if (out_off) *out_off = (size_t)(addr - start);
     return 1;
 }
@@ -7165,6 +7185,78 @@ static void full_state_set_err(char* err, size_t err_cap, const char* msg) {
     if (!err || err_cap == 0) return;
     if (!msg) msg = "unknown error";
     snprintf(err, err_cap, "%s", msg);
+}
+
+/* A snapshot is an all-or-nothing boundary. Optional reads used to replace
+ * inaccessible globals with zero, while optional writes could commit the rest
+ * of the snapshot and leave one simulation field at its future value. Check
+ * every scalar and the transient slab before capture or the first apply write.
+ * Entity/tile backing allocations have their own size-aware checks below. */
+static int full_state_validate_global_access(int writing, char* err, size_t err_cap) {
+#define REQUIRE_GLOBAL(pointer, bytes) \
+    do { \
+        if (!(writing ? ptr_writable((void*)(pointer), (bytes)) \
+                      : ptr_readable((const void*)(pointer), (bytes)))) { \
+            full_state_set_err(err, err_cap, "native state unavailable: " #pointer); \
+            return 0; \
+        } \
+    } while (0)
+    REQUIRE_GLOBAL(p_mrand_seed, sizeof(*p_mrand_seed));
+    REQUIRE_GLOBAL(p_camera_x, sizeof(*p_camera_x));
+    REQUIRE_GLOBAL(p_camera_y, sizeof(*p_camera_y));
+    REQUIRE_GLOBAL(p_camera_shake, sizeof(*p_camera_shake));
+    REQUIRE_GLOBAL(p_camera_shake_decay, sizeof(*p_camera_shake_decay));
+    REQUIRE_GLOBAL(p_game_w, sizeof(*p_game_w));
+    REQUIRE_GLOBAL(p_game_h, sizeof(*p_game_h));
+    REQUIRE_GLOBAL(p_resumed, sizeof(*p_resumed));
+    REQUIRE_GLOBAL(p_map_selector, sizeof(*p_map_selector));
+    REQUIRE_GLOBAL(p_map_mode, sizeof(*p_map_mode));
+    REQUIRE_GLOBAL(p_round_end_any, sizeof(*p_round_end_any));
+    REQUIRE_GLOBAL(p_score_target, sizeof(*p_score_target));
+    REQUIRE_GLOBAL(p_armed_respawn_limit, sizeof(*p_armed_respawn_limit));
+    REQUIRE_GLOBAL(p_score_p0, sizeof(*p_score_p0));
+    REQUIRE_GLOBAL(p_score_p1, sizeof(*p_score_p1));
+    REQUIRE_GLOBAL(p_game_active_room, sizeof(*p_game_active_room));
+    REQUIRE_GLOBAL(p_chant_step, sizeof(*p_chant_step));
+    REQUIRE_GLOBAL(p_chant_timer, sizeof(*p_chant_timer));
+    REQUIRE_GLOBAL(p_crowd_timer, sizeof(*p_crowd_timer));
+    REQUIRE_GLOBAL(p_native_thing_count, sizeof(*p_native_thing_count));
+    REQUIRE_GLOBAL(p_things_allocated, sizeof(*p_things_allocated));
+    REQUIRE_GLOBAL(p_thing_latest, sizeof(*p_thing_latest));
+    REQUIRE_GLOBAL(p_game_do_lerp_colours, sizeof(*p_game_do_lerp_colours));
+    REQUIRE_GLOBAL(p_waterfall_count, sizeof(*p_waterfall_count));
+    REQUIRE_GLOBAL(p_game_started, sizeof(*p_game_started));
+    REQUIRE_GLOBAL(p_lerp_time, sizeof(*p_lerp_time));
+    REQUIRE_GLOBAL(p_start_countdown, sizeof(*p_start_countdown));
+    REQUIRE_GLOBAL(p_end_countdown, sizeof(*p_end_countdown));
+    REQUIRE_GLOBAL(p_game_level, sizeof(*p_game_level));
+    REQUIRE_GLOBAL(p_game_old_active_room, sizeof(*p_game_old_active_room));
+    REQUIRE_GLOBAL(p_freeze, sizeof(*p_freeze));
+    REQUIRE_GLOBAL(p_player_mode0, sizeof(*p_player_mode0));
+    REQUIRE_GLOBAL(p_player_mode1, sizeof(*p_player_mode1));
+    REQUIRE_GLOBAL(p_seed, sizeof(*p_seed));
+    REQUIRE_GLOBAL(p_native_game_ticks, sizeof(*p_native_game_ticks));
+    REQUIRE_GLOBAL(p_crowd_sound_last_tick, sizeof(*p_crowd_sound_last_tick));
+    REQUIRE_GLOBAL(p_waterfall_fx, sizeof(*p_waterfall_fx));
+    REQUIRE_GLOBAL(p_game_leader, sizeof(*p_game_leader));
+    REQUIRE_GLOBAL(p_loser, sizeof(*p_loser));
+    REQUIRE_GLOBAL(p_roomdef_count, sizeof(*p_roomdef_count));
+    REQUIRE_GLOBAL(p_room_w, sizeof(*p_room_w));
+    REQUIRE_GLOBAL(p_room_pixel_w, sizeof(*p_room_pixel_w));
+    REQUIRE_GLOBAL(p_tile_w_native, sizeof(*p_tile_w_native));
+    REQUIRE_GLOBAL(p_tile_h_native, sizeof(*p_tile_h_native));
+    REQUIRE_GLOBAL(p_tilemap_pixels_w, sizeof(*p_tilemap_pixels_w));
+    REQUIRE_GLOBAL(p_tilemap_pixels_h, sizeof(*p_tilemap_pixels_h));
+    REQUIRE_GLOBAL(p_map_w, sizeof(*p_map_w));
+    REQUIRE_GLOBAL(p_map_h, sizeof(*p_map_h));
+    REQUIRE_GLOBAL(p_tilemap_w, sizeof(*p_tilemap_w));
+    REQUIRE_GLOBAL(p_tilemap_h, sizeof(*p_tilemap_h));
+    REQUIRE_GLOBAL(p_player_slots, sizeof(*p_player_slots) * 2u);
+    REQUIRE_GLOBAL(p_controller, sizeof(*p_controller));
+    REQUIRE_GLOBAL(p_score_shudder, sizeof(*p_score_shudder) * 2u);
+    REQUIRE_GLOBAL(p_transient_game_state, TRANSIENT_GAME_STATE_SIZE);
+#undef REQUIRE_GLOBAL
+    return 1;
 }
 
 static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, char* err, size_t err_cap) {
@@ -7226,6 +7318,7 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
                            "authoritative simulation state unavailable");
         return 0;
     }
+    if (!full_state_validate_global_access(0, err, err_cap)) return 0;
     if (!isfinite(*p_camera_x) || !isfinite(*p_camera_y) ||
         !isfinite(*p_camera_shake) || !isfinite(*p_camera_shake_decay) ||
         !game_sim_extent_valid(*p_game_w) ||
@@ -7484,6 +7577,11 @@ static int full_state_validate_apply_blob(const void* src, size_t src_len,
         full_state_set_err(err, err_cap, "state blob layout mismatch");
         return 0;
     }
+    if (hdr->leader_mode > FULL_STATE_LEADER_RAW ||
+        hdr->loser_mode > FULL_STATE_LEADER_RAW) {
+        full_state_set_err(err, err_cap, "state blob player role out of range");
+        return 0;
+    }
     if (hdr->thing_count > 128u) {
         full_state_set_err(err, err_cap, "state blob thing count out of range");
         return 0;
@@ -7513,6 +7611,8 @@ static int full_state_validate_apply_blob(const void* src, size_t src_len,
                            "authoritative simulation state unavailable");
         return 0;
     }
+
+    if (!full_state_validate_global_access(1, err, err_cap)) return 0;
 
     expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
     if (src_len != expected_size) {
@@ -7839,6 +7939,11 @@ static int full_state_validate_blob_header(const void* src, size_t src_len, cons
         full_state_set_err(err, err_cap, "state blob layout mismatch");
         return 0;
     }
+    if (hdr->leader_mode > FULL_STATE_LEADER_RAW ||
+        hdr->loser_mode > FULL_STATE_LEADER_RAW) {
+        full_state_set_err(err, err_cap, "state blob player role out of range");
+        return 0;
+    }
     if (hdr->thing_count > 128u) {
         full_state_set_err(err, err_cap, "state blob thing count out of range");
         return 0;
@@ -7927,6 +8032,14 @@ static int full_state_canonicalize_rollback_blob_ex(void* blob, size_t blob_len,
      * intentionally do not re-enter Lua on_tick handlers.
      */
     hdr->framework_tick_count = 0;
+    /* RAW roles cannot survive pointer removal: apply reconstructs them as
+     * null. Normalize the tag too so a canonical save/load/save is stable. */
+    if (hdr->leader_mode == FULL_STATE_LEADER_RAW) {
+        hdr->leader_mode = FULL_STATE_LEADER_NONE;
+    }
+    if (hdr->loser_mode == FULL_STATE_LEADER_RAW) {
+        hdr->loser_mode = FULL_STATE_LEADER_NONE;
+    }
     hdr->leader_raw = 0;
     hdr->loser_raw = 0;
     hdr->waterfall_fx_present = 0;
@@ -12731,10 +12844,13 @@ static int lua_font_alloc_glyph(lua_State* Ls) {
     const char* rel = luaL_checkstring(Ls, 1);
     uint8_t b = 0;
     char err[256] = {0};
-    if (!mod) {
+    if (!mod || !mod->enabled || mod_is_gameplay_suspended(mod)) {
         lua_pushnil(Ls);
-        lua_pushstring(Ls, "no mod context");
+        lua_pushstring(Ls, "mod is not active");
         return 2;
+    }
+    if (!mod_resource_reg_prepare(mod, 1)) {
+        lua_pushnil(Ls); lua_pushstring(Ls, "out of memory recording glyph ownership"); return 2;
     }
     if (!font_ext_alloc_glyph(mod->id, mod->folder_path, rel, &b, err, (int)sizeof(err))) {
         lua_pushnil(Ls);
@@ -12757,9 +12873,9 @@ static int lua_font_register_glyph(lua_State* Ls) {
     const char* rel = luaL_checkstring(Ls, 2);
     int override_other = 0;
 
-    if (!mod) {
+    if (!mod || !mod->enabled || mod_is_gameplay_suspended(mod)) {
         lua_pushboolean(Ls, 0);
-        lua_pushstring(Ls, "no mod context");
+        lua_pushstring(Ls, "mod is not active");
         return 2;
     }
 
@@ -12773,6 +12889,9 @@ static int lua_font_register_glyph(lua_State* Ls) {
     if (byte_value > 255) byte_value = 255;
 
     char err[256] = {0};
+    if (!mod_resource_reg_prepare(mod, 1)) {
+        lua_pushboolean(Ls, 0); lua_pushstring(Ls, "out of memory recording glyph ownership"); return 2;
+    }
     if (!font_ext_register_glyph(mod->id, mod->folder_path, (uint8_t)byte_value, rel, override_other, err, (int)sizeof(err))) {
         lua_pushboolean(Ls, 0);
         lua_pushstring(Ls, err[0] ? err : "register_glyph failed");
@@ -12813,17 +12932,26 @@ static int lua_texture_register_target(
     const char* fallback_err
 ) {
     char err[256] = {0};
-    if (!mod) {
+    char canonical[128];
+    if (!mod || !mod->enabled || mod_is_gameplay_suspended(mod)) {
         lua_pushboolean(Ls, 0);
-        lua_pushstring(Ls, "no mod context");
+        lua_pushstring(Ls, "mod is not active");
         return 2;
     }
-    if (!texture_ext_register_png(mod->id, mod->folder_path, target_path, rel_path, override_other, err, (int)sizeof(err))) {
+    if (!texture_ext_canonicalize_target(target_path, canonical, sizeof(canonical))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "invalid texture target");
+        return 2;
+    }
+    if (!mod_resource_reg_prepare(mod, 0)) {
+        lua_pushboolean(Ls, 0); lua_pushstring(Ls, "out of memory recording texture ownership"); return 2;
+    }
+    if (!texture_ext_register_png(mod->id, mod->folder_path, canonical, rel_path, override_other, err, (int)sizeof(err))) {
         lua_pushboolean(Ls, 0);
         lua_pushstring(Ls, err[0] ? err : fallback_err);
         return 2;
     }
-    (void)mod_texture_reg_record(mod, target_path, rel_path);
+    (void)mod_texture_reg_record(mod, canonical, rel_path);
 
     if (texture_ext_path_loaded(target_path)) {
         if (!reload_engine_gfx_atlases("texture registered after atlas load")) {
@@ -12914,6 +13042,61 @@ static int lua_texture_reload_all(lua_State* Ls) {
     lua_pushinteger(Ls, font_reloaded); lua_setfield(Ls, -2, "fonts_reloaded");
     lua_pushinteger(Ls, font_failed); lua_setfield(Ls, -2, "fonts_failed");
     lua_pushinteger(Ls, font_restart); lua_setfield(Ls, -2, "fonts_restart_required");
+    return 2;
+}
+
+/* Remove only this owner's declaration, then replay the remaining declarations
+ * so removing an override reveals the previous owner's image or native asset.
+ * The second boolean reports whether a renderer restart is still needed. */
+static int lua_font_unregister_glyph(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    lua_Number value = luaL_checknumber(Ls, 1);
+    if (!mod || !mod->enabled || mod_is_gameplay_suspended(mod) ||
+        !isfinite(value) || value < 0 || value > 255 || floor(value) != value) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "active mod and integer glyph byte 0..255 required");
+        return 2;
+    }
+    for (int i = 0; i < mod->font_reg_count; i++) {
+        if (mod->font_regs[i].byte_value != (uint8_t)value) continue;
+        memmove(&mod->font_regs[i], &mod->font_regs[i + 1],
+                sizeof(*mod->font_regs) * (size_t)(mod->font_reg_count - i - 1));
+        mod->font_reg_count--;
+        font_ext_forget_glyph_cache(mod->id, (uint8_t)value);
+        int applied = rebuild_registered_assets_from_enabled_mods("glyph unregistered");
+        lua_pushboolean(Ls, 1);
+        lua_pushboolean(Ls, !applied);
+        return 2;
+    }
+    lua_pushboolean(Ls, 0);
+    lua_pushboolean(Ls, 0);
+    return 2;
+}
+
+static int lua_texture_unregister(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    size_t bytes;
+    const char* target = luaL_checklstring(Ls, 1, &bytes);
+    char canonical[128];
+    if (!mod || !mod->enabled || mod_is_gameplay_suspended(mod) ||
+        strlen(target) != bytes ||
+        !texture_ext_canonicalize_target(target, canonical, sizeof(canonical))) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "active mod and valid texture target required");
+        return 2;
+    }
+    for (int i = 0; i < mod->texture_reg_count; i++) {
+        if (_stricmp(mod->texture_regs[i].target, canonical) != 0) continue;
+        memmove(&mod->texture_regs[i], &mod->texture_regs[i + 1],
+                sizeof(*mod->texture_regs) * (size_t)(mod->texture_reg_count - i - 1));
+        mod->texture_reg_count--;
+        int applied = rebuild_registered_assets_from_enabled_mods("texture unregistered");
+        lua_pushboolean(Ls, 1);
+        lua_pushboolean(Ls, !applied);
+        return 2;
+    }
+    lua_pushboolean(Ls, 0);
+    lua_pushboolean(Ls, 0);
     return 2;
 }
 
@@ -13199,10 +13382,12 @@ static void push_font_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_loaded, 1);         lua_setfield(Ls, -2, "font_loaded");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_alloc_glyph, 1);    lua_setfield(Ls, -2, "alloc_glyph");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_register_glyph, 1); lua_setfield(Ls, -2, "register_glyph");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_font_unregister_glyph, 1); lua_setfield(Ls, -2, "unregister_glyph");
 }
 
 static void push_texture_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_newtable(Ls);
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_unregister, 1); lua_setfield(Ls, -2, "unregister");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_loaded, 1);               lua_setfield(Ls, -2, "loaded");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_register, 1);             lua_setfield(Ls, -2, "register");
     lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_texture_sprites_loaded, 1);       lua_setfield(Ls, -2, "sprites_loaded");
@@ -14743,6 +14928,7 @@ static int loaded_mod_requires_id(const LoadedMod* mod, const char* dep_id) {
 
 static int rebuild_registered_assets_from_enabled_mods(const char* reason) {
     int had_loaded_assets = font_ext_font_loaded() || texture_ext_any_path_loaded();
+    int replay_ok = 1;
     char err[256];
 
     texture_ext_reset_runtime_state();
@@ -14758,6 +14944,7 @@ static int rebuild_registered_assets_from_enabled_mods(const char* reason) {
             if (!font_ext_register_glyph(mod->id, mod->folder_path,
                                          reg->byte_value, reg->relpath, 1,
                                          err, (int)sizeof(err))) {
+                replay_ok = 0;
                 LOG_WARN("font_ext: failed to replay glyph 0x%02X for %s: %s",
                          (unsigned)reg->byte_value,
                          mod->id,
@@ -14771,6 +14958,7 @@ static int rebuild_registered_assets_from_enabled_mods(const char* reason) {
             if (!texture_ext_register_png(mod->id, mod->folder_path,
                                           reg->target, reg->relpath, 1,
                                           err, (int)sizeof(err))) {
+                replay_ok = 0;
                 LOG_WARN("texture_ext: failed to replay %s for %s: %s",
                          reg->target,
                          mod->id,
@@ -14786,7 +14974,7 @@ static int rebuild_registered_assets_from_enabled_mods(const char* reason) {
         }
     }
 
-    return 1;
+    return replay_ok;
 }
 
 static int scan_and_load_mods(void) {
@@ -16780,7 +16968,7 @@ uint32_t lua_manager_game_state_layout_fingerprint(void) {
      * serializer can deliberately retain blob-reader compatibility while
      * changing rollback field/layout semantics. */
     static const uint32_t layout_schema_version = 6u;
-    static const uint32_t rollback_canonicalization_version = 6u;
+    static const uint32_t rollback_canonicalization_version = 7u;
     int tilemap_w = 0;
     int tilemap_h = 0;
     size_t tilemap_bytes = game_get_tilemap_bytes(&tilemap_w, &tilemap_h);

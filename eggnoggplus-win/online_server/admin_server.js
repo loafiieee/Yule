@@ -114,7 +114,7 @@ function sendHtml(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -181,6 +181,72 @@ function presencePill(user) {
 
 function emptyRow(columns, message) {
   return `<tr><td class="empty" colspan="${columns}">${html(message)}</td></tr>`;
+}
+
+/* Served as an external same-origin script; no inline-script CSP exception.
+ * Keep this function self-contained so the served code and lifecycle tests use
+ * the same implementation. */
+function adminLiveDashboard() {
+  const status = document.getElementById("live-status");
+  let timer;
+  let pending = false;
+  let stopped = false;
+  const schedule = () => {
+    clearTimeout(timer);
+    if (!stopped) timer = setTimeout(refresh, 2000);
+  };
+  async function refresh() {
+    if (pending || stopped) return;
+    if (document.hidden) { schedule(); return; }
+    pending = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const url = new URL(location.href);
+      url.hash = "";
+      url.searchParams.set("live", "1");
+      const response = await fetch(url, {
+        credentials: "same-origin", cache: "no-store", redirect: "error",
+        signal: controller.signal,
+      });
+      if (response.status === 401 || response.status === 403) {
+        stopped = true;
+        status.textContent = "Live updates stopped. Refresh to reconnect.";
+        return;
+      }
+      if (!response.ok) throw new Error("refresh failed");
+      const next = new DOMParser().parseFromString(await response.text(), "text/html");
+      const regions = [...document.querySelectorAll("[data-live]")];
+      const replacements = regions.map((region) =>
+        next.querySelector('[data-live="' + region.dataset.live + '"]'));
+      if (replacements.some((region) => !region)) throw new Error("incomplete dashboard");
+      let editing = false;
+      regions.forEach((region, index) => {
+        /* Never replace a focused control, an open maintenance panel, or an
+         * entered password/reason, even after focus moves elsewhere. */
+        if (region.contains(document.activeElement) ||
+            region.querySelector("details[open]") ||
+            [...region.querySelectorAll('input:not([type="hidden"])')]
+              .some((input) => input.value !== input.defaultValue)) {
+          editing = true;
+          return;
+        }
+        region.replaceChildren(...replacements[index].childNodes);
+      });
+      status.textContent = editing
+        ? "Live · editing section paused" : "Live · updates every 2 seconds";
+    } catch (_) {
+      status.textContent = "Connection interrupted · retrying";
+    } finally {
+      clearTimeout(timeout);
+      pending = false;
+      schedule();
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) { clearTimeout(timer); void refresh(); }
+  });
+  schedule();
 }
 
 function dashboardPage(snapshot, session, query) {
@@ -323,11 +389,11 @@ function dashboardPage(snapshot, session, query) {
     <nav class="admin-nav" aria-label="Dashboard sections">
       <a href="#players">Players</a><a href="#matches">Matches</a><a href="#queues">Queues</a><a href="#social">Social</a><a href="#accounts">Accounts</a>
     </nav>
-    <div class="snapshot">Private LAN snapshot<br>${html(snapshot.generated_at || "just now")}</div>
+    <div class="snapshot"><span data-live="timestamp">${html(snapshot.generated_at || "just now")}</span><br><span id="live-status" role="status">Live · updates every 2 seconds</span></div>
     <a class="refresh" href="/">Refresh</a>
   </header>
   ${notice ? `<div class="${noticeClass}">${html(notice)}</div>` : ""}
-  <section class="metrics" aria-label="Server totals">
+  <section class="metrics" aria-label="Server totals" data-live="totals">
     <div class="metric"><b>${html(snapshot.online || 0)}</b><span>authenticated</span></div>
     <div class="metric"><b>${html(snapshot.connections || snapshot.online || 0)}</b><span>connections</span></div>
     <div class="metric"><b>${html(users.length)}</b><span>accounts</span></div>
@@ -337,17 +403,17 @@ function dashboardPage(snapshot, session, query) {
     <div class="metric"><b>${html(challenges.length)}</b><span>challenges</span></div>
   </section>
 
-  <section class="panel" id="players">
+  <section class="panel" id="players" data-live="players">
     <div class="panel-head"><div><div class="section-label">Live presence</div><h2>Connected players</h2><p>Current activity, opponent, client compatibility, and connection age.</p></div></div>
     <div class="player-grid">${playerCards || `<div class="empty">Nobody is authenticated right now.</div>`}</div>
   </section>
 
-  <section class="panel" id="matches">
+  <section class="panel" id="matches" data-live="matches">
     <div class="panel-head"><div><div class="section-label">Gameplay</div><h2>Active matches</h2><p>Authoritative server phase and transport negotiation. No authentication tokens or raw endpoints are shown.</p></div></div>
     <div class="table-wrap"><table><thead><tr><th>Match</th><th>Players</th><th>Map</th><th>Mode</th><th>Network</th><th>Runtime</th></tr></thead><tbody>${matchRows || emptyRow(6, "No active matches.")}</tbody></table></div>
   </section>
 
-  <div class="split" id="queues">
+  <div class="split" id="queues" data-live="queues">
     <section class="panel">
       <div class="panel-head"><div><div class="section-label">Matchmaking</div><h2>Queues</h2><p>Order, rating window, wait, content pool, and client build.</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>Queue</th><th>Player</th><th>Elo / range</th><th>Wait</th><th>Content</th><th>Client</th></tr></thead><tbody>${allQueueRows || emptyRow(6, "Both queues are empty.")}</tbody></table></div>
@@ -364,7 +430,7 @@ function dashboardPage(snapshot, session, query) {
     </div>
   </div>
 
-  <section class="panel" id="social">
+  <section class="panel" id="social" data-live="social">
     <div class="panel-head"><div><div class="section-label">Social graph</div><h2>Player relationships</h2><p>Friendships are deduplicated into pairs; one-sided rows flag inconsistent stored data.</p></div></div>
     <div class="social-summary">
       <div class="social-stat"><b>${html(friendships.length)}</b><span>friendships</span></div>
@@ -389,8 +455,8 @@ function dashboardPage(snapshot, session, query) {
       <div><div class="section-label">Accounts</div><h2>Directory and maintenance</h2><p>Ratings, complete social lists, live build details, bans, and existing maintenance actions.</p></div>
       <form class="inline" method="get" action="/"><input name="q" value="${html(search)}" placeholder="Search username"><button type="submit">Search</button>${search ? `<a class="refresh" href="/#accounts">Clear</a>` : ""}</form>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>User</th><th>Status</th><th>Elo / MMR</th><th>Relationships</th><th>Client</th><th>Actions</th></tr></thead><tbody>${accountRows || emptyRow(6, "No matching accounts.")}</tbody></table></div>
-  </section>`);
+    <div class="table-wrap"><table><thead><tr><th>User</th><th>Status</th><th>Elo / MMR</th><th>Relationships</th><th>Client</th><th>Actions</th></tr></thead><tbody data-live="accounts">${accountRows || emptyRow(6, "No matching accounts.")}</tbody></table></div>
+  </section><script src="/live.js" defer></script>`);
 }
 
 function startAdminServerFromEnv(env, api, options = {}) {
@@ -454,17 +520,37 @@ function startAdminServerFromEnv(env, api, options = {}) {
     const session = activeSession(req);
 
     try {
+      // LAN source filtering alone does not stop DNS rebinding: a malicious
+      // public hostname can resolve to this listener in a visitor's browser.
+      const authority = new URL(`http://${req.headers.host || ""}`);
+      const requestHost = authority.hostname.replace(/^\[|\]$/g, "");
+      if (!isPrivateBindHost(requestHost) || authority.username || authority.password ||
+          authority.pathname !== "/" || authority.search || authority.hash) {
+        return sendHtml(res, 403, page("Forbidden", "Use a private literal address or localhost for admin access."));
+      }
       const url = new URL(req.url || "/", "http://admin.invalid");
       if (!isPrivateBindHost(ip)) {
         return sendHtml(res, 403, page("Forbidden", "<div class=\"notice error\">Admin access is limited to private LAN addresses.</div>"));
       }
       if (req.method === "GET" && url.pathname === "/") {
+        if (!session && url.searchParams.get("live") === "1") {
+          return sendHtml(res, 401, page("Session expired", "Refresh to reconnect."));
+        }
         if (!session) return redirect(res, "/", newSessionCookie(ip));
         return sendHtml(res, 200, dashboardPage(api.snapshot(), session, url.searchParams));
       }
 
       if (!session) {
         return redirect(res, "/");
+      }
+
+      if (req.method === "GET" && url.pathname === "/live.js") {
+        res.writeHead(200, {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        });
+        return res.end(`(${adminLiveDashboard.toString()})();`);
       }
 
       if (req.method === "POST" && url.pathname === "/action") {
@@ -510,6 +596,7 @@ function startAdminServerFromEnv(env, api, options = {}) {
 }
 
 module.exports = {
+  adminLiveDashboard,
   isPrivateBindHost,
   startAdminServerFromEnv,
 };

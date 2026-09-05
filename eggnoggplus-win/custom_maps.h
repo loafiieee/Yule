@@ -11,6 +11,9 @@ extern "C" {
 
 void custom_maps_init(void);
 void custom_maps_shutdown(void);
+/* Visual override from the installed map generation; no filesystem polling.
+ * Returns zero without touching output when the selected map uses native color. */
+int custom_maps_pinned_eggnogg_color(int selector, float out_rgb[3]);
 void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void));
 
 /*
@@ -113,6 +116,8 @@ int custom_maps_content_sheet_for_key(const char* sheet_key,
                                       size_t out_sha256_size);
 
 typedef struct CustomMapValidationSummary {
+    int has_eggnogg_color;
+    float eggnogg_color[3];
     int format_version;
     int source_room_count;
     int content_tile_count;

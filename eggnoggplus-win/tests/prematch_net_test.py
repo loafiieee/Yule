@@ -1123,6 +1123,18 @@ def main() -> int:
         return 0
     try:
         child_env = build()
+        receive_budget = subprocess.run(
+            [str(EXE), "receive-budget"], cwd=ROOT, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=10, check=False, env=child_env,
+        )
+        if receive_budget.returncode != 0 or "receive-budget PASS" not in receive_budget.stdout:
+            raise AssertionError(
+                f"receive budget failed\nOUT:\n{receive_budget.stdout}\nERR:\n{receive_budget.stderr}"
+            )
+        print(receive_budget.stdout.strip())
+        if "--receive-budget-only" in sys.argv[1:]:
+            return 0
         if "--state-transaction-only" in sys.argv[1:]:
             state_transaction = subprocess.run(
                 [str(EXE), "state-transaction"],

@@ -32,6 +32,9 @@ OnlineControlJsonResult online_control_json_get_string(const char* json,
 OnlineControlJsonResult online_control_json_get_int(const char* json,
                                                      const char* key,
                                                      int* out);
+OnlineControlJsonResult online_control_json_get_uint32(const char* json,
+                                                        const char* key,
+                                                        uint32_t* out);
 
 /* Canonical account names returned by the bundled server are normalized to
  * lowercase and constrained to [a-z0-9_], 1..24 bytes. */

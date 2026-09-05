@@ -52,6 +52,9 @@
 /* Keep bulk state traffic bounded behind the fresh per-service control packet.
  * A large burst can fill the UDP send buffer and starve the next INPUT/ACK. */
 #define GGPO_NET_CORRECTION_BURST_CHUNKS 8
+/* Count every receive attempt, including unauthenticated/malformed traffic and
+ * recoverable socket errors, so inbound traffic cannot monopolize a tick. */
+#define GGPO_NET_RECEIVE_BUDGET 64u
 #define GGPO_NET_RESYNC_REQUEST_INTERVAL_TICKS 30
 #define GGPO_NET_STATE_CHUNK_BYTES 900
 #define GGPO_NET_PUNCH_HELLO_BURST 8
@@ -2278,7 +2281,9 @@ static void ggpo_net_advance_remote_checksum_ack(void) {
 }
 
 static uint32_t ggpo_net_now_tick(void) {
-    return g_net.service_tick ? g_net.service_tick : 1u;
+    /* Zero is the inactive-timer sentinel. At clock wrap choose the preceding
+     * tick, not a future tick: 0 - 1 would look like UINT32_MAX elapsed. */
+    return g_net.service_tick ? g_net.service_tick : UINT32_MAX;
 }
 
 /* Fold one peer packet's timing into the RTT estimate. send_tick is the peer's
@@ -4932,8 +4937,23 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     }
 
     flags = p->flags & (GGPO_NET_STATE_FLAG_CORRECTION | GGPO_NET_STATE_FLAG_DELTA);
+    if (flags != p->flags) {
+        g_net.stale_state_chunks_dropped++;
+        return;
+    }
     is_correction = (flags & GGPO_NET_STATE_FLAG_CORRECTION) ? 1 : 0;
     is_delta = (flags & GGPO_NET_STATE_FLAG_DELTA) ? 1 : 0;
+    /* Frame-zero state is immutable once accepted. Only the coordinated
+     * correction barrier may replace live state; a conflicting retransmission
+     * must never reset an already running joiner to frame zero. */
+    if (!is_correction &&
+        (p->frame != 0u || p->correction_id != 0u || is_delta ||
+         (g_net.state_synced &&
+          (p->state_checksum != g_net.initial_checksum ||
+           p->state_size != g_net.initial_state_len)))) {
+        g_net.stale_state_chunks_dropped++;
+        return;
+    }
     if (!is_correction && p->base_checksum != g_net.state_layout_id) {
         g_net.stale_state_chunks_dropped++;
         return;
@@ -5151,6 +5171,45 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
     ggpo_net_reset_recv_state();
     (void)ggpo_net_prematch_invariants_ok("state-sync-complete");
 }
+
+#ifdef GGPO_NET_TEST
+int ggpo_net_test_initial_state_chunk_rejected(uint32_t checksum_xor,
+                                               uint32_t frame,
+                                               uint32_t correction_id,
+                                               uint32_t flags) {
+    GgpoNetStateChunkPacket packet;
+    uint32_t old_frame = g_net.frame;
+    uint32_t old_epoch = g_net.state_epoch;
+    uint32_t old_dropped = g_net.stale_state_chunks_dropped;
+    if (g_net.mode != GGPO_NET_MODE_JOIN || !g_net.state_synced ||
+        !ggpo_net_link_confirmed() || g_net.recv_state ||
+        !g_net.initial_state || !g_net.initial_state_len) return 0;
+    memset(&packet, 0, sizeof(packet));
+    packet.magic = GGPO_NET_MAGIC;
+    packet.version = GGPO_NET_VERSION;
+    packet.type = GGPO_NET_PACKET_STATE_CHUNK;
+    packet.sender_player = (uint32_t)g_net.remote_player;
+    packet.session_id = g_net.remote_session_id;
+    packet.state_epoch = g_net.state_epoch;
+    packet.state_size = (uint32_t)g_net.initial_state_len;
+    packet.state_checksum = g_net.initial_checksum ^ checksum_xor;
+    packet.base_checksum = g_net.state_layout_id;
+    packet.full_chunk_count = ggpo_net_state_chunk_count(packet.state_size);
+    packet.chunk_count = packet.full_chunk_count;
+    packet.chunk_size = ggpo_net_state_chunk_size(g_net.initial_state_len, 0u);
+    packet.frame = frame;
+    packet.correction_id = correction_id;
+    packet.flags = flags;
+    memcpy(packet.data, g_net.initial_state, packet.chunk_size);
+    ggpo_net_handle_state_chunk(&packet,
+        (int)(offsetof(GgpoNetStateChunkPacket, data) + packet.chunk_size),
+        &g_net.peer_addr);
+    return !g_net.recv_state && g_net.frame == old_frame &&
+           g_net.state_epoch == old_epoch && g_net.state_synced &&
+           g_net.stale_state_chunks_dropped == old_dropped + 1u &&
+           !g_net.peer_disconnected;
+}
+#endif
 
 static void ggpo_net_handle_cosmetic_packet(const GgpoNetCosmeticPacket* p, int got_len, const struct sockaddr_in* from) {
 #if !GGPO_NET_ENABLE_COSMETICS
@@ -6307,8 +6366,8 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
     if (!g_net.peer_disconnected) ggpo_net_process_deferred_checksums(p);
 }
 
-static void ggpo_net_poll_socket(void) {
-    for (;;) {
+static uint32_t ggpo_net_poll_socket(void) {
+    for (uint32_t received = 0u; received < GGPO_NET_RECEIVE_BUDGET; received++) {
         union {
             GgpoNetPacket normal;
             GgpoNetStateChunkPacket state_chunk;
@@ -6324,8 +6383,11 @@ static void ggpo_net_poll_socket(void) {
         int got = recvfrom(g_net.sock, (char*)packet.bytes, sizeof(packet.bytes), 0, (struct sockaddr*)&from, &from_len);
         if (got == SOCKET_ERROR) {
             int e = WSAGetLastError();
-            if (e == WSAEWOULDBLOCK) return;
-            return;
+            if (e == WSAEWOULDBLOCK) return received;
+            /* Winsock consumes an oversized UDP datagram and may surface an
+             * earlier ICMP error here. Neither should hide the next packet. */
+            if (e == WSAEMSGSIZE || e == WSAECONNRESET) continue;
+            return received;
         }
         if (got < (int)sizeof(GgpoNetPacketPrefix)) continue;
         if (prefix->magic != GGPO_NET_MAGIC || prefix->version != GGPO_NET_VERSION) continue;
@@ -6361,7 +6423,14 @@ static void ggpo_net_poll_socket(void) {
             ggpo_net_handle_packet(&packet.normal, &from);
         }
     }
+    return GGPO_NET_RECEIVE_BUDGET;
 }
+
+#ifdef GGPO_NET_TEST
+uint32_t ggpo_net_test_poll_socket(void) {
+    return ggpo_net_poll_socket();
+}
+#endif
 
 static void ggpo_net_send_correction_burst(void) {
     if (g_net.mode != GGPO_NET_MODE_HOST) return;

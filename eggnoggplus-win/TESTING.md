@@ -20,6 +20,34 @@ The runners prepare the MinGW DLL search path before launching their test binari
 They do not launch the game. A clean run establishes parser, rollback, network-envelope,
 map-script, updater/recovery, Discord IPC, and audio-render regression coverage.
 
+## Custom-map Eggnogg color
+
+In Greggnogg's Map inspector, enable the Eggnogg color override and choose a
+distinct color. Paint `E` and `^`, confirm the canvas preview, undo/redo the
+setting, and export/reimport the package. Uncheck the override and verify the
+export omits `rules.eggnogg_color`. Team goals `1`/`2` and tentacles should retain
+their ordinary colors.
+
+With the new framework build, test the package in both mirrored halves and enter
+the goal: stationary/waving Eggnogg and goal particles should use the chosen
+color. Switch to a map without the override and then a vanilla map to confirm
+automatic colors return. Test two clients with the same build/package. Parser
+and renderer unit coverage cannot replace this live visual pass.
+
+## Sword-tile initial spawning
+
+Use a room with a known number of `*` markers. Start immediately from the local
+menu, repeat after waiting on the menu, and repeat through online setup and an
+in-game restart. Each marker should initially create one sword. Pick up or move
+the sword, leave the room, and revisit it to confirm normal reset spawning still
+works. Also check a room with mines or `K` markers: their reset actions share the
+initial-reset guard. For online testing both clients need the matching new build.
+
+The automated lifecycle fixture reproduces the native countdown/first-update
+ordering, but does not run the actual game. If duplicates persist, record the map,
+room, local/online mode, and whether they appeared on initial start, restart, or a
+room revisit. Those distinguish this repaired path from another spawning issue.
+
 ## Discord application and Rich Presence
 
 The release default is compiled in and enabled even when

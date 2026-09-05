@@ -172,7 +172,7 @@ static void test_sensor_validation(const MapScriptTileBinding* bindings,
     MapScriptDefinition split_players = make_definition(441,
         "map.sensor('S', { objects = { 'alive_player', 'dead_body' } })",
         bindings, binding_count);
-    CHECK(MAP_SCRIPT_API_VERSION == UINT32_C(5));
+    CHECK(MAP_SCRIPT_API_VERSION == UINT32_C(7));
     CHECK(map_script_validate(&valid, error, sizeof(error)));
     CHECK(map_script_validate(&split_players, error, sizeof(error)));
     expect_validation_failure(421,
@@ -1409,6 +1409,83 @@ static void test_memory_limits(const MapScriptTileBinding* bindings,
     CHECK(strstr(error, "memory") != NULL);
 }
 
+static void test_periodic_clock(const MapScriptTileBinding* bindings,
+                                size_t binding_count) {
+    static const char source[] =
+        "map.on_tick(function() "
+        "if map.every(3) then map.state.base = (map.state.base or 0) + 1 end "
+        "if map.every(3, 2) then map.state.shift = (map.state.shift or 0) + 1 end "
+        "map.state.wide = map.every(4294967295, 1) "
+        "end)";
+    static const char* invalid[] = {
+        "map.every()", "map.every(0)", "map.every(-1)",
+        "map.every(1.5)", "map.every(4294967296)", "map.every('3')",
+        "map.every(3, -1)", "map.every(3, 3)", "map.every(3, 0.5)",
+        "map.every(3, nil)", "map.every(3, 0, 1)",
+        "map.every(0/0)", "map.every(3, 0/0)", "map.every(1/0)"
+    };
+    MapScriptDefinition definition = make_definition(400, source, bindings, binding_count);
+    MapScriptSnapshot baseline, future, replay;
+    const MapScriptSnapshotStateEntry* entry;
+    char error[512];
+    size_t i;
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    for (i = 0; i < 6; ++i) CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+    entry = state_entry(&future, "base");
+    CHECK(entry && entry->number_value == 3.0);
+    entry = state_entry(&future, "shift");
+    CHECK(entry && entry->number_value == 2.0);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    for (i = 0; i < 6; ++i) CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay, error, sizeof(error)));
+    CHECK(memcmp(&future, &replay, sizeof(future)) == 0);
+    baseline.tick = UINT64_C(9007199254740991) + 2u;
+    baseline.checksum = test_snapshot_checksum(&baseline);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay, error, sizeof(error)));
+    entry = state_entry(&replay, "base");
+    CHECK(entry && entry->number_value == 2.0);
+    entry = state_entry(&replay, "wide");
+    CHECK(entry && entry->bool_value ==
+          (baseline.tick % UINT64_C(4294967295) == 1u));
+    for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        expect_validation_failure(401 + i, invalid[i], bindings, binding_count, "map.every");
+    }
+}
+
+static void test_optional_bindings(const MapScriptTileBinding* bindings,
+                                    size_t binding_count) {
+    static const char source[] =
+        "assert(map.has_tile('S') and map.has_tile('demo:spring')) "
+        "assert(not map.has_tile('X') and not map.has_tile('@')) "
+        "assert(not map.has_tile('') and not map.has_tile('demo:spring' .. string.char(0) .. 'x')) "
+        "if map.has_tile('X') then map.on_contact('X', function() end) end "
+        "map.on_tick(function() map.state.present = map.has_tile('S') end)";
+    MapScriptDefinition definition = make_definition(500, source, bindings, binding_count);
+    MapScriptSnapshot baseline, future, replay;
+    const MapScriptSnapshotStateEntry* entry;
+    char error[512];
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+    entry = state_entry(&future, "present");
+    CHECK(entry && entry->bool_value == 1);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay, error, sizeof(error)));
+    CHECK(memcmp(&future, &replay, sizeof(future)) == 0);
+    expect_validation_failure(501, "map.has_tile(1)", bindings, binding_count, "map.has_tile");
+    expect_validation_failure(502, "map.has_tile('S', 'F')", bindings, binding_count, "map.has_tile");
+    expect_validation_failure(503,
+        "map.on_contact('demo:spring' .. string.char(0) .. 'x', function() end)",
+        bindings, binding_count, "unknown map tile");
+}
+
 int main(void) {
     static const MapScriptTileBinding bindings[] = {
         { 'S', "demo:spring" },
@@ -1429,6 +1506,8 @@ int main(void) {
     test_reused_slot_lifecycle(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_runtime_fault(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_memory_limits(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_periodic_clock(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_optional_bindings(bindings, sizeof(bindings) / sizeof(bindings[0]));
     map_script_deactivate();
     test_inactive_snapshot();
     if (g_failures) {

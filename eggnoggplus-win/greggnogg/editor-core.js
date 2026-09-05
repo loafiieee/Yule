@@ -645,6 +645,8 @@
       },
       rooms: {}
     };
+    var eggnoggColor = camelOrSnake(rules, "eggnoggColor", "eggnogg_color", undefined);
+    if (eggnoggColor !== undefined) data.rules.eggnogg_color = deepClone(eggnoggColor);
     var defaultAppearance = appearanceToJson(defaults.appearance, false);
     /* An empty appearance object is semantically meaningful to the loader's
      * primary/mirror copy rules, so preserve authored presence. */
@@ -961,6 +963,7 @@
         mode: isPlainObject(json.rules) && json.rules.mode !== undefined ? json.rules.mode : "swords",
         roundEndRooms: isPlainObject(json.rules) && json.rules.round_end_rooms !== undefined ? json.rules.round_end_rooms : "inner_only",
         scoreTarget: isPlainObject(json.rules) && json.rules.score_target !== undefined ? json.rules.score_target : null,
+        eggnoggColor: isPlainObject(json.rules) ? json.rules.eggnogg_color : undefined,
         armedRespawnLimit: isPlainObject(json.rules) && json.rules.armed_respawn_limit !== undefined ? json.rules.armed_respawn_limit : 4
       },
       layout: {
@@ -1117,7 +1120,8 @@
     if (json.rules !== undefined) {
       if (!isPlainObject(json.rules)) pushSchemaError(errors, "rules_type", "rules must be an object.", "rules");
       else {
-        warnUnknownKeys(json.rules, ["mode", "round_end_rooms", "score_target", "armed_respawn_limit"], "rules", warnings);
+        warnUnknownKeys(json.rules, ["mode", "round_end_rooms", "score_target", "armed_respawn_limit", "eggnogg_color"], "rules", warnings);
+        validateEggnoggColor(json.rules.eggnogg_color, errors);
         if (json.rules.mode === undefined) pushSchemaError(errors, "rules_mode_required", "rules.mode is required when rules exists.", "rules.mode");
         else if (json.rules.mode !== "swords" && json.rules.mode !== "karate") pushSchemaError(errors, "rules_mode", "rules.mode must be swords or karate.", "rules.mode");
         if (json.rules.round_end_rooms !== undefined && json.rules.round_end_rooms !== "inner_only" && json.rules.round_end_rooms !== "any") pushSchemaError(errors, "round_end_rooms", "rules.round_end_rooms must be inner_only or any.", "rules.round_end_rooms");
@@ -1383,6 +1387,13 @@
       (Number.isInteger(value) && value >= 0 && value <= 9);
   }
 
+  function validateEggnoggColor(value, errors) {
+    if (value === undefined) return;
+    if (!Array.isArray(value) || value.length !== 3 || ![0, 1, 2].every(function (index) { var channel = value[index]; return typeof channel === "number" && Number.isFinite(channel) && channel >= 0 && channel <= 1; })) {
+      errors.push(makeIssue("error", "eggnogg_color", "rules.eggnogg_color must contain exactly three finite RGB channels from 0 to 1.", { path: "rules.eggnogg_color" }));
+    }
+  }
+
   function validateColorBank(bank, path, errors, roomId) {
     if (bank === undefined) return;
     if (!bank || typeof bank !== "object" || Array.isArray(bank)) {
@@ -1465,6 +1476,7 @@
       if (roundEnd !== "inner_only" && roundEnd !== "any") errors.push(makeIssue("error", "round_end_rooms", "rules.round_end_rooms must be \"inner_only\" or \"any\".", { path: "rules.round_end_rooms" }));
       var score = camelOrSnake(rules, "scoreTarget", "score_target", null);
       if (score !== null && (!Number.isInteger(score) || score <= 0 || score > 2147483647)) errors.push(makeIssue("error", "score_target", "rules.score_target must be null or a positive integer.", { path: "rules.score_target" }));
+      validateEggnoggColor(camelOrSnake(rules, "eggnoggColor", "eggnogg_color", undefined), errors);
       var armedLimit = camelOrSnake(rules, "armedRespawnLimit", "armed_respawn_limit", 4);
       if (!Number.isInteger(armedLimit) || armedLimit < 0 || armedLimit > 2147483647) errors.push(makeIssue("error", "armed_respawn_limit", "rules.armed_respawn_limit must be a non-negative integer.", { path: "rules.armed_respawn_limit" }));
     }

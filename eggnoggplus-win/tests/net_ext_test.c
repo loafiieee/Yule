@@ -104,6 +104,15 @@ static DWORD WINAPI udp_probe_server(void *opaque) {
     struct sockaddr_in source;
     int source_length = (int)sizeof(source);
     char request[256];
+    char oversized[4096] = {0};
+    const char *invalid[] = {
+        "{\"type\":\"udp_pong\",\"seq\":12345junk,\"observed_host\":\"203.0.113.99\",\"observed_port\":45678}",
+        "{\"type\":\"udp_pong\",\"seq\":+12345,\"observed_host\":\"203.0.113.99\",\"observed_port\":45678}",
+        "{\"type\":\"udp_pong\",\"seq\":12345,\"observed_host\":\"203.0.113.99\",\"observed_port\":45678.5}",
+        "{\"type\":\"udp_pong\",\"seq\":12345,\"seq\":9,\"observed_host\":\"203.0.113.99\",\"observed_port\":45678}",
+        "{\"type\":\"udp_pong\",\"seq\":12345,\"observed_host\":\"203.0.113.99\",\"observed_port\":45678}garbage",
+        "{\"type\":\"udp_pong\",\"seq\":12345,\"observed_host\":\"999.999.999.999\",\"observed_port\":45678}"
+    };
     const char reply[] =
         "{\"type\":\"udp_pong\",\"seq\":12345,"
         "\"observed_host\":\"203.0.113.7\",\"observed_port\":45678}";
@@ -114,6 +123,13 @@ static DWORD WINAPI udp_probe_server(void *opaque) {
     if (!strstr(request, "\"type\":\"udp_ping\"") ||
         !strstr(request, "\"seq\":12345")) {
         return 1;
+    }
+    if (sendto(server->socket, oversized, sizeof(oversized), 0,
+               (const struct sockaddr*)&source, source_length) != sizeof(oversized)) return 1;
+    for (size_t i = 0; i < 95u; i++) {
+        const char *packet = invalid[i % (sizeof(invalid) / sizeof(invalid[0]))];
+        if (sendto(server->socket, packet, (int)strlen(packet), 0,
+                   (const struct sockaddr*)&source, source_length) != (int)strlen(packet)) return 1;
     }
     if (sendto(server->socket, reply, (int)strlen(reply), 0,
                (const struct sockaddr*)&source, source_length) ==
@@ -172,6 +188,10 @@ static void test_large_copied_send(void) {
     CHECK(wait_connected(slot, &connected) == 1);
     CHECK(connected == 1);
     if (!connected) goto cleanup;
+    CHECK(net_recv(slot, NULL, 1) == -1);
+    CHECK(net_recv(slot, &ack, 0) == -1);
+    CHECK(net_recv(slot, &ack, -1) == -1);
+    CHECK(net_connected(slot) == 1);
 
     /* Backpressure is message-atomic: an item larger than the queue is refused
      * without leaking a prefix onto the wire. */
@@ -240,6 +260,12 @@ static void test_udp_reachability_probe(void) {
     CHECK(net_udp_probe_start("127.0.0.1", port, 12345u, 2000u,
                               error, sizeof(error)) == 1);
     CHECK(net_udp_probe_active() == 1);
+    CHECK(WaitForSingleObject(thread, 3000) == WAIT_OBJECT_0);
+    /* More than one receive budget is queued before polling: neither the
+     * oversized packet nor a numeric-prefix forgery may terminate the probe. */
+    Sleep(20);
+    CHECK(net_udp_probe_poll(&result, error, sizeof(error)) == 0);
+    CHECK(net_udp_probe_active() == 1);
     deadline = GetTickCount() + 3000u;
     while ((LONG)(GetTickCount() - deadline) < 0) {
         status = net_udp_probe_poll(&result, error, sizeof(error));
@@ -274,6 +300,11 @@ static void test_network_profile_smoke(void) {
 int main(void) {
     WSADATA data;
     CHECK(WSAStartup(MAKEWORD(2, 2), &data) == 0);
+    CHECK(net_connect(NULL, 47777) == -1);
+    CHECK(net_connect("", 47777) == -1);
+    CHECK(net_connect("127.0.0.1", 0) == -1);
+    CHECK(net_connect("127.0.0.1", -1) == -1);
+    CHECK(net_connect("127.0.0.1", 65536) == -1);
     test_large_copied_send();
     test_refused_connect_never_reports_success();
     test_udp_reachability_probe();

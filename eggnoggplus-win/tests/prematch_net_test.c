@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <winsock2.h>
 #include <windows.h>
 
 #include "ggpo_ext.h"
@@ -918,9 +919,22 @@ static int run_frame_ring_test(void) {
     ggpo_net_test_reset_frame_rings(512u);
     ggpo_net_test_set_checksum_epoch(1u, 0u, 0u);
     if (!ggpo_net_test_seed_history(0u, 0u, 0, 0xB000u) ||
+        ggpo_net_test_checksum_retirement_gate(512u, 0u) != 0 ||
         ggpo_net_test_checksum_retirement_gate(512u, 1u) != 0 ||
-        ggpo_net_test_checksum_retirement_gate(512u, 601u) != -1) {
+        ggpo_net_test_checksum_retirement_gate(512u, 598u) != 0 ||
+        ggpo_net_test_checksum_retirement_gate(512u, 599u) != -1) {
         return frame_ring_fail("checksum history boundary did not stall then time out");
+    }
+    /* A running timer also survives clock wrap, without a reset or immediate
+     * unsigned-underflow timeout. */
+    ggpo_net_test_reset_frame_rings(512u);
+    ggpo_net_test_set_checksum_epoch(1u, 0u, 0u);
+    if (!ggpo_net_test_seed_history(0u, 0u, 0, 0xB000u) ||
+        ggpo_net_test_checksum_retirement_gate(512u, UINT32_MAX - 2u) != 0 ||
+        ggpo_net_test_checksum_retirement_gate(512u, 0u) != 0 ||
+        ggpo_net_test_checksum_retirement_gate(512u, 596u) != 0 ||
+        ggpo_net_test_checksum_retirement_gate(512u, 597u) != -1) {
+        return frame_ring_fail("checksum timer did not survive service-clock wrap");
     }
 
     /* Cumulative receive and peer-ACK bases use serial arithmetic across wrap. */
@@ -1152,6 +1166,45 @@ int main(int argc, char** argv) {
     const char* match_token = TEST_MATCH_TOKEN;
 
 #ifdef GGPO_NET_TEST
+    if (argc == 2 && strcmp(argv[1], "receive-budget") == 0) {
+        struct sockaddr_in target;
+        SOCKET sender;
+        char oversized[4096] = {0};
+        uint32_t first, second;
+        memset(g_state, 0x33, sizeof(g_state));
+        err[0] = '\0';
+        if (!ggpo_net_set_match_token(TEST_MATCH_TOKEN, err, sizeof(err)) ||
+            !ggpo_net_start_host_held(0, err, sizeof(err))) {
+            return fail("receive-budget", "could not start transport", err);
+        }
+        sender = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        memset(&target, 0, sizeof(target));
+        target.sin_family = AF_INET;
+        target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        target.sin_port = htons(ggpo_net_local_port());
+        if (sender == INVALID_SOCKET) return fail("receive-budget", "socket failed", "");
+        /* The oversize datagram must consume budget without aborting the poll.
+         * All following packets are invalid, so authentication must not be a
+         * prerequisite for accounting receive work. */
+        if (sendto(sender, oversized, sizeof(oversized), 0,
+                   (const struct sockaddr*)&target, sizeof(target)) != sizeof(oversized)) {
+            return fail("receive-budget", "oversize send failed", "");
+        }
+        for (int i = 0; i < 95; i++) {
+            if (sendto(sender, "x", 1, 0, (const struct sockaddr*)&target,
+                       sizeof(target)) != 1) return fail("receive-budget", "send failed", "");
+        }
+        Sleep(20);
+        first = ggpo_net_test_poll_socket();
+        second = ggpo_net_test_poll_socket();
+        closesocket(sender);
+        ggpo_net_stop();
+        if (first != 64u || second != 32u) {
+            return fail("receive-budget", "poll did not bound and resume receive work", "");
+        }
+        puts("receive-budget PASS oversized=1 first=64 second=32");
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "frame-ring") == 0) {
         return run_frame_ring_test();
     }
@@ -1736,6 +1789,15 @@ int main(int argc, char** argv) {
         return fail(role, "authoritative final-layout tail mismatch", NULL);
     }
     test_palette_set_sentinel();
+
+    if (!is_host &&
+        (!ggpo_net_test_initial_state_chunk_rejected(1u, 0u, 0u, 0u) ||
+         !ggpo_net_test_initial_state_chunk_rejected(0u, 1u, 0u, 0u) ||
+         !ggpo_net_test_initial_state_chunk_rejected(0u, 0u, 1u, 0u) ||
+         !ggpo_net_test_initial_state_chunk_rejected(0u, 0u, 0u, 2u) ||
+         !ggpo_net_test_initial_state_chunk_rejected(0u, 0u, 0u, 0x80000000u))) {
+        return fail(role, "invalid frame-zero retransmission was not rejected", NULL);
+    }
 
     if (gameplay_wrap_chaos) {
         err[0] = '\0';

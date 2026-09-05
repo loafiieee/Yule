@@ -9,7 +9,7 @@ assert '#include "map_script.h"' in source
 assert "#define FULL_STATE_BLOB_VERSION     9u" in source
 assert "MapScriptSnapshot map_script_state;" in source
 assert "FULL_STATE_FIELD_RANGE(map_script_state);" in source
-assert "#define MAP_SCRIPT_API_VERSION            UINT32_C(5)" in header
+assert "#define MAP_SCRIPT_API_VERSION            UINT32_C(7)" in header
 assert "#define MAP_SCRIPT_SNAPSHOT_VERSION       5u" in header
 assert "int32_t offset_x_q;" in header
 assert "int32_t offset_y_q;" in header

@@ -17,6 +17,7 @@ static const char* const k_mod_api_capabilities[] = {
     "console.commands",
     "content.tiles.v1",
     "events.removable",
+    "font.unregister",
     "fs.pick_file",
     "game.rollback_state",
     "http.async_get",
@@ -28,6 +29,7 @@ static const char* const k_mod_api_capabilities[] = {
     "net.tcp",
     "online.status",
     "storage.v1",
+    "texture.unregister",
     "ui.native"
 };
 

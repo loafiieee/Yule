@@ -3,6 +3,7 @@
    Link with -lws2_32. */
 
 #include "net_ext.h"
+#include "online_control.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -64,16 +65,17 @@ static int net_flush_send_queue(int slot) {
     return 1;
 }
 
-static void ensure_wsa(void) {
+static int ensure_wsa(void) {
     if (!g_wsa_ready) {
         WSADATA wd;
-        WSAStartup(MAKEWORD(2, 2), &wd);
+        if (WSAStartup(MAKEWORD(2, 2), &wd) != 0) return 0;
         g_wsa_ready = 1;
     }
+    return 1;
 }
 
 int net_connect(const char *host, int port) {
-    ensure_wsa();
+    if (!host || !host[0] || port <= 0 || port > 65535 || !ensure_wsa()) return -1;
 
     /* Find a free slot */
     int slot = -1;
@@ -96,7 +98,11 @@ int net_connect(const char *host, int port) {
 
     /* Switch to non-blocking mode before connect so we never stall the game */
     u_long nb = 1;
-    ioctlsocket(fd, FIONBIO, &nb);
+    if (ioctlsocket(fd, FIONBIO, &nb) == SOCKET_ERROR) {
+        closesocket(fd);
+        freeaddrinfo(res);
+        return -1;
+    }
 
     int cr = connect(fd, res->ai_addr, (int)res->ai_addrlen);
     freeaddrinfo(res);
@@ -127,7 +133,12 @@ int net_check_connect(int slot) {
     FD_ZERO(&wfds); FD_SET(c->fd, &wfds);
     FD_ZERO(&efds); FD_SET(c->fd, &efds);
     struct timeval tv = {0, 0}; /* non-blocking poll */
-    if (select(0, NULL, &wfds, &efds, &tv) <= 0) return 0;
+    int ready = select(0, NULL, &wfds, &efds, &tv);
+    if (ready == SOCKET_ERROR) {
+        net_close(slot);
+        return -1;
+    }
+    if (ready == 0) return 0;
 
     if (FD_ISSET(c->fd, &efds) || FD_ISSET(c->fd, &wfds)) {
         int socket_error = 0;
@@ -177,6 +188,7 @@ int net_send(int slot, const char *data, int len) {
 
 int net_recv(int slot, char *buf, int maxlen) {
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].connected) return -1;
+    if (!buf || maxlen <= 0) return -1;
     if (net_flush_send_queue(slot) < 0) return -1;
     int r = recv(g_net[slot].fd, buf, maxlen, 0);
     if (r == 0) { net_close(slot); return -1; } /* clean close */
@@ -212,7 +224,7 @@ int net_local_ipv4(char *buf, int buflen) {
     int ok = 0;
     if (!buf || buflen <= 0) return 0;
     buf[0] = '\0';
-    ensure_wsa();
+    if (!ensure_wsa()) return 0;
     if (gethostname(host, sizeof(host)) != 0) return 0;
     host[sizeof(host) - 1] = '\0';
     memset(&hints, 0, sizeof(hints));
@@ -482,7 +494,10 @@ int net_udp_probe_start(const char *host, uint16_t port, uint32_t sequence,
     if (timeout_ms < 250u) timeout_ms = 250u;
     if (timeout_ms > 10000u) timeout_ms = 10000u;
     net_udp_probe_cancel();
-    ensure_wsa();
+    if (!ensure_wsa()) {
+        net_probe_error(error, error_cap, "could not initialize Winsock", 0);
+        return 0;
+    }
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -541,37 +556,6 @@ int net_udp_probe_start(const char *host, uint16_t port, uint32_t sequence,
     return 1;
 }
 
-static int net_probe_json_uint(const char *json, const char *key,
-                               uint32_t *out) {
-    const char *found;
-    char *end;
-    unsigned long value;
-    found = strstr(json, key);
-    if (!found) return 0;
-    found += strlen(key);
-    value = strtoul(found, &end, 10);
-    if (end == found || value > UINT32_MAX) return 0;
-    if (out) *out = (uint32_t)value;
-    return 1;
-}
-
-static int net_probe_json_host(const char *json, char *out, size_t cap) {
-    const char *key = "\"observed_host\":\"";
-    const char *found = strstr(json, key);
-    size_t len = 0;
-    if (!found || !out || cap == 0) return 0;
-    found += strlen(key);
-    while (found[len] && found[len] != '"' && len + 1 < cap) {
-        unsigned char ch = (unsigned char)found[len];
-        if (!(isdigit(ch) || ch == '.' || ch == ':')) return 0;
-        len++;
-    }
-    if (len == 0 || found[len] != '"') return 0;
-    memcpy(out, found, len);
-    out[len] = '\0';
-    return 1;
-}
-
 int net_udp_probe_poll(NetUdpProbeResult *out, char *error,
                        size_t error_cap) {
     char response[2049];
@@ -584,9 +568,11 @@ int net_udp_probe_poll(NetUdpProbeResult *out, char *error,
         net_probe_error(error, error_cap, "no UDP probe is active", 0);
         return -1;
     }
-    for (;;) {
+    for (unsigned int attempt = 0; attempt < 64u; attempt++) {
         uint32_t sequence = 0;
         uint32_t observed_port = 0;
+        char type[16];
+        struct in_addr observed_address;
         NetUdpProbeResult result;
         source_len = (int)sizeof(source);
         received = recvfrom(g_udp_probe.fd, response,
@@ -595,6 +581,7 @@ int net_udp_probe_poll(NetUdpProbeResult *out, char *error,
         if (received == SOCKET_ERROR) {
             int code = WSAGetLastError();
             if (code == WSAEWOULDBLOCK) break;
+            if (code == WSAEMSGSIZE || code == WSAECONNRESET) continue;
             net_udp_probe_cancel();
             net_probe_error(error, error_cap, "UDP receive failed", code);
             return -1;
@@ -604,15 +591,20 @@ int net_udp_probe_poll(NetUdpProbeResult *out, char *error,
             source.sin_port != g_udp_probe.target.sin_port) {
             continue;
         }
+        /* A C-string parser must see the entire datagram, including trailing
+         * data. Embedded NULs otherwise conceal an invalid packet suffix. */
+        if (memchr(response, '\0', (size_t)received)) continue;
         response[received] = '\0';
         memset(&result, 0, sizeof(result));
-        if (!strstr(response, "\"type\":\"udp_pong\"") ||
-            !net_probe_json_uint(response, "\"seq\":", &sequence) ||
+        if (online_control_json_get_string(response, "type", type,
+                                            sizeof(type)) != ONLINE_CONTROL_JSON_OK ||
+            strcmp(type, "udp_pong") != 0 ||
+            online_control_json_get_uint32(response, "seq", &sequence) != ONLINE_CONTROL_JSON_OK ||
             sequence != g_udp_probe.sequence ||
-            !net_probe_json_host(response, result.observed_host,
-                                 sizeof(result.observed_host)) ||
-            !net_probe_json_uint(response, "\"observed_port\":",
-                                 &observed_port) ||
+            online_control_json_get_string(response, "observed_host", result.observed_host,
+                                            sizeof(result.observed_host)) != ONLINE_CONTROL_JSON_OK ||
+            inet_pton(AF_INET, result.observed_host, &observed_address) != 1 ||
+            online_control_json_get_uint32(response, "observed_port", &observed_port) != ONLINE_CONTROL_JSON_OK ||
             observed_port == 0 || observed_port > 65535u) {
             continue;
         }

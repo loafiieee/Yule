@@ -741,6 +741,7 @@ static int find_binding_by_ref(MapScriptRuntime* runtime,
                                size_t length) {
     size_t i;
     char normalized[MAP_SCRIPT_TILE_KEY_MAX];
+    if (!reference || length == 0 || memchr(reference, '\0', length)) return -1;
     if (length == 1) {
         for (i = 0; i < runtime->binding_count; ++i) {
             if (runtime->bindings[i].symbol == reference[0]) return (int)i;
@@ -753,6 +754,18 @@ static int find_binding_by_ref(MapScriptRuntime* runtime,
         if (strcmp(runtime->bindings[i].qualified_key, normalized) == 0) return (int)i;
     }
     return -1;
+}
+
+static int api_has_tile(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    size_t length;
+    const char* reference;
+    if (lua_gettop(L) != 1 || lua_type(L, 1) != LUA_TSTRING) {
+        return luaL_error(L, "map.has_tile expects one tile reference string");
+    }
+    reference = lua_tolstring(L, 1, &length);
+    lua_pushboolean(L, find_binding_by_ref(runtime, reference, length) >= 0);
+    return 1;
 }
 
 static int register_tile_callback(lua_State* L, enum MapScriptEvent event) {
@@ -1873,6 +1886,28 @@ static int api_random(lua_State* L) {
     return 1;
 }
 
+static int api_every(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    int count = lua_gettop(L);
+    double interval;
+    double phase = 0.0;
+    if (count < 1 || count > 2 || lua_type(L, 1) != LUA_TNUMBER ||
+        (count == 2 && lua_type(L, 2) != LUA_TNUMBER)) {
+        return luaL_error(L, "map.every expects interval and optional phase integers");
+    }
+    interval = (double)lua_tonumber(L, 1);
+    if (count == 2) phase = (double)lua_tonumber(L, 2);
+    if (!isfinite(interval) || interval < 1.0 || interval > 4294967295.0 ||
+        floor(interval) != interval || !isfinite(phase) || phase < 0.0 ||
+        phase >= interval || floor(phase) != phase) {
+        return luaL_error(L, "map.every needs interval 1..4294967295 and phase 0..interval-1");
+    }
+    /* Stay in integer space even beyond Lua's exactly represented tick range.
+     * No timer state or callback registration: rollback restores this clock. */
+    lua_pushboolean(L, runtime->tick % (uint64_t)interval == (uint64_t)phase);
+    return 1;
+}
+
 static int api_tick(lua_State* L) {
     MapScriptRuntime* runtime = checked_runtime(L);
     if (lua_gettop(L) != 0) return luaL_error(L, "map.tick expects no arguments");
@@ -1927,7 +1962,7 @@ static void replace_global_with_readonly_fields(lua_State* L,
 static int install_sandbox_entry(lua_State* L) {
     static const char* const map_fields[] = {
         "on_contact", "on_enter", "on_leave", "on_tick", "sensor", "random",
-        "tick", "state"
+        "tick", "every", "has_tile", "state"
     };
     static const char* const math_fields[] = {
         /* Transcendental CRT/libm results are not bit-stable across every
@@ -2033,6 +2068,10 @@ static int install_sandbox_entry(lua_State* L) {
     lua_setfield(L, -2, "random");
     lua_pushcfunction(L, api_tick);
     lua_setfield(L, -2, "tick");
+    lua_pushcfunction(L, api_every);
+    lua_setfield(L, -2, "every");
+    lua_pushcfunction(L, api_has_tile);
+    lua_setfield(L, -2, "has_tile");
     (void)lua_newuserdata(L, 1);
     luaL_getmetatable(L, g_state_metatable_key);
     lua_setmetatable(L, -2);

@@ -107,7 +107,7 @@ assert "g_net.clean_camera_shake_decay" in restore
 assert "lua_manager_game_set_rng_seed" not in restore
 assert "lua_manager_game_set_camera" not in restore
 assert "lua_manager_game_set_width" not in restore
-assert "rollback_canonicalization_version = 6u" in LUA
+assert "rollback_canonicalization_version = 7u" in LUA
 assert "ADDR_MINE_ANIM_LAST_TICK" in LUA
 assert "full_state_zero_transient_range(hdr, ADDR_MINE_ANIM_LAST_TICK" not in LUA
 assert "ADDR_SOUND_DEDUP_TIMERS_B" not in LUA

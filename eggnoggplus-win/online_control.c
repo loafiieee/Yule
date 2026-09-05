@@ -11,7 +11,8 @@
 typedef enum OnlineControlWantedType {
     ONLINE_CONTROL_WANT_NONE = 0,
     ONLINE_CONTROL_WANT_STRING,
-    ONLINE_CONTROL_WANT_INT
+    ONLINE_CONTROL_WANT_INT,
+    ONLINE_CONTROL_WANT_UINT32
 } OnlineControlWantedType;
 
 typedef enum OnlineControlValueType {
@@ -34,6 +35,7 @@ typedef struct OnlineControlJsonScan {
     char* string_out;
     size_t string_cap;
     int* int_out;
+    uint32_t* uint32_out;
     int found;
     OnlineControlJsonResult wanted_result;
 } OnlineControlJsonScan;
@@ -369,6 +371,22 @@ static OnlineControlJsonResult parse_integer_value(const unsigned char* start,
     return ONLINE_CONTROL_JSON_OK;
 }
 
+static OnlineControlJsonResult parse_uint32_value(const unsigned char* start,
+                                                   const unsigned char* end,
+                                                   uint32_t* out) {
+    uint32_t value = 0u;
+    if (!start || !end || start >= end || !out) return ONLINE_CONTROL_JSON_VALUE_INVALID;
+    for (const unsigned char* cursor = start; cursor < end; cursor++) {
+        uint32_t digit;
+        if (*cursor < '0' || *cursor > '9') return ONLINE_CONTROL_JSON_VALUE_INVALID;
+        digit = (uint32_t)(*cursor - '0');
+        if (value > (UINT32_MAX - digit) / 10u) return ONLINE_CONTROL_JSON_VALUE_INVALID;
+        value = value * 10u + digit;
+    }
+    *out = value;
+    return ONLINE_CONTROL_JSON_OK;
+}
+
 static int keys_equal(char stored[][ONLINE_CONTROL_JSON_MAX_KEY_BYTES + 1u],
                       size_t count,
                       const char* key) {
@@ -484,7 +502,8 @@ static OnlineControlJsonResult scan_object(const char* input,
                 scan->found = 1;
                 if ((scan->wanted_type == ONLINE_CONTROL_WANT_STRING &&
                      value_type != ONLINE_CONTROL_VALUE_STRING) ||
-                    (scan->wanted_type == ONLINE_CONTROL_WANT_INT &&
+                    ((scan->wanted_type == ONLINE_CONTROL_WANT_INT ||
+                      scan->wanted_type == ONLINE_CONTROL_WANT_UINT32) &&
                      value_type != ONLINE_CONTROL_VALUE_NUMBER)) {
                     scan->wanted_result = ONLINE_CONTROL_JSON_TYPE_MISMATCH;
                 } else if (scan->wanted_type == ONLINE_CONTROL_WANT_STRING) {
@@ -495,6 +514,10 @@ static OnlineControlJsonResult scan_object(const char* input,
                     scan->wanted_result = parse_integer_value(number_start,
                                                               number_end,
                                                               scan->int_out);
+                } else if (scan->wanted_type == ONLINE_CONTROL_WANT_UINT32) {
+                    scan->wanted_result = parse_uint32_value(number_start,
+                                                             number_end,
+                                                             scan->uint32_out);
                 }
             }
 
@@ -560,6 +583,22 @@ OnlineControlJsonResult online_control_json_get_int(const char* json,
     scan.wanted_type = ONLINE_CONTROL_WANT_INT;
     scan.int_out = out;
     return scan_object(json, &scan, NULL, 0);
+}
+
+OnlineControlJsonResult online_control_json_get_uint32(const char* json,
+                                                        const char* key,
+                                                        uint32_t* out) {
+    OnlineControlJsonScan scan;
+    OnlineControlJsonResult result;
+    uint32_t value = 0u;
+    if (!key || !key[0] || !out) return ONLINE_CONTROL_JSON_INVALID;
+    memset(&scan, 0, sizeof(scan));
+    scan.wanted_key = key;
+    scan.wanted_type = ONLINE_CONTROL_WANT_UINT32;
+    scan.uint32_out = &value;
+    result = scan_object(json, &scan, NULL, 0);
+    if (result == ONLINE_CONTROL_JSON_OK) *out = value;
+    return result;
 }
 
 int online_control_username_is_canonical(const char* username) {

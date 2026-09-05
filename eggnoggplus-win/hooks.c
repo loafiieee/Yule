@@ -12,6 +12,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include "native_room_reset.h"
 
 #include <GL/gl.h>
 #ifdef __has_include
@@ -888,6 +889,8 @@ static Detour g_mapgen_build_map_detour;
 static Detour g_tile_action_ex_detour;
 static Detour g_high_water_action_detour;
 static Detour g_spawn_thing_action_detour;
+static Detour g_eggnogg_colour_detour;
+static void (__cdecl *p_eggnogg_colour_trampoline)(float* rgb);
 static Detour g_atlas_upload_detour;
 static Detour g_game_player_colour_index_detour;
 static Detour g_game_set_player_colour_index_detour;
@@ -19218,6 +19221,12 @@ static void __cdecl hooked_mapgen_build_map(void) {
     }
 }
 
+static void __cdecl hooked_eggnogg_colour(float* rgb) {
+    if (g_hook_map_selector &&
+        custom_maps_pinned_eggnogg_color(*g_hook_map_selector, rgb)) return;
+    if (p_eggnogg_colour_trampoline) p_eggnogg_colour_trampoline(rgb);
+}
+
 static int __cdecl hooked_tile_action_ex(void* tile,
                                          int mode,
                                          int x,
@@ -19244,6 +19253,17 @@ static int __cdecl hooked_tile_action_ex(void* tile,
     int swapped_tiles = 0;
     int result = 0;
     int native_underlay_invoked = 0;
+
+    /* Native countdown initialization has already dispatched this initial
+     * room's reset. Do not spawn its swords/hazards or reset its other tile
+     * actions twice when game_update performs first-room entry bookkeeping.
+     * Subsequent room transitions (old room >= 0) retain native behavior. */
+    if (g_game_started && g_game_old_active_room && g_game_start_countdown &&
+        native_room_reset_is_duplicate_initial(
+            mode, *g_game_started, *g_game_old_active_room,
+            *g_game_start_countdown)) {
+        return 1;
+    }
 
     /* tile_action_ex calls the tile definition's action pointer directly.
      * That bypasses an entry detour on spawn_thing_action, which is exactly
@@ -19442,6 +19462,16 @@ void hooks_init(void) {
     } else {
         p_thing_new_trampoline = (fn_thing_new_t)g_thing_new_detour.trampoline;
         InterlockedExchange(&g_thing_lifecycle_tracking_enabled, 1);
+    }
+
+    /* game_eggnogg_colour: sub esp,0x30 (3), mov ecx,[abs] (6).
+     * Its RGB output also feeds native Eggnogg particles, keeping them coherent. */
+    if (!install_detour(&g_eggnogg_colour_detour, (void*)(uintptr_t)0x4208B0u,
+                        (void*)&hooked_eggnogg_colour, 9)) {
+        LOG_WARN("hooks_init: failed to install custom-map Eggnogg color override");
+    } else {
+        p_eggnogg_colour_trampoline =
+            (void (__cdecl *)(float*))g_eggnogg_colour_detour.trampoline;
     }
 
     /* spawn_thing_action begins push ebx / xor eax,eax / sub esp,0x28.

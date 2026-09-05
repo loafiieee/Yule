@@ -531,6 +531,81 @@ int main(void) {
         }
     }
 
+    /* Tilemap globals live on a separate page from the tile allocation. A
+     * readable but non-writable dimensions page formerly passed preflight and
+     * allowed all other regions to be committed. An unreadable page silently
+     * turned capture into an empty tilemap snapshot. */
+    {
+        uint8_t* layout_page = (uint8_t*)((uintptr_t)NATIVE_AT(ADDR_TILEMAP_W) &
+                                         ~(uintptr_t)0xfffu);
+        DWORD layout_old_protect = 0;
+        DWORD layout_ignored_protect = 0;
+        *(uint32_t*)NATIVE_AT(ADDR_SCORE_P0) ^= UINT32_C(0x11223344);
+        copy_native_regions(before_region);
+        memcpy(before_player0, player0, sizeof(before_player0));
+        memcpy(before_player1, player1, sizeof(before_player1));
+        memcpy(before_tilemap, tilemap, sizeof(before_tilemap));
+        CHECK(VirtualProtect(layout_page, PLAYER_PAGE_SIZE, PAGE_READONLY,
+                             &layout_old_protect) != 0,
+              "could not protect native tilemap layout globals");
+        err[0] = '\0';
+        CHECK(!ggpo_ext_validate_rollback_transport_blob(
+                  canonical, canonical_len, &injected_checksum,
+                  err, sizeof(err)),
+              "rollback preflight accepted read-only tilemap globals");
+        CHECK(strstr(err, "native state unavailable") != NULL,
+              "layout preflight did not identify inaccessible native state");
+        CHECK(!ggpo_ext_load_game_state(canonical, canonical_len,
+                                        err, sizeof(err)),
+              "rollback load accepted read-only tilemap globals");
+        CHECK(native_regions_equal(before_region) &&
+                  memcmp(before_player0, player0, sizeof(before_player0)) == 0 &&
+                  memcmp(before_player1, player1, sizeof(before_player1)) == 0 &&
+                  memcmp(before_tilemap, tilemap, sizeof(before_tilemap)) == 0,
+              "failed scalar preflight partially committed a snapshot");
+        CHECK(VirtualProtect(layout_page, PLAYER_PAGE_SIZE, PAGE_NOACCESS,
+                             &layout_ignored_protect) != 0,
+              "could not make native tilemap globals unreadable");
+        memset(injected, 0x5a, capacity);
+        memcpy(raw_roundtrip, injected, capacity);
+        CHECK(!ggpo_ext_save_game_state_raw(injected, capacity, NULL,
+                                            err, sizeof(err)),
+              "capture silently replaced inaccessible tilemap with an empty map");
+        CHECK(memcmp(injected, raw_roundtrip, capacity) == 0,
+              "failed scalar capture preflight modified destination");
+        if (layout_old_protect != 0) {
+            CHECK(VirtualProtect(layout_page, PLAYER_PAGE_SIZE,
+                                 layout_old_protect,
+                                 &layout_ignored_protect) != 0,
+                  "could not restore native layout page protection");
+        }
+        CHECK(native_regions_equal(before_region),
+              "failed scalar capture preflight modified native state");
+        *(uint32_t*)NATIVE_AT(ADDR_SCORE_P0) ^= UINT32_C(0x11223344);
+    }
+
+    {
+        const char* role_names[] = { "leader_mode", "loser_mode" };
+        size_t role;
+        for (role = 0; role < sizeof(role_names) / sizeof(role_names[0]); ++role) {
+            size_t offset = field_offset(role_names[role], canonical_len);
+            CHECK(offset != SIZE_MAX, "player role offset unavailable");
+            if (offset == SIZE_MAX) continue;
+            memcpy(injected, canonical, canonical_len);
+            *(uint32_t*)(injected + offset) = UINT32_MAX;
+            copy_native_regions(before_region);
+            CHECK(!ggpo_ext_validate_rollback_transport_blob(
+                      injected, canonical_len, &injected_checksum,
+                      err, sizeof(err)),
+                  "unknown player role passed transport preflight");
+            CHECK(!ggpo_ext_load_game_state(injected, canonical_len,
+                                            err, sizeof(err)),
+                  "unknown player role passed load preflight");
+            CHECK(native_regions_equal(before_region),
+                  "invalid player role load modified native state");
+        }
+    }
+
     memcpy(injected, canonical, canonical_len);
     *(uintptr_t*)(injected + leader_raw_offset) = INJECTED_POINTER;
     err[0] = '\0';
@@ -698,6 +773,13 @@ int main(void) {
     expect_call(ggpo_ext_load_game_state(canonical, canonical_len,
                                          err, sizeof(err)),
                 "canonical rollback load", err);
+    /* Non-player leader/loser pointers are removed from canonical state.
+     * Their role tags must describe the reconstructed null pointers too. */
+    CHECK(lua_manager_game_state_rollback_checksum(&injected_checksum,
+                                                    err, sizeof(err)),
+          "could not checksum reconstructed canonical snapshot");
+    CHECK(injected_checksum == canonical_checksum,
+          "canonical load changed checksum after raw role pointers were removed");
     CHECK(*(uintptr_t*)NATIVE_AT(ADDR_PLAYER_ARRAY) == (uintptr_t)player0 &&
               *(uintptr_t*)NATIVE_AT(ADDR_PLAYER_ARRAY + sizeof(uintptr_t)) ==
                   (uintptr_t)player1,

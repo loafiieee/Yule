@@ -32,6 +32,8 @@ int main(void) {
     CHECK(mod_api_has_capability("events.removable"));
     CHECK(mod_api_has_capability("console.commands"));
     CHECK(mod_api_has_capability("http.response_metadata"));
+    CHECK(mod_api_has_capability("font.unregister"));
+    CHECK(mod_api_has_capability("texture.unregister"));
 
     for (i = 0; i < mod_api_capability_count(); ++i) {
         const char* capability = mod_api_capability_at(i);

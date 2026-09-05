@@ -25,7 +25,7 @@ extern "C" {
 
 /* Bump when the source-visible map API or host dispatch contract changes.
  * Online layout negotiation mixes this value into its compatibility key. */
-#define MAP_SCRIPT_API_VERSION            UINT32_C(5)
+#define MAP_SCRIPT_API_VERSION            UINT32_C(7)
 
 #define MAP_SCRIPT_SENSOR_QUANTIZATION    256
 #define MAP_SCRIPT_PLAYER_CONTACT_RADIUS  6.0f

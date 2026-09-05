@@ -95,6 +95,19 @@ sudo ss -ltnp | grep 47779
 The admin listener is integrated into `server.js`; do not launch
 `node admin_server.js` as a second process.
 
+Admin requests must use `localhost` or a private literal IP in the Host header.
+Public DNS names are rejected before a session is granted, preventing a DNS
+rebinding page from gaining access through a private client. A reverse proxy must
+forward a private literal Host to this listener and enforce its own authentication.
+
+The dashboard refreshes activity, totals, queues, matches, social relationships,
+and account rows every two seconds while the tab is visible. Search filters stay
+applied. A section pauses while it contains a focused control, an open maintenance
+panel, or an edited password/reason; other sections keep updating. Close the panel
+and clear or submit the edit to resume that section. Interrupted requests retry
+without clearing the last snapshot; expired sessions stop updates and ask for a
+manual refresh. Maintenance actions still require an explicit form submission.
+
 ```bash
 sudo ufw allow from 192.168.1.0/24 to any port 47779 proto tcp
 ```
@@ -312,9 +325,17 @@ not sufficient: the running Node process must be restarted.
 
 Safe server-only deployment sequence:
 
+Existing account/ratings stores that are unreadable, malformed, or have invalid
+record shapes now stop startup. They are never replaced with an empty database.
+Back up the damaged file and repair or restore it before restarting. A missing
+store still initializes normally. Account and ratings writes use a flushed sibling
+file followed by replacement; the two stores are not a single transaction.
+An invalid or unwritable rating secret also stops startup instead of silently
+generating a replacement secret and invalidating stored signatures.
+
 1. Confirm or drain active TCP clients.
 2. Run `npm run check` and `npm test` locally.
-3. Stage the complete matching application set (`server.js`, `admin_server.js`, LFG
+3. Stage the complete matching application set (`server.js`, `storage.js`, `admin_server.js`, LFG
    modules, package metadata, and scripts); do not replace `users.json`, `ratings.json`,
    `server_secret.key`, external admin-password/environment files, or their paths.
 4. Run the same checks on the staged remote application.

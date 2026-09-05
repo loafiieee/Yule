@@ -200,6 +200,13 @@
             <label class="field">Armed respawn limit <span>0 or more</span><input id="respawn-limit" type="number" min="0" step="1" value="4"></label>
           </div>
 
+          <fieldset class="field-group">
+            <legend>Eggnogg color</legend>
+            <label><input id="eggnogg-color-enabled" type="checkbox"> Force a map-wide goal color</label>
+            <label class="field">Goal color<input id="eggnogg-color" type="color" value="#ffc966" disabled></label>
+            <p>Colors E and ^ goals in every room. Uncheck to restore automatic player-derived color. Team targets 1 and 2 keep their team colors.</p>
+          </fieldset>
+
           <div class="format-card">
             <div><span class="format-badge" id="format-badge">V1</span><strong id="format-title">Native map package</strong></div>
             <p id="format-copy">Uses EGGNOGG+’s built-in tiles and produces <code>data.json</code> plus <code>data.map</code>.</p>

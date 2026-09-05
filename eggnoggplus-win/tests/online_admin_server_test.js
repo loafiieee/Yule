@@ -5,12 +5,115 @@ const { spawnSync } = require("node:child_process");
 const http = require("http");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const {
+  adminLiveDashboard,
   isPrivateBindHost,
   startAdminServerFromEnv,
 } = require("../online_server/admin_server");
 
-function request(port, method, path, body = "", cookie = "") {
+function liveHarness() {
+  const timers = new Map();
+  const listeners = {};
+  const status = { textContent: "" };
+  let nextTimer = 0;
+  const region = (name) => ({
+    dataset: { live: name }, edits: [], open: false, focused: false, updates: 0,
+    contains() { return this.focused; },
+    querySelector() { return this.open; },
+    querySelectorAll() { return this.edits; },
+    replaceChildren() { this.updates++; },
+  });
+  const accounts = region("accounts");
+  const players = region("players");
+  const document = {
+    hidden: false, activeElement: {},
+    getElementById: () => status,
+    querySelectorAll: () => [accounts, players],
+    addEventListener: (name, fn) => { listeners[name] = fn; },
+  };
+  const harness = { document, accounts, players, status, timers, listeners,
+    requests: [], response: {ok: true, status: 200, text: async () => "fixture"} };
+  const context = vm.createContext({
+    document, location: {href: "http://localhost/?q=audit#accounts"}, URL, AbortController,
+    DOMParser: class { parseFromString() {
+      return { querySelector: () => ({childNodes: []}) };
+    } },
+    setTimeout: (fn, delay) => { timers.set(++nextTimer, {fn, delay}); return nextTimer; },
+    clearTimeout: (id) => timers.delete(id),
+    fetch: async (url, options) => {
+      harness.requests.push({url: String(url), options});
+      if (harness.failure) throw new Error("offline");
+      return harness.response;
+    },
+  });
+  vm.runInContext(`(${adminLiveDashboard.toString()})();`, context);
+  harness.tick = async () => {
+    const timer = [...timers].find(([, value]) => value.delay === 2000);
+    assert.ok(timer, "refresh must have exactly one scheduled retry");
+    timers.delete(timer[0]);
+    await timer[1].fn();
+  };
+  return harness;
+}
+
+test("live dashboard preserves focused, open, and edited maintenance while other regions refresh", async () => {
+  const h = liveHarness();
+  await h.tick();
+  assert.equal(h.accounts.updates, 1);
+  assert.equal(h.players.updates, 1);
+  assert.equal(h.requests[0].url, "http://localhost/?q=audit&live=1");
+  assert.equal(h.requests[0].options.redirect, "error");
+  h.accounts.focused = true;
+  await h.tick();
+  h.accounts.focused = false;
+  h.accounts.open = true;
+  await h.tick();
+  h.accounts.open = false;
+  h.accounts.edits = [{value: "unsaved password", defaultValue: ""}];
+  await h.tick();
+  assert.equal(h.accounts.updates, 1);
+  assert.equal(h.players.updates, 4);
+  assert.match(h.status.textContent, /editing section paused/);
+  h.accounts.edits = [];
+  await h.tick();
+  assert.equal(h.accounts.updates, 2);
+  assert.equal(h.timers.size, 1);
+});
+
+test("live dashboard pauses hidden tabs, retries failures, and stops on expired sessions", async () => {
+  const h = liveHarness();
+  h.document.hidden = true;
+  await h.tick();
+  assert.equal(h.requests.length, 0);
+  h.document.hidden = false;
+  h.failure = true;
+  await h.tick();
+  assert.equal(h.players.updates, 0);
+  assert.match(h.status.textContent, /retrying/);
+  h.failure = false;
+  await h.tick();
+  assert.equal(h.players.updates, 1);
+  h.response = {ok: false, status: 401};
+  await h.tick();
+  assert.match(h.status.textContent, /Refresh to reconnect/);
+  assert.equal(h.timers.size, 0);
+});
+
+test("live dashboard does not overlap requests after visibility changes", async () => {
+  const h = liveHarness();
+  let release;
+  h.response = new Promise((resolve) => { release = resolve; });
+  const pending = h.tick();
+  h.listeners.visibilitychange();
+  assert.equal(h.requests.length, 1);
+  release({ok: true, status: 200, text: async () => "fixture"});
+  await pending;
+  assert.equal(h.timers.size, 1);
+  assert.equal(h.players.updates, 1);
+});
+
+function request(port, method, path, body = "", cookie = "", hostHeader = "") {
   return new Promise((resolve, reject) => {
     const req = http.request({
       host: "127.0.0.1",
@@ -21,6 +124,7 @@ function request(port, method, path, body = "", cookie = "") {
         "Content-Type": "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(body),
         ...(cookie ? { Cookie: cookie } : {}),
+        ...(hostHeader ? { Host: hostHeader } : {}),
       },
     }, (res) => {
       const chunks = [];
@@ -222,6 +326,23 @@ test("admin UI grants a private client session, requires CSRF, and dispatches ac
   assert.match(dashboard.body, /Pending requests/);
   assert.match(dashboard.headers["content-security-policy"], /frame-ancestors 'none'/);
   assert.equal(dashboard.headers["cache-control"], "no-store");
+  assert.match(dashboard.body, /src="\/live.js" defer/);
+  assert.match(dashboard.headers["content-security-policy"], /script-src 'self'; connect-src 'self'/);
+  const script = await request(port, "GET", "/live.js", "", cookie);
+  assert.equal(script.status, 200);
+  assert.match(script.headers["content-type"], /text\/javascript/);
+  assert.equal(script.headers["cache-control"], "no-store");
+  const expiredLive = await request(port, "GET", "/?live=1");
+  assert.equal(expiredLive.status, 401);
+  assert.equal(expiredLive.headers["set-cookie"], undefined);
+  const oldSnapshot = api.snapshot;
+  api.snapshot = () => ({ ...oldSnapshot(), online: 7 });
+  const live = await request(port, "GET", "/?live=1&q=player_1", "", cookie);
+  assert.equal(live.status, 200);
+  assert.match(live.body, /<b>7<\/b><span>authenticated/);
+  assert.match(live.body, /id="account-player_1"/);
+  assert.doesNotMatch(live.body, /id="account-player_2"/);
+  api.snapshot = oldSnapshot;
   const csrf = dashboard.body.match(/name="csrf" value="([0-9a-f]+)"/)[1];
 
   const rejected = await request(
@@ -253,4 +374,15 @@ test("direct execution explains that the admin listener belongs to server.js", (
   assert.equal(result.status, 1);
   assert.match(result.stderr, /not a standalone process/);
   assert.match(result.stderr, /configure ADMIN_HOST\/ADMIN_PORT/);
+});
+
+
+test("admin rejects DNS rebinding hostnames before granting sessions", async (t) => {
+  const server = startAdminServerFromEnv({ ADMIN_PORT: "0", ADMIN_HOST: "127.0.0.1" },
+    { snapshot: () => ({}) }, { allowEphemeralPort: true, log() {} });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await new Promise(resolve => server.once("listening", resolve));
+  const response = await request(server.address().port, "GET", "/", "", "", "attacker.example");
+  assert.equal(response.status, 403);
+  assert.equal(response.headers["set-cookie"], undefined);
 });

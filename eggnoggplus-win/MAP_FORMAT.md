@@ -269,6 +269,29 @@ In `v1`:
 - `hook` must be omitted or `null`
 - any non-null value is an error
 
+## Forced Eggnogg color
+
+V1 and V2 maps may set `rules.eggnogg_color` to an RGB triple. For example:
+
+```json
+"rules": {
+  "mode": "swords",
+  "eggnogg_color": [0.25, 0.8, 1.0]
+}
+```
+
+This forces the same color throughout the map for stationary `E`, waving `^`,
+and their native round-end particles. Team score targets `1`/`2`, player colors,
+and tentacles retain their normal colors. It changes appearance only, including
+on mirrored rooms; it does not change goal collision or scoring rules.
+
+Omit the field to keep the game's automatic player-derived color. An explicit
+value must contain exactly three finite numbers in `0.0..1.0`; `null`, strings,
+missing channels, and out-of-range values are invalid. Greggnogg's Map inspector
+provides an Eggnogg color checkbox and picker. Unchecking removes the override.
+The setting is included in the package's ordinary online identity; both players
+must use the same map package and a framework build supporting the setting.
+
 ## Room ambience
 
 `ambient` may be either:
@@ -1125,12 +1148,48 @@ neighboring sprite. The sprite and offsets expire, reset, fault-roll back, and
 snapshot-restore atomically. They move only the temporary custom sprite—not the
 native underlay, tile/collision grid, contact sensor, or any spawned entity.
 
+`map.has_tile(reference)` checks whether the current script manifest declares a
+custom tile binding. Pass its one-byte symbol or qualified key. This is available
+during loading and callbacks, so reusable scripts can skip optional behavior:
+
+```lua
+if map.has_tile("demo:spring") then
+    map.on_enter("demo:spring", function(object, tile)
+        map.state.entries = (map.state.entries or 0) + 1
+    end)
+end
+```
+
+This checks declarations, not whether any cell in the current room uses the tile.
+Unbound native glyphs, unknown/malformed names, and embedded NULs return false;
+non-string arguments raise an error. Map API version 7 advertises this helper.
+Registration still rejects missing bindings and occurs only during script load.
+
 Persistent script values belong in `map.state`. It holds at most 64 entries;
 keys are at most 31 bytes, and values are `nil`, boolean, finite number, or a
 string of at most 63 bytes. `nil` deletes a value. `map.tick()` returns the
 rollback-tracked clock. `map.random()`, `map.random(max)`, and
 `map.random(min,max)` use a separate rollback-tracked deterministic generator.
 Do not keep mutable callback state in ordinary globals or captured locals.
+
+`map.every(interval[, phase])` tests the rollback clock without creating a timer.
+It returns true when `tick % interval == phase`; phase defaults to zero, so the
+first tick matches by default. Interval must be an integer from 1 through
+4294967295 and phase an integer from zero through interval minus one. Strings,
+fractions, and non-finite values are rejected. For example:
+
+```lua
+map.on_tick(function()
+    if map.every(60, 30) then
+        map.state.pulse = (map.state.pulse or 0) + 1
+    end
+end)
+```
+
+The helper uses integer clock arithmetic, does not consume RNG or add snapshot
+state, and repeats its result after rollback. It is a predicate, not a one-shot
+callback: repeated calls during the same tick return the same result. Map API
+version 6 advertises this addition through online compatibility negotiation.
 
 Map scripts run in their own restricted LuaJIT state, not the general mod VM.
 They have a 2 MiB default memory cap and 100,000-instruction load/callback

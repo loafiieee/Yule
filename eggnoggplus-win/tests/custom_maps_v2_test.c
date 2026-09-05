@@ -1268,9 +1268,40 @@ static void test_map_script_online_identity(void) {
     CHECK(RemoveDirectoryA(folder) != 0);
 }
 
+static void test_eggnogg_color(void) {
+    const char* invalid[] = {"null", "[]", "[0,1]", "[0,1,0,1]",
+        "[0,1,\"0\"]", "[0,-0.01,0]", "[1.000000001,0,0]", "[1e999,0,0]"};
+    char json[2048], map_text[1024];
+    CustomMapValidationSummary summary;
+    const char* base = v1_json();
+    size_t i;
+    float untouched[3] = {0.25f, 0.5f, 0.75f};
+    build_one_room_map('^', map_text, sizeof(map_text));
+    CHECK(custom_maps_validate_package_text("legacy", ".", base, map_text, &summary));
+    CHECK(!summary.has_eggnogg_color);
+    snprintf(json, sizeof(json), "%.*s,\"rules\":{\"mode\":\"swords\",\"eggnogg_color\":[0,0.5,1]}}",
+             (int)strlen(base) - 1, base);
+    CHECK(custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+    CHECK(summary.has_eggnogg_color && summary.eggnogg_color[0] == 0.0f &&
+          summary.eggnogg_color[1] == 0.5f && summary.eggnogg_color[2] == 1.0f);
+    base = spawn_budget_v2_json();
+    snprintf(json, sizeof(json), "%.*s,\"rules\":{\"mode\":\"swords\",\"eggnogg_color\":[0,0.5,1]}}",
+             (int)strlen(base) - 1, base);
+    CHECK(custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+    CHECK(summary.format_version == 2 && summary.has_eggnogg_color);
+    for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        snprintf(json, sizeof(json), "%.*s,\"rules\":{\"mode\":\"swords\",\"eggnogg_color\":%s}}",
+                 (int)strlen(base) - 1, base, invalid[i]);
+        CHECK(!custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+    }
+    CHECK(!custom_maps_pinned_eggnogg_color(-1, untouched));
+    CHECK(untouched[0] == 0.25f && untouched[1] == 0.5f && untouched[2] == 0.75f);
+}
+
 int main(void) {
     content_registry_shutdown();
     test_v1_compatibility();
+    test_eggnogg_color();
     test_native_tentacle_headroom();
     test_in_memory_v1_preview();
     test_native_room_spawn_budget();

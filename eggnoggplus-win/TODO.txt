@@ -35,7 +35,7 @@ desync and recovery failure modes):
       (used by native loser-respawn and horizontal camera-clamp branches), `_game_h`
       (used by vertical camera and camera-relative ambient paths), and `_resumed` (used to
       clear buffered attacks), and the `_mine_anim` same-tick activation guard at
-      `0x541EFC` are now checksum-authoritative under canonicalization v6 and have
+      `0x541EFC` are now checksum-authoritative under canonicalization v7 and have
       production-serializer regressions. Shake amplitude/decay decide whether native
       camera update consumes zero or two gameplay RNG draws, and its prior-tick camera-X
       result can change loser respawn. Online play pins the clean post-tick RNG/camera/
@@ -83,6 +83,10 @@ desync and recovery failure modes):
     - theres a desync in the last room of vanilla 1 thats causing disconnects in online play.
 
 Runtime acceptance still required:
+    - Verify initial sword tiles create one sword each through immediate local start,
+      online start, and in-game restart; then leave/revisit the room and confirm normal
+      respawning. The native double-reset path is guarded and lifecycle fixtures pass,
+      but the user's intermittent duplicate-sword report needs live confirmation.
     - Soak room transitions and mine explosions through ordinary rollback and coordinated
       correction on two live clients. Confirm every transition reaches the new room
       palette and every temporary mine tint returns to it. The active-match palette
@@ -195,8 +199,9 @@ Framework API release gate:
       duplicate rejection, gameplay suspension, removable handles, unload cleanup,
       API capability/revision discovery, documentation, and guarded coverage are in.
     - P1: Finish explicit asset ownership/removal and repeated hot-reload memory tests for
-      mod spritesheets, texture/font replacements, and retired atlases before promising
-      long-running live authoring.
+      mod spritesheets and retired GPU atlases before promising long-running live
+      authoring. Texture/font removal APIs and focused CPU allocation/reload coverage
+      are complete below; live GPU retirement and authoring soaks remain open.
 
 Feature backlog:
     - Finish the broad custom-content API as a coherent, polished system: additional
@@ -230,6 +235,9 @@ Feature backlog:
       document is created. The native crowd preview still reconstructs the executable's
       sparse spectator masks from original `sprites.png` gray-mask pixels.
     - Redesign Greggnogg V2 authoring before implementing it again:
+      Draft workflow and scope proposal: docs/greggnogg-v2-authoring-design.md.
+      Source-conformance review is complete; product choice, prototype and user
+      usability review remain open before enabling any V2 authoring UI.
       - [ ] Write and review a complete object-authoring interaction design before
         exposing another V2 toggle. Cover asset import, drawing, animation timelines,
         collision/native fallback, forces, scripting, deletion, package identity,
@@ -244,13 +252,75 @@ Feature backlog:
       use consistent formatting and names, remove duplication, document tricky module
       boundaries, and keep the build and tests updated as code moves.
     - add linux and mac support.
-    - make the admin panel update live
     - allow custom maps to have custom heights/widths
     - heavily expand map.lua functions and make it easier to script/create mods and map lua scripts
     - be able to choose when an opponent spawns in certain rooms rather than just not spawning them in the end rooms or spawning them always
 
-
 # Completed (source implementation and focused automated coverage)
+
+    - Map API version 7 adds map.has_tile(symbol_or_key), an immutable declaration
+      query usable during load/callbacks for optional reusable script behavior.
+      Missing native/custom bindings return false; callback references containing
+      embedded NULs no longer match a valid prefix. Guarded runtime/replay coverage
+      passes. Online peers require the same API compatibility fingerprint.
+    - Netcode service-clock wrap: timer initialization at tick zero uses the previous
+      serial tick instead of a future tick, avoiding unsigned elapsed-time underflow
+      and immediate recovery timeout. Guarded tests cover starting at zero and a
+      running checksum timer crossing uint32 wrap through its timeout boundary.
+    - Custom-map Eggnogg color: optional rules.eggnogg_color RGB in V1/V2 forces
+      stationary/waving Eggnogg and its round-end particles; omitted keeps native
+      player-derived colors. Greggnogg adds a toggle/picker, live canvas preview,
+      strict import/export validation, draft restoration, and undo/redo. Native
+      parsing and editor regressions pass. Browser/game visual acceptance remains.
+    - Duplicate initial room spawns: the original game's countdown resets the room
+      before setting started, then its first update can reset it again while old room
+      is still -1. Skip only that second mode-9 dispatch at countdown 90, preserving
+      room-entry bookkeeping and later room revisits. This covers all reset tile
+      actions, including sword/K spawns, using rollback-owned native state. Guarded
+      lifecycle fixtures and hook wiring pass; see docs/sword-spawn-audit-2026-09-04.md.
+    - Map-script authoring helper: map.every(interval[, phase]) provides a deterministic
+      periodic predicate with strict integer bounds, optional phase, and no mutable
+      timer/RNG state. Map API version 6 participates in the rollback compatibility
+      fingerprint. Tests cover phase/default behavior, rollback replay, malformed
+      arguments, and integer clock arithmetic beyond Lua's exact numeric tick range.
+
+    - Deeper transport/serializer audit: synchronized initial state cannot be replaced
+      by conflicting same-epoch chunks; strict probe JSON rejects duplicate keys,
+      trailing garbage, invalid IPv4, and out-of-range unsigned fields. Native snapshot
+      capture/apply preflights scalar/slab access and rejects invalid role tags before
+      mutation. Canonicalization v7 normalizes erased raw role pointers consistently;
+      both peers need matching builds. Full guarded and paired suites pass.
+    - Server safety/persistence audit: bound raw UTF-8 control frames, reject repeated
+      authentication on one connection, isolate inherited account/token keys, and
+      contain malformed dispatch input. Corrupt existing stores/secrets fail startup;
+      store writes use flushed atomic replacement. Private admin Host validation
+      closes the DNS-rebinding path. Transactional multi-file storage remains open.
+    - Framework API revision 6: add owner-scoped mod.font.unregister_glyph and
+      mod.texture.unregister, rebuild remaining declarations on removal, and reject
+      inactive-owner edits. Fix glyph cache ownership/reservations, canonical texture
+      registration keys, truncated paths, image-size overflow, and allocation bookkeeping.
+      Native cache regressions and 100 texture reset cycles pass; Lua API wiring has
+      static coverage. Live rendering acceptance remains required. Details and test
+      evidence: docs/framework-audit-2026-09-04.md.
+
+    - Netcode receive/error-path audit: cap both GGPO and reachability-probe UDP
+      polling at 64 attempts per service call, including invalid traffic; skip
+      consumed oversized datagrams and asynchronous UDP reset errors within that
+      budget. TCP setup now checks Winsock/nonblocking failures, rejects invalid
+      targets, and closes failed select polls instead of reporting pending forever.
+      Invalid receive buffers no longer close a healthy TCP connection. Probe
+      numeric fields reject signs, overflow, and numeric-prefix garbage. Native
+      socket regressions, the full authenticated paired suite, and production DLL
+      linkage cover the changes. See docs/netcode-audit-2026-09-04.md for scope and
+      remaining limitations; the last-room report above is still open.
+    - Live LAN admin dashboard: automatically refresh server activity, totals,
+      queues/challenges/rematches, social relationships, and filtered account rows
+      every two seconds. Preserve focused controls, open maintenance panels, and
+      unsaved form values; pause hidden tabs, bound requests, prevent overlap, and
+      retry interruptions without clearing the last view. Expired sessions stop
+      polling. Same-origin external script and fetch permissions retain CSRF and
+      private-client gates. Endpoint and lifecycle tests pass; real-browser visual
+      acceptance remains required.
 
     - Console code cleanup: moved the command list, argument parser, and saved command
       history out of `hooks.c` into small tested modules. Autocomplete now includes every

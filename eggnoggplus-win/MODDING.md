@@ -1117,6 +1117,19 @@ The framework patches `data/font8x8.png` **as it is loaded** so the base game te
 - `mod.font.font_loaded() -> bool`
   - Returns true after the game has loaded `data/font8x8.png` once.
   - If you register/allocate after this, the framework attempts a live atlas rebuild.
+- `mod.font.unregister_glyph(byte) -> removed, restart_required` (API revision 6;
+  capability `font.unregister`)
+  - Removes only your mod's declaration and cached allocation for that byte.
+  - Remaining declarations are replayed, revealing another owner's registration or
+    the native glyph. Returns `false, false` if your mod has no such declaration;
+    invalid arguments or an inactive mod return `false, error`.
+  - A successful removal attempts live atlas refresh. A true second return means
+    that refresh failed; inspect the log and restart after repairing any missing asset.
+
+Cached allocations retain their byte through a registry rebuild. If another
+registration has replaced the cached glyph, `alloc_glyph` returns an error instead
+of returning someone else's image. Unregister the old declaration before allocating
+a new byte. Glyph and texture mutation APIs reject disabled or suspended owners.
 
 Registered glyph PNGs are now watched for source-file changes:
 - Changes are reloaded from disk and applied live by rebuilding graphics atlases.
@@ -1134,6 +1147,19 @@ mod.texture.register_glowsheet("assets/glow.png")
 ```
 
 The framework patches `data/*.png` atlases **as they are loaded** by the game.
+
+`mod.texture.unregister(target_path) -> removed, restart_required` removes your
+mod's replacement without disabling the mod (API revision 6, capability
+`texture.unregister`). Target shorthand and slash/case aliases use one canonical
+identity. Other owners' declarations are preserved and replayed; when none remain,
+the native image is used. Return values and live-refresh failures follow
+`mod.font.unregister_glyph` above. This does not remove custom spritesheets created
+through `mod.assets`.
+
+```lua
+local removed, restart_required = mod.texture.unregister("tiles.png")
+if removed and restart_required then mod.log("Restart required to refresh tiles") end
+```
 
 - `mod.texture.register(target_path, rel_path [,opts]) -> true | false, err`
   - Generic replacement API.
@@ -1410,7 +1436,13 @@ previous override.
 
 Persistent data must use `map.state`, whose 64 bounded entries accept only nil,
 boolean, finite number, or short string values. `map.random(...)` is the only
-gameplay RNG and is snapshotted; `map.tick()` returns the deterministic script
+gameplay RNG and is snapshotted; `map.every(interval[, phase])` tests periodic
+ticks without mutable timer state (default phase zero includes tick zero).
+Use integer interval 1..4294967295 and phase 0..interval-1.
+`map.has_tile(symbol_or_key)` tests declared custom bindings, allowing reusable
+scripts to register optional tile callbacks only when that binding exists.
+It is available during loading and callbacks, and does not inspect room placement.
+`map.tick()` returns the deterministic script
 clock. Ordinary mutable globals/captured state, `math.random`, bytecode, dynamic
 loading, debug/FFI/JIT/coroutine APIs, unbounded execution, and the numeric `^`
 operator are rejected. `^` would route through non-bit-stable libm power code;

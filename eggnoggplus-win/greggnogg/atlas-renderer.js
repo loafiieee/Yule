@@ -1205,6 +1205,15 @@
     context.restore();
   }
 
+  function goalColour(glyph, palette, options) {
+    var teams = options.teamColours || options.teamColors || {
+      "1": [0.95, 0.28, 0.22, 1], "2": [0.25, 0.55, 1, 1]
+    };
+    if (glyph === "1" || glyph === "2") return parseColour(teams[glyph], paletteColour(palette, "special"));
+    var supplied = ((glyph === "E" || glyph === "^") && options.eggnoggColor) || options.enemyColour || options.enemyColor || teams.enemy;
+    return supplied ? parseColour(supplied, previewEnemyColour(palette)) : previewEnemyColour(palette);
+  }
+
   function renderNativeCell(context, assets, cell, x, y, palette, options) {
     var settings = {};
     var hash = hashCell(cell.nativeWorldX, cell.y, cell.sourceGlyph);
@@ -1215,13 +1224,6 @@
     var colour;
     var transform;
     var flips;
-    var teamColours = options.teamColours || options.teamColors || {
-      "1": [0.95, 0.28, 0.22, 1],
-      "2": [0.25, 0.55, 1.0, 1]
-    };
-    var suppliedEnemyColour = options.enemyColour || options.enemyColor || teamColours.enemy;
-    var enemyColour = suppliedEnemyColour ? parseColour(suppliedEnemyColour, previewEnemyColour(palette)) :
-      previewEnemyColour(palette);
 
     if (cell.nativeMirror && options.mirrored) settings.flipX = true;
     switch (cell.kind) {
@@ -1325,14 +1327,14 @@
         renderSun(context, assets, transform.x, transform.y, palette, time, !!options.glyphPreview);
         return;
       case "still-goal":
-        drawFrame(context, assets, "tiles", NATIVE_FRAME_RECIPES.goal.frames[0], x, y, enemyColour, settings);
+        drawFrame(context, assets, "tiles", NATIVE_FRAME_RECIPES.goal.frames[0], x, y, goalColour(cell.sourceGlyph, palette, options), settings);
         return;
       case "waving-goal":
         sway = 0.5 + Math.sin((time * 3 + cell.nativeWorldX * 15) * Math.PI / 180) * 0.5;
-        drawFrame(context, assets, "tiles", NATIVE_FRAME_RECIPES.goal.frames[0], x, y + 4 + sway * 8, enemyColour, settings);
+        drawFrame(context, assets, "tiles", NATIVE_FRAME_RECIPES.goal.frames[0], x, y + 4 + sway * 8, goalColour(cell.sourceGlyph, palette, options), settings);
         return;
       case "team-goal":
-        colour = parseColour(teamColours[cell.sourceGlyph], paletteColour(palette, "special"));
+        colour = goalColour(cell.sourceGlyph, palette, options);
         drawFrame(context, assets, "tiles", NATIVE_FRAME_RECIPES.goal.frames[0], x, y, colour, settings);
         return;
       case "crowd":
@@ -1395,7 +1397,7 @@
         drawFrame(context, assets, "tiles", cell.frame,
           x + tentacleDx,
           y - tentacleDy,
-          enemyColour, settings);
+          goalColour(cell.sourceGlyph, palette, options), settings);
         return;
       case "puzzley":
         frame = 0x08 + ((Math.floor(time / 24) + (hash & 3)) & 3);
@@ -1922,6 +1924,7 @@
     _nativeChandelierGeometry: nativeChandelierGeometry,
     _nativeChandelierGlow: nativeChandelierGlow,
     _nativeSunPosition: nativeSunPosition,
+    _goalColour: goalColour,
     _previewEnemyColour: previewEnemyColour
   };
 }));

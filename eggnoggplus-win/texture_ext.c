@@ -23,8 +23,15 @@
 typedef unsigned char* (__cdecl *fn_stbi_load_t)(const char* filename, int* x, int* y, int* comp, int req_comp);
 typedef void (__cdecl *fn_stbi_image_free_t)(void* p);
 
+#ifdef ASSET_EXT_TEST
+extern unsigned char* __cdecl asset_test_load(const char*, int*, int*, int*, int);
+extern void __cdecl asset_test_free(void*);
+static fn_stbi_load_t p_stbi_load = asset_test_load;
+static fn_stbi_image_free_t p_stbi_image_free = asset_test_free;
+#else
 static fn_stbi_load_t       p_stbi_load       = (fn_stbi_load_t)(uintptr_t)ADDR_STBI_LOAD;
 static fn_stbi_image_free_t p_stbi_image_free = (fn_stbi_image_free_t)(uintptr_t)ADDR_STBI_IMAGE_FREE;
+#endif
 
 typedef struct TextureReplacement {
     int used;
@@ -92,18 +99,20 @@ static int str_ends_with(const char* s, const char* suffix) {
     return memcmp(s + (ls - lf), suffix, lf) == 0;
 }
 
-static int canonicalize_target_path(const char* input, char* out, int out_sz) {
+int texture_ext_canonicalize_target(const char* input, char* out, int out_sz) {
     char norm[512];
     const char* p;
 
     if (!input || !input[0]) return 0;
     if (!out || out_sz <= 0) return 0;
+    if (strlen(input) >= sizeof(norm)) return 0;
 
     normalize_slashes_lower(input, norm, (int)sizeof(norm));
 
     // Allow shorthand like "sprites.png" and map it to data/sprites.png.
     if (!strchr(norm, '/')) {
         if (!str_ends_with(norm, ".png")) return 0;
+        if (strlen(norm) + 5u >= (size_t)out_sz) return 0;
         safe_snprintf(out, out_sz, "data/%s", norm);
         return 1;
     }
@@ -113,7 +122,7 @@ static int canonicalize_target_path(const char* input, char* out, int out_sz) {
     {
         const char* it = norm;
         while ((it = strstr(it, "data/")) != NULL) {
-            p = it;
+            if (it == norm || it[-1] == '/') p = it;
             it += 5;
         }
     }
@@ -122,6 +131,7 @@ static int canonicalize_target_path(const char* input, char* out, int out_sz) {
     }
 
     if (strncmp(p, "data/", 5) != 0) return 0;
+    if (strstr(p, "/../") || strstr(p, "/./") || strstr(p, "//") || strchr(p, ':')) return 0;
     if (!str_ends_with(p, ".png")) return 0;
     if ((int)strlen(p) >= out_sz) return 0;
 
@@ -159,7 +169,7 @@ static int load_png_rgba(const char* full_path, uint8_t** out_pixels, int* out_w
         safe_snprintf(err, err_sz, "failed to load %s", full_path);
         return 0;
     }
-    if (w <= 0 || h <= 0) {
+    if (w <= 0 || h <= 0 || (size_t)w > SIZE_MAX / 4u / (size_t)h) {
         p_stbi_image_free(pix);
         safe_snprintf(err, err_sz, "invalid image size %dx%d", w, h);
         return 0;
@@ -323,7 +333,7 @@ void texture_ext_reset_runtime_state(void) {
 
 int texture_ext_path_loaded(const char* target_path) {
     char canonical[TEX_PATH_MAX];
-    if (!canonicalize_target_path(target_path, canonical, (int)sizeof(canonical))) return 0;
+    if (!texture_ext_canonicalize_target(target_path, canonical, (int)sizeof(canonical))) return 0;
     return loaded_path_index(canonical) >= 0;
 }
 
@@ -388,8 +398,14 @@ int texture_ext_register_png(
         safe_snprintf(err, err_sz, "missing texture path");
         return 0;
     }
+    if (strlen(owner_mod_id) >= sizeof(g_replacements[0].owner) ||
+        strlen(rel_path) >= sizeof(g_replacements[0].relpath) ||
+        strlen(owner_mod_folder) + 1u + strlen(rel_path) >= MAX_PATH) {
+        safe_snprintf(err, err_sz, "texture owner or path is too long");
+        return 0;
+    }
 
-    if (!canonicalize_target_path(target_path, canonical, (int)sizeof(canonical))) {
+    if (!texture_ext_canonicalize_target(target_path, canonical, (int)sizeof(canonical))) {
         safe_snprintf(err, err_sz, "invalid target path '%s'", target_path);
         return 0;
     }
@@ -471,7 +487,7 @@ void texture_ext_on_rgba_load(const char* path, RgbaImage* img) {
     if (!path || !img) return;
     if (!img->pixels || img->w <= 0 || img->h <= 0) return;
 
-    if (!canonicalize_target_path(path, canonical, (int)sizeof(canonical))) {
+    if (!texture_ext_canonicalize_target(path, canonical, (int)sizeof(canonical))) {
         return;
     }
 

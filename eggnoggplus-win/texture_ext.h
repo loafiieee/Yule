@@ -11,6 +11,8 @@ void texture_ext_shutdown(void);
 
 // Clears live replacement/runtime state.
 void texture_ext_reset_runtime_state(void);
+/* Shared exact target identity for runtime and owner registration records. */
+int texture_ext_canonicalize_target(const char* input, char* out, int out_sz);
 
 // Returns 1 after we've seen a target texture load once.
 // target_path accepts:

@@ -80,7 +80,9 @@ assert "best_physical ? best_physical : best_any" in NET
 assert "primary_vpn_suspected" in NET
 assert "UINT32_C(0x64400000)" in NET
 assert '\\"type\\":\\"udp_ping\\"' in NET
-assert '\\"type\\":\\"udp_pong\\"' in NET
+assert 'online_control_json_get_string(response, "type"' in NET
+assert 'strcmp(type, "udp_pong")' in NET
+assert 'online_control_json_get_uint32(response, "seq"' in NET
 assert "NetNetworkProfile" in NET_H
 assert "NetUdpProbeResult" in NET_H
 assert "-liphlpapi" in BUILD

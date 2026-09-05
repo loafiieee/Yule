@@ -184,3 +184,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\run_v2_map_test.ps1
 ```
 
 Never launch `eggnoggplus.exe` or a `build/*.exe` test binary directly.
+
+### Forced Eggnogg color
+
+In the map inspector, enable **Force a map-wide goal color** and choose a color. The override applies to E and ^ goals across every room, including mirrored rooms. Uncheck it to return to automatic player-derived color. Team targets 1 and 2 retain their team colors.
+
+Exports store `rules.eggnogg_color` as three numeric RGB channels from 0 to 1. Imports preserve exact channel values until the color is edited; automatic mode omits the field. Invalid colors are rejected instead of silently clamped. The canvas previews the override immediately, and changes support undo, redo, and draft restoration.

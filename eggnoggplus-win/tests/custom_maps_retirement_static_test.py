@@ -23,6 +23,16 @@ swap = function_body("static void registry_swap_in")
 mapgen = function_body("void custom_maps_handle_mapgen_init")
 shutdown = function_body("void custom_maps_shutdown")
 reclaim = function_body("static void free_unpinned_retired_registry_maps")
+eggnogg = function_body("int custom_maps_pinned_eggnogg_color")
+assert "selector != g_engine_pinned_selector" in eggnogg
+assert "g_engine_pinned_map->has_eggnogg_color" in eggnogg
+assert "g_engine_pinned_map->eggnogg_color" in eggnogg
+assert "reload" not in eggnogg
+
+hooks = (ROOT / "hooks.c").read_text(encoding="utf-8")
+assert "custom_maps_pinned_eggnogg_color(*g_hook_map_selector, rgb)" in hooks
+assert "p_eggnogg_colour_trampoline(rgb)" in hooks
+assert "(void*)&hooked_eggnogg_colour, 9)" in hooks
 
 assert "old_maps == g_engine_pinned_registry_maps" in swap
 assert "retire_registry_maps(old_maps, old_count);" in swap

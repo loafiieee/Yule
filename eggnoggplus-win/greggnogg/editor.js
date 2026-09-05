@@ -63,7 +63,7 @@
     "room-render-canvas", "coordinate-label", "tool-status", "validation-summary", "duplicate-room-button",
     "add-room-button", "room-tabs", "inspector-panel", "map-tab", "room-tab", "validation-tab", "validation-count",
     "map-inspector", "room-inspector", "validation-inspector", "map-name", "map-author", "map-id", "map-description",
-    "description-count", "sort-order", "score-target", "respawn-limit", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
+    "description-count", "sort-order", "eggnogg-color-enabled", "eggnogg-color", "score-target", "respawn-limit", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
     "room-id", "room-ambient", "reset-colors-button", "preview-mirror-colors-button", "palette-presets", "palette-name", "save-palette-button", "random-palette-button", "saved-palettes", "primary-color-fields",
     "custom-mirror-colors", "mirror-color-fields", "move-room-in-button", "move-room-out-button", "delete-room-button",
     "spawn-meter-fill", "spawn-budget-label", "spawn-budget-detail", "validation-heading", "validation-list",
@@ -251,6 +251,8 @@
     if (!doc.rules.mode) doc.rules.mode = "swords";
     if (!doc.rules.roundEndRooms) doc.rules.roundEndRooms = doc.rules.round_end_rooms || "inner_only";
     if (doc.rules.scoreTarget === undefined) doc.rules.scoreTarget = doc.rules.score_target === undefined ? null : doc.rules.score_target;
+    if (doc.rules.eggnoggColor === undefined && doc.rules.eggnogg_color !== undefined) doc.rules.eggnoggColor = doc.rules.eggnogg_color;
+    delete doc.rules.eggnogg_color;
     if (doc.rules.armedRespawnLimit === undefined) doc.rules.armedRespawnLimit = doc.rules.armed_respawn_limit === undefined ? 4 : doc.rules.armed_respawn_limit;
     if (!doc.layout || typeof doc.layout !== "object" || Array.isArray(doc.layout)) doc.layout = { kind: "mirrored_source_rooms", roomFormat: "vanilla_33x12", order: [] };
     doc.layout.kind = "mirrored_source_rooms";
@@ -709,6 +711,7 @@
           grid: room.grid,
           appearance: appearance,
           ambient: room.ambient,
+          eggnoggColor: state.document.rules.eggnoggColor,
           tileset: state.document && state.document.tileset,
           mirrored: state.previewMirrored,
           /* Native terrain variation is seeded from the destination room and
@@ -1310,6 +1313,9 @@
     setControlValue(els["sort-order"], doc.sortOrder);
     document.querySelectorAll('input[name="combat-mode"]').forEach(function (input) { input.checked = input.value === doc.rules.mode; });
     document.querySelectorAll('input[name="round-end"]').forEach(function (input) { input.checked = input.value === doc.rules.roundEndRooms; });
+    els["eggnogg-color-enabled"].checked = doc.rules.eggnoggColor !== undefined;
+    els["eggnogg-color"].disabled = doc.rules.eggnoggColor === undefined;
+    setControlValue(els["eggnogg-color"], Core.colorToHex(doc.rules.eggnoggColor) || "#ffc966");
     setControlValue(els["score-target"], doc.rules.scoreTarget);
     setControlValue(els["respawn-limit"], doc.rules.armedRespawnLimit);
     els["format-badge"].textContent = isV2 ? "V2" : "V1";
@@ -2398,6 +2404,17 @@
       els["description-count"].textContent = utf8Length(value) + " / 255 bytes";
     });
     bindNumberField(els["sort-order"], "Edit sort order", function () { return state.document.sortOrder; }, function (value) { state.document.sortOrder = value; }, false);
+    els["eggnogg-color-enabled"].addEventListener("change", function () {
+      var enabled = this.checked;
+      commit("Change Eggnogg color mode", function () {
+        if (enabled) state.document.rules.eggnoggColor = Core.hexToColor(els["eggnogg-color"].value);
+        else delete state.document.rules.eggnoggColor;
+      });
+    });
+    els["eggnogg-color"].addEventListener("change", function () {
+      var color = Core.hexToColor(this.value);
+      if (color && state.document.rules.eggnoggColor !== undefined) commit("Change Eggnogg color", function () { state.document.rules.eggnoggColor = color; });
+    });
     bindNumberField(els["score-target"], "Edit score target", function () { return state.document.rules.scoreTarget; }, function (value) { state.document.rules.scoreTarget = value; }, true);
     bindNumberField(els["respawn-limit"], "Edit armed respawn limit", function () { return state.document.rules.armedRespawnLimit; }, function (value) { state.document.rules.armedRespawnLimit = value; }, false);
 

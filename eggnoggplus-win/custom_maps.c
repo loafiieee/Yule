@@ -212,6 +212,8 @@ typedef struct CustomMap {
     int round_end_any;
     int score_target;
     int armed_respawn_limit;
+    int has_eggnogg_color;
+    float eggnogg_color[3];
     int format_version;
     RoomConfig defaults_room;
     int source_room_count;
@@ -2485,11 +2487,12 @@ static void parse_color_triplet(MapDiagnostics* diag, const JsonValue* value, co
             diag_log(diag, 1, "[data.json][%s] error: colour channel %d must be numeric", path, i);
             return;
         }
-        channel = (float)item->u.number_value;
-        if (channel < 0.0f || channel > 1.0f) {
+        if (!isfinite(item->u.number_value) || item->u.number_value < 0.0 ||
+            item->u.number_value > 1.0) {
             diag_log(diag, 1, "[data.json][%s] error: colour channel %d must be in 0.0..1.0", path, i);
             return;
         }
+        channel = (float)item->u.number_value;
         fields->rgb[slot][i] = channel;
     }
     fields->present[slot] = 1;
@@ -3037,12 +3040,13 @@ static int custom_map_compare(const void* lhs_ptr, const void* rhs_ptr) {
 
 static int parse_rules(MapDiagnostics* diag, const JsonValue* rules_value, CustomMap* map) {
     static const char* const known_keys[] = {
-        "mode", "round_end_rooms", "score_target", "armed_respawn_limit"
+        "mode", "round_end_rooms", "score_target", "armed_respawn_limit", "eggnogg_color"
     };
     JsonValue* mode_value;
     JsonValue* round_value;
     JsonValue* score_value;
     JsonValue* limit_value;
+    JsonValue* eggnogg_value;
 
     if (!rules_value) return 1;
     if (rules_value->type != JSON_OBJECT) {
@@ -3051,6 +3055,17 @@ static int parse_rules(MapDiagnostics* diag, const JsonValue* rules_value, Custo
     }
 
     warn_unknown_keys(diag, rules_value, "rules", known_keys, (int)(sizeof(known_keys) / sizeof(known_keys[0])));
+
+    eggnogg_value = json_object_get(rules_value, "eggnogg_color");
+    if (eggnogg_value) {
+        ColorFields fields;
+        memset(&fields, 0, sizeof(fields));
+        parse_color_triplet(diag, eggnogg_value, "rules.eggnogg_color", &fields, 0);
+        if (fields.present[0]) {
+            map->has_eggnogg_color = 1;
+            memcpy(map->eggnogg_color, fields.rgb[0], sizeof(map->eggnogg_color));
+        }
+    }
 
     mode_value = json_object_get(rules_value, "mode");
     if (!mode_value) {
@@ -4001,6 +4016,14 @@ int custom_maps_pinned_content_view(int selector,
     return 1;
 }
 
+int custom_maps_pinned_eggnogg_color(int selector, float out_rgb[3]) {
+    if (!out_rgb || !g_custom_maps_inited || !g_engine_pinned_map ||
+        selector != g_engine_pinned_selector || g_engine_pinned_generation == 0 ||
+        !g_engine_pinned_map->has_eggnogg_color) return 0;
+    memcpy(out_rgb, g_engine_pinned_map->eggnogg_color, sizeof(float) * 3u);
+    return 1;
+}
+
 int custom_maps_pinned_script_id(int selector, uint64_t* out_script_id) {
     if (!out_script_id) return -1;
     *out_script_id = 0;
@@ -4207,6 +4230,8 @@ int custom_maps_validate_package_text(const char* folder_id,
 done:
     if (out_summary) {
         out_summary->format_version = format_version;
+        out_summary->has_eggnogg_color = map.has_eggnogg_color;
+        memcpy(out_summary->eggnogg_color, map.eggnogg_color, sizeof(map.eggnogg_color));
         out_summary->source_room_count = map.source_room_count;
         out_summary->content_tile_count = map.content_tile_count;
         snprintf(out_summary->default_sheet_key,

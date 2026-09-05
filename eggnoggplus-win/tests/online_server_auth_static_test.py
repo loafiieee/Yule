@@ -159,7 +159,7 @@ assert "relayRateAllowed" in relay_packet
 register_endpoint = function_body("function registerP2pEndpoint")
 assert "generation >= 2" in register_endpoint
 assert "match.force_relay = true" in register_endpoint
-assert "match.p2p_notified = {}" in register_endpoint
+assert "match.p2p_notified = Object.create(null)" in register_endpoint
 assert "retainTerminalRelay(match)" in finish
 assert "clearRelayEndpoints(match)" in cancel
 retain_relay = function_body("function retainTerminalRelay")

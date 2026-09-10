@@ -30,3 +30,8 @@ eggnoggplus-win/build/command_history_test.exe
 eggnoggplus-win/build/command_history_test.tmp
 yule-src/
 yule-src-public/
+.claude/
+.github/
+.vscode/
+eggnoggplus-win.zip
+

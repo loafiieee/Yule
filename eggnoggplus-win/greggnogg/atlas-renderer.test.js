@@ -54,7 +54,13 @@ function blankRoom() {
   return rows;
 }
 
+var GregAtlas;
+
 function loadRenderer() {
+  if (typeof require === "function") {
+    GregAtlas = require("./atlas-renderer.js");
+    return;
+  }
   var fso = new ActiveXObject("Scripting.FileSystemObject");
   var directory = fso.GetParentFolderName(WScript.ScriptFullName);
   var path = fso.BuildPath(directory, "atlas-renderer.js");
@@ -388,10 +394,15 @@ try {
   testWaterfallBackfill();
   testWaterfallBackfillUsesRawFrameByte();
   testV2Binding();
-  WScript.Echo("atlas-renderer tests: OK");
-  WScript.Quit(0);
+  if (typeof WScript !== "undefined") WScript.Echo("atlas-renderer tests: OK");
+  else console.log("atlas-renderer tests: OK");
 } catch (error) {
-  WScript.StdErr.WriteLine("atlas-renderer tests: FAILED");
-  WScript.StdErr.WriteLine(error && error.message ? error.message : String(error));
-  WScript.Quit(1);
+  if (typeof WScript !== "undefined") {
+    WScript.StdErr.WriteLine("atlas-renderer tests: FAILED");
+    WScript.StdErr.WriteLine(error && error.message ? error.message : String(error));
+    WScript.Quit(1);
+  } else {
+    console.error(error);
+    process.exitCode = 1;
+  }
 }

@@ -30,6 +30,7 @@
 #include "mod_json.h"
 #include "console_catalog.h"
 #include "console_parse.h"
+#include "ui_geometry.h"
 
 static lua_State *L = NULL;
 
@@ -2392,84 +2393,7 @@ static InputBinding* mod_bind_by_index(LoadedMod* mod, int bind_index) {
     return &mod->binds[bind_index];
 }
 
-typedef struct BindNameMap {
-    int sym;
-    const char* name;
-} BindNameMap;
-
-static const BindNameMap k_bind_name_map[] = {
-    { 8, "Backspace" },
-    { 9, "Tab" },
-    { 13, "Enter" },
-    { 27, "Escape" },
-    { 32, "Space" },
-    { 127, "Delete" },
-    { 1073741882, "F1" }, { 1073741883, "F2" }, { 1073741884, "F3" },
-    { 1073741885, "F4" }, { 1073741886, "F5" }, { 1073741887, "F6" },
-    { 1073741888, "F7" }, { 1073741889, "F8" }, { 1073741890, "F9" },
-    { 1073741891, "F10" }, { 1073741892, "F11" }, { 1073741893, "F12" },
-    { 1073741898, "Home" },
-    { 1073741899, "PageUp" },
-    { 1073741901, "End" },
-    { 1073741902, "PageDown" },
-    { 1073741903, "Right" },
-    { 1073741904, "Left" },
-    { 1073741905, "Down" },
-    { 1073741906, "Up" },
-    { 1073741912, "KeypadEnter" },
-    { '`', "Backtick" },
-};
-
-static int bind_sym_to_name(int sym, char* out, size_t outsz) {
-    if (!out || outsz == 0) return 0;
-    out[0] = '\0';
-    if (sym == 0) {
-        snprintf(out, outsz, "Unbound");
-        return 1;
-    }
-    for (size_t i = 0; i < sizeof(k_bind_name_map) / sizeof(k_bind_name_map[0]); i++) {
-        if (k_bind_name_map[i].sym == sym) {
-            snprintf(out, outsz, "%s", k_bind_name_map[i].name);
-            return 1;
-        }
-    }
-    if (sym >= 33 && sym <= 126) {
-        if (sym >= 'a' && sym <= 'z') sym = toupper(sym);
-        snprintf(out, outsz, "%c", (char)sym);
-        return 1;
-    }
-    snprintf(out, outsz, "Key%d", sym);
-    return 1;
-}
-
-static int bind_name_to_sym(const char* name, int* out_sym) {
-    if (!name || !name[0]) return 0;
-    while (*name && isspace((unsigned char)*name)) name++;
-    if (!name[0]) return 0;
-    if (_stricmp(name, "none") == 0 || _stricmp(name, "unbound") == 0 || _stricmp(name, "clear") == 0) {
-        if (out_sym) *out_sym = 0;
-        return 1;
-    }
-    for (size_t i = 0; i < sizeof(k_bind_name_map) / sizeof(k_bind_name_map[0]); i++) {
-        if (_stricmp(name, k_bind_name_map[i].name) == 0) {
-            if (out_sym) *out_sym = k_bind_name_map[i].sym;
-            return 1;
-        }
-    }
-    if ((_strnicmp(name, "Key", 3) == 0 || _strnicmp(name, "SDLK_", 5) == 0) && isdigit((unsigned char)name[strlen(name)-1])) {
-        const char* n = (_strnicmp(name, "Key", 3) == 0) ? (name + 3) : (name + 5);
-        int v = atoi(n);
-        if (out_sym) *out_sym = v;
-        return 1;
-    }
-    if (!name[1]) {
-        int sym = (unsigned char)name[0];
-        if (sym >= 'A' && sym <= 'Z') sym = tolower(sym);
-        if (out_sym) *out_sym = sym;
-        return 1;
-    }
-    return 0;
-}
+#include "input_binding.h"
 
 static void mod_bind_update_name(InputBinding* bind) {
     if (!bind) return;
@@ -6734,8 +6658,7 @@ static void mod_suspend_transient_state(LoadedMod* mod) {
 }
 
 static void mod_ui_push_hitbox(LoadedMod* mod, float x, float y, float w, float h) {
-    if (!mod) return;
-    if (w <= 0.0f || h <= 0.0f) return;
+    if (!mod || !ui_bounds_valid(x, y, w, h)) return;
     if (mod->ui_hitbox_count + 1 > mod->ui_hitbox_cap) {
         int newcap = (mod->ui_hitbox_cap == 0) ? 8 : (mod->ui_hitbox_cap * 2);
         UiHitBox* nb = (UiHitBox*)realloc(mod->ui_hitboxes, sizeof(UiHitBox) * newcap);
@@ -6751,14 +6674,7 @@ static void mod_ui_push_hitbox(LoadedMod* mod, float x, float y, float w, float 
 }
 
 static int ui_point_in_hitbox(int x, int y, const UiHitBox* hb) {
-    float fx = (float)x;
-    float fy = (float)y;
-    if (!hb) return 0;
-    if (fx < hb->x) return 0;
-    if (fy < hb->y) return 0;
-    if (fx > hb->x + hb->w) return 0;
-    if (fy > hb->y + hb->h) return 0;
-    return 1;
+    return hb && ui_bounds_contains(hb->x, hb->y, hb->w, hb->h, x, y);
 }
 
 static int ui_hit_any_visible_button(int x, int y) {
@@ -6880,7 +6796,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define TILEMAP_MAX_BYTES           (4u * 1024u * 1024u)
 
 #define FULL_STATE_BLOB_MAGIC       0x30474745u /* "EGG0" */
-#define FULL_STATE_BLOB_VERSION     9u
+#define FULL_STATE_BLOB_VERSION     12u
 
 typedef struct FullStateBlobHeader {
     uint32_t magic;
@@ -6952,22 +6868,22 @@ typedef struct FullStateBlobHeader {
     uint8_t particle_state[PARTICLE_STATE_SIZE];
 } FullStateBlobHeader;
 
-/* The offline peer-trace analyzer recognizes this exact 32-bit EGG0/v9
+/* The offline peer-trace analyzer recognizes this exact 32-bit EGG0/v12
  * canonical layout. Keep the scalar and major-component boundaries explicit:
  * any change must bump FULL_STATE_BLOB_VERSION and teach the analyzer the new
  * schema instead of silently relabeling offsets from an old trace. */
-_Static_assert(sizeof(FullStateBlobHeader) == 0x25688u,
-               "EGG0/v9 header size changed without a schema version bump");
+_Static_assert(sizeof(FullStateBlobHeader) == 0x25790u,
+               "EGG0/v12 header size changed without a schema version bump");
 _Static_assert(offsetof(FullStateBlobHeader, map_script_state) == 252u,
-               "EGG0/v9 map-script boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, transient_game_state) == 29700u,
-               "EGG0/v9 transient boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, thing_info_state) == 30852u,
-               "EGG0/v9 thing-info boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, room_info_state) == 31044u,
-               "EGG0/v9 room-info boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, particle_state) == 48520u,
-               "EGG0/v9 particle boundary changed");
+               "EGG0/v12 map-script boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, transient_game_state) == 29960u,
+               "EGG0/v12 transient boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, thing_info_state) == 31112u,
+               "EGG0/v12 thing-info boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, room_info_state) == 31304u,
+               "EGG0/v12 room-info boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, particle_state) == 48780u,
+               "EGG0/v12 particle boundary changed");
 
 enum {
     FULL_STATE_LEADER_NONE = 0,
@@ -7146,8 +7062,33 @@ static size_t full_state_blob_size_for_counts(int thing_count, size_t tilemap_by
         + tilemap_bytes;
 }
 
+static void full_state_set_err(char* err, size_t err_cap, const char* msg);
+
+static size_t full_state_content_bytes(void) {
+    return map_script_has_entities() ? map_script_content_snapshot_size() : 0u;
+}
+/* v12 retains the native header/payload offsets and appends YMC2 only when the
+ * active map owns entities. Both copies of the map state must agree exactly. */
+static int full_state_validate_content(const void* src, size_t src_len,
+    const FullStateBlobHeader* hdr, char* err, size_t err_cap) {
+    size_t base = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
+    size_t content = full_state_content_bytes();
+    const uint8_t* tail = (const uint8_t*)src + base;
+    if (!base || content > SIZE_MAX - base || src_len != base + content) {
+        full_state_set_err(err, err_cap, "state blob content size mismatch"); return 0;
+    }
+    if (!content) return map_script_snapshot_validate(&hdr->map_script_state,
+                                                      map_script_active_id(), err, err_cap);
+    if (!map_script_content_snapshot_validate(tail, content, err, err_cap)) return 0;
+    if (memcmp(&hdr->map_script_state, tail + MAP_SCRIPT_CONTENT_HEADER_BYTES,
+               sizeof(hdr->map_script_state))) {
+        full_state_set_err(err, err_cap, "state blob has conflicting map snapshots"); return 0;
+    }
+    return 1;
+}
+
 static size_t full_state_blob_size_for_thing_count(int thing_count) {
-    return full_state_blob_size_for_counts(thing_count, game_get_tilemap_bytes(NULL, NULL));
+    return full_state_blob_size_for_counts(thing_count, game_get_tilemap_bytes(NULL, NULL)) + full_state_content_bytes();
 }
 
 static int full_state_transient_range(uintptr_t addr, size_t len, size_t* out_off) {
@@ -7267,7 +7208,9 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
     void* tilemap_ptr = game_get_tilemap_data_ptr();
     uintptr_t p0 = game_get_player_ptr(0);
     uintptr_t p1 = game_get_player_ptr(1);
-    size_t total_size = full_state_blob_size_for_counts(thing_count, tilemap_bytes);
+    size_t base_size = full_state_blob_size_for_counts(thing_count, tilemap_bytes);
+    size_t content_size = full_state_content_bytes();
+    size_t total_size = base_size ? base_size + content_size : 0;
     uint8_t* out = (uint8_t*)dst;
     FullStateBlobHeader* hdr = NULL;
     uint8_t* payload = NULL;
@@ -7347,7 +7290,11 @@ static int full_state_capture_into(void* dst, size_t dst_len, size_t* out_len, c
     hdr->tilemap_h = tilemap_h;
     hdr->tilemap_bytes = (uint32_t)tilemap_bytes;
     hdr->framework_tick_count = (uint64_t)g_game_tick_count;
-    if (!map_script_snapshot_save(&hdr->map_script_state, err, err_cap)) {
+    if (content_size) {
+        if (!map_script_content_snapshot_save(out + base_size, content_size, err, err_cap)) return 0;
+        memcpy(&hdr->map_script_state, out + base_size + MAP_SCRIPT_CONTENT_HEADER_BYTES,
+               sizeof(hdr->map_script_state));
+    } else if (!map_script_snapshot_save(&hdr->map_script_state, err, err_cap)) {
         return 0;
     }
 
@@ -7614,7 +7561,7 @@ static int full_state_validate_apply_blob(const void* src, size_t src_len,
 
     if (!full_state_validate_global_access(1, err, err_cap)) return 0;
 
-    expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
+    expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes) + full_state_content_bytes();
     if (src_len != expected_size) {
         full_state_set_err(err, err_cap, "state blob size mismatch");
         return 0;
@@ -7660,10 +7607,7 @@ static int full_state_validate_apply_blob(const void* src, size_t src_len,
         full_state_set_err(err, err_cap, "tilemap state unavailable");
         return 0;
     }
-    if (!map_script_snapshot_validate(&hdr->map_script_state,
-                                      map_script_active_id(), err, err_cap)) {
-        return 0;
-    }
+    if (!full_state_validate_content(src, src_len, hdr, err, err_cap)) return 0;
 
     if (out_validation) *out_validation = validation;
     return 1;
@@ -7691,7 +7635,10 @@ static int full_state_apply_blob(const void* src, size_t src_len, char* err, siz
      * already-validated fixed POD state and must not execute map Lua. Do it
      * before the native memcpy phase so a rejected script snapshot can never
      * leave half of the game state restored. */
-    if (!map_script_snapshot_load(&hdr->map_script_state, err, err_cap)) {
+    if (map_script_has_entities()) {
+        size_t base = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
+        if (!map_script_content_snapshot_load((const uint8_t*)src + base, src_len - base, err, err_cap)) return 0;
+    } else if (!map_script_snapshot_load(&hdr->map_script_state, err, err_cap)) {
         return 0;
     }
 
@@ -7952,15 +7899,12 @@ static int full_state_validate_blob_header(const void* src, size_t src_len, cons
         full_state_set_err(err, err_cap, "state blob tilemap too large");
         return 0;
     }
-    expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes);
+    expected_size = full_state_blob_size_for_counts((int)hdr->thing_count, hdr->tilemap_bytes) + full_state_content_bytes();
     if (src_len != expected_size) {
         full_state_set_err(err, err_cap, "state blob size mismatch");
         return 0;
     }
-    if (!map_script_snapshot_validate(&hdr->map_script_state,
-                                      map_script_active_id(), err, err_cap)) {
-        return 0;
-    }
+    if (!full_state_validate_content(src, src_len, hdr, err, err_cap)) return 0;
 
     if (out_hdr) *out_hdr = hdr;
     return 1;
@@ -9464,11 +9408,8 @@ static int lua_ui_hitbox(lua_State* Ls) {
         }
     }
 
-    if (w > 0.0f && h > 0.0f) {
-        hovered = (g_ui_mouse_x >= (int)x &&
-                   g_ui_mouse_y >= (int)y &&
-                   g_ui_mouse_x <= (int)(x + w) &&
-                   g_ui_mouse_y <= (int)(y + h));
+    if (ui_bounds_valid(x, y, w, h)) {
+        hovered = ui_bounds_contains(x, y, w, h, g_ui_mouse_x, g_ui_mouse_y);
         if (button == 3) {
             clicked = hovered && g_ui_mouse_pressed_right;
             down = hovered && g_ui_mouse_down_right;
@@ -9595,11 +9536,11 @@ static int lua_ui_readable_scale(lua_State* Ls) {
     return 1;
 }
 
-/* ── UI draw layering ────────────────────────────────────────────────────
+/* â”€â”€ UI draw layering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  *
  * The engine's sprite batch system queues sprites/text and flushes them at
  * specific points during the render pipeline.  Mod on_frame callbacks fire
- * from SDL_GL_SwapWindow — AFTER the game has already flushed its batches.
+ * from SDL_GL_SwapWindow â€” AFTER the game has already flushed its batches.
  * Anything mods plot into the batch carries over to the NEXT frame and
  * gets flushed BEFORE tiles, making mod UI appear below the game world.
  *
@@ -9904,10 +9845,11 @@ static int ui_button_common(lua_State* Ls,
     if (w <= 0.0f) w = ui_approx_text_width(rendered, scale) + 14.0f;
     if (h <= 0.0f) h = ui_text_line_height(scale) + 14.0f;
 
-    hovered = (g_ui_mouse_x >= (int)x &&
-               g_ui_mouse_y >= (int)y &&
-               g_ui_mouse_x <= (int)(x + w) &&
-               g_ui_mouse_y <= (int)(y + h));
+    if (!ui_bounds_valid(x, y, w, h) || !isfinite(scale)) {
+        lua_pushboolean(Ls, 0);
+        return 1;
+    }
+    hovered = ui_bounds_contains(x, y, w, h, g_ui_mouse_x, g_ui_mouse_y);
     clicked = hovered && g_ui_mouse_pressed_left;
 
     if (clicked) {
@@ -13662,571 +13604,7 @@ static void push_mod_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushinteger(Ls, MOD_API_REVISION); lua_setfield(Ls, -2, "framework_api_revision");
 }
 
-static const char* k_mod_ui_helpers_lua =
-    "local ui = mod and mod.ui\n"
-    "if not ui then return end\n"
-    "\n"
-    "local function copy(src)\n"
-    "  local out = {}\n"
-    "  if type(src) ~= 'table' then return out end\n"
-    "  for k, v in pairs(src) do\n"
-    "    if type(v) == 'table' then out[k] = copy(v) else out[k] = v end\n"
-    "  end\n"
-    "  return out\n"
-    "end\n"
-    "\n"
-    "local function merge(dst, src)\n"
-    "  if type(src) ~= 'table' then return dst end\n"
-    "  for k, v in pairs(src) do\n"
-    "    if type(v) == 'table' and type(dst[k]) == 'table' then\n"
-    "      merge(dst[k], v)\n"
-    "    elseif type(v) == 'table' then\n"
-    "      dst[k] = copy(v)\n"
-    "    else\n"
-    "      dst[k] = v\n"
-    "    end\n"
-    "  end\n"
-    "  return dst\n"
-    "end\n"
-    "\n"
-    "local default_dark = {\n"
-    "  bg = {0.06, 0.07, 0.08, 0.88},\n"
-    "  fg = {0.92, 0.94, 0.96, 1.0},\n"
-    "  muted = {0.55, 0.60, 0.68, 1.0},\n"
-    "  accent = {1.0, 0.78, 0.25, 1.0},\n"
-    "  border = {0.23, 0.27, 0.32, 1.0},\n"
-    "  hover = {0.13, 0.16, 0.19, 0.94},\n"
-    "  active = {0.18, 0.17, 0.10, 0.96},\n"
-    "  disabled = {0.16, 0.17, 0.18, 0.50},\n"
-    "  pad = 8,\n"
-    "  gap = 6,\n"
-    "  text_scale = 1.0,\n"
-    "}\n"
-    "\n"
-    "local themes = { default_dark = default_dark }\n"
-    "local style_stack = { copy(default_dark) }\n"
-    "\n"
-    "local function style_for(opts)\n"
-    "  local s = copy(style_stack[#style_stack] or default_dark)\n"
-    "  if type(opts) == 'table' and type(opts.style) == 'table' then merge(s, opts.style) end\n"
-    "  return s\n"
-    "end\n"
-    "\n"
-    "local function color(s, key, fallback)\n"
-    "  local v = s and s[key] or fallback\n"
-    "  if type(v) ~= 'table' then v = fallback or {1, 1, 1, 1} end\n"
-    "  return v\n"
-    "end\n"
-    "\n"
-    "local function clamp01(v)\n"
-    "  v = tonumber(v) or 0\n"
-    "  if v < 0 then return 0 elseif v > 1 then return 1 end\n"
-    "  return v\n"
-    "end\n"
-    "\n"
-    "local function shade(c, amount, alpha)\n"
-    "  c = type(c) == 'table' and c or {1, 1, 1, 1}\n"
-    "  amount = tonumber(amount) or 0\n"
-    "  local a = alpha ~= nil and alpha or c[4] or 1\n"
-    "  return { clamp01((c[1] or 0) + amount), clamp01((c[2] or 0) + amount), clamp01((c[3] or 0) + amount), a }\n"
-    "end\n"
-    "\n"
-    "function ui.push_style(style)\n"
-    "  local s = copy(style_stack[#style_stack] or default_dark)\n"
-    "  merge(s, style)\n"
-    "  style_stack[#style_stack + 1] = s\n"
-    "  return copy(s)\n"
-    "end\n"
-    "\n"
-    "function ui.pop_style()\n"
-    "  if #style_stack > 1 then return table.remove(style_stack) end\n"
-    "  return copy(style_stack[1])\n"
-    "end\n"
-    "\n"
-    "function ui.current_style()\n"
-    "  return copy(style_stack[#style_stack] or default_dark)\n"
-    "end\n"
-    "\n"
-    "function ui.define_theme(name, style)\n"
-    "  if type(name) ~= 'string' or name == '' or type(style) ~= 'table' then return false end\n"
-    "  themes[name] = copy(style)\n"
-    "  return true\n"
-    "end\n"
-    "\n"
-    "function ui.style_color(key, fallback)\n"
-    "  return copy(color(style_stack[#style_stack] or default_dark, key, fallback))\n"
-    "end\n"
-    "\n"
-    "function ui.theme(style)\n"
-    "  if type(style) == 'table' then merge(style_stack[#style_stack], style) end\n"
-    "  return copy(style_stack[#style_stack])\n"
-    "end\n"
-    "\n"
-    "function ui.set_theme(name)\n"
-    "  local t = themes[tostring(name or 'default_dark')]\n"
-    "  if not t then return false end\n"
-    "  style_stack = { copy(t) }\n"
-    "  return true\n"
-    "end\n"
-    "\n"
-    "local function resolve_bounds(opts, def_w, def_h)\n"
-    "  opts = opts or {}\n"
-    "  local x = tonumber(opts.x)\n"
-    "  local y = tonumber(opts.y)\n"
-    "  if (not x or not y) and ui.cursor then x, y = ui.cursor() end\n"
-    "  x = x or 0\n"
-    "  y = y or 0\n"
-    "  local w = tonumber(opts.w or opts.width) or def_w or 80\n"
-    "  local h = tonumber(opts.h or opts.height) or def_h or 28\n"
-    "  return x, y, w, h\n"
-    "end\n"
-    "\n"
-    "local function advance_if_layout(opts, x, y, h, gap)\n"
-    "  opts = opts or {}\n"
-    "  if opts.no_advance then return end\n"
-    "  if opts.x ~= nil or opts.y ~= nil or not ui.cursor then return end\n"
-    "  ui.cursor(x, y + h + (tonumber(opts.gap) or gap or 6))\n"
-    "end\n"
-    "\n"
-    "local function text_center(text, x, y, w, h, scale, c)\n"
-    "  text = tostring(text or '')\n"
-    "  scale = tonumber(scale) or 1\n"
-    "  local tw = 0\n"
-    "  local th = 9 * scale\n"
-    "  if ui.measure_text then tw, th = ui.measure_text(text, scale) end\n"
-    "  local max_w = math.max(4, w - 4)\n"
-    "  while tw > max_w and scale > 0.55 do\n"
-    "    scale = scale * 0.9\n"
-    "    if ui.measure_text then tw, th = ui.measure_text(text, scale) else break end\n"
-    "  end\n"
-    "  ui.text_at(text, x + (w - tw) * 0.5, y + h * 0.58, scale, c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)\n"
-    "end\n"
-    "\n"
-    "local function measured_width(text, scale)\n"
-    "  if ui.measure_text then local w = ui.measure_text(tostring(text or ''), scale) return w or 0 end\n"
-    "  return #tostring(text or '') * 9 * (tonumber(scale) or 1)\n"
-    "end\n"
-    "\n"
-    "function ui.wrap_text(text, max_w, scale)\n"
-    "  text = tostring(text or '')\n"
-    "  max_w = tonumber(max_w) or 0\n"
-    "  scale = tonumber(scale) or 1\n"
-    "  local lines = {}\n"
-    "  local function push(line) lines[#lines + 1] = tostring(line or '') end\n"
-    "  local function push_long_word(word)\n"
-    "    local chunk = ''\n"
-    "    for i = 1, #word do\n"
-    "      local next_chunk = chunk .. word:sub(i, i)\n"
-    "      if max_w > 0 and chunk ~= '' and measured_width(next_chunk, scale) > max_w then\n"
-    "        push(chunk)\n"
-    "        chunk = word:sub(i, i)\n"
-    "      else\n"
-    "        chunk = next_chunk\n"
-    "      end\n"
-    "    end\n"
-    "    return chunk\n"
-    "  end\n"
-    "  local function emit_para(para)\n"
-    "    if para == '' then push('') return end\n"
-    "    local line = ''\n"
-    "    for word in tostring(para):gmatch('%S+') do\n"
-    "      if max_w > 0 and measured_width(word, scale) > max_w then\n"
-    "        if line ~= '' then push(line) line = '' end\n"
-    "        line = push_long_word(word)\n"
-    "      else\n"
-    "        local candidate = (line == '') and word or (line .. ' ' .. word)\n"
-    "        if max_w > 0 and line ~= '' and measured_width(candidate, scale) > max_w then\n"
-    "          push(line)\n"
-    "          line = word\n"
-    "        else\n"
-    "          line = candidate\n"
-    "        end\n"
-    "      end\n"
-    "    end\n"
-    "    push(line)\n"
-    "  end\n"
-    "  for para in (text .. '\\n'):gmatch('(.-)\\n') do emit_para(para) end\n"
-    "  if #lines == 0 then lines[1] = '' end\n"
-    "  return lines\n"
-    "end\n"
-    "\n"
-    "function ui.text_wrapped(text, x, y, w, opts)\n"
-    "  opts = opts or {}\n"
-    "  local scale = tonumber(opts.scale) or 1\n"
-    "  local line_gap = tonumber(opts.line_gap) or 4\n"
-    "  local s = style_for(opts)\n"
-    "  local fg = opts.color or opts.fg or color(s, 'fg')\n"
-    "  local lines = ui.wrap_text(text, w, scale)\n"
-    "  local line_h = 9 * scale\n"
-    "  if ui.measure_text then local _, measured_h = ui.measure_text('Ag', scale) line_h = tonumber(measured_h) or line_h end\n"
-    "  for i = 1, #lines do\n"
-    "    ui.text_at(lines[i], x, y + (i - 1) * (line_h + line_gap) + line_h * 0.82, scale, fg[1] or 1, fg[2] or 1, fg[3] or 1, fg[4] or 1)\n"
-    "  end\n"
-    "  return #lines * line_h + math.max(#lines - 1, 0) * line_gap, #lines\n"
-    "end\n"
-    "\n"
-    "function ui.tooltip(text, opts)\n"
-    "  if not text or text == '' then return false end\n"
-    "  opts = opts or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local mx, my = ui.mouse_pos()\n"
-    "  local scale = tonumber(opts.scale) or 0.85\n"
-    "  local pad = tonumber(opts.pad) or 6\n"
-    "  local max_w = tonumber(opts.max_w or opts.w) or 280\n"
-    "  local lines = ui.wrap_text(tostring(text), max_w, scale)\n"
-    "  local tw, th = 0, 9 * scale\n"
-    "  for i = 1, #lines do\n"
-    "    local lw, lh = ui.measure_text(lines[i], scale)\n"
-    "    if lw > tw then tw = lw end\n"
-    "    if lh > th then th = lh end\n"
-    "  end\n"
-    "  local box_w = tw + pad * 2\n"
-    "  local box_h = (#lines * th) + math.max(#lines - 1, 0) * 4 + pad * 2\n"
-    "  local x = tonumber(opts.x) or (mx + 12)\n"
-    "  local y = tonumber(opts.y) or (my + 12)\n"
-    "  local sw, sh = ui.screen_size()\n"
-    "  if x + box_w > sw - 4 then x = sw - box_w - 4 end\n"
-    "  if y + box_h > sh - 4 then y = sh - box_h - 4 end\n"
-    "  if x < 4 then x = 4 end\n"
-    "  if y < 4 then y = 4 end\n"
-    "  ui.rect(x, y, box_w, box_h, { color = color(s, 'bg') })\n"
-    "  ui.border(x, y, box_w, box_h, { color = color(s, 'border') })\n"
-    "  ui.text_wrapped(tostring(text), x + pad, y + pad, tw, { scale = scale, color = color(s, 'fg'), line_gap = 4 })\n"
-    "  return true\n"
-    "end\n"
-    "\n"
-    "local function maybe_tooltip(opts, hovered)\n"
-    "  if hovered and type(opts) == 'table' and opts.tooltip then ui.tooltip(opts.tooltip, opts.tooltip_opts) end\n"
-    "end\n"
-    "\n"
-    "function ui.icon_button(id, icon, x, y, w, h, opts)\n"
-    "  opts = opts or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local hovered, clicked, down = false, false, false\n"
-    "  if ui.hitbox then hovered, clicked, down = ui.hitbox(tostring(id or ''), x, y, w, h) end\n"
-    "  if opts.disabled then clicked = false end\n"
-    "  local bg = color(s, 'bg')\n"
-    "  if opts.disabled then bg = color(s, 'disabled')\n"
-    "  elseif opts.selected then bg = color(s, 'active')\n"
-    "  elseif down then bg = color(s, 'active')\n"
-    "  elseif hovered then bg = color(s, 'hover') end\n"
-    "  ui.rect(x, y, w, h, { color = bg })\n"
-    "  ui.border(x, y, w, h, { line_w = opts.line_w or 1, color = opts.selected and color(s, 'accent') or color(s, 'border') })\n"
-    "  local fg = opts.disabled and color(s, 'muted') or color(s, 'fg')\n"
-    "  if type(icon) == 'number' and ui.draw_sprite then\n"
-    "    ui.draw_sprite(icon, x + w * 0.5, y + h * 0.5, { scale = opts.icon_scale or opts.scale or 1, tint = opts.tint or fg })\n"
-    "  elseif type(icon) == 'table' and ui.draw_sprite then\n"
-    "    local draw_opts = copy(icon)\n"
-    "    merge(draw_opts, opts.sprite_opts)\n"
-    "    if not draw_opts.scale then draw_opts.scale = opts.icon_scale or opts.scale or 1 end\n"
-    "    if not draw_opts.tint then draw_opts.tint = opts.tint or fg end\n"
-    "    ui.draw_sprite(draw_opts, x + w * 0.5, y + h * 0.5, draw_opts)\n"
-    "  else\n"
-    "    text_center(icon or opts.label or '', x, y, w, h, opts.text_scale or s.text_scale or 1, fg)\n"
-    "  end\n"
-    "  maybe_tooltip(opts, hovered)\n"
-    "  return clicked and not opts.disabled, hovered\n"
-    "end\n"
-    "\n"
-    "function ui.panel(a, b, c, d, e, f)\n"
-    "  local id, x, y, w, h, opts\n"
-    "  if type(a) == 'string' then id, x, y, w, h, opts = a, b, c, d, e, f or {} else x, y, w, h, opts = a, b, c, d, e or {} end\n"
-    "  opts = opts or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local hovered, clicked, down = false, false, false\n"
-    "  if id and ui.hitbox then hovered, clicked, down = ui.hitbox(tostring(id), x, y, w, h, opts.hitbox or opts) end\n"
-    "  if opts.disabled then clicked, down = false, false end\n"
-    "  local bg = opts.bg or opts.fill or color(s, 'bg')\n"
-    "  if opts.disabled then bg = opts.disabled_bg or color(s, 'disabled') elseif down and opts.active then bg = opts.active elseif hovered and opts.hover then bg = opts.hover end\n"
-    "  ui.rect(x, y, w, h, { color = bg, alpha = opts.alpha })\n"
-    "  if opts.inner ~= false then\n"
-    "    local inner = type(opts.inner) == 'table' and opts.inner or shade(bg, tonumber(opts.inner_shade) or 0.025, opts.inner_alpha or ((bg[4] or 1) * 0.48))\n"
-    "    local inset = tonumber(opts.inset) or 3\n"
-    "    if w > inset * 2 and h > inset * 2 then ui.rect(x + inset, y + inset, w - inset * 2, h - inset * 2, { color = inner }) end\n"
-    "  end\n"
-    "  if opts.accent_edge then\n"
-    "    local aw = tonumber(opts.accent_w or opts.accent_width) or 4\n"
-    "    local accent = opts.accent or color(s, 'accent')\n"
-    "    if opts.accent_edge == 'right' then ui.rect(x + w - aw, y, aw, h, { color = accent, alpha = opts.accent_alpha })\n"
-    "    elseif opts.accent_edge == 'top' then ui.rect(x, y, w, aw, { color = accent, alpha = opts.accent_alpha })\n"
-    "    elseif opts.accent_edge == 'bottom' then ui.rect(x, y + h - aw, w, aw, { color = accent, alpha = opts.accent_alpha })\n"
-    "    else ui.rect(x, y, aw, h, { color = accent, alpha = opts.accent_alpha }) end\n"
-    "  end\n"
-    "  if opts.border ~= false then\n"
-    "    local border = type(opts.border) == 'table' and opts.border or color(s, 'border')\n"
-    "    ui.border(x, y, w, h, { line_w = opts.line_w or opts.line_width or 1, color = border, alpha = opts.border_alpha })\n"
-    "  end\n"
-    "  maybe_tooltip(opts, hovered)\n"
-    "  return clicked, hovered, down\n"
-    "end\n"
-    "\n"
-    "function ui.progress_bar(id, value, x, y, w, h, opts)\n"
-    "  if type(id) ~= 'string' then opts, h, w, y, x, value, id = h, w, y, x, value, id, nil end\n"
-    "  opts = opts or {}\n"
-    "  local s = style_for(opts)\n"
-    "  value = clamp01(value)\n"
-    "  local hovered, clicked, down = false, false, false\n"
-    "  if id and ui.hitbox and (opts.interactive or opts.hitbox) then hovered, clicked, down = ui.hitbox(tostring(id), x, y, w, h, opts.hitbox or opts) end\n"
-    "  local changed = false\n"
-    "  if opts.interactive and (clicked or down) and ui.mouse_pos then\n"
-    "    local mx, my = ui.mouse_pos()\n"
-    "    local next_value = opts.vertical and ((my - y) / h) or ((mx - x) / w)\n"
-    "    if opts.reverse then next_value = 1 - next_value end\n"
-    "    next_value = clamp01(next_value)\n"
-    "    if next_value ~= value then value, changed = next_value, true end\n"
-    "  end\n"
-    "  local bg = opts.bg or opts.rail or color(s, 'border')\n"
-    "  local fill = opts.fill or opts.color or color(s, 'accent')\n"
-    "  ui.rect(x, y, w, h, { color = bg, alpha = opts.alpha })\n"
-    "  if opts.vertical then\n"
-    "    local fh = h * value\n"
-    "    local fy = opts.reverse and y or (y + h - fh)\n"
-    "    ui.rect(x, fy, w, fh, { color = fill, alpha = opts.fill_alpha })\n"
-    "  else\n"
-    "    local fw = w * value\n"
-    "    local fx = opts.reverse and (x + w - fw) or x\n"
-    "    ui.rect(fx, y, fw, h, { color = fill, alpha = opts.fill_alpha })\n"
-    "  end\n"
-    "  if opts.border ~= false then ui.border(x, y, w, h, { line_w = opts.line_w or 1, color = type(opts.border) == 'table' and opts.border or color(s, 'border'), alpha = opts.border_alpha }) end\n"
-    "  if opts.label then text_center(opts.label, x, y, w, h, opts.text_scale or s.text_scale or 1, opts.text_color or color(s, 'fg')) end\n"
-    "  maybe_tooltip(opts, hovered)\n"
-    "  return value, changed, hovered\n"
-    "end\n"
-    "\n"
-    "function ui.close_button(id, x, y, size, opts)\n"
-    "  opts = opts or {}\n"
-    "  size = tonumber(size) or 24\n"
-    "  local s = style_for(opts)\n"
-    "  local hovered, clicked, down = false, false, false\n"
-    "  if ui.hitbox then hovered, clicked, down = ui.hitbox(tostring(id or 'close'), x, y, size, size, opts.hitbox or opts) end\n"
-    "  if opts.disabled then clicked, down = false, false end\n"
-    "  local bg = opts.bg or (hovered and (opts.hover or color(s, 'hover')) or color(s, 'bg'))\n"
-    "  if down and opts.active then bg = opts.active end\n"
-    "  ui.rect(x, y, size, size, { color = bg, alpha = opts.alpha })\n"
-    "  if opts.border ~= false then ui.border(x, y, size, size, { line_w = opts.line_w or 1, color = type(opts.border) == 'table' and opts.border or color(s, 'border'), alpha = opts.border_alpha }) end\n"
-    "  local fg = opts.color or opts.fg or color(s, 'fg')\n"
-    "  local p = size * (tonumber(opts.pad_ratio) or 0.30)\n"
-    "  ui.line(x + p, y + p, x + size - p, y + size - p, { line_w = opts.stroke or 2, color = fg, alpha = opts.fg_alpha })\n"
-    "  ui.line(x + size - p, y + p, x + p, y + size - p, { line_w = opts.stroke or 2, color = fg, alpha = opts.fg_alpha })\n"
-    "  maybe_tooltip(opts, hovered)\n"
-    "  return clicked and not opts.disabled, hovered, down\n"
-    "end\n"
-    "\n"
-    "local function item_key_label(item, i)\n"
-    "  if type(item) == 'table' then return item.id or item.value or i, item.label or item.name or tostring(item.id or item.value or i) end\n"
-    "  return i, tostring(item)\n"
-    "end\n"
-    "\n"
-    "function ui.tabs(id, tabs, selected, opts)\n"
-    "  opts = opts or {}\n"
-    "  tabs = tabs or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local x, y, w, h = resolve_bounds(opts, (#tabs > 0 and #tabs or 1) * 88, 30)\n"
-    "  local gap = tonumber(opts.gap) or 0\n"
-    "  local tab_w = tonumber(opts.tab_w) or ((w - gap * math.max(#tabs - 1, 0)) / math.max(#tabs, 1))\n"
-    "  local changed = false\n"
-    "  for i = 1, #tabs do\n"
-    "    local key, label = item_key_label(tabs[i], i)\n"
-    "    local bx = x + (i - 1) * (tab_w + gap)\n"
-    "    local clicked = ui.icon_button(tostring(id) .. ':' .. tostring(key), label, bx, y, tab_w, h, merge({ selected = selected == key, text_scale = opts.text_scale or s.text_scale }, opts.item_opts))\n"
-    "    if clicked and selected ~= key then selected = key changed = true end\n"
-    "  end\n"
-    "  advance_if_layout(opts, x, y, h, s.gap)\n"
-    "  return selected, changed\n"
-    "end\n"
-    "\n"
-    "ui.segmented = ui.tabs\n"
-    "\n"
-    "function ui.swatch_grid(id, colors, selected, opts)\n"
-    "  opts = opts or {}\n"
-    "  colors = colors or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local cols = math.max(1, math.floor(tonumber(opts.cols or opts.columns) or 8))\n"
-    "  local cell = tonumber(opts.cell or opts.cell_w) or 24\n"
-    "  local gap = tonumber(opts.gap) or 5\n"
-    "  local x, y = resolve_bounds(opts, cols * cell + (cols - 1) * gap, cell)\n"
-    "  local changed = false\n"
-    "  for i = 1, #colors do\n"
-    "    local item = colors[i]\n"
-    "    local key = type(item) == 'table' and (item.id or item.value or i) or i\n"
-    "    local c = type(item) == 'table' and (item.color or item.tint or item) or {1, 1, 1, 1}\n"
-    "    local col = (i - 1) % cols\n"
-    "    local row = math.floor((i - 1) / cols)\n"
-    "    local bx = x + col * (cell + gap)\n"
-    "    local by = y + row * (cell + gap)\n"
-    "    local hovered, clicked = ui.hitbox(tostring(id) .. ':' .. tostring(key), bx, by, cell, cell)\n"
-    "    ui.rect(bx, by, cell, cell, { color = c })\n"
-    "    ui.border(bx, by, cell, cell, { line_w = selected == key and 2 or 1, color = selected == key and color(s, 'accent') or color(s, 'border') })\n"
-    "    if hovered then ui.border(bx + 2, by + 2, cell - 4, cell - 4, { color = color(s, 'fg') }) end\n"
-    "    if clicked and selected ~= key then selected = key changed = true end\n"
-    "  end\n"
-    "  local rows = math.ceil(#colors / cols)\n"
-    "  advance_if_layout(opts, x, y, rows * cell + math.max(rows - 1, 0) * gap, s.gap)\n"
-    "  return selected, changed\n"
-    "end\n"
-    "\n"
-    "function ui.item_grid(id, items, selected, opts)\n"
-    "  opts = opts or {}\n"
-    "  items = items or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local cols = math.max(1, math.floor(tonumber(opts.cols or opts.columns) or 5))\n"
-    "  local cell_w = tonumber(opts.cell_w or opts.cell or opts.w_cell) or 84\n"
-    "  local cell_h = tonumber(opts.cell_h or opts.cell or opts.h_cell) or 64\n"
-    "  local gap = tonumber(opts.gap) or 6\n"
-    "  local x, y = resolve_bounds(opts, cols * cell_w + (cols - 1) * gap, cell_h)\n"
-    "  local changed = false\n"
-    "  for i = 1, #items do\n"
-    "    local item = items[i]\n"
-    "    local key, label = item_key_label(item, i)\n"
-    "    local col = (i - 1) % cols\n"
-    "    local row = math.floor((i - 1) / cols)\n"
-    "    local bx = x + col * (cell_w + gap)\n"
-    "    local by = y + row * (cell_h + gap)\n"
-    "    local hovered, clicked, down = ui.hitbox(tostring(id) .. ':' .. tostring(key), bx, by, cell_w, cell_h)\n"
-    "    ui.rect(bx, by, cell_w, cell_h, { color = down and color(s, 'active') or (hovered and color(s, 'hover') or color(s, 'bg')) })\n"
-    "    ui.border(bx, by, cell_w, cell_h, { line_w = selected == key and 2 or 1, color = selected == key and color(s, 'accent') or color(s, 'border') })\n"
-    "    if type(item) == 'table' and item.color then ui.rect(bx + 8, by + 8, cell_w - 16, cell_h - 26, { color = item.color }) end\n"
-    "    if type(item) == 'table' and item.sprite and ui.draw_sprite then ui.draw_sprite(item.sprite, bx + cell_w * 0.5, by + cell_h * 0.42, item.sprite_opts or {}) end\n"
-    "    text_center(label, bx + 4, by + cell_h - 22, cell_w - 8, 18, opts.text_scale or 0.75, color(s, 'fg'))\n"
-    "    if clicked and selected ~= key then selected = key changed = true end\n"
-    "  end\n"
-    "  local rows = math.ceil(#items / cols)\n"
-    "  advance_if_layout(opts, x, y, rows * cell_h + math.max(rows - 1, 0) * gap, s.gap)\n"
-    "  return selected, changed\n"
-    "end\n"
-    "\n"
-    "function ui.slider(id, value, min_value, max_value, opts)\n"
-    "  opts = opts or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local x, y, w, h = resolve_bounds(opts, 180, 26)\n"
-    "  value = tonumber(value) or 0\n"
-    "  min_value = tonumber(min_value) or 0\n"
-    "  max_value = tonumber(max_value) or 1\n"
-    "  if max_value == min_value then max_value = min_value + 1 end\n"
-    "  local hovered, clicked, down = ui.hitbox(tostring(id), x, y, w, h)\n"
-    "  local changed = false\n"
-    "  if clicked or down then\n"
-    "    local mx = ui.mouse_pos()\n"
-    "    local t = (mx - x) / w\n"
-    "    if t < 0 then t = 0 elseif t > 1 then t = 1 end\n"
-    "    local nv = min_value + (max_value - min_value) * t\n"
-    "    local step = tonumber(opts.step)\n"
-    "    if step and step > 0 then nv = math.floor((nv / step) + 0.5) * step end\n"
-    "    if nv ~= value then value = nv changed = true end\n"
-    "  end\n"
-    "  local t = (value - min_value) / (max_value - min_value)\n"
-    "  if t < 0 then t = 0 elseif t > 1 then t = 1 end\n"
-    "  local track_y = y + h * 0.5 - 2\n"
-    "  ui.rect(x, track_y, w, 4, { color = color(s, 'border') })\n"
-    "  ui.rect(x, track_y, w * t, 4, { color = color(s, 'accent') })\n"
-    "  ui.rect(x + w * t - 4, y + 4, 8, h - 8, { color = hovered and color(s, 'fg') or color(s, 'accent') })\n"
-    "  if opts.label then local fg = color(s, 'fg'); ui.text_at(tostring(opts.label), x, y - 4, opts.text_scale or 0.75, fg[1] or 1, fg[2] or 1, fg[3] or 1, fg[4] or 1) end\n"
-    "  maybe_tooltip(opts, hovered)\n"
-    "  advance_if_layout(opts, x, y, h, s.gap)\n"
-    "  return value, changed\n"
-    "end\n"
-    "\n"
-    "function ui.checkbox(id, value, opts)\n"
-    "  opts = opts or {}\n"
-    "  local s = style_for(opts)\n"
-    "  local size = tonumber(opts.size) or 22\n"
-    "  local x, y = resolve_bounds(opts, size, size)\n"
-    "  local clicked = ui.icon_button(id, value and 'X' or '', x, y, size, size, opts)\n"
-    "  if opts.label then local fg = color(s, 'fg'); ui.text_at(tostring(opts.label), x + size + (opts.gap or s.gap), y + size * 0.72, opts.text_scale or s.text_scale, fg[1] or 1, fg[2] or 1, fg[3] or 1, fg[4] or 1) end\n"
-    "  advance_if_layout(opts, x, y, size, s.gap)\n"
-    "  if clicked then return not value, true end\n"
-    "  return not not value, false\n"
-    "end\n"
-    "\n"
-    "function ui.cursor_sprite(index)\n"
-    "  if not ui.sprite_id then return nil end\n"
-    "  return ui.sprite_id('misc', tonumber(index) or 7)\n"
-    "end\n"
-    "\n"
-    "function ui.draw_cursor(opts)\n"
-    "  if opts == nil or (type(opts) == 'table' and next(opts) == nil) then\n"
-    "    if ui._draw_native_cursor and ui._draw_native_cursor() then return true end\n"
-    "  end\n"
-    "  opts = opts or {}\n"
-    "  local mx, my = ui.mouse_pos()\n"
-    "  local scale = tonumber(opts.scale) or (ui.readable_scale and ui.readable_scale(1.0)) or 1\n"
-    "  local sprite = opts.sprite or ui.cursor_sprite(opts.index)\n"
-    "  if sprite and ui.draw_sprite then\n"
-    "    local size = tonumber(opts.size) or 16\n"
-    "    local hot_x = tonumber(opts.hot_x) or 0\n"
-    "    local hot_y = tonumber(opts.hot_y) or 0\n"
-    "    if ui.draw_sprite(sprite, mx + (size * 0.5 - hot_x) * scale, my + (size * 0.5 - hot_y) * scale, { scale = scale, tint = opts.tint, layer = opts.layer or 1000 }) then return true end\n"
-    "  end\n"
-    "  if ui.line then\n"
-    "    ui.line(mx - 6, my, mx + 6, my, { color = opts.color or {1, 1, 1, 1}, line_w = 1 })\n"
-    "    ui.line(mx, my - 6, mx, my + 6, { color = opts.color or {1, 1, 1, 1}, line_w = 1 })\n"
-    "    return true\n"
-    "  end\n"
-    "  return false\n"
-    "end\n"
-    "\n"
-    "if not ui.tile_preview then\n"
-    "  function ui.tile_preview(id, frame, arg, x, y, scale, tile_y, opts)\n"
-    "    if not ui.sprite_id or not ui.draw_sprite then return false end\n"
-    "    local sprite = ui.sprite_id('tiles', tonumber(id) or 0)\n"
-    "    if not sprite then return false end\n"
-    "    local draw_opts = type(opts) == 'table' and copy(opts) or {}\n"
-    "    if not draw_opts.scale then draw_opts.scale = tonumber(scale) or 1 end\n"
-    "    return ui.draw_sprite(sprite, tonumber(x) or 0, tonumber(y) or 0, draw_opts) and true or false\n"
-    "  end\n"
-    "end\n"
-    "\n"
-    "local state_specs = {}\n"
-    "local state_router_installed = false\n"
-    "local active_state = nil\n"
-    "local last_clock = os.clock()\n"
-    "\n"
-    "local function install_state_router()\n"
-    "  if state_router_installed then return end\n"
-    "  state_router_installed = true\n"
-    "  mod.on_frame(function()\n"
-    "    local now = os.clock()\n"
-    "    local dt = now - last_clock\n"
-    "    if dt < 0 then dt = 0 elseif dt > 0.25 then dt = 0.25 end\n"
-    "    last_clock = now\n"
-    "    local name = ui.state_name()\n"
-    "    if name ~= active_state then\n"
-    "      local old = active_state\n"
-    "      local old_spec = old and state_specs[old]\n"
-    "      if old_spec and old_spec.leave then old_spec.leave(name) end\n"
-    "      active_state = name\n"
-    "      local new_spec = state_specs[name]\n"
-    "      if new_spec and new_spec.enter then new_spec.enter(old) end\n"
-    "    end\n"
-    "    local spec = state_specs[name]\n"
-    "    if spec then\n"
-    "      if spec.update then spec.update(dt) end\n"
-    "      if spec.render then spec.render() end\n"
-    "      local cursor_opts = type(spec.cursor) == 'table' and spec.cursor or spec.cursor_opts\n"
-    "      if spec.cursor == false then\n"
-    "        if ui._set_default_cursor_visible then ui._set_default_cursor_visible(false) end\n"
-    "      elseif cursor_opts and ui.draw_cursor then\n"
-    "        local drew = false\n"
-    "        if ui.begin_overlay and ui.end_overlay then ui.begin_overlay() drew = ui.draw_cursor(cursor_opts) ui.end_overlay() else drew = ui.draw_cursor(cursor_opts) end\n"
-    "        if drew and ui._set_default_cursor_visible then ui._set_default_cursor_visible(false) end\n"
-    "      end\n"
-    "    end\n"
-    "  end)\n"
-    "  mod.on_event(function(e)\n"
-    "    local spec = state_specs[ui.state_name()]\n"
-    "    if spec and spec.event then return spec.event(e) and true or false end\n"
-    "    return false\n"
-    "  end)\n"
-    "end\n"
-    "\n"
-    "function ui.define_state(name, spec)\n"
-    "  if type(name) ~= 'string' or name == '' then return false, 'state name required' end\n"
-    "  spec = spec or {}\n"
-    "  state_specs[name] = spec\n"
-    "  if ui.create_state then ui.create_state(name) end\n"
-    "  install_state_router()\n"
-    "  return true\n"
-    "end\n";
+#include "ui_helpers.h"
 
 static void install_mod_ui_helpers(LoadedMod* mod) {
     if (!L || !mod) return;
@@ -16036,7 +15414,7 @@ void lua_manager_on_frame() {
         const char* new_name = ui_state_name_from_ptr(state_ptr);
         if (_stricmp(new_name, "main_initial") == 0) new_name = "main";
 
-        // Do NOT normalise old_name — we want main_initial→main to count as a
+        // Do NOT normalise old_name â€” we want main_initialâ†’main to count as a
         // real transition so the callback fires once the button list is stable.
         const char* old_name = ui_state_name_from_ptr(g_last_layout_state);
 
@@ -16099,7 +15477,7 @@ void lua_manager_on_frame() {
     }
 
     // If the engine's button list was wiped (main_buttons_start was called by
-    // a state enter), any cached native btn_ptrs are stale — the slots may now
+    // a state enter), any cached native btn_ptrs are stale â€” the slots may now
     // hold a completely different state's buttons.  Detect this by watching for
     // the count to drop back to near-zero and null out all cached ptrs so the
     // native_button path re-creates them cleanly on the next frame.
@@ -16976,7 +16354,7 @@ uint32_t lua_manager_game_state_layout_fingerprint(void) {
     uint32_t hash = 2166136261u;
 
     if (tilemap_w <= 0 || tilemap_h <= 0 || tilemap_bytes == 0u) return 0u;
-    state_size = full_state_blob_size_for_counts(GAME_THING_COUNT_MAX, tilemap_bytes);
+    state_size = full_state_blob_size_for_counts(GAME_THING_COUNT_MAX, tilemap_bytes) + full_state_content_bytes();
     if (state_size == 0u || state_size > (size_t)UINT32_MAX) return 0u;
 
     hash = full_state_layout_mix_u32(hash, 0x4C474745u); /* "EGGL" */

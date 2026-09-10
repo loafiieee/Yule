@@ -105,6 +105,18 @@ static INIT_ONCE g_chakra_once = INIT_ONCE_STATIC_INIT;
 static BytebeatChakraApi g_chakra;
 static int g_chakra_available = 0;
 
+static int bbch_running_under_wine(void) {
+    typedef const char* (WINAPI *WineGetVersionFn)(void);
+    HMODULE ntdll;
+    WineGetVersionFn get_version;
+
+    ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return 0;
+    get_version = (WineGetVersionFn)(void*)GetProcAddress(
+        ntdll, "wine_get_version");
+    return get_version != NULL;
+}
+
 static void bbch_copy_error(char* out, size_t out_size,
                             const char* message) {
     if (!out || out_size == 0u) return;
@@ -172,6 +184,10 @@ static BOOL CALLBACK bbch_load_api(PINIT_ONCE once, PVOID parameter,
 }
 
 int bytebeat_chakra_available(void) {
+    /* Chakra's cross-thread execution watchdog is not reliable under Wine.
+     * Use the QuickJS fallback there instead of allowing a native guard-page
+     * exception to escape while a custom track is being rendered. */
+    if (bbch_running_under_wine()) return 0;
     InitOnceExecuteOnce(&g_chakra_once, bbch_load_api, NULL, NULL);
     return g_chakra_available;
 }

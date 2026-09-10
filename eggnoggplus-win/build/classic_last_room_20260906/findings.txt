@@ -1,0 +1,37 @@
+Classic last-room reproduction, September 6 2026
+
+Current workspace modframework.log:
+18:26:42 synchronized gameplay starts.
+18:27:55 host correction offered: id 1, snapshot 4338, resume 4339,
+          snapshot checksum 1844090.
+18:27:55 correction transcript differs: local 3626137447, host 3085855946.
+          Transport aborts and server resolves no contest.
+
+The workspace desync_dump.log last changed June 30 and is historical evidence.
+The installed AppData game log predates this run. Workspace mods/desync_repros
+had no current captures. Original logs were copied here without modifying them.
+
+Fix implemented: an authenticated, accepted host correction offer now captures
+joining peer divergent history before replay replaces it, and emits the RNG
+ring when tracing is enabled. This repairs diagnostics, not the native divergence.
+
+Guarded --correction-only and source integration checks pass.
+Next reproduction: both clients use the same rebuilt DLL, enable
+  ggpo.net rngtrace on
+before the match, then preserve modframework.log, desync_dump.log and all files
+in mods/desync_repros from both clients immediately after the failure.
+
+Other-player artifacts received:
+Pair 3500D386, tick 4338, state boundary 4339. Matching build/exe/DLL IDs.
+Host original post checksum 46728397; joining original 3620283870.
+Host after correction replay 3620283870; joining after replay 46728397.
+Host trace checksum independently verified after applying production cosmetic
+checksum masks. No original joining trace exists, so differing fields remain
+unidentified. Single-byte checksum-delta probes did not identify a candidate;
+no gameplay field has been changed or excluded on that speculative basis.
+
+Camera issue: host viewport/window 1600x900, native display cached 1537x865.
+Verified wrapper_display_w/h globals at 0x44812c/0x448128 via objdump.
+Refresh now updates both from valid SDL window size, retaining drawable size
+for glViewport and leaving synchronized game_w/game_h untouched.
+Production DLL and full guarded core suite pass. Both local DLL copies updated.

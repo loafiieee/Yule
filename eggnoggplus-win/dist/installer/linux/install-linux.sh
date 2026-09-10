@@ -389,7 +389,8 @@ for line in "${manifest_lines[@]:1}"; do
 done
 install_managed "$UPDATER_SOURCE" "$UPDATER_NAME"
 
-mkdir -p -- "$INSTALL_DIR/mods"
+mkdir -p -- "$INSTALL_DIR/mods" "$INSTALL_DIR/maps"
+say "Custom maps: extract each map into its own folder inside $INSTALL_DIR/maps (containing data.map and data.json)."
 CFG="$INSTALL_DIR/mods/modframework.cfg"
 if [[ -f $CFG ]]; then
     cp -a -- "$CFG" "$ROLLBACK_DIR/modframework.cfg"

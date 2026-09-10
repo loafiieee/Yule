@@ -188,6 +188,11 @@ def main() -> int:
                 "verified install did not adopt vanilla SDL and sync files\n"
                 f"OUT:\n{installed.stdout}\nERR:\n{installed.stderr}"
             )
+        assert (game / "mods").is_dir()
+        assert (game / "maps").is_dir()
+        user_map = game / "maps" / "user-map"
+        user_map.mkdir()
+        (user_map / "data.map").write_bytes(b"user map content")
         manifest_path = manifest_dir / "install.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
         managed = {entry["path"]: entry for entry in manifest["managed_files"]}
@@ -226,6 +231,7 @@ def main() -> int:
             protocol_root,
             uninstall=True,
         )
+        assert (user_map / "data.map").read_bytes() == b"user map content"
         if removed.returncode != 0:
             raise AssertionError(
                 f"uninstaller failed\nOUT:\n{removed.stdout}\nERR:\n{removed.stderr}"

@@ -34,7 +34,7 @@
     { name: "Dusk", colors: { fg1: "#a35f78", fg2: "#eab0a2", bg1: "#1c1025", bg2: "#41213b", water: "#34517e", water_hi: "#b8c9ed", special: "#d46a55", special2: "#f2d384" } },
     { name: "Cavern", colors: { fg1: "#726759", fg2: "#c4aa7d", bg1: "#100f12", bg2: "#292329", water: "#264f58", water_hi: "#9fc8bd", special: "#784a62", special2: "#d69b69" } }
   ];
-  var CATEGORY_ORDER = ["Solid terrain", "Hazards & water", "Goals & items", "Animated scenery", "Background art", "Empty & utility"];
+  var CATEGORY_ORDER = ["Solid terrain", "Hazards & water", "Goals & items", "Animated scenery", "Background art", "Empty & utility", "Custom tiles"];
   var SCRIPT_COMPLETIONS = [
     { label: "map.on_enter", snippet: "map.on_enter(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run when an object enters a tile sensor." },
     { label: "map.on_contact", snippet: "map.on_contact(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run while an object contacts a tile." },
@@ -63,7 +63,7 @@
     "room-render-canvas", "coordinate-label", "tool-status", "validation-summary", "duplicate-room-button",
     "add-room-button", "room-tabs", "inspector-panel", "map-tab", "room-tab", "validation-tab", "validation-count",
     "map-inspector", "room-inspector", "validation-inspector", "map-name", "map-author", "map-id", "map-description",
-    "description-count", "sort-order", "eggnogg-color-enabled", "eggnogg-color", "score-target", "respawn-limit", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
+    "description-count", "sort-order", "eggnogg-color-enabled", "eggnogg-color", "score-target", "respawn-limit", "default-opponent-spawn", "room-opponent-spawn", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
     "room-id", "room-ambient", "reset-colors-button", "preview-mirror-colors-button", "palette-presets", "palette-name", "save-palette-button", "random-palette-button", "saved-palettes", "primary-color-fields",
     "custom-mirror-colors", "mirror-color-fields", "move-room-in-button", "move-room-out-button", "delete-room-button",
     "spawn-meter-fill", "spawn-budget-label", "spawn-budget-detail", "validation-heading", "validation-list",
@@ -427,7 +427,7 @@
     if (custom) return {
       glyph: glyph,
       label: custom.name || custom.id || "Custom V2 tile",
-      category: "animated-scenery",
+      category: "custom",
       description: "V2 built-in atlas tile " + (custom.sprite_sheet || "builtin:tiles") + " #" + (custom.sprite_index || 0) + ".",
       physics: (custom.collision || "native").replace(/_/g, " ")
     };
@@ -438,6 +438,7 @@
 
   function categoryFor(meta) {
     var category = String(meta.category || "").toLowerCase();
+    if (category === "custom") return "Custom tiles";
     if (category === "solid-terrain") return "Solid terrain";
     if (category === "hazard" || category === "water-effect" || category === "water") return "Hazards & water";
     if (category === "goal-item" || category === "gameplay" || category === "objective") return "Goals & items";
@@ -460,6 +461,8 @@
   }
 
   function selectGlyph(glyph) {
+    state.selectedObject = null;
+    document.querySelectorAll("[data-object-key]").forEach(function(button){button.setAttribute("aria-selected","false");});
     state.selectedGlyph = glyph;
     var meta = tileMeta(glyph);
     els["selected-tile-name"].textContent = meta.label || "Native tile";
@@ -517,6 +520,18 @@
     fallback();
   }
 
+  function selectObject(key) {
+    state.selectedObject=key;setTool("pencil");
+    els["selected-tile-name"].textContent=GregObjects.label(key);els["selected-tile-description"].textContent="Custom object";els["selected-tile-glyph"].textContent="OBJ";
+    renderObjectPreview(els["selected-tile-preview"],key,48);
+    renderPalette();
+  }
+  function renderObjectPreview(host,key,size) {
+    var canvas=host.querySelector("canvas");if(!canvas){canvas=document.createElement("canvas");host.appendChild(canvas);}canvas.width=size;canvas.height=size;
+    var type=GregObjects.catalog(state.document).types.find(function(t){return t.key===key;});if(!type)return;
+    var ctx=canvas.getContext("2d");ctx.imageSmoothingEnabled=false;
+    GregObjects.drawPicture(ctx,state.document,type,size/2,size/2,previewTicks(),false,size/24).catch(function(){});
+  }
   function renderPalette() {
     var query = els["tile-search"].value.trim().toLowerCase();
     var tiles = (Core.TILE_METADATA || Core.TILES || []).filter(function (item, index, list) {
@@ -527,6 +542,7 @@
         if (tile && typeof tile.symbol === "string" && tile.symbol.length === 1) tiles.push(tileMeta(tile.symbol));
       });
     }
+    GregObjects.catalog(state.document).types.forEach(function(type){tiles.push({objectKey:type.key,label:GregObjects.label(type.key),category:"custom",description:"Custom object"});});
     if (!tiles.length && Core.GLYPHS) tiles = Core.GLYPHS.map(tileMeta);
     tiles = tiles.filter(function (item) {
       var haystack = [item.glyph, item.label, item.description, item.category, item.physics].join(" ").toLowerCase();
@@ -541,6 +557,10 @@
       heading.textContent = group;
       els["tile-catalog"].appendChild(heading);
       grouped.forEach(function (meta) {
+        if(meta.objectKey){
+          var objectButton=document.createElement("button");objectButton.type="button";objectButton.className="tile-button";objectButton.dataset.objectKey=meta.objectKey;objectButton.setAttribute("role","option");objectButton.setAttribute("aria-label",meta.label);objectButton.setAttribute("aria-selected",String(state.selectedObject===meta.objectKey));objectButton.title=meta.label;
+          var objectPreview=document.createElement("span");objectPreview.className="tile-atlas-preview";var objectLabel=document.createElement("span");objectLabel.textContent=meta.label;objectButton.append(objectPreview,objectLabel);objectButton.onclick=function(){selectObject(meta.objectKey);};els["tile-catalog"].appendChild(objectButton);renderObjectPreview(objectPreview,meta.objectKey,40);return;
+        }
         var button = document.createElement("button");
         button.type = "button";
         button.className = "tile-button" + (meta.glyph === " " || meta.glyph === "." ? " is-empty" : "");
@@ -548,7 +568,7 @@
         button.setAttribute("role", "option");
         button.setAttribute("aria-label", labelForGlyph(meta.glyph) + ". " + (meta.description || "") +
           (meta.physics ? " " + meta.physics + "." : ""));
-        button.setAttribute("aria-selected", meta.glyph === state.selectedGlyph ? "true" : "false");
+        button.setAttribute("aria-selected", !state.selectedObject && meta.glyph === state.selectedGlyph ? "true" : "false");
         button.title = (meta.label || "Native tile") + " (" + (meta.glyph === " " ? "space" : meta.glyph) + ")\n" +
           (meta.physics ? meta.physics + "\n" : "") + (meta.description || "");
         var preview = document.createElement("span");
@@ -571,9 +591,9 @@
     state.paletteAppearanceKey = key;
     els["tile-catalog"].querySelectorAll(".tile-button").forEach(function (button) {
       var host = button.querySelector(".tile-atlas-preview");
-      if (host) renderGlyphPreview(host, button.dataset.glyph, 40);
+      if (host) {if(button.dataset.objectKey)renderObjectPreview(host,button.dataset.objectKey,40);else renderGlyphPreview(host, button.dataset.glyph, 40);}
     });
-    renderGlyphPreview(els["selected-tile-preview"], state.selectedGlyph, 48);
+    if(state.selectedObject)renderObjectPreview(els["selected-tile-preview"],state.selectedObject,48);else renderGlyphPreview(els["selected-tile-preview"], state.selectedGlyph, 48);
   }
 
   function createGridControls() {
@@ -707,7 +727,9 @@
     }
     if (Atlas && Atlas.renderRoom) {
       try {
-        Promise.resolve(Atlas.renderRoom(canvas, room, {
+        var frame=document.createElement("canvas");frame.width=canvas.width;frame.height=canvas.height;
+        var frameDoc=state.document,frameMirrored=state.previewMirrored,frameTick=previewTicks();
+        Promise.resolve(Atlas.renderRoom(frame, room, {
           grid: room.grid,
           appearance: appearance,
           ambient: room.ambient,
@@ -721,7 +743,8 @@
           worldRoomIndex: Math.max(0, worldRoomIndex),
           time: previewTicks()
         }))
-          .then(function () { if (request === state.roomRenderRequest) document.body.classList.add("atlas-ready"); })
+          .then(function () {return GregObjects.drawRoom(frame,frameDoc,room.id,frameTick,frameMirrored);})
+          .then(function(){if(request!==state.roomRenderRequest)return;var context=canvas.getContext("2d");context.clearRect(0,0,canvas.width,canvas.height);context.drawImage(frame,0,0);document.body.classList.add("atlas-ready");})
           .catch(function (error) {
             if (request === state.roomRenderRequest) {
               fallback();
@@ -769,6 +792,7 @@
   }
 
   function updateToolStatus() {
+    if(state.selectedObject){els["tool-status"].textContent=state.tool+" ? "+GregObjects.label(state.selectedObject);return;}
     var meta = tileMeta(state.selectedGlyph);
     var toolName = state.tool.charAt(0).toUpperCase() + state.tool.slice(1);
     els["tool-status"].textContent = toolName + " · " + (meta.label || "Native tile") + " (" + (state.selectedGlyph === " " ? "space" : state.selectedGlyph) + ")";
@@ -830,7 +854,7 @@
     return list;
   }
 
-  function applyChanges(changes, silent) {
+  function applyChanges(changes, silent, eraseObject) {
     var room = activeRoom();
     if (!room) return false;
     var unique = Object.create(null);
@@ -840,10 +864,12 @@
       unique[key] = true;
       return true;
     });
+    if(state.selectedObject){try{var objectChanged=GregObjects.paint(state.document,state.selectedObject,room.id,changes,(eraseObject===undefined?!!(state.pointer?state.pointer.erase:state.tool==="eraser"):eraseObject));if(objectChanged&&!silent)renderAfterMapEdit();return objectChanged;}catch(error){toast("Object placement failed",error.message,"error");return false;}}
     var invalid = changes.find(function (change) { return !footprintValid(change.glyph, change.row, change.col, false); });
     if (invalid) { footprintValid(invalid.glyph, invalid.row, invalid.col, true); return false; }
     if (!changes.length || !prospectiveSpawnerValid(room, changes)) return false;
     var changed = false;
+    var eraseObjects=changes.filter(function(c){return c.glyph===" ";});if(eraseObjects.length&&GregObjects.catalog(state.document).types.length)changed=GregObjects.paint(state.document,null,room.id,eraseObjects,true);
     changes.forEach(function (change) {
       var row = rowArray(room, change.row);
       if (row[change.col] !== change.glyph) {
@@ -866,7 +892,7 @@
   function floodFill(startRow, startCol, glyph) {
     var room = activeRoom();
     var target = rowArray(room, startRow)[startCol];
-    if (target === glyph) return [];
+    if (target === glyph && !state.selectedObject) return [];
     var queue = [[startRow, startCol]];
     var seen = Object.create(null);
     var changes = [];
@@ -968,7 +994,8 @@
     var erase = event.button === 2 || state.tool === "eraser";
     var glyph = erase ? " " : state.selectedGlyph;
     if (state.tool === "eyedropper" && !erase) {
-      selectGlyph(rowArray(activeRoom(), row)[col]);
+      var picked=GregObjects.catalog(state.document).placements.find(function(p){return GregObjects.atCell(state.document,p,activeRoom().id,row,col);});
+      if(picked)selectObject(picked.type);else selectGlyph(rowArray(activeRoom(), row)[col]);
       setTool("pencil");
       return;
     }
@@ -977,6 +1004,7 @@
       start: { row: row, col: col },
       last: { row: row, col: col },
       glyph: glyph,
+      erase: erase,
       tool: state.tool,
       snapshot: historySnapshot(state.tool === "eraser" || erase ? "Erase" : state.tool.charAt(0).toUpperCase() + state.tool.slice(1)),
       changed: false,
@@ -1041,7 +1069,7 @@
       } else if (event.key === " " || event.key === "Enter" || event.key === "Backspace" || event.key === "Delete") {
         event.preventDefault();
         var glyph = event.key === "Backspace" || event.key === "Delete" ? " " : state.selectedGlyph;
-        commit(glyph === " " ? "Erase cell" : "Paint cell", function () { applyChanges(mirroredChanges(row, col, glyph), true); });
+        commit(glyph === " " ? "Erase cell" : "Paint cell", function () { applyChanges(mirroredChanges(row, col, glyph), true, event.key === "Backspace" || event.key === "Delete" || state.tool === "eraser"); });
       }
     });
   }
@@ -1114,7 +1142,8 @@
     } catch (error) {
       base = { valid: false, errors: [issue("error", "validator_exception", error.message)], warnings: [] };
     }
-    var combined = (base.issues || []).concat(playabilityIssues());
+    var combined = (base.issues || base.errors || []).concat(playabilityIssues());
+    try{GregObjects.exportFiles(state.document,{});}catch(error){combined.push(issue("error","object_content",error.message));}
     var seen = Object.create(null);
     combined = combined.filter(function (item) {
       var key = [item.severity, item.code, item.roomId, item.row, item.col].join("|");
@@ -1172,8 +1201,8 @@
     els["validation-summary"].append(icon, copy);
     els["validation-heading"].textContent = errors ? "Fix " + errors + (errors === 1 ? " error" : " errors") : warnings ? "Ready with warnings" : "Ready to export";
     els["export-button"].disabled = errors > 0;
-    els["preview-button"].disabled = errors > 0 || state.document.format !== "eggnogg-map/v1";
-    els["mobile-preview-button"].disabled = errors > 0 || state.document.format !== "eggnogg-map/v1";
+    els["preview-button"].disabled = errors > 0 || previewBusy;
+    els["mobile-preview-button"].disabled = errors > 0 || previewBusy;
     if (!total) {
       var empty = document.createElement("div");
       empty.className = "validation-empty";
@@ -1314,10 +1343,17 @@
     document.querySelectorAll('input[name="combat-mode"]').forEach(function (input) { input.checked = input.value === doc.rules.mode; });
     document.querySelectorAll('input[name="round-end"]').forEach(function (input) { input.checked = input.value === doc.rules.roundEndRooms; });
     els["eggnogg-color-enabled"].checked = doc.rules.eggnoggColor !== undefined;
-    els["eggnogg-color"].disabled = doc.rules.eggnoggColor === undefined;
-    setControlValue(els["eggnogg-color"], Core.colorToHex(doc.rules.eggnoggColor) || "#ffc966");
+    els["eggnogg-color"].hidden = doc.rules.eggnoggColor === undefined;
+    if (doc.rules.eggnoggColor !== undefined) {
+      buildColorBank(els["eggnogg-color"], {goal: doc.rules.eggnoggColor}, "map", {
+        keys: ["goal"], labels: {goal: "Goal"}, historyLabel: "Change Eggnogg color",
+        onChange: function (key, color) { state.document.rules.eggnoggColor = color; },
+      });
+    }
     setControlValue(els["score-target"], doc.rules.scoreTarget);
     setControlValue(els["respawn-limit"], doc.rules.armedRespawnLimit);
+    var roomDefaults = doc.defaults && (doc.defaults.room || doc.defaults);
+    setControlValue(els["default-opponent-spawn"], roomDefaults && roomDefaults.opponent_spawn || "default");
     els["format-badge"].textContent = isV2 ? "V2" : "V1";
     els["format-title"].textContent = isV2 ? "Custom-content package" : "Native map package";
     els["format-copy"].textContent = isV2 ?
@@ -1325,7 +1361,7 @@
       "Uses EGGNOGG+’s built-in tiles and produces data.json plus data.map.";
     els["format-v2-toggle"].checked = isV2;
     els["header-tile-lab-button"].disabled = !isV2;
-    els["header-script-button"].disabled = !isV2;
+    els["header-script-button"].disabled = false;
     els["v2-tile-summary"].hidden = !isV2;
     if (isV2) {
       var assetCount = Object.keys(doc.assets || {}).length;
@@ -1858,6 +1894,7 @@
   }
 
   function scriptDiagnostics() {
+    if(window.GregLogicStudio)GregLogicStudio.sync();
     var source = els["map-lua-editor"].value;
     var count = utf8Length(source);
     var notes = [];
@@ -1947,13 +1984,16 @@
 
   function openScriptingMode() {
     state.scriptSnapshot = historySnapshot("Edit map.lua");
+    if(state.document.format!=="eggnogg-map/v2")state.document=Core.upgradeToV2(state.document);
     els["map-lua-editor"].value = state.document.mapLuaPresent ? String(state.document.mapLua || "") : "";
     renderScriptReference(); renderScriptBuilder(); scriptDiagnostics(); document.body.classList.add("script-mode-open");
     els["map-mode-button"].classList.remove("is-active"); els["map-mode-button"].setAttribute("aria-pressed", "false"); els["header-script-button"].classList.add("is-active");
     openDialog(els["script-dialog"]);
+    GregLogicStudio.open(function(){return state.document;},function(text){els["map-lua-editor"].value=text;state.document.mapLua=text;state.document.mapLuaPresent=true;markChanged();scriptDiagnostics();});
   }
 
   function closeScriptingMode() {
+    try{GregLogicStudio.close();}catch(error){toast("Map logic needs attention",error.message,"error");return;}
     if (state.scriptSnapshot && JSON.stringify(state.scriptSnapshot.document) !== JSON.stringify(state.document)) pushHistory(state.scriptSnapshot, "Edit map.lua");
     state.scriptSnapshot = null; els["script-autocomplete"].hidden = true; document.body.classList.remove("script-mode-open");
     els["header-script-button"].classList.remove("is-active"); els["map-mode-button"].classList.add("is-active"); els["map-mode-button"].setAttribute("aria-pressed", "true");
@@ -1962,6 +2002,7 @@
 
   function removeScript() {
     delete state.document.mapLua; delete state.document.mapLuaPresent;
+    GregLogicStudio.reset();
     els["map-lua-editor"].value = ""; scriptDiagnostics(); markChanged();
   }
 
@@ -1971,6 +2012,7 @@
     els["room-inspector-title"].textContent = room.id;
     els["room-position-copy"].textContent = state.roomIndex === 0 ? "Center room" : "Distance " + state.roomIndex + " from center";
     setControlValue(els["room-id"], room.id);
+    setControlValue(els["room-opponent-spawn"], room.opponent_spawn === undefined ? "inherit" : room.opponent_spawn);
     var ambientValue = Number.isInteger(room.ambient) ? (Core.AMBIENTS || ["none", "bugs", "clouds", "art", "flies", "drips", "dust", "bats", "bubbles", "boil"])[room.ambient] : room.ambient;
     setControlValue(els["room-ambient"], ambientValue === "fumes" ? "boil" : ambientValue);
     els["custom-mirror-colors"].checked = !!(room.appearance && room.appearance.mirror);
@@ -1993,12 +2035,14 @@
     else els["mirror-color-fields"].textContent = "";
   }
 
-  function buildColorBank(host, bank, bankName) {
+  function buildColorBank(host, bank, bankName, options) {
+    options = options || {};
+    var historyLabel = options.historyLabel || "Change room palette";
     var room = activeRoom();
-    if (!room) return;
+    if (!room && !options.onChange) return;
     if (host.contains(document.activeElement)) return;
     host.textContent = "";
-    COLOR_KEYS.forEach(function (key) {
+    (options.keys || COLOR_KEYS).forEach(function (key) {
       var sourceValue = bank[key];
       var hex = Core.colorToHex ? Core.colorToHex(sourceValue) : sourceValue;
       if (!hex) hex = FALLBACK_COLORS[key];
@@ -2006,7 +2050,7 @@
       field.className = "color-field";
       var title = document.createElement("span");
       title.id = "color-" + bankName + "-" + key + "-title";
-      title.textContent = COLOR_LABELS[key];
+      title.textContent = (options.labels || COLOR_LABELS)[key];
       var swatch = document.createElement("button");
       swatch.type = "button";
       swatch.className = "color-swatch-button";
@@ -2021,17 +2065,17 @@
       input.className = "color-hex";
       input.pattern = "#[0-9A-Fa-f]{6}";
       input.spellcheck = false;
-      input.setAttribute("aria-label", COLOR_LABELS[key] + " hexadecimal color");
+      input.setAttribute("aria-label", (options.labels || COLOR_LABELS)[key] + " hexadecimal color");
       var rgb = document.createElement("input");
       rgb.type = "text";
       rgb.className = "color-rgb";
       rgb.placeholder = "0.0, 0.0, 0.0";
       rgb.spellcheck = false;
-      rgb.setAttribute("aria-label", COLOR_LABELS[key] + " RGB channels from zero to one");
+      rgb.setAttribute("aria-label", (options.labels || COLOR_LABELS)[key] + " RGB channels from zero to one");
       var editor = document.createElement("div");
       editor.className = "color-channel-editor";
       editor.hidden = true;
-      editor.setAttribute("aria-label", COLOR_LABELS[key] + " live RGB editor");
+      editor.setAttribute("aria-label", (options.labels || COLOR_LABELS)[key] + " live RGB editor");
       var sliders = [];
       var numbers = [];
       var channelNames = ["R", "G", "B"];
@@ -2041,8 +2085,8 @@
       if (!numericValue || numericValue.length !== 3) numericValue = [0, 0, 0];
 
       function begin() {
-        if (!fieldSnapshot) fieldSnapshot = historySnapshot("Change room palette");
-        setAppearancePreviewBank(bankName, false);
+        if (!fieldSnapshot) fieldSnapshot = historySnapshot(historyLabel);
+        if (!options.onChange) setAppearancePreviewBank(bankName, false);
       }
       function updateSliderTracks(channels) {
         var bytes = channels.map(function (channel) { return Math.round(channel * 255); });
@@ -2074,9 +2118,12 @@
         })) return false;
         input.removeAttribute("aria-invalid");
         rgb.removeAttribute("aria-invalid");
-        room.appearance = room.appearance || {};
-        room.appearance[bankName] = room.appearance[bankName] || {};
-        room.appearance[bankName][key] = channels.slice(0, 3);
+        if (options.onChange) options.onChange(key, channels.slice(0, 3));
+        else {
+          room.appearance = room.appearance || {};
+          room.appearance[bankName] = room.appearance[bankName] || {};
+          room.appearance[bankName][key] = channels.slice(0, 3);
+        }
         sync(channels);
         validate(); renderGrid(); renderRoomTabs(); markChanged();
         return true;
@@ -2098,7 +2145,7 @@
       function finish() {
         var snapshot = fieldSnapshot;
         fieldSnapshot = null;
-        if (snapshot && JSON.stringify(snapshot.document) !== JSON.stringify(state.document)) pushHistory(snapshot, "Change room palette");
+        if (snapshot && JSON.stringify(snapshot.document) !== JSON.stringify(state.document)) pushHistory(snapshot, historyLabel);
         refreshPalettePreviews();
       }
 
@@ -2112,13 +2159,13 @@
         slider.min = "0";
         slider.max = "1";
         slider.step = "0.001";
-        slider.setAttribute("aria-label", COLOR_LABELS[key] + " " + channelName + " channel");
+        slider.setAttribute("aria-label", (options.labels || COLOR_LABELS)[key] + " " + channelName + " channel");
         var number = document.createElement("input");
         number.type = "number";
         number.min = "0";
         number.max = "1";
         number.step = "0.001";
-        number.setAttribute("aria-label", COLOR_LABELS[key] + " " + channelName + " numeric channel");
+        number.setAttribute("aria-label", (options.labels || COLOR_LABELS)[key] + " " + channelName + " numeric channel");
         sliders.push(slider);
         numbers.push(number);
         slider.addEventListener("pointerdown", begin);
@@ -2176,6 +2223,8 @@
   }
 
   function renderAll() {
+    if(state.selectedObject&&!GregObjects.catalog(state.document).types.some(function(t){return t.key===state.selectedObject;}))state.selectedObject=null;
+    renderPalette();
     validate();
     renderMapFields();
     renderRoomFields();
@@ -2407,13 +2456,9 @@
     els["eggnogg-color-enabled"].addEventListener("change", function () {
       var enabled = this.checked;
       commit("Change Eggnogg color mode", function () {
-        if (enabled) state.document.rules.eggnoggColor = Core.hexToColor(els["eggnogg-color"].value);
+        if (enabled) state.document.rules.eggnoggColor = Core.hexToColor("#ffc966");
         else delete state.document.rules.eggnoggColor;
       });
-    });
-    els["eggnogg-color"].addEventListener("change", function () {
-      var color = Core.hexToColor(this.value);
-      if (color && state.document.rules.eggnoggColor !== undefined) commit("Change Eggnogg color", function () { state.document.rules.eggnoggColor = color; });
     });
     bindNumberField(els["score-target"], "Edit score target", function () { return state.document.rules.scoreTarget; }, function (value) { state.document.rules.scoreTarget = value; }, true);
     bindNumberField(els["respawn-limit"], "Edit armed respawn limit", function () { return state.document.rules.armedRespawnLimit; }, function (value) { state.document.rules.armedRespawnLimit = value; }, false);
@@ -2429,9 +2474,25 @@
       var room = activeRoom();
       var old = room.id;
       room.id = value;
+      GregObjects.catalog(state.document).placements.forEach(function(p){if(p.room===old)p.room=value;});
       state.document.layout.order = rooms().map(function (entry) { return entry === room ? value : entry.id; });
       if (old !== value) renderArena();
     }, { renderRooms: true });
+    els["default-opponent-spawn"].addEventListener("change", function () {
+      var value = this.value;
+      commit("Change default opponent spawn", function () {
+        if (!state.document.defaults) state.document.defaults = {};
+        var defaults = state.document.defaults.room || state.document.defaults;
+        defaults.opponent_spawn = value;
+      });
+    });
+    els["room-opponent-spawn"].addEventListener("change", function () {
+      var value = this.value;
+      commit("Change room opponent spawn", function () {
+        if (value === "inherit") delete activeRoom().opponent_spawn;
+        else activeRoom().opponent_spawn = value;
+      });
+    });
     els["room-ambient"].addEventListener("change", function () { var value = this.value; commit("Change ambience", function () { activeRoom().ambient = value; }); });
     els["custom-mirror-colors"].addEventListener("change", function () {
       var checked = this.checked;
@@ -2504,6 +2565,8 @@
       commit("Duplicate room", function () {
         var copy = clone(activeRoom());
         copy.id = nextRoomId(copy.id + "_copy");
+        var nextOrder=rooms().map(function(r){return r.id;});nextOrder.splice(state.roomIndex+1,0,copy.id);
+        try{GregObjects.duplicateRoom(state.document,activeRoom().id,copy.id,nextOrder);}catch(error){toast("Cannot duplicate room",error.message,"error");return;}
         rooms().splice(state.roomIndex + 1, 0, copy);
         state.roomIndex += 1;
         state.document.layout.order = rooms().map(function (room) { return room.id; });
@@ -2515,6 +2578,7 @@
       var nonempty = room.grid.some(function (row) { return row.some(function (glyph) { return glyph !== " " && glyph !== "."; }); });
       if (nonempty && !window.confirm('Delete non-empty room "' + room.id + '"? You can undo this action.')) return;
       commit("Delete room", function () {
+        if(state.document.entities)state.document.entities.placements=state.document.entities.placements.filter(function(p){return p.room!==room.id;});
         rooms().splice(state.roomIndex, 1);
         state.roomIndex = Math.min(state.roomIndex, rooms().length - 1);
         state.document.layout.order = rooms().map(function (entry) { return entry.id; });
@@ -2863,7 +2927,6 @@
       var mapText = decodeText(mapEntry, 4 * 1024 * 1024);
       var jsonText = jsonEntry ? decodeText(jsonEntry, 4 * 1024 * 1024) : null;
       var packageDir = dirname(mapEntry.name).toLowerCase();
-      if (packageDir && packageDir.split("/").length !== 1) throw new Error("Map files must be direct children of one top-level package folder.");
       var directExtras = entries.filter(function (entry) {
         return dirname(entry.name).toLowerCase() === packageDir && basename(entry.name) !== "data.json" && basename(entry.name) !== "data.map";
       });
@@ -2871,17 +2934,14 @@
       if (jsonText !== null) {
         try { json = JSON.parse(jsonText.charCodeAt(0) === 0xFEFF ? jsonText.slice(1) : jsonText); }
         catch (error) { throw new Error("data.json is not valid JSON: " + error.message); }
-        if (json && (json.format === "eggnogg-map/v2" || json.tileset !== undefined)) {
-          throw new Error("This is a V2 package. Greggnogg’s native editor will not overwrite custom symbols, sprite sheets, or map.lua; the current draft is unchanged.");
-        }
       }
-      if (directExtras.length) {
-        var extraNames = directExtras.map(function (entry) { return basename(entry.name); });
-        throw new Error("Package has extra direct files (" + extraNames.join(", ") + "). Greggnogg refuses to discard V2 assets or map.lua; the current draft is unchanged.");
-      }
+      var unsupportedExtras=directExtras.filter(function(entry){return !/^(map\.lua|entities\.json|objects\.greggnogg\.json|logic\.greggnogg\.json)$/i.test(basename(entry.name))&&!/\.png$/i.test(entry.name);});
+      if(unsupportedExtras.length)throw new Error("Unrecognized files cannot be preserved by this editor: "+unsupportedExtras.map(function(e){return basename(e.name);}).join(", "));
       var parsed;
       if (jsonText !== null) {
-        parsed = Core.parsePackage(jsonText, mapText);
+        var packageFiles={};
+        entries.forEach(function(entry){if(dirname(entry.name).toLowerCase()===packageDir)packageFiles[basename(entry.name)]=entry.bytes;});
+        parsed = Core.parsePackageFiles(packageFiles);
       } else {
         var parsedMap = Core.parseMapText(mapText);
         if (!parsedMap.valid) parsed = parsedMap;
@@ -2919,6 +2979,15 @@
       if (typeof documentValue.id !== "string" || !documentValue.id.trim()) {
         documentValue.id = normalizeId(dirname(mapEntry.name).split("/").pop() || documentValue.name || "imported_map");
       }
+      var entityEntries=entries.filter(function(entry){return dirname(entry.name).toLowerCase()===packageDir&&basename(entry.name)==="entities.json";});
+      if(entityEntries.length>1)throw new Error("Duplicate object definitions.");
+      if(entityEntries.length){documentValue.entities=EntityAuthor.parse(decodeText(entityEntries[0],1048576));EntityAuthor.expandPlacements(documentValue.entities,documentValue.layout.order);}
+      var logicEntries=entries.filter(function(entry){return dirname(entry.name).toLowerCase()===packageDir&&basename(entry.name)==="objects.greggnogg.json";});
+      if(logicEntries.length>1)throw new Error("Duplicate object editor metadata.");
+      if(logicEntries.length)documentValue=GregObjects.importLogic(documentValue,decodeText(logicEntries[0],1048576));
+      var blockEntries=entries.filter(function(entry){return dirname(entry.name).toLowerCase()===packageDir&&basename(entry.name)==="logic.greggnogg.json";});
+      if(blockEntries.length>1)throw new Error("Duplicate block editor metadata.");
+      if(blockEntries.length){var blockData=JSON.parse(decodeText(blockEntries[0],1048576));if(blockData&&blockData.source===String(documentValue.mapLua||""))documentValue.mapBlocks=blockData;}
       state.pendingImport = ensureDocumentShape(documentValue);
       showImportResult((state.pendingImport.format === "eggnogg-map/v2" ? "V2" : "V1") + " package ready", state.pendingImport.rooms.length + " source rooms found" + (warnings.length ? " · " + warnings.length + " warnings" : "") + ". Import is one undoable action; editing/export canonicalizes the package and changes its raw-byte online key.", false, true);
     } catch (error) {
@@ -2938,10 +3007,6 @@
   }
 
   function compilePackage() {
-    if (state.document.format !== "eggnogg-map/v1") {
-      toast("V1 maps only", "This Greggnogg build does not author or export V2 packages.", "error");
-      return null;
-    }
     commitAllTileArt();
     var validation = validate();
     if (validation.errors.length) {
@@ -2950,7 +3015,7 @@
       return null;
     }
     try {
-      var files = Core.exportProjectFiles ? Core.exportProjectFiles(state.document) : null;
+      var files = Core.exportProjectFiles ? GregObjects.exportFiles(state.document,Core.exportProjectFiles(state.document)) : null;
       var json = files ? files["data.json"] : (Core.serializeDataJson ? Core.serializeDataJson(state.document) : JSON.stringify(Core.buildDataObject(state.document), null, 2) + "\n");
       var map = files ? files["data.map"] : Core.serializeMapText(state.document);
       var id = normalizeId(state.document.id || state.document.name);
@@ -2964,7 +3029,7 @@
   function compilePreviewUri() {
     var validation;
     if (state.document.format !== "eggnogg-map/v1") {
-      toast("V1 maps only", "Preview links currently support V1 packages.", "error");
+      toast("Use Preview", "Custom maps include assets and logic. Use Preview here, or export the map to share it.", "error");
       return null;
     }
     commitAllTileArt();
@@ -2982,7 +3047,28 @@
     }
   }
 
-  function launchPreview() {
+  var previewBusy = false;
+  async function launchPreview() {
+    if(previewBusy)return;
+    if(state.document.format!=="eggnogg-map/v1"){
+      var compiled=compilePackage();
+      if(!compiled)return;
+      try{
+        var packet=GregPreviewPackage.encode(compiled.files);
+        var session=GregPreviewClient.token(window.crypto);
+        previewBusy=true;renderValidation();
+        var sessionLink=document.createElement("a");
+        sessionLink.href="yule://preview/session/"+session;
+        sessionLink.hidden=true;document.body.appendChild(sessionLink);
+        sessionLink.click();sessionLink.remove();
+        var previousStatus="";
+        await GregPreviewClient.transfer(session,packet,{status:function(message){
+          if(message!==previousStatus){previousStatus=message;toast("Preview",message);}
+        }});
+      }catch(error){toast("Preview failed",error.message,"error");}
+      finally{previewBusy=false;renderValidation();}
+      return;
+    }
     var uri = compilePreviewUri();
     var link;
     if (!uri) return;
@@ -3088,11 +3174,7 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         var value = JSON.parse(raw);
-        if (value && value.format === "eggnogg-map/v2") {
-          localStorage.setItem(V2_BACKUP_KEY, raw);
-          localStorage.removeItem(STORAGE_KEY);
-          els["save-label"].textContent = "V2 draft archived · New V1 map";
-        } else if (value && value.format === "eggnogg-map/v1" && !value._preserved) {
+        if (value && (value.format === "eggnogg-map/v1" || value.format === "eggnogg-map/v2") && !value._preserved) {
           state.idWasEdited = true;
           els["save-label"].textContent = "Restored local draft · Not exported";
           return ensureDocumentShape(value);
@@ -3148,12 +3230,14 @@
     createGridControls();
     renderPresets();
     bindControls();
+    document.getElementById("object-designer-button").onclick=function(){window.openGregObjectDesigner(state.document,function(next){commit("Edit objects",function(){state.document=ensureDocumentShape(next);});renderPalette();},state.selectedObject);};
     renderPalette();
     selectGlyph("@");
     setTool("pencil");
     renderAll();
     window.requestAnimationFrame(fitZoom);
     startAtlas();
+    if(new URLSearchParams(window.location.search).has("objects"))document.getElementById("object-designer-button").click();
     if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       startPreviewAnimation();
     }

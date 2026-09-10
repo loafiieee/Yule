@@ -101,7 +101,7 @@ assert "custom_maps_deactivate_script();" in bind_failure
 activate = function_body(
     CUSTOM_MAPS, "int custom_maps_activate_script_for_selector(int selector"
 )
-activation_failure = activate[activate.index("if (!map_script_activate") :]
+activation_failure = activate[activate.index("if (!(map->entity_source") :]
 assert "map_script_deactivate();" in activation_failure
 assert "return 0;" in activation_failure
 
@@ -126,3 +126,6 @@ assert "g_online_pending_connect_fail_reason[0]" in hub_enter
 assert "online_hub_set_status(g_online_pending_connect_fail_reason[0]" in hub_enter
 
 print("map_script_online_gate_static_test: all checks passed")
+
+assert "map_script_activate_content" in activate
+assert "map_script_network_admissible" in function_body(HOOKS, "static int online_validate_pinned_map_script(int selector")

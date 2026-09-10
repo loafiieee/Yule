@@ -121,6 +121,16 @@ int main(void) {
     char* preview_json = NULL;
     char* preview_map = NULL;
 
+    {
+        const char* session[]={"game.exe","yule://preview/session/0123456789abcdef0123456789abcdef"};
+        expect_action(2,session,LAUNCH_REQUEST_PREVIEW_SESSION,"0123456789abcdef0123456789abcdef");
+        const char* invalid[]={"","0123456789abcdef","0123456789ABCDEF0123456789abcdef","0123456789abcdef0123456789abcdef0","../../../../../../../../../../.."};
+        for(size_t i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
+            char uri[128];snprintf(uri,sizeof(uri),"yule://preview/session/%s",invalid[i]);session[1]=uri;
+            CHECK(parse(2,session,&request,error)==LAUNCH_REQUEST_PARSE_ERROR);
+        }
+        CHECK(!launch_request_preview_session_valid(NULL));
+    }
     CHECK(parse(3, none, &request, error) == LAUNCH_REQUEST_PARSE_NONE);
     CHECK(request.action == LAUNCH_REQUEST_NONE);
     expect_action(2, hub, LAUNCH_REQUEST_HUB, "");

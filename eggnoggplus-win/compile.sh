@@ -17,8 +17,10 @@ mkdir -p build
 sources=(
   dllmain.c stubs.c hooks.c custom_maps.c
   content_registry.c content_tiles.c content_bridge.c map_script.c
+  entity_world.c entity_lua.c entity_package.c entity_package_json.c
   cursor_ext.c
   credential_ext.c online_control.c launch_request.c launch_ipc.c
+  preview_bridge.c preview_http.c preview_package.c preview_stage.c
   lua_manager.c mod_api.c mod_callbacks.c mod_fs.c mod_http.c mod_json.c
   ggpo_ext.c ggpo_loopback.c ggpo_local.c ggpo_net.c
   fp_control.c rollback_schema.c

@@ -34,6 +34,13 @@ int main(void) {
     CHECK(mod_api_has_capability("http.response_metadata"));
     CHECK(mod_api_has_capability("font.unregister"));
     CHECK(mod_api_has_capability("texture.unregister"));
+    CHECK(mod_api_has_capability("ui.responsive_grid"));
+    CHECK(mod_api_has_capability("ui.virtual_list"));
+    CHECK(mod_api_has_capability("ui.navigation"));
+    CHECK(mod_api_has_capability("ui.themes"));
+    CHECK(mod_api_has_capability("ui.list_box"));
+    CHECK(mod_api_has_capability("ui.control_navigation"));
+    CHECK(mod_api_has_capability("ui.scoped_style"));
 
     for (i = 0; i < mod_api_capability_count(); ++i) {
         const char* capability = mod_api_capability_at(i);

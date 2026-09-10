@@ -85,6 +85,10 @@ int hooks_get_raw_input_blocked(int player_index);
 void hooks_sync_mad_ticks_to_game_clock(void);
 #ifdef EGGNOGGPLUS_SERIALIZER_TESTING
 void hooks_test_bind_mad_ticks(volatile uint32_t* ticks);
+struct MapScriptObjectView;
+int hooks_test_solid_box(const unsigned char* cells,int columns,int rows,const unsigned char* table,double x,double y,double width,double height);
+int hooks_test_commit_players(uintptr_t* slots,uint32_t mask,uint32_t defeat_mask,const struct MapScriptObjectView* players,void (__cdecl *defeat)(int));
+int hooks_test_apply_player_velocities(uintptr_t* slots,uint32_t mask,const struct MapScriptObjectView* players);
 #endif
 
 // AI match flag: armed by the main-menu mode button, read by Lua bot mods,

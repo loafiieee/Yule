@@ -25,3 +25,8 @@ bash install-linux.sh --uninstall
 `UNINSTALL-LINUX.sh` is a convenience wrapper for the final command. Uninstall
 removes only files whose hashes still match the installer receipt, restores the
 original `SDL2.dll`, and preserves maps, mods, saves, and locally modified files.
+
+The installer creates `maps/` beside `mods/` in the installed game folder.
+Extract each downloaded map into its own subfolder, for example
+`maps/MyMap/data.map` and `maps/MyMap/data.json`. Extract ZIP archives first;
+avoid an extra nested folder between `MyMap/` and these two files.

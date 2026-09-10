@@ -8,7 +8,7 @@ Each record is little-endian:
     uint8  canonical_state[canonical_state_size]
 
 The tool deliberately reports hashes and the first differing byte offset, never
-the state bytes themselves. Recognized canonical EGG0 v9 states also report
+the state bytes themselves. Recognized canonical EGG0 v9/v10/v11/v12 states also report
 component hashes and a schema location for the first difference. Exit 0 means
 identical, 1 means a valid divergence, and 2 means invalid input or usage.
 """
@@ -270,9 +270,10 @@ def parse_egg0_v9(state: bytes) -> Egg0View | None:
     versions/layouts deliberately fall back to the generic byte-level report.
     """
 
-    if len(state) < EGG0_HEADER_SIZE_V9:
+    delta = 260 if len(state) >= 8 and _u32(state, 4) in (10, 11, 12) else 0
+    if len(state) < (EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0)):
         return None
-    if _u32(state, 0) != EGG0_MAGIC or _u32(state, 4) != EGG0_VERSION:
+    if _u32(state, 0) != EGG0_MAGIC or _u32(state, 4) not in (9, 10, 11, 12):
         return None
     thing_count = _u32(state, 8)
     player_size = _u32(state, 12)
@@ -290,11 +291,37 @@ def parse_egg0_v9(state: bytes) -> Egg0View | None:
     ):
         return None
     payload_bytes = player_size * 2 + thing_size * thing_count + tilemap_bytes
-    if EGG0_HEADER_SIZE_V9 + payload_bytes != len(state):
+    base_size = EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0) + payload_bytes
+    if base_size > len(state):
         return None
+    if base_size != len(state):
+        if _u32(state, 4) not in (11, 12):
+            return None
+        tail = state[base_size:]
+        map_bytes = 29708
+        content_header = 48 if _u32(state, 4) == 12 else 16
+        package_at = content_header + map_bytes
+        world_at = package_at + 72
+        magic = b"YMC2" if content_header == 48 else b"YMC1"
+        if len(tail) < world_at + 32 or tail[:4] != magic or tail[content_header-12:content_header] != bytes(12):
+            return None
+        if tail[content_header:package_at] != state[252:252 + map_bytes]:
+            return None
+        if tail[package_at:package_at + 4] != b"YEP1" or tail[world_at:world_at + 4] != b"YEW1":
+            return None
+        if tail[package_at + 68:world_at] != bytes(4) or _u32(tail, world_at + 4) != 1:
+            return None
+        if any(c not in b"0123456789abcdef" for c in tail[package_at + 4:package_at + 68]):
+            return None
+        capacity = _u32(tail, world_at + 8)
+        types = _u32(tail, world_at + 24)
+        if not 1 <= capacity <= 4096 or not 1 <= types <= 4096:
+            return None
+        if len(tail) != world_at + 32 + capacity * 32 + types * 520:
+            return None
     if tilemap_w and tilemap_h and tilemap_w * tilemap_h * 4 > tilemap_bytes:
         return None
-    player0_offset = EGG0_HEADER_SIZE_V9
+    player0_offset = (EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0))
     player1_offset = player0_offset + player_size
     things_offset = player1_offset + player_size
     tilemap_offset = things_offset + thing_count * thing_size
@@ -306,7 +333,7 @@ def parse_egg0_v9(state: bytes) -> Egg0View | None:
         tilemap_w=tilemap_w,
         tilemap_h=tilemap_h,
         tilemap_bytes=tilemap_bytes,
-        payload_offset=EGG0_HEADER_SIZE_V9,
+        payload_offset=(EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0)),
         player0_offset=player0_offset,
         player1_offset=player1_offset,
         things_offset=things_offset,
@@ -324,6 +351,12 @@ def _named_range(
 
 
 def _map_script_location(relative: int) -> dict[str, int | str]:
+    if relative >= 29448:
+        if relative < 29452:
+            return {"component": "map_script", "field": "timer_count", "component_byte": relative}
+        timer, byte = divmod(relative - 29452, 8)
+        return {"component": "map_script", "field": "timer_remaining" if byte < 4 else "timer_interval",
+                "timer": timer, "field_byte": byte % 4, "component_byte": relative}
     header_fields = (
         ("magic", 0, 4),
         ("version", 4, 2),
@@ -442,6 +475,7 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
 
 
 def egg0_location(view: Egg0View, offset: int) -> dict[str, int | str]:
+    delta = 260 if _u32(view.state, 4) in (10, 11, 12) else 0
     if offset < 0 or offset >= len(view.state):
         return {"component": "outside_state", "state_byte": offset}
     if offset < EGG0_SCALAR_HEADER_SIZE_V9:
@@ -452,32 +486,32 @@ def egg0_location(view: Egg0View, offset: int) -> dict[str, int | str]:
             "field_byte": found[1] if found else offset,
             "state_byte": offset,
         }
-    if offset < EGG0_MAP_SCRIPT_END_V9:
+    if offset < (EGG0_MAP_SCRIPT_END_V9 + delta):
         result = _map_script_location(offset - EGG0_SCALAR_HEADER_SIZE_V9)
         result["state_byte"] = offset
         return result
-    if offset < EGG0_TRANSIENT_END_V9:
+    if offset < (EGG0_TRANSIENT_END_V9 + delta):
         return {
             "component": "transient_game_state",
-            "component_byte": offset - EGG0_MAP_SCRIPT_END_V9,
+            "component_byte": offset - (EGG0_MAP_SCRIPT_END_V9 + delta),
             "state_byte": offset,
         }
-    if offset < EGG0_THING_INFO_END_V9:
+    if offset < (EGG0_THING_INFO_END_V9 + delta):
         return {
             "component": "thing_info_state",
-            "component_byte": offset - EGG0_TRANSIENT_END_V9,
+            "component_byte": offset - (EGG0_TRANSIENT_END_V9 + delta),
             "state_byte": offset,
         }
-    if offset < EGG0_ROOM_INFO_END_V9:
+    if offset < (EGG0_ROOM_INFO_END_V9 + delta):
         return {
             "component": "room_info_state",
-            "component_byte": offset - EGG0_THING_INFO_END_V9,
+            "component_byte": offset - (EGG0_THING_INFO_END_V9 + delta),
             "state_byte": offset,
         }
-    if offset < EGG0_HEADER_SIZE_V9:
+    if offset < (EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0)):
         return {
             "component": "particle_state",
-            "component_byte": offset - EGG0_ROOM_INFO_END_V9,
+            "component_byte": offset - (EGG0_ROOM_INFO_END_V9 + delta),
             "state_byte": offset,
         }
     if offset < view.player1_offset:
@@ -512,6 +546,8 @@ def egg0_location(view: Egg0View, offset: int) -> dict[str, int | str]:
             "entity_byte": entity_byte,
             "state_byte": offset,
         }
+    if offset >= view.tilemap_offset + view.tilemap_bytes:
+        return {"component": "managed_content", "component_byte": offset - view.tilemap_offset - view.tilemap_bytes, "state_byte": offset}
     rel = offset - view.tilemap_offset
     tile_index, cell_byte = divmod(rel, 4)
     result: dict[str, int | str] = {
@@ -531,24 +567,26 @@ def _sha256(data: bytes) -> str:
 
 
 def egg0_component_bytes(view: Egg0View) -> dict[str, bytes]:
+    delta = 260 if _u32(view.state, 4) in (10, 11, 12) else 0
     return {
         "header": view.state[:EGG0_SCALAR_HEADER_SIZE_V9],
         "map_script": view.state[
-            EGG0_SCALAR_HEADER_SIZE_V9:EGG0_MAP_SCRIPT_END_V9
+            EGG0_SCALAR_HEADER_SIZE_V9:(EGG0_MAP_SCRIPT_END_V9 + delta)
         ],
         "transient_game_state": view.state[
-            EGG0_MAP_SCRIPT_END_V9:EGG0_TRANSIENT_END_V9
+            (EGG0_MAP_SCRIPT_END_V9 + delta):(EGG0_TRANSIENT_END_V9 + delta)
         ],
         "thing_info_state": view.state[
-            EGG0_TRANSIENT_END_V9:EGG0_THING_INFO_END_V9
+            (EGG0_TRANSIENT_END_V9 + delta):(EGG0_THING_INFO_END_V9 + delta)
         ],
         "room_info_state": view.state[
-            EGG0_THING_INFO_END_V9:EGG0_ROOM_INFO_END_V9
+            (EGG0_THING_INFO_END_V9 + delta):(EGG0_ROOM_INFO_END_V9 + delta)
         ],
-        "particle_state": view.state[EGG0_ROOM_INFO_END_V9:EGG0_HEADER_SIZE_V9],
+        "particle_state": view.state[(EGG0_ROOM_INFO_END_V9 + delta):(EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0))],
         "player0": view.state[view.player0_offset:view.player1_offset],
         "player1": view.state[view.player1_offset:view.things_offset],
         "things": view.state[view.things_offset:view.tilemap_offset],
+        "managed_content": view.state[view.tilemap_offset + view.tilemap_bytes:],
         "tilemap": view.state[
             view.tilemap_offset:view.tilemap_offset + view.tilemap_bytes
         ],
@@ -598,7 +636,8 @@ def compare_egg0_schema(
     changed_tile_count += abs(left.tilemap_bytes - right.tilemap_bytes) // 4
     report: dict[str, object] = {
         "format": "EGG0",
-        "version": EGG0_VERSION,
+        "version": _u32(left.state, 4),
+        "right_version": _u32(right.state, 4),
         "changed_components": changed_components,
         "changed_entities": changed_entities,
         "changed_tile_count": changed_tile_count,

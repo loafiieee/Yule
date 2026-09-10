@@ -29,6 +29,7 @@ online_server/users.json
 online_server/ratings.json
 online_server/server_secret.key
 online_server/*.log
+online_server/*.jsonl
 online_server/*.env
 .env
 

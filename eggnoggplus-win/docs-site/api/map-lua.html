@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Complete deterministic Eggnogg+ V2 map Lua API reference.">
+  <meta name="description" content="Deterministic Eggnogg+ map Lua and custom object behavior reference.">
   <title>Map Lua API · Eggnogg+ Developer Docs</title>
   <link rel="stylesheet" href="../styles.css">
   <script defer src="../api-data.js"></script>
@@ -14,6 +14,76 @@
   <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / <a href="index.html">API</a> / Map Lua</nav>
   <h1>Deterministic <code>map.lua</code></h1>
   <p class="lead">A V2 package may place one <code>map.lua</code> beside <code>data.json</code> and <code>data.map</code>. The restricted VM adds bounded tile contact behavior without filesystem, network, OS, UI, audio, dynamic code, modules, FFI, debug, or process access.</p>
+
+  <section>
+    <h2>Custom objects and physics: current boundaries</h2>
+    <p>Custom objects are framework-owned instances declared in <code>entities.json</code>.
+    Their callbacks share this map's Lua VM. They are not native EGGNOGG thing slots:
+    they do not automatically inherit native gravity, terrain collision, sword combat,
+    or corpse behavior. Entity-bearing maps remain offline-only.</p>
+    <p><code>entity.on_update(type, callback)</code>, <code>entity.on_spawn</code> and
+    <code>entity.on_remove</code> register lifecycle callbacks. Use <code>entity.get(handle)</code>
+    and <code>entity.set(handle, {x=..., y=..., vx=..., vy=...})</code> for fixed-point
+    movement. Live objects integrate velocity once each simulation tick. Coordinates
+    and velocity use pixels and pixels per tick; writes round to 1/256 pixel.</p>
+    <p>Greggnogg's Object designer supplies gravity, horizontal drag and maximum vertical
+    speed controls. These generate update logic before your authored callback body.
+    Enable <strong>Collide with solid map blocks</strong> to stop at native solid tiles,
+    using the centered collision width and height. Movement is swept along X then Y;
+    it does not bounce or damage players. Custom update logic runs afterward and can
+    override the resulting velocity. Start objects clear of terrain. Advanced Lua can implement other
+    movement rules within the VM's shared execution limits.</p>
+    <p>API 23 adds <code>map.solid_box(x, y, width, height)</code>: a gameplay-only
+    query returning whether a centered box overlaps native solid terrain. Dimensions
+    are 1/256 through 128 pixels; coordinates must be within +/-4194303 pixels.
+    Map boundaries are solid; merely touching an edge is not overlap. Each query
+    consumes execution budget. This does not query players or custom objects.</p>
+    <h3>Block variables</h3>
+    <p>Map and Object logic share named map-wide and per-player variables. The Blocks
+    Variables category reads, sets, changes, clears and tests existence. Values live
+    in <code>map.state</code> under <code>v:m:NAME</code> or
+    <code>v:p:NUMBER:NAME</code>, persist across ticks and restore with rollback.
+    Unset reads return 0; boolean false is preserved. The shared state capacity is
+    64 entries. Player input events and player-following indicators are not yet
+    provided by these blocks.</p>
+    <p>API 24 adds <code>entity.set(handle, {automatic_motion=false})</code> to
+    disable velocity integration while preserving explicit position writes and animation.
+    New Greggnogg designs use this mode. Per-instance block variables use keys
+    <code>o:HANDLE:NAME</code> in map.state and are cleared on removal. Names allow
+    up to 12 characters and share the existing 64-entry state limit.</p>
+    <h3>Object point query (API 26)</h3>
+    <p><code>entity.at(x, y)</code> returns a detached, stable-order list of handles
+    whose authored regions contain the world point. Each instance appears once.
+    Left/top edges are included; right/bottom are excluded. All region purposes
+    participate and mirroring is applied. Empty-region objects do not match.
+    Results may include the caller; use <code>entity.type</code> and ordinary
+    conditions to filter them. Work is charged to the shared execution budget.</p>
+    <h3>Solid obstacles (API 25)</h3>
+    <p>A region with <code>role: "solid"</code> blocks native players, corpses,
+    swords and hazards. Greggnogg exposes this as the area's Solid checkbox.
+    Geometry uses authored rectangle bounds, mirrored with its object; sprite
+    scaling does not scale collision. Native body motion is swept against an
+    expanded rectangle, stops on the blocked axis and slides along the other.
+    Use separate sensor/attack regions for event filtering. This does not add
+    moving-platform carrying or custom-entity rigid-body collisions.</p>
+    <h3>What detection areas mean</h3>
+    <p>Body, sensor, hitbox and hurtbox are authored region roles. An area alone does not
+    stop movement or damage a player. <code>entity.regions(handle)</code> returns local
+    and world bounds; <code>entity.contacts()</code> queries object/object region overlaps.
+    <code>map.players()</code> supplies live player positions, speeds and contact radii.
+    Logic must choose the response. Greggnogg's player/object touching block performs
+    a circle/rectangle test against the chosen region role.</p>
+    <p>During tick or entity-update callbacks, <code>map.set_player_velocity(player, vx, vy)</code>
+    queues native velocity changes; <code>map.defeat_player(player)</code> queues native
+    death. Player numbers are 1 and 2. Both commit after successful script execution;
+    callback failure discards the batch. Defeat is a one-hit native action, not a general
+    health, weapon or equipment system.</p>
+    <p>Additional entity controls include <code>animation_tick</code>,
+    <code>animation_paused</code> and <code>mirrored</code>. Visibility, arbitrary per-instance
+    sprite changes and full native rigid-body behavior are not exposed by this version.
+    Use <code>map.state</code> for persistent logic state. Managed entities and script
+    state participate in rollback; this does not make entity maps online-admissible.</p>
+  </section>
 
   <section>
     <h2>Execution model</h2>

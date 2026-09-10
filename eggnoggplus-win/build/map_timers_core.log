@@ -1,0 +1,162 @@
+PASS: nine opponent policy call sites match native executable; all-or-nothing patch preflight
+Building opponent spawn policy tests...
+PASS: opponent spawn policy preserves initial/leader respawns and match completion
+Production cosmetic RNG classifier extracted
+Building cosmetic RNG branch tests...
+Native cosmetic RNG branch classification: OK
+online capture production extraction and event wiring: OK
+Building online hub text focus tests...
+online hub commit-on-blur production handler tests: OK
+Building keyboard binding parser tests...
+strict keyboard binding parser and round-trip tests: OK
+Building mod API compatibility/capability tests...
+mod API compatibility tests: OK
+Building embedded UI helpers tests...
+List box filtering, bounded rendering, navigation and pointer tests: OK
+List browser demo and clipping checks: OK
+UI helpers responsive layout and slider tests: OK
+Building native room reset lifecycle tests...
+native room reset lifecycle tests: OK
+Building credential lifecycle tests...
+Credential Manager live roundtrip skipped (set EGGNOGGPLUS_CREDENTIAL_TEST_LIVE=1 to enable).
+credential_ext tests passed
+Building nonblocking TCP transport tests...
+ALL OK
+Building online control parser/lifecycle tests...
+online_control tests passed
+Building asset ownership and validation tests...
+asset ownership, canonical paths, overflow and reload tests: OK
+Building removable mod callback list tests...
+removable mod callback list tests: OK
+Building mod.http response/lifecycle tests...
+mod.http lifecycle tests: OK
+Building bounded Lua JSON parser/encoder tests...
+mod JSON parser/encoder tests: OK
+Building bounded text utility tests...
+text utility tests: OK
+Building RGBA image utility tests...
+image utility tests: OK
+Building console command catalog tests...
+console command catalog tests: OK
+Building console parser tests...
+console parser tests: OK
+Building bounded command history tests...
+command history tests: OK
+Building safe launch request parser tests...
+launch_request_test: all checks passed
+Building existing-process launch IPC tests...
+launch IPC tests passed
+Building window policy tests...
+window policy tests: OK
+Building canonical floating-point tick tests...
+fp control tests: ALL OK
+Building canonical rollback envelope codec tests...
+PASS: canonical rollback envelope codec tests
+Building privacy-bounded Discord Rich Presence tests...
+discord Rich Presence tests: OK
+Building bounded bytebeat expression/render tests...
+bytebeat expression/render tests: OK
+Building sandboxed Dollchan JavaScript compatibility tests...
+tune9 mode=0 rate=44100 block render: 0/0 ms (budget 211 ms)
+tune10 mode=2 rate=44100 block render: 62/78 ms (budget 211 ms)
+sandboxed Dollchan JavaScript tests: OK
+Building ahead-of-time Dollchan PCM stream tests...
+bytebeat producer stream tests: OK
+Building native rollback serializer tests...
+state serializer tests: ALL OK
+atlas-renderer tests: OK
+✔ greggnogg\atlas-renderer.test.js (105.8969ms)
+Greggnogg editor-core tests passed: 121
+✔ greggnogg\editor-core.test.js (132.1859ms)
+✔ configuration fails closed (2.1209ms)
+✔ queue payload contains only public identity, queue, and HTTPS handoffs (1.1737ms)
+✔ join posts once and leave edits the exact owned message (0.6962ms)
+✔ matched post is edited now and deleted after one-day retention (0.343ms)
+✔ leave racing create edits the late message (0.246ms)
+✔ a sub-two-second queue stay never creates a Discord message (0.1242ms)
+✔ the delayed post is created once only after its timer fires (0.1287ms)
+✔ 429 response uses server retry_after instead of hardcoded route rates (0.1856ms)
+✔ invalid lifecycle values never reach Discord (0.0988ms)
+✔ orderly close retires active owned posts (0.3707ms)
+✔ pending create work is bounded without dropping owned cleanup (5.5969ms)
+✔ goal RGB controls preview exact channels and group a gesture into one undo (2.9444ms)
+✔ invalid goal RGB or hex input preserves the document (0.9765ms)
+✔ shared RGB controls retain room palette behavior (0.7868ms)
+✔ public base and generated links are strict HTTPS routes (0.8955ms)
+✔ redirect parser exposes only completed canonical yule intents (0.2282ms)
+✔ HTTP handoff is no-store and method bounded (0.3355ms)
+✔ redirect server refuses an accidental public bind (0.7617ms)
+✔ audit preserves append history and records correlated intent/outcome without secrets (17.5037ms)
+✔ audit failure blocks mutation and completion failure is explicitly distinguished (0.3229ms)
+✔ an interrupted final record cannot absorb later audit entries (6.1586ms)
+✔ live dashboard preserves focused, open, and edited maintenance while other regions refresh (2.3936ms)
+✔ live dashboard pauses hidden tabs, retries failures, and stops on expired sessions (1.0414ms)
+✔ live dashboard does not overlap requests after visibility changes (0.8234ms)
+✔ admin bind validation accepts only loopback/private literals by default (5.1039ms)
+✔ admin UI grants a private client session, requires CSRF, and dispatches actions (24.1245ms)
+✔ admin UI can be disabled explicitly (0.1446ms)
+✔ direct execution explains that the admin listener belongs to server.js (51.9002ms)
+✔ admin rejects DNS rebinding hostnames before granting sessions (3.501ms)
+✔ offline backup verifies data and restores with a complete recovery copy (66.2861ms)
+✔ tampered backup is rejected before any destination changes (19.748ms)
+✔ partial restore failure restores previous bytes and retains recovery snapshot (47.9186ms)
+✔ silent write corruption triggers verified recovery (47.9455ms)
+✔ silent recovery corruption is never reported as recovered (43.217ms)
+✔ stores reject damaged existing files and have no inherited users (12.9508ms)
+✔ failed atomic replacement preserves destination and cleans temporary file (5.0666ms)
+✔ record updates publish only after persistence and preserve unrelated users (8.332ms)
+ℹ tests 39
+ℹ suites 0
+ℹ pass 39
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 367.8418
+embedded UI source/header synchronization: OK
+compile source list checks: OK (40 implementation files)
+release packaging fail-closed static checks: OK
+Linux Wine installer static/syntax checks: OK
+Linux Wine installer integration test: skipped on non-POSIX host
+public source exporter/static release guards: OK
+credential_hooks_static_test: all checks passed
+online_control_hooks_static_test: all checks passed
+online flow integration static checks: OK
+online native cursor static checks: OK
+online match network HUD static checks: OK
+online menu tick static checks: OK
+online active troubleshooter static checks: OK
+online LAN admin integration static checks: OK
+online server control safety: OK
+friend challenge map picker static checks: OK
+social controls static checks: OK
+private rematch static checks: OK
+online launch/deep-link static checks: OK
+one-shot updater handoff static checks: OK
+single frame-boundary capture static checks: OK
+desync_repro_static_test: all checks passed
+peer trace diff tests: OK
+fp_control_hooks_static_test: all checks passed
+simulation_geometry_static_test: all checks passed
+player colour static checks: OK
+Discord Rich Presence privacy/runtime wiring checks: OK
+bytebeat Lua/cache/resource wiring checks: OK
+Lua HTTP owner/cancellation/body-bound static checks: OK
+Greggnogg responsive color-editor static checks: OK
+owner-scoped Lua console command integration: OK
+removable Lua subscription integration static checks: OK
+public mod.online cosmetics-surface removal checks: OK
+Lua filesystem picker static checks: OK
+mod API manifest/runtime integration static checks: OK
+owner-scoped asset removal API wiring: OK
+bounded mod.json integration static checks: OK
+sandboxed Dollchan JavaScript build/security wiring checks: OK
+native/bounded/Dollchan music playlist and authoring controls: OK
+console catalog coverage: OK (70 dispatched, 70 catalog entries)
+Discord LFG server/bot privacy lifecycle checks: OK
+state-preserving online-server updater checks: OK
+repository-wide updater safety checks: OK
+installer lifecycle checks: OK
+net_backpressure_static_test: all checks passed
+window runtime static checks: OK
+PASS: guarded credential, TCP/control, FP, rollback envelope, serializer, and window native/static tests completed.

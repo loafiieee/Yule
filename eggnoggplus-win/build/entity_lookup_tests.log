@@ -1,0 +1,47 @@
+Building framework-owned entity lifecycle tests...
+entity world: lifecycle, overflow atomicity, 2048-tick replay and strict snapshots passed
+Building entity Lua adapter tests...
+[string "entity.set(orb,{vx=9}) entity.spawn('demo:orb..."]:1: intentional rollback
+entity Lua adapter: named types, exact handles, validation and transactional callbacks passed
+Building entity package ownership tests...
+entity packages: canonical ownership, placement, identities and atomic restore passed
+Building isolated deterministic map.lua runtime tests...
+map.lua disabled for this rollback timeline: map.on_contact failed: tests/map.lua:2: unknown or read-only map object property
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: get_sprite expects no arguments
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options must be a table
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options has an unknown field 'offset_z'
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options.offset_y must be a number
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options.offset_y is non-finite or outside -4096..4096 pixels
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options.offset_y is non-finite or outside -4096..4096 pixels
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options has an unknown field 'offset_y'
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite expects sprite index, duration_ticks, and optional options
+map.lua disabled for this rollback timeline: map.on_contact failed: tests/map.lua:3: intentional limit fault
+map.lua disabled for this rollback timeline: map timer callback failed: tests/map.lua:1: timer fault
+map.lua disabled for this rollback timeline: map timer callback failed: tests/map.lua:1: timer fault
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: timer ticks are outside the supported integer range
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state_clear expects at most one prefix
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state strings may contain at most 63 bytes
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state strings may contain at most 63 bytes
+map_script_test: all checks passed
+Building checked-in spring demo behavior tests...
+spring demo fixture tests passed
+Building managed entity package integration tests...
+map.lua disabled for this rollback timeline: map.on_tick failed: map.lua:1: rollback both
+map.lua disabled for this rollback timeline: map.on_tick failed: map.lua:1: map.lua globals and API tables are read-only during callbacks
+map.lua disabled for this rollback timeline: entity.on_update failed: map.lua:1: entity failure
+map.lua disabled for this rollback timeline: entity.on_update failed: map.lua instruction budget exceeded
+map.lua disabled for this rollback timeline: entity.on_update failed: map.lua:1: map.lua globals and API tables are read-only during callbacks
+map.lua disabled for this rollback timeline: map.on_tick failed: map.lua:1: entity contact query exceeded its comparison budget
+map.lua disabled for this rollback timeline: map.on_tick failed: map.lua:1: remove failure
+managed entities: sandbox, combined snapshots, replay, atomic rejection and callback rollback passed
+PASS: sandboxing, contact sensors, temporary visual offsets, rollback replay, contact phases, and faults are deterministic.

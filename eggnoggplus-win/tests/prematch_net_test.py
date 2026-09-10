@@ -230,6 +230,7 @@ def run_pair(
     expect_rejection: bool = False,
     tamper_host: bool = False,
     replay_host: bool = False,
+    replay_join: bool = False,
     require_host_rejects: bool = False,
     require_join_rejects: bool = False,
     restart_join: bool = False,
@@ -345,6 +346,8 @@ def run_pair(
         host_args.append("replay")
     join_mode = ("layoutrestart" if final_layout else "restart") if restart_join else mode
     join_args = [str(EXE), join_role, str(join_port), str(peer_port_for_join), join_token, join_mode]
+    if replay_join:
+        join_args.append("replay")
     if restart_join:
         host_args[5] = "layoutwatchrestart" if final_layout else "watchrestart"
         host_args.append(str(restart_port))
@@ -863,6 +866,14 @@ def run_pair(
                 f"correction path did not exercise duplicate, loss, and delay\n{host_out}\n{join_out}"
             )
     if chaos_case:
+        if replay_join:
+            rejected = re.search(r"host CHAOS AUTH rejected=(\d+)", host_out)
+            if not rejected or int(rejected.group(1)) == 0:
+                raise AssertionError(f"duplicate chaos never rejected join replays\n{host_out}\n{join_out}")
+        if replay_host:
+            rejected = re.search(r"join CHAOS AUTH rejected=(\d+)", join_out)
+            if not rejected or int(rejected.group(1)) == 0:
+                raise AssertionError(f"duplicate chaos never rejected replayed packets\n{host_out}\n{join_out}")
         chaos_pattern = re.compile(
             r"CHAOS PASS start=(\d+) target=(\d+) wrapped=(\d+) "
             r"checksum=(\d+) frame=(\d+) "
@@ -1215,6 +1226,20 @@ def main() -> int:
                 tick_failure=True,
             )
             print("prematch_net_test: live-tick failure-atomicity checks passed")
+            return 0
+        if "--duplicate-wrap-chaos-only" in sys.argv[1:]:
+            run_pair(
+                "join", expect_recovery=False, child_env=child_env,
+                gameplay_wrap_chaos=True, replay_host=True, replay_join=True,
+            )
+            print("prematch_net_test: bilateral duplicate/wrap gameplay-chaos checks passed")
+            return 0
+        if "--duplicate-chaos-only" in sys.argv[1:]:
+            run_pair(
+                "join", expect_recovery=False, child_env=child_env,
+                gameplay_chaos=True, replay_host=True,
+            )
+            print("prematch_net_test: duplicate/loss/delay gameplay-chaos checks passed")
             return 0
         if "--chaos-only" in sys.argv[1:]:
             run_pair(

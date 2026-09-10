@@ -2,7 +2,7 @@
   "id": "flight",
   "name": "Flight Mode",
   "version": "1.0.0",
-  "author": "Codex",
+  "author": "loaf",
   "description": "Toggle collision-free flight and steer with the player's movement controls.",
   "api_version": 1,
   "api_revision": 2,

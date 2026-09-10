@@ -6,7 +6,7 @@ SOURCE = (ROOT / "hooks.c").read_text(encoding="utf-8")
 DLLMAIN = (ROOT / "dllmain.c").read_text(encoding="utf-8")
 CURSOR_EXT = (ROOT / "cursor_ext.c").read_text(encoding="utf-8")
 CURSOR_EXT_H = (ROOT / "cursor_ext.h").read_text(encoding="utf-8")
-LUA = (ROOT / "lua_manager.c").read_text(encoding="utf-8")
+LUA = (ROOT / "lua_manager.c").read_text(encoding="utf-8") + (ROOT / "ui_helpers.h").read_text(encoding="utf-8")
 BUILD = (ROOT / "compile.sh").read_text(encoding="utf-8")
 GHIDRA = (ROOT / "ghidra" / "eggnoggplus.exe.c").read_text(encoding="utf-8")
 

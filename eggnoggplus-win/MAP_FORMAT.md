@@ -15,7 +15,11 @@ This format is intentionally engine-native first. It does not try to invent a ne
 
 ## Folder layout
 
-Each custom map lives in its own folder under `maps/`.
+Each custom map lives in its own folder under `maps/`. Extract downloaded map ZIPs
+there; extra enclosing folders are supported automatically. For example,
+`maps/download-name/download-name/data.json` and its sibling `data.map` are found
+without moving files. Nested maps use the same selector, reload detection, and
+online map identity as maps directly under `maps/`.
 
 ```text
 maps/
@@ -29,8 +33,12 @@ maps/
 ```
 
 Rules:
-- The folder name is the fallback map id.
-- Folders starting with `_` are ignored by the scanner.
+- The innermost map folder name is the fallback map id; enclosing folder names do not change it.
+- Discovery searches up to eight folder levels below `maps/`, with a 4,096-directory
+  scan limit. A limit warning is written to the map log.
+- Discovery stops inside a folder containing both package files, so map assets and
+  bundled examples are not accidentally registered as additional maps.
+- Folders starting with `_` and their descendants are ignored by the scanner.
 - A map folder must contain both `data.map` and `data.json`.
 - Reparse-point map folders and reparse-point package files are rejected.
 - `data.json` and `data.map` are each capped at 4 MiB.
@@ -1165,12 +1173,53 @@ Unbound native glyphs, unknown/malformed names, and embedded NULs return false;
 non-string arguments raise an error. Map API version 7 advertises this helper.
 Registration still rejects missing bindings and occurs only during script load.
 
+Within tile callbacks, `tile:get_sprite()` (Map API version 9) returns a detached
+table with `sprite_index`, `offset_x`, `offset_y`, and `ticks_left` for the active
+temporary override, or `nil` when none is active. Offsets are pixels. Lifetime
+counts script tick advances until expiry: immediately after `set_sprite(..., 2)`
+it is 3, including the current callback tick. Mutating the returned table changes
+no runtime state. Use `set_sprite` and `reset_sprite` to change the effect.
+This inspects only temporary script overrides, not the underlying atlas or
+declarative animation frame.
+
+`map.tile_bindings()` (Map API version 8) returns a fresh array in manifest order.
+Each entry contains `symbol` and the normalized qualified `key`. Use `ipairs` to
+register shared behavior for a package's declared custom tiles. Editing the
+returned array or its entries cannot change the runtime bindings. The list is
+available during loading and callbacks, returns an empty array for no bindings,
+and does not enumerate ordinary unbound native glyphs or room placements.
+
+```lua
+for _, binding in ipairs(map.tile_bindings()) do
+    map.on_enter(binding.key, function(object, tile)
+        map.state.contacts = (map.state.contacts or 0) + 1
+    end)
+end
+```
+
 Persistent script values belong in `map.state`. It holds at most 64 entries;
 keys are at most 31 bytes, and values are `nil`, boolean, finite number, or a
 string of at most 63 bytes. `nil` deletes a value. `map.tick()` returns the
 rollback-tracked clock. `map.random()`, `map.random(max)`, and
 `map.random(min,max)` use a separate rollback-tracked deterministic generator.
 Do not keep mutable callback state in ordinary globals or captured locals.
+
+`map.state_keys()` (Map API version 10) returns a detached array of existing
+state keys in bytewise lexicographic order. It is available during loading and
+callbacks. Empty state returns `{}`; at most 64 keys are returned. Insertion
+order and reused storage slots do not affect the result. Mutating the returned
+array cannot rename or delete state. Read values through `map.state[key]`.
+
+```lua
+-- Clear state without hardcoding every key. The detached array stays valid
+-- as entries are deleted; the changes remain part of rollback state.
+for _, key in ipairs(map.state_keys()) do
+  map.state[key] = nil
+end
+```
+
+The map API version contributes to online compatibility: both peers need the
+same framework build when using this surface.
 
 `map.every(interval[, phase])` tests the rollback clock without creating a timer.
 It returns true when `tick % interval == phase`; phase defaults to zero, so the
@@ -1371,3 +1420,147 @@ When changing the implemented format, preserve these constraints:
 - optional executable behavior is a direct bounded `map.lua`, never JSON code
 - non-null `hook` is rejected in `v1`
 - verbose multi-error logging is mandatory
+
+### Clearing script state (Map API 11)
+
+`map.state_clear([prefix])` removes matching `map.state` entries and returns the
+number removed. Omit the prefix or pass `""` to clear all state. A prefix is a
+literal, case-sensitive byte prefix, not a Lua pattern; it must be a string of
+0-31 bytes without NULs. Explicit `nil`, other types, and extra arguments are
+errors. Arguments are validated before any entries are removed. Cleared slots
+are reusable immediately, and clearing participates in rollback snapshots.
+
+```lua
+map.state_clear("puzzle_") -- retain unrelated score/progress keys
+```
+
+### Per-room opponent spawning
+
+V1 and V2 packages may set `defaults.room.opponent_spawn` and override it in
+`rooms.<source_room_id>.opponent_spawn`:
+
+```json
+{
+  "defaults": {"room": {"opponent_spawn": "default"}},
+  "rooms": {
+    "mid_1": {"opponent_spawn": "never"},
+    "outer_1": {"opponent_spawn": "always"}
+  }
+}
+```
+
+This is a fragment to merge into a complete package's `data.json`.
+
+- `default`: retain the native room/rules behavior. Explicit `default` overrides
+  a map-wide `always` or `never` setting.
+- `always`: allow the trailing opponent to respawn, including end rooms. Combat
+  remains enabled there and the native end-room removal path no longer removes
+  that opponent. Score-target and victory-countdown restrictions still apply.
+- `never`: suppress the trailing opponent's subsequent respawns in that room.
+  This does not delete an already living opponent or disable combat.
+
+Omitting a room setting inherits `defaults.room`; omitting both uses `default`.
+The two mirrored copies share their source room's setting. Ordinary initial
+spawning, deaths before either player leads, and the leader's own respawn retain
+native behavior. This controls respawn permission, not delay or spawn position.
+It does not change goal detection or round completion.
+
+Greggnogg exposes **Default opponent spawning** in map settings and
+**Opponent spawning** in room settings, including an **Inherit** option. Inherit
+is an editor choice represented by an absent JSON field, not an enum value.
+Invalid values, including null and boolean values, reject the package.
+
+Online play reads the immutable registry generation pinned for the active map;
+there is no filesystem lookup or mutable policy state during simulation. The
+existing package signature includes `data.json`, and framework build matching
+prevents pairing this runtime with a build lacking the policy hooks. This is
+compatibility checking, not a cryptographic content-integrity guarantee.
+
+Live acceptance steps are in `docs/opponent-spawn-testing.md`.
+
+### Rollback-safe timers (Map API 12)
+
+Register up to 32 named timers while the script loads:
+
+```lua
+map.state.pulses = 0
+map.on_timer("pulse", function()
+  map.state.pulses = map.state.pulses + 1
+end)
+map.timer_start("pulse", 60, 120) -- first pulse after 60 ticks, then every 120
+```
+
+`map.on_timer(name, callback)` declares a unique 1-31 byte string name without
+NULs. Callbacks use the same locked environment as other map callbacks and cannot
+capture upvalues. Use `map.state` for mutable values. Registration order defines
+firing order when multiple timers expire together.
+
+`map.timer_start(name, delay [, interval])` starts or replaces a named timer.
+Delay is an integer from 1 through 1,000,000,000 simulation ticks. Interval is
+0 (one-shot, the default) or an integer in that same positive range. Invalid
+arguments leave an existing timer unchanged. All timer names must be declared
+before use; unknown names are errors.
+
+`map.timer_cancel(name)` stops a timer and returns whether it was running or
+waiting to fire in the current dispatch. `map.timer_remaining(name)` returns
+its remaining simulation ticks, or 0 when stopped/due. Starting and cancelling
+are allowed during loading and callbacks.
+
+After contact/leave callbacks and before `map.on_tick`, each running timer loses
+one tick. Due callbacks fire in registration order, at most once per timer per
+dispatch. Repeating timers are rearmed before their callback. A callback can
+cancel or replace a later due timer, preventing its old callback from firing.
+Timers started inside timer callbacks or `on_tick` first count down on the next
+dispatch. Timers started by contact/leave callbacks count down in the current
+end-of-tick timer phase. `map.tick()` still reports the current, pre-increment tick.
+
+Timers do not use wall time and do not consume map.state slots. Countdown and
+repeat intervals are included in snapshot version 6; restores are validated and
+perform no Lua calls. A failing callback rolls back the entire tick's script
+changes before faulting the VM, including timer changes. The API/layout identity
+prevents online pairing with older timer-incompatible runtimes.
+
+`docs/examples/map_timed_spring.lua` demonstrates alternating inactive/active
+spring windows with two one-shot timers. A restart reactivates the script and
+starts its timers from their declared initial state.
+
+Timer integration also advances the full-state envelope to EGG0/v10 and the
+standalone canonical codec to schema v2. `tools/peer_trace_diff.py` recognizes
+EGG0/v9, v10, v11, and v12 traces, including named timer countdown/interval
+fields in byte-location reports.
+
+
+### Managed content runtime status
+
+The native serializer now uses EGG0/v12. It preserves v10 native offsets and
+appends combined managed content state only when an entity package is active.
+This prevents entities from being omitted during rollback and correction. It
+supports logical entity packages loaded from a direct `entities.json` file in V2
+map folders. Copy [the example package](docs/examples/entity_package.json) under
+that name; [the update example](docs/examples/entity_update.lua) can be saved as
+`map.lua`. The entity package is limited to 1 MiB and must pass validation. Maps
+with entities are offline-only for now; rendering, collision response, native
+combat and online admission remain under work.
+See [the custom-content status](docs/custom-content-system.md#native-rollback-extension-egg0-version-12).
+
+Managed entity scripts can query declared region overlaps using
+`entity.contacts()` (Map API 14). See [contact query semantics and example](docs/custom-content-system.md#script-contact-queries-map-api-14).
+
+Map API 15 also supports per-type `entity.on_spawn` and `entity.on_remove`
+callbacks. Initial placements notify after declarations; runtime notifications
+are synchronous and participate in rollback. See [lifecycle semantics](docs/custom-content-system.md#spawn-and-removal-callbacks-map-api-15).
+
+Entity types can include an independent `visual` sprite definition; see the
+[entity sprite schema and native integration](docs/custom-content-system.md#entity-sprite-rendering).
+
+Map API 16 adds `entity.find("placement_name")` and `entity.type(handle)`; see
+[named lookup and visual validation](docs/custom-content-system.md#visual-admission-and-named-lookup-map-api-16).
+
+Map API 17 provides read-only `map.players()` snapshots during gameplay callbacks;
+see [native player observation](docs/custom-content-system.md#native-player-observation-map-api-17).
+
+Map API 18 adds transactional `map.set_player_velocity(player, vx, vy)` during
+tick/timer/entity-update callbacks; see [atomic native velocity changes](docs/custom-content-system.md#atomic-native-velocity-changes-map-api-18).
+
+Map API 19 exposes detached `entity.regions(handle)` geometry and the native
+`map.players()` contact radius. See [region queries and the launch-pad example](docs/custom-content-system.md#authored-region-queries-map-api-19).

@@ -12,6 +12,8 @@ for required in (
     "'REPOSITORY_UPDATER.md'",
     "'tools/update_repository.sh'",
     "source_commit",
+    "'ui_helpers.lua'",
+    "'.jsonl'",
     "inherited_history",
     "Potential secret matched in public output",
     "Destination must be outside the private project source tree",

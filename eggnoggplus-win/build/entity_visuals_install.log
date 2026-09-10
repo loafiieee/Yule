@@ -1,0 +1,14 @@
+﻿[
+    {
+        "target":  "C:\\Users\\potato\\Downloads\\eggnoggplus-win\\eggnoggplus-win\\SDL2.dll",
+        "backup":  "C:\\Users\\potato\\Downloads\\eggnoggplus-win\\eggnoggplus-win\\build\\entity_visuals_backup_20260908_134717_0_C644765BB26FFD3369AEF8DC2C44B12B044427070E839AACD0C32CE767B91911.dll",
+        "old_sha256":  "C644765BB26FFD3369AEF8DC2C44B12B044427070E839AACD0C32CE767B91911",
+        "new_sha256":  "3845CC7A0A1405E9B45DAA7DB55C1CAA9B4D2DC5404588A124C386B6B0C83895"
+    },
+    {
+        "target":  "C:\\Users\\potato\\AppData\\Local\\EGGNOGG+\\SDL2.dll",
+        "backup":  "C:\\Users\\potato\\Downloads\\eggnoggplus-win\\eggnoggplus-win\\build\\entity_visuals_backup_20260908_134717_1_C644765BB26FFD3369AEF8DC2C44B12B044427070E839AACD0C32CE767B91911.dll",
+        "old_sha256":  "C644765BB26FFD3369AEF8DC2C44B12B044427070E839AACD0C32CE767B91911",
+        "new_sha256":  "3845CC7A0A1405E9B45DAA7DB55C1CAA9B4D2DC5404588A124C386B6B0C83895"
+    }
+]

@@ -89,7 +89,7 @@ protected_runtime_path() {
       ;;
   esac
   case "$base" in
-    *.log|*.key|*.env|*.pid|*.sock)
+    *.log|*.jsonl|*.key|*.env|*.pid|*.sock)
       return 0
       ;;
   esac

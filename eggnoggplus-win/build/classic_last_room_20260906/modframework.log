@@ -1,0 +1,135 @@
+[18:25:29] [INFO] Mod framework initializing...
+[18:25:29] [INFO] Mod framework API version: 1
+[18:25:29] [INFO] Scanning mods/ folder...
+[18:25:29] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
+[18:25:29] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by Codex
+[18:25:29] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
+[18:25:29] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
+[18:25:29] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
+[18:25:29] [INFO] Loaded mod: flight
+[18:25:29] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[18:25:29] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[18:25:29] [INFO] [mod:options_demo] Loaded options demo
+[18:25:29] [INFO] [mod:options_demo] difficulty=normal greeting=hello
+[18:25:29] [INFO] Loaded mod: options_demo
+[18:25:29] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[18:25:29] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[18:25:29] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[18:25:29] [INFO] [mod:speedhack] speed=1
+[18:25:29] [INFO] Loaded mod: speedhack
+[18:25:29] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[18:25:29] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[18:25:29] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[18:25:29] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[18:25:29] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[18:25:29] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[18:25:29] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[18:25:29] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[18:25:29] [INFO] Loaded mod: texture_pack_test
+[18:25:29] [INFO] Done. 5 mod folder(s) scanned, 4 candidate manifest(s), 4 mod(s) loaded.
+[18:25:29] [INFO] [maps] scanning maps/ for custom maps
+[18:25:29] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[18:25:29] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[18:25:29] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[18:25:29] [WARN] [maps][basketsword] warning: map has only one source room
+[18:25:29] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[18:25:29] [INFO] [maps][example_map] scanning folder: maps\example_map
+[18:25:29] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[18:25:29] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[18:25:29] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[18:25:29] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[18:25:29] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[18:25:29] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[18:25:29] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[18:25:29] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[18:25:29] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[18:25:29] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[18:25:29] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[18:25:29] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[18:25:29] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[18:25:29] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[18:25:29] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[18:25:29] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[18:25:29] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[18:25:29] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[18:25:29] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[18:25:29] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[18:25:29] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[18:25:29] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[18:25:29] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[18:25:29] [INFO] [maps] registry ready: 6 custom maps (was 0)
+[18:25:29] [INFO] hooks_init: custom MODS menu ready
+[18:25:29] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
+[18:25:30] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
+[18:25:30] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[18:25:30] [INFO] [music] mixer output changed from 48000 Hz to 16000 Hz
+[18:25:30] [INFO] [music][tune9] Dollchan JavaScript active: LAST FOUNTAIN (44100 Hz, 0.25 volume)
+[18:25:30] [INFO] [discord] Rich Presence connected
+[18:25:30] [INFO] update: boot local=1.92 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[18:25:30] [INFO] update: current (local=1.92 channel=1.92)
+[18:25:31] [INFO] online.credentials: loaded remembered login server=eggnogg.loafiieee.com:47778 user=loaf
+[18:25:31] [INFO] online.hub: Connecting to online server...
+[18:25:31] [INFO] ONLINE HUB: enter
+[18:25:31] [INFO] online.hub: Checking online server...
+[18:25:31] [INFO] online.hub: Signing in...
+[18:25:31] [INFO] online.credentials: updated remembered login server=eggnogg.loafiieee.com:47778 user=loaf
+[18:25:31] [INFO] online.hub: Logged in.
+[18:25:44] [INFO] ONLINE HUB: leave
+[18:25:45] [INFO] [music] mixer output changed from 16000 Hz to 48000 Hz
+[18:26:16] [INFO] ONLINE HUB: enter
+[18:26:18] [INFO] ONLINE HUB: leave
+[18:26:19] [INFO] ONLINE HUB: enter
+[18:26:33] [INFO] online.hub: Sending challenge...
+[18:26:39] [INFO] Online mod safety: gameplay-affecting Lua mods suspended; cosmetic mods remain active
+[18:26:39] [INFO] [mod:flight] suspended for online rollback safety (mod.on_tick handler)
+[18:26:39] [INFO] online.hub: Match found: thatjack2505 on Vanilla 1
+[18:26:39] [INFO] ggpo.net: local build fingerprint build=AF591C7E exe=632C561E dll=AAAD5401 correction=on
+[18:26:39] [INFO] ggpo.net: joining held/deferred local_port=54541; rollback layout deferred
+[18:26:39] [INFO] ggpo.net: joining from online server match waiting for peer endpoint local_udp=54541 player=1 delay=1 adv=20 predcap=24 corr=on state_size=0
+[18:26:39] [INFO] online.p2p: connect attempt 1/3 local_udp=54541 configured socket
+[18:26:39] [INFO] online.p2p: sent UDP discovery probe match=4 server=eggnogg.loafiieee.com:47778 local_udp=54541
+[18:26:39] [INFO] online.p2p: server selected route=public peer=68.229.40.147:56765 match=4
+[18:26:39] [INFO] ggpo.net: set peer endpoint 68.229.40.147:56765 mode=join local_port=54541 candidates=1
+[18:26:39] [INFO] ggpo.net: peer traffic received mode=join local_player=1 peer_port=56765; confirming bidirectional link
+[18:26:39] [INFO] online.p2p: connected during countdown on attempt 1/3 local_udp=54541
+[18:26:40] [INFO] ggpo.net: bidirectional link confirmed mode=join local_player=1 remote_player=0 peer_port=56765
+[18:26:40] [INFO] ggpo.net: peer prematch hold engaged hold_epoch=1 state_epoch=1
+[18:26:40] [INFO] ggpo.net: finalized rollback layout mode=join schema=99A752F9 capacity=215888 snapshot=176912 checksum=3463849603
+[18:26:40] [INFO] online.prematch: deterministic match state prepared in countdown match=4 map=0 seed=0
+[18:26:40] [INFO] online.hub: Synchronizing map layout...
+[18:26:40] [INFO] online.hub: Synchronizing map layout...
+[18:26:40] [INFO] online.hub: Synchronizing map layout...
+[18:26:40] [INFO] ggpo.net: remote palette received player=0 skin=33 clothing=33 entries=45
+[18:26:40] [INFO] ggpo.net: peer finalized rollback layout schema=99A752F9 capacity=215888 hold_epoch=1
+[18:26:40] [INFO] ggpo.net: prematch hold released mode=join hold_epoch=2 state_epoch=0 remote_floor=1 checksum=3463849603
+[18:26:40] [INFO] online.hub: Synchronizing match...
+[18:26:40] [INFO] online.prematch: hold released during countdown match=4 epoch=0
+[18:26:40] [INFO] ggpo.net: local palette acknowledged by peer
+[18:26:40] [INFO] ggpo.net: peer prematch hold released hold_epoch=2 state_epoch=2
+[18:26:40] [INFO] ggpo.net: receiving host state epoch=2 id=0 frame=0 size=176912 checksum=4265318342 chunks=197/197
+[18:26:40] [INFO] ggpo.net: host state synced epoch=2 size=176912 checksum=4265318342 chunks=197
+[18:26:42] [INFO] ggpo.net: auto input delay 1->5 (rtt~5 ticks, one_way~3, samples=233)
+[18:26:42] [INFO] ggpo.net: start state loaded checksum=4265318342 input_delay=5
+[18:26:42] [INFO] ggpo.net: prematch ready; synchronized frame 0 prepared before gameplay
+[18:26:42] [INFO] online.prematch: applied presentation palettes p2=1/0 p1=33/33 entries=45
+[18:26:42] [INFO] online.hub: Waiting for opponent to finish setup...
+[18:26:42] [INFO] online.hub: Both players ready. Starting match...
+[18:26:42] [INFO] online.match: server committed gameplay start match=4
+[18:26:42] [INFO] ONLINE HUB: leave
+[18:26:42] [INFO] online.viewport[match-start]: window=1440x960 drawable=1440x960 viewport=0,0 1440x960 scissor=off:0,0 1440x960 mad=1440x960 game=240.0x160.0 camera=2904.00,96.00 fullscreen=0 state=game match=4 lp=1 frame=0/0
+[18:27:55] [WARN] ggpo.net: accepted correction offer id=1 snapshot=4338 resume=4339 checksum=1844090
+[18:27:55] [INFO] ggpo.net: receiving correction state epoch=2 id=1 frame=4338 size=176912 checksum=1844090 chunks=197/197
+[18:27:55] [ERROR] ggpo.net: correction transcript mismatch id=1 local=3626137447 host=3085855946
+[18:27:55] [ERROR] ggpo.net: failed (correction replay transcript mismatch)
+[18:27:55] [INFO] ggpo.net: stopped from P2P transport failure after 4339 frame(s), checksum=46728397 tx=9116 rx=9519 pred=1392 rb=17 adv_stall=18 pred_stall=0 desync=0
+[18:27:55] [INFO] online.viewport[match-end]: window=1440x960 drawable=1440x960 viewport=0,0 1440x960 scissor=off:0,0 1440x960 mad=1440x960 game=240.0x160.0 camera=688.55,86.50 fullscreen=0 state=game match=4 lp=0 frame=0/0
+[18:27:55] [INFO] Online mod safety: gameplay-affecting Lua mods resumed
+[18:27:55] [INFO] online.hub: P2P connection lost; resolving as no contest.
+[18:27:55] [INFO] ONLINE HUB: enter
+[18:27:55] [INFO] online.hub: Connection failure reported; resolving as no contest.
+[18:27:55] [INFO] online.hub: P2P connection failed; no contest
+[18:28:01] [INFO] ONLINE HUB: leave
+[18:28:01] [INFO] ONLINE HUB: enter
+[18:28:02] [INFO] ONLINE HUB: leave
+[18:28:02] [INFO] [mod:speedhack] Unloaded
+[18:28:02] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

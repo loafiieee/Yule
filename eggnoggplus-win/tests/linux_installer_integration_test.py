@@ -146,6 +146,11 @@ def main() -> int:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         wrapper = home / "bin" / "yule-eggnoggplus"
         desktop = home / "data" / "applications" / "yule-eggnoggplus.desktop"
+        assert (installed / "mods").is_dir()
+        assert (installed / "maps").is_dir()
+        user_map = installed / "maps" / "user-map"
+        user_map.mkdir()
+        (user_map / "data.map").write_bytes(b"user map content")
         assert (installed / "SDL2.dll").read_bytes() == proxy
         assert (installed / "SDL2_real.dll").read_bytes() == vanilla
         assert (installed / "libgcc_s_dw2-1.dll").read_bytes() == runtime
@@ -172,6 +177,7 @@ def main() -> int:
             check=False,
         )
         assert removed.returncode == 0, removed.stdout + removed.stderr
+        assert (user_map / "data.map").read_bytes() == b"user map content"
         assert (installed / "SDL2.dll").read_bytes() == vanilla
         assert not (installed / "SDL2_real.dll").exists()
         assert (installed / "libgcc_s_dw2-1.dll").read_bytes() == changed

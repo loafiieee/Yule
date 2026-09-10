@@ -26,6 +26,60 @@ Main protocol is newline-delimited JSON over TCP. The server handles:
   match-owned UDP relay when a fresh direct-path socket generation is required
 - one random 256-bit `p2p_auth_token` per match for GGPO UDP v17 packet MACs
 
+## Admin audit records
+
+Maintenance actions append JSONL intent/outcome records to `admin-audit.jsonl`,
+or `ADMIN_AUDIT_FILE`. Each pair shares an operation ID and records timestamp,
+action, target account and LAN source address. Passwords, session cookies, ban
+reasons, result messages and exception text are excluded. Writes are flushed
+before proceeding. An intent-write failure blocks the action; an outcome-write
+failure explicitly says the action may already have completed. A requested entry
+without an outcome needs investigation, not automatic replay.
+
+This is a local append-only operational history, not a tamper-proof ledger or a
+transaction with the account stores. Administrators with filesystem access can
+alter it, and a crash can interrupt the final record. Retain/rotate it according
+to your operational needs. The updater preserves `.jsonl` runtime files.
+
+Admin password, ban/unban, and rating maintenance persists a detached proposed
+record before publishing it in memory or disconnecting/notifying clients. A
+failed file replacement leaves the previous live record intact and produces a
+failed audit outcome. Ordinary gameplay/social persistence is still a separate
+work item; these changes do not make multi-file updates transactional.
+
+After an interrupted audit append, the incomplete trailing line is retained and
+separated from new records. Audit readers must flag malformed lines for operator
+inspection, rather than silently treating the history as complete.
+
+## Offline backup and restore
+
+Stop the server before backup or restore. Use the same `DB`, `RATINGS`, and
+`SECRET_FILE` environment paths as the service; defaults are files alongside
+`server.js`. All three existing files must be valid. This tool supports file-backed
+rating secrets; deployments using `RATING_SECRET` must preserve that secret through
+their configuration backup instead. No secret bytes are printed.
+
+```text
+node maintenance.js backup /private/backups/yule-before-change --offline
+node maintenance.js verify /private/backups/yule-before-change
+node maintenance.js restore /private/backups/yule-before-change /private/backups/yule-before-restore --offline
+```
+
+Choose new snapshot/recovery directories beneath an existing private parent, outside
+the application update tree. Backup preserves exact bytes and records SHA-256/size
+checks for users, ratings and the signing secret. Verify detects damage, not a
+maliciously rewritten manifest. Keep backups private: they contain password hashes
+and signing material. Runtime audit logs and service environment configuration are
+retained separately; restore never replaces audit history.
+
+Restore validates the entire snapshot and saves a verified recovery copy before
+changing destinations. Ordinary write failure attempts to recover all previous
+files and reports whether that succeeded. Abrupt interruption is not a multi-file
+transaction: keep the server stopped and restore the recovery snapshot before
+restarting. `--offline` is your assertion that the service is stopped; the tool
+cannot detect every supervisor or remote process. Existing backup directories
+are never overwritten.
+
 ## Optional Discord LFG bridge
 
 The server can mirror genuinely waiting casual/competitive players to one configured
@@ -335,7 +389,7 @@ generating a replacement secret and invalidating stored signatures.
 
 1. Confirm or drain active TCP clients.
 2. Run `npm run check` and `npm test` locally.
-3. Stage the complete matching application set (`server.js`, `storage.js`, `admin_server.js`, LFG
+3. Stage the complete matching application set (`server.js`, `storage.js`, `admin_server.js`, `admin_audit.js`, `maintenance.js`, LFG
    modules, package metadata, and scripts); do not replace `users.json`, `ratings.json`,
    `server_secret.key`, external admin-password/environment files, or their paths.
 4. Run the same checks on the staged remote application.

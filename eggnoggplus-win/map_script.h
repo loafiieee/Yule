@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "entity_package.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,7 +26,7 @@ extern "C" {
 
 /* Bump when the source-visible map API or host dispatch contract changes.
  * Online layout negotiation mixes this value into its compatibility key. */
-#define MAP_SCRIPT_API_VERSION            UINT32_C(7)
+#define MAP_SCRIPT_API_VERSION            UINT32_C(27)
 
 #define MAP_SCRIPT_SENSOR_QUANTIZATION    256
 #define MAP_SCRIPT_PLAYER_CONTACT_RADIUS  6.0f
@@ -36,7 +37,7 @@ extern "C" {
 #define MAP_SCRIPT_RENDER_OFFSET_LIMIT    4096
 
 #define MAP_SCRIPT_SNAPSHOT_MAGIC         UINT32_C(0x4d534c53) /* "MSLS" */
-#define MAP_SCRIPT_SNAPSHOT_VERSION       5u
+#define MAP_SCRIPT_SNAPSHOT_VERSION       6u
 
 typedef struct MapScriptTileBinding {
     char symbol;
@@ -54,6 +55,7 @@ typedef struct MapScriptDefinition {
     size_t binding_count;
     size_t memory_limit_bytes;       /* zero selects the safe default */
     uint32_t instruction_budget;     /* per load/callback; zero = default */
+    EntityPackageLayout entity_layout; /* borrowed room names, copied through package expansion */
 } MapScriptDefinition;
 
 typedef struct MapScriptObjectView {
@@ -124,11 +126,27 @@ typedef void (*MapScriptLogFn)(void* userdata, const char* message);
 typedef void (*MapScriptApplyObjectFn)(void* userdata,
                                        const MapScriptObjectView* object);
 
+/* Query one current native player by zero-based slot. Return 1 for a live
+ * player, 0 if absent/dead, -1 for an invalid host read. Never mutate native state. */
+typedef int (*MapScriptReadPlayerFn)(void* userdata,uint32_t slot,MapScriptObjectView* out);
+
+/* Commit masked player velocities together. Validate every target first; on
+ * failure return zero with NO native mutations. Bits 0/1 identify players 1/2. */
+typedef int (*MapScriptApplyPlayerVelocitiesFn)(void* userdata,uint32_t mask,const MapScriptObjectView players[2]);
+
+/* Combined final commit: preflight ALL targets before velocity/death effects.
+ * Return zero with no effects on failure; slot-order deaths follow velocities. */
+typedef int (*MapScriptCommitPlayersFn)(void* userdata,uint32_t velocity_mask,uint32_t defeat_mask,const MapScriptObjectView players[2]);
+
 typedef struct MapScriptHost {
     uint32_t rng_seed;               /* zero is canonicalized to a fixed seed */
     MapScriptLogFn log_fn;
     MapScriptApplyObjectFn apply_object_fn; /* used for synthesized leave events */
     void* userdata;
+    MapScriptReadPlayerFn read_player_fn;
+    MapScriptApplyPlayerVelocitiesFn apply_player_velocities_fn;
+    MapScriptCommitPlayersFn commit_players_fn;
+    int (*solid_box_fn)(void* userdata,double x,double y,double width,double height);
 } MapScriptHost;
 
 enum {
@@ -205,6 +223,13 @@ typedef struct MapScriptSnapshotVelocityLimit {
     uint64_t expires_after_tick;
 } MapScriptSnapshotVelocityLimit;
 
+#define MAP_SCRIPT_MAX_TIMERS 32
+#define MAP_SCRIPT_TIMER_MAX_TICKS 1000000000u
+typedef struct MapScriptTimerState {
+    uint32_t remaining;
+    uint32_t interval;
+} MapScriptTimerState;
+
 typedef struct MapScriptSnapshot {
     uint32_t magic;
     uint16_t version;
@@ -225,6 +250,8 @@ typedef struct MapScriptSnapshot {
     MapScriptSnapshotSpriteOverride overrides[MAP_SCRIPT_MAX_SPRITE_OVERRIDES];
     MapScriptSnapshotContact contacts[MAP_SCRIPT_MAX_CONTACTS];
     MapScriptSnapshotVelocityLimit velocity_limits[MAP_SCRIPT_MAX_VELOCITY_LIMITS];
+    uint32_t timer_count;
+    MapScriptTimerState timers[MAP_SCRIPT_MAX_TIMERS];
 } MapScriptSnapshot;
 #pragma pack(pop)
 
@@ -237,6 +264,20 @@ int map_script_activate(const MapScriptDefinition* definition,
                         const MapScriptHost* host,
                         char* err,
                         size_t err_cap);
+/* Experimental host adapter. The caller must use combined content snapshots;
+ * legacy fixed map snapshots reject an entity-bearing runtime. Not online admission. */
+int map_script_validate_content(const MapScriptDefinition* definition,
+    const char* package_json, size_t length, char* err, size_t err_cap);
+int map_script_activate_content(const MapScriptDefinition* definition,
+    const MapScriptHost* host, const char* package_json, size_t length, char* err, size_t err_cap);
+#define MAP_SCRIPT_CONTENT_HEADER_BYTES 48u
+int map_script_has_entities(void);
+/* Current admission policy; checked before network startup and every network tick. */
+int map_script_network_admissible(char* err, size_t err_cap);
+size_t map_script_content_snapshot_size(void);
+int map_script_content_snapshot_save(void* bytes, size_t size, char* err, size_t err_cap);
+int map_script_content_snapshot_validate(const void* bytes, size_t size, char* err, size_t err_cap);
+int map_script_content_snapshot_load(const void* bytes, size_t size, char* err, size_t err_cap);
 void map_script_deactivate(void);
 int map_script_is_active(void);
 int map_script_is_faulted(void);
@@ -254,7 +295,7 @@ uint32_t map_script_object_lifecycle_current(uint32_t slot);
 /* Send every current contact once, then call dispatch_tick once.  The runtime
  * derives enter/stay/leave from object/lifecycle plus either cell_index or the
  * binding, according to that sensor's contact_scope. dispatch_tick fires
- * missing leaves, on_tick, advances the deterministic clock, and expires
+ * missing leaves, named timers, on_tick, advances the deterministic clock, and expires
  * temporary sprite and object-velocity policies. */
 int map_script_dispatch_contact(MapScriptContactView* contact,
                                 char* err,
@@ -305,3 +346,10 @@ int map_script_snapshot_load(const MapScriptSnapshot* snapshot,
 #ifdef __cplusplus
 }
 #endif
+
+/* Read-only entity rendering view; opaque declaration keeps the map API header
+ * independent of the package author's native metadata definitions. */
+struct EntityRenderView;
+int map_script_entity_render_next(uint32_t* cursor,struct EntityRenderView* out);
+
+unsigned map_script_sweep_solids(double old_x,double old_y,double radius,double* x,double* y);

@@ -1221,6 +1221,9 @@ if ($SkipSteam) {
 Head 'Framework log console'
 $modsDir = Join-Path $gameDir 'mods'
 Ensure-Dir $modsDir
+$mapsDir = Join-Path $gameDir 'maps'
+Ensure-Dir $mapsDir
+Say "Custom maps: extract each map into its own folder inside $mapsDir (containing data.map and data.json)." 'Green'
 $fwCfg = Join-Path $modsDir 'modframework.cfg'
 $lines = @()
 if (Test-Path -LiteralPath $fwCfg) {

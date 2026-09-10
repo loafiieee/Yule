@@ -12,6 +12,9 @@
 #include "../lua_manager.h"
 #include "../map_script.h"
 
+static int defeat_calls;
+static void __cdecl fixture_defeat(int body) {defeat_calls++;((uint8_t*)(uintptr_t)body)[0x78]=8;}
+
 /*
  * This test deliberately exercises the production lua_manager.c serializer.
  * The game stores its native state at fixed 32-bit addresses. A test-only
@@ -222,6 +225,15 @@ static int expect_call(int result, const char* operation, const char* err) {
 }
 
 int main(void) {
+    {
+        unsigned char cells[4*4*4]={0},properties[256*0x2c]={0};properties[7*0x2c+2]=1;cells[(2*4+1)*4]=7;
+        CHECK(hooks_test_solid_box(cells,4,4,properties,24,40,16,16)==1,"native solid-property lookup missed a block");
+        CHECK(hooks_test_solid_box(cells,4,4,properties,24,24,16,16)==0,"edge-only contact is not penetration");
+        CHECK(hooks_test_solid_box(cells,4,4,properties,24,24.00390625,16,16)==1,"subpixel block penetration missed");
+        CHECK(hooks_test_solid_box(cells,4,4,properties,-1,24,16,16)==1,"outside-map cells must be solid");
+        CHECK(hooks_test_solid_box(cells,0,4,properties,24,24,16,16)==-1,"invalid tilemap dimensions accepted");
+    }
+
     uint8_t* player0 = NULL;
     uint8_t* player1 = NULL;
     uint8_t* tilemap = NULL;
@@ -861,12 +873,79 @@ int main(void) {
                                          err, sizeof(err)),
                 "post-protection canonical load", err);
 
+    /* Production native serializer must retain managed entities, and reject an
+     * invalid trailer before touching native memory or the managed runtime. */
+    {
+        const char package[]="{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[]}],\"placements\":[{\"name\":\"orb\",\"type\":\"demo:orb\",\"vx\":1}]}";
+        const char source[]="entity.on_update('demo:orb',function(h) map.state.x=entity.get(h).x end)";
+        MapScriptDefinition definition={0};size_t bytes,len=0,roundtrip=0,managed_size;
+        uint8_t *saved,*restored,*bad,*managed_before,*managed_after;uint32_t crc=0;
+        definition.script_id=UINT64_C(0x12344321);definition.source=source;definition.source_len=strlen(source);
+        CHECK(map_script_activate_content(&definition,NULL,package,strlen(package),err,sizeof(err)),"could not activate managed serializer fixture");
+        CHECK(map_script_dispatch_tick(err,sizeof(err)),"managed serializer fixture tick failed");
+        bytes=ggpo_ext_game_state_size();managed_size=map_script_content_snapshot_size();
+        saved=malloc(bytes);restored=malloc(bytes);bad=malloc(bytes);
+        managed_before=malloc(managed_size);managed_after=malloc(managed_size);
+        if(!saved || !restored || !bad || !managed_before || !managed_after) return 1;
+        CHECK(ggpo_ext_save_game_state(saved,bytes,&len,&crc,err,sizeof(err)),"native entity save failed");
+        CHECK(len>managed_size && memcmp(saved+len-managed_size,"YMC2",4)==0,"native snapshot lacks entity extension");
+        CHECK(ggpo_ext_validate_rollback_transport_blob(saved,len,&crc,err,sizeof(err)),"native entity transport preflight failed");
+        CHECK(map_script_dispatch_tick(err,sizeof(err)),"second managed fixture tick failed");
+        *(uint32_t*)NATIVE_AT(ADDR_SCORE_P0)=31337;
+        CHECK(ggpo_ext_load_game_state(saved,len,err,sizeof(err)),"native entity restore failed");
+        CHECK(ggpo_ext_save_game_state(restored,bytes,&roundtrip,&crc,err,sizeof(err)),"native entity resave failed");
+        CHECK(roundtrip==len && memcmp(saved,restored,len)==0,"native entity save-load-save differs");
+        copy_native_regions(before_region);
+        CHECK(map_script_content_snapshot_save(managed_before,managed_size,err,sizeof(err)),"managed preflight checkpoint failed");
+        memcpy(bad,saved,len);bad[len-managed_size+MAP_SCRIPT_CONTENT_HEADER_BYTES+sizeof(MapScriptSnapshot)+4]^=1;
+        CHECK(!ggpo_ext_load_game_state(bad,len,err,sizeof(err)),"native load accepted foreign entity identity");
+        CHECK(native_regions_equal(before_region),"failed entity preflight mutated native globals");
+        CHECK(map_script_content_snapshot_save(managed_after,managed_size,err,sizeof(err)) && !memcmp(managed_before,managed_after,managed_size),"failed entity preflight mutated managed state");
+        CHECK(!ggpo_ext_load_game_state(saved,len-1,err,sizeof(err)),"native load accepted truncated entity extension");
+        map_script_deactivate();free(saved);free(restored);free(bad);free(managed_before);free(managed_after);
+    }
+
+    /* Exercise the production all-player writer, including a late target whose
+     * page is read-only. The binding seam changes only the player slot table. */
+    {
+        uintptr_t slots[2]={(uintptr_t)player0,(uintptr_t)player1};MapScriptObjectView views[2];
+        uint8_t saved0[PLAYER_SIZE],saved1[PLAYER_SIZE],expected0[PLAYER_SIZE],expected1[PLAYER_SIZE];
+        DWORD velocity_protect=0,velocity_ignored=0;
+        player0[0x0b]=0;player1[0x0b]=1;defeat_calls=0;
+        player0[0]=player0[1]=player1[0]=player1[1]=1;player0[0x78]=player1[0x78]=0;
+        memcpy(saved0,player0,PLAYER_SIZE);memcpy(saved1,player1,PLAYER_SIZE);
+        memset(views,0,sizeof(views));for(uint32_t i=0;i<2;i++){views[i].object_id=i;views[i].object_kind=MAP_SCRIPT_OBJECT_PLAYER;views[i].vx=3.5f+(float)i;views[i].vy=-2.0f-(float)i;}
+        if(VirtualProtect(player1,PLAYER_PAGE_SIZE,PAGE_READONLY,&velocity_protect)) {
+            CHECK(!hooks_test_commit_players(slots,1,2,views,fixture_defeat),"read-only defeat target must reject velocity writes too");
+            CHECK(defeat_calls==0 && !memcmp(saved0,player0,PLAYER_SIZE),"defeat preflight partially committed");
+            CHECK(!hooks_test_apply_player_velocities(slots,3,views),"read-only second player should reject the whole batch");
+            CHECK(!memcmp(saved0,player0,PLAYER_SIZE) && !memcmp(saved1,player1,PLAYER_SIZE),"rejected velocity batch partially mutated players");
+            CHECK(VirtualProtect(player1,PLAYER_PAGE_SIZE,velocity_protect,&velocity_ignored),"restore velocity fixture page protection");
+        } else CHECK(0,"protect velocity fixture second player");
+        slots[1]=slots[0];CHECK(!hooks_test_apply_player_velocities(slots,3,views),"aliased player slots must reject");slots[1]=(uintptr_t)player1;
+        player1[0x78]=8;CHECK(!hooks_test_apply_player_velocities(slots,3,views),"dead second player must reject batch");player1[0x78]=0;
+        CHECK(!memcmp(saved0,player0,PLAYER_SIZE) && !memcmp(saved1,player1,PLAYER_SIZE),"failed player identity preflight changed motion");
+        memcpy(expected0,saved0,PLAYER_SIZE);memcpy(expected1,saved1,PLAYER_SIZE);
+        memcpy(expected0+0x34,&views[0].vx,sizeof(float));memcpy(expected0+0x38,&views[0].vy,sizeof(float));
+        memcpy(expected1+0x34,&views[1].vx,sizeof(float));memcpy(expected1+0x38,&views[1].vy,sizeof(float));
+        CHECK(!hooks_test_commit_players(slots,1,2,views,NULL),"missing native death routine must reject before writes");
+        player1[0x78]=9;CHECK(!hooks_test_commit_players(slots,1,2,views,fixture_defeat),"goal-dive state must reject scripted defeat");player1[0x78]=0;
+        CHECK(hooks_test_apply_player_velocities(slots,3,views),"valid velocity batch rejected");
+        CHECK(!memcmp(expected0,player0,PLAYER_SIZE) && !memcmp(expected1,player1,PLAYER_SIZE),"velocity commit changed fields other than vx/vy");
+    }
+
     free(before_region);
     free(injected);
     free(canonical);
     free(raw_roundtrip);
     free(raw);
     VirtualFree(tilemap, 0, MEM_RELEASE);
+    {
+        uintptr_t slots[2]={(uintptr_t)player0,(uintptr_t)player1};MapScriptObjectView views[2]={{0}};
+        for(uint32_t i=0;i<2;i++){views[i].object_id=i;views[i].object_kind=MAP_SCRIPT_OBJECT_PLAYER;views[i].vx=9;views[i].vy=3;}
+        CHECK(hooks_test_commit_players(slots,1,2,views,fixture_defeat),"valid mixed velocity/defeat batch rejected");
+        CHECK(defeat_calls==1 && player1[0x78]==8 && *(float*)(player0+0x34)==9,"mixed native batch did not apply exact requested effects");
+    }
     VirtualFree(player1, 0, MEM_RELEASE);
     VirtualFree(player0, 0, MEM_RELEASE);
     hooks_test_bind_mad_ticks(NULL);

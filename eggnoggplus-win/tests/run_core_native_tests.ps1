@@ -1,6 +1,10 @@
 [CmdletBinding()]
 param(
-    [switch]$LiveCredential
+    [switch]$LiveCredential,
+    [switch]$EntityOnly,
+    [switch]$PreviewOnly,
+    [switch]$SerializerOnly,
+    [switch]$UiOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +56,81 @@ try {
         Remove-Item Env:EGGNOGGPLUS_CREDENTIAL_TEST_LIVE -ErrorAction SilentlyContinue
     }
 
+    if (-not $SerializerOnly) {
+    Invoke-NativeTest 'preview package transport tests' '.\build\preview_package_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\preview_package_test.c', 'preview_package.c', '-o', 'build\preview_package_test.exe'
+    )
+    Invoke-NativeTest 'preview loopback bridge tests' '.\build\preview_bridge_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic', '-DPREVIEW_BRIDGE_PORT=0',
+        'tests\preview_bridge_test.c', 'preview_stage.c', 'preview_bridge.c', 'preview_http.c', 'preview_package.c', 'launch_request.c', 'online_control.c',
+        '-o', 'build\preview_bridge_test.exe', '-lws2_32'
+    )
+    Invoke-NativeTest 'preview HTTP request tests' '.\build\preview_http_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\preview_http_test.c', 'preview_http.c', 'launch_request.c', 'online_control.c', '-o', 'build\preview_http_test.exe'
+    )
+    if ($PreviewOnly) {
+        Invoke-NativeTest 'preview launch request tests' '.\build\launch_request_test.exe' @(
+            '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+            'tests\launch_request_test.c', 'launch_request.c', 'online_control.c', '-o', 'build\launch_request_test.exe'
+        )
+        return
+    }
+    Invoke-NativeTest 'framework-owned entity lifecycle tests' '.\build\entity_world_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\entity_world_test.c', 'entity_world.c', '-o', 'build\entity_world_test.exe'
+    )
+    Invoke-NativeTest 'entity Lua adapter tests' '.\build\entity_lua_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\entity_lua_test.c', 'entity_lua.c', 'entity_world.c',
+        '-o', 'build\entity_lua_test.exe', '-lluajit-5.1'
+    )
+    Invoke-NativeTest 'entity package ownership tests' '.\build\entity_package_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\entity_package_test.c', 'entity_package.c', 'entity_package_json.c', 'mod_json.c', 'entity_world.c', 'content_registry.c',
+        '-o', 'build\entity_package_test.exe', '-lbcrypt', '-lluajit-5.1'
+    )
+    if ($EntityOnly) { return }
+    & python 'tests\opponent_spawn_source_test.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Opponent spawn native call verification failed.' }
+    Invoke-NativeTest 'opponent spawn policy tests' '.\build\opponent_spawn_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\opponent_spawn_test.c', '-o', 'build\opponent_spawn_test.exe'
+    )
+    & python 'tests\rng_cosmetic_source_test.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Cosmetic RNG source extraction failed.' }
+    Invoke-NativeTest 'cosmetic RNG branch tests' '.\build\rng_cosmetic_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\rng_cosmetic_test.c', '-o', 'build\rng_cosmetic_test.exe'
+    )
+    & python 'tests\online_capture_source_test.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Online text capture wiring check failed.' }
+    Invoke-NativeTest 'online hub text focus tests' '.\build\online_capture_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\online_capture_test.c', '-o', 'build\online_capture_test.exe'
+    )
+    Invoke-NativeTest 'keyboard binding parser tests' '.\build\input_binding_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\input_binding_test.c', '-o', 'build\input_binding_test.exe'
+    )
+    Invoke-NativeTest 'mod API compatibility/capability tests' '.\build\mod_api_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\mod_api_test.c', 'mod_api.c',
+        '-o', 'build\mod_api_test.exe'
+    )
+    Invoke-NativeTest 'embedded UI helpers tests' '.\build\ui_helpers_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror',
+        'tests\ui_helpers_test.c', '-o', 'build\ui_helpers_test.exe', '-lluajit-5.1'
+    )
+    if ($UiOnly) {
+        & python 'tools\embed_ui_helpers.py'
+        if ($LASTEXITCODE -ne 0) { throw 'Embedded UI source/header check failed.' }
+        & python 'tests\mod_api_integration_static_test.py'
+        if ($LASTEXITCODE -ne 0) { throw 'Mod API wiring check failed.' }
+        Write-Host 'PASS: guarded UI and API tests completed.' -ForegroundColor Green
+        return
+    }
     Invoke-NativeTest 'native room reset lifecycle tests' '.\build\native_room_reset_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\native_room_reset_test.c', '-o', 'build\native_room_reset_test.exe'
@@ -70,11 +149,6 @@ try {
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\online_control_test.c', 'online_control.c',
         '-o', 'build\online_control_test.exe'
-    )
-    Invoke-NativeTest 'mod API compatibility/capability tests' '.\build\mod_api_test.exe' @(
-        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
-        'tests\mod_api_test.c', 'mod_api.c',
-        '-o', 'build\mod_api_test.exe'
     )
     Invoke-NativeTest 'asset ownership and validation tests' '.\build\asset_ext_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
@@ -175,6 +249,7 @@ try {
         '-w', '-o', 'build\bytebeat_stream_test.exe',
         '-lkernel32', '-lm'
     )
+    }
     Invoke-NativeTest 'native rollback serializer tests' '.\build\state_serializer_test.exe' @(
         '-m32', '-O2', '-std=gnu11', '-Wall', '-Wextra', '-pedantic',
         '-ffunction-sections', '-fdata-sections',
@@ -184,12 +259,13 @@ try {
         'console_catalog.c', 'console_parse.c', 'command_history.c',
         'custom_maps.c',
         'content_registry.c', 'content_tiles.c', 'content_bridge.c',
-        'map_script.c', 'cursor_ext.c', 'credential_ext.c', 'discord_rpc_ext.c',
+        'map_script.c', 'entity_world.c', 'entity_lua.c', 'entity_package.c', 'entity_package_json.c', 'cursor_ext.c', 'credential_ext.c', 'discord_rpc_ext.c',
         'bytebeat_ext.c', 'bytebeat_chakra.c', 'bytebeat_js.c',
         'bytebeat_stream.c',
         'third_party\quickjs-ng\quickjs-amalgam.c',
         '-w',
         'online_control.c', 'launch_request.c', 'launch_ipc.c',
+        'preview_bridge.c', 'preview_http.c', 'preview_package.c', 'preview_stage.c',
         'lua_manager.c', 'mod_api.c', 'mod_callbacks.c', 'mod_fs.c', 'mod_http.c', 'mod_json.c',
         'ggpo_ext.c',
         'ggpo_loopback.c', 'ggpo_local.c', 'ggpo_net.c',
@@ -202,13 +278,15 @@ try {
         '-lcomdlg32', '-lshell32', '-lole32', '-lm'
     )
 
-    & node --test 'tests\online_server_storage_test.js' 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
+    & node --test 'greggnogg\object-logic.test.js' 'greggnogg\logic-studio.test.js' 'greggnogg\preview-client.test.js' 'greggnogg\preview-package.test.js' 'greggnogg\logic-blocks.test.js' 'greggnogg\content-workspace\core.test.js' 'greggnogg\content-workspace\workshop.test.js' 'greggnogg\editor-core.test.js' 'greggnogg\atlas-renderer.test.js' 'tests\greggnogg_color_controls_test.js' 'tests\online_maintenance_test.js' 'tests\online_admin_audit_test.js' 'tests\online_server_storage_test.js' 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
     if ($LASTEXITCODE -ne 0) {
         throw "Discord LFG bot/redirect tests failed with exit code $LASTEXITCODE."
     }
 
     foreach ($script in @(
+        'tools\embed_ui_helpers.py',
         'tests\compile_sources_static_test.py',
+        'tests\entity_render_source_test.py',
         'tests\release_packaging_static_test.py',
         'tests\linux_installer_static_test.py',
         'tests\linux_installer_integration_test.py',

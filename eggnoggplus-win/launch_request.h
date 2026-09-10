@@ -18,7 +18,8 @@ typedef enum LaunchRequestAction {
     LAUNCH_REQUEST_QUEUE_COMPETITIVE,
     LAUNCH_REQUEST_CHALLENGE,
     LAUNCH_REQUEST_PREVIEW_V1,
-    LAUNCH_REQUEST_PREVIEW_V1_PACKED
+    LAUNCH_REQUEST_PREVIEW_V1_PACKED,
+    LAUNCH_REQUEST_PREVIEW_SESSION
 } LaunchRequestAction;
 
 typedef struct LaunchRequest {
@@ -49,6 +50,8 @@ LaunchRequestParseResult launch_request_parse_args(int argc,
  * Decoding either form allocates UTF-8 data.json and data.map buffers; the
  * caller owns them and must free them.
  */
+/* A preview session token is exactly 128 bits encoded as lowercase hex. */
+int launch_request_preview_session_valid(const char* token);
 int launch_request_preview_target_valid(const char* target);
 int launch_request_preview_packed_target_valid(const char* target);
 int launch_request_decode_preview(const LaunchRequest* request,

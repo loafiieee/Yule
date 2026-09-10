@@ -107,7 +107,7 @@ try {
     Write-Host 'Building generated-map render bridge tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
         'tests\content_bridge_test.c' 'content_bridge.c' 'content_tiles.c' `
-        'content_registry.c' 'custom_maps.c' 'map_script.c' 'log.c' `
+        'content_registry.c' 'custom_maps.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' 'log.c' `
         -o 'build\content_bridge_test.exe' -lbcrypt '-lluajit-5.1'
     if ($LASTEXITCODE -ne 0) {
         throw "Content bridge test compilation failed with exit code $LASTEXITCODE."
@@ -119,8 +119,8 @@ try {
 
     Write-Host 'Building isolated deterministic map.lua runtime tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-        'tests\map_script_test.c' 'map_script.c' `
-        -o 'build\map_script_test.exe' '-lluajit-5.1'
+        'tests\map_script_test.c' 'content_registry.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' `
+        -o 'build\map_script_test.exe' '-lluajit-5.1' '-lbcrypt'
     if ($LASTEXITCODE -ne 0) {
         throw "Map script test compilation failed with exit code $LASTEXITCODE."
     }
@@ -131,8 +131,8 @@ try {
 
     Write-Host 'Building checked-in spring demo behavior tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-        'tests\spring_demo_test.c' 'map_script.c' `
-        -o 'build\spring_demo_test.exe' '-lluajit-5.1'
+        'tests\spring_demo_test.c' 'content_registry.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' `
+        -o 'build\spring_demo_test.exe' '-lluajit-5.1' '-lbcrypt'
     if ($LASTEXITCODE -ne 0) {
         throw "Spring demo test compilation failed with exit code $LASTEXITCODE."
     }
@@ -143,7 +143,7 @@ try {
 
     Write-Host 'Building the V2 package/fixture regression test...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-        'tests\custom_maps_v2_test.c' 'custom_maps.c' 'content_registry.c' 'map_script.c' 'log.c' `
+        '-DCUSTOM_MAPS_TESTING' 'tests\custom_maps_v2_test.c' 'custom_maps.c' 'content_registry.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' 'log.c' `
         -o 'build\custom_maps_v2_test.exe' -lbcrypt '-lluajit-5.1'
     if ($LASTEXITCODE -ne 0) {
         throw "V2 map test compilation failed with exit code $LASTEXITCODE."

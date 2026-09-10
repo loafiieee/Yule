@@ -6,8 +6,9 @@ const dgram = require("dgram");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { loadUserStore, atomicWriteFile } = require("./storage");
+const { loadUserStore, atomicWriteFile, updateUserRecord } = require("./storage");
 const { startAdminServerFromEnv } = require("./admin_server");
+const { createAuditWriter } = require("./admin_audit");
 const { createDiscordLfgBotFromEnv } = require("./discord_lfg_bot");
 const { startRedirectServerFromEnv } = require("./lfg_redirect");
 
@@ -203,7 +204,7 @@ function ratingSignature(username, elo, mmr) {
     .digest("hex");
 }
 
-function setRating(username, elo, mmr) {
+function makeRating(username, elo, mmr) {
   const cleanElo = numericRating(elo, DEFAULT_ELO);
   const cleanMmr = numericRating(mmr, DEFAULT_MMR);
   const rec = {
@@ -212,6 +213,11 @@ function setRating(username, elo, mmr) {
     sig: ratingSignature(username, cleanElo, cleanMmr),
     updated_at: new Date().toISOString(),
   };
+  return rec;
+}
+
+function setRating(username, elo, mmr) {
+  const rec = makeRating(username, elo, mmr);
   ratings.users[username] = rec;
   return rec;
 }
@@ -2230,10 +2236,11 @@ function adminResetPassword(rawUsername, password) {
   if (nextPassword.length < 4 || nextPassword.length > 256) {
     throw new Error("password must be 4..256 characters");
   }
-  rec.salt = crypto.randomBytes(16).toString("hex");
-  rec.hash = hashPassword(nextPassword, rec.salt);
-  rec.password_reset_at = new Date().toISOString();
-  saveDB();
+  updateUserRecord(DB_FILE, db, username, next => {
+    next.salt = crypto.randomBytes(16).toString("hex");
+    next.hash = hashPassword(nextPassword, next.salt);
+    next.password_reset_at = new Date().toISOString();
+  });
   const client = connectedClient(username);
   if (client) {
     sendError(client, "Password reset by server administrator.");
@@ -2243,16 +2250,17 @@ function adminResetPassword(rawUsername, password) {
 }
 
 function adminSetBan(rawUsername, banned, reason) {
-  const { username, rec } = requireAdminUser(rawUsername);
-  if (banned) {
-    rec.ban = {
-      reason: String(reason || "Banned by server administrator").trim().slice(0, 160),
-      at: new Date().toISOString(),
-    };
-  } else {
-    delete rec.ban;
-  }
-  saveDB();
+  const { username } = requireAdminUser(rawUsername);
+  const rec = updateUserRecord(DB_FILE, db, username, next => {
+    if (banned) {
+      next.ban = {
+        reason: String(reason || "Banned by server administrator").trim().slice(0, 160),
+        at: new Date().toISOString(),
+      };
+    } else {
+      delete next.ban;
+    }
+  });
   const client = connectedClient(username);
   if (banned && client) {
     sendError(client, rec.ban.reason || "Account banned.");
@@ -2274,8 +2282,8 @@ function adminDisconnect(rawUsername) {
 
 function adminResetRating(rawUsername) {
   const { username } = requireAdminUser(rawUsername);
-  const rating = setRating(username, DEFAULT_ELO, DEFAULT_MMR);
-  saveRatings();
+  const rating = updateUserRecord(RATINGS_FILE, ratings, username,
+    () => makeRating(username, DEFAULT_ELO, DEFAULT_MMR));
   const client = connectedClient(username);
   if (client) {
     send(client, { type: "rating_update", elo: rating.elo, elo_before: rating.elo });
@@ -2289,7 +2297,7 @@ const adminServer = startAdminServerFromEnv(process.env, {
   setBan: adminSetBan,
   disconnect: adminDisconnect,
   resetRating: adminResetRating,
-});
+}, {audit: createAuditWriter(process.env.ADMIN_AUDIT_FILE || path.join(__dirname, "admin-audit.jsonl"))});
 
 const matchSweepTimer = setInterval(() => {
   const cutoff = now();

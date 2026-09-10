@@ -219,6 +219,7 @@ int ggpo_net_checksum_confirmed_frame(uint32_t* out_frame);
 
 #ifdef GGPO_NET_TEST
 uint32_t ggpo_net_test_poll_socket(void);
+int ggpo_net_test_delayed_duplicate_backpressure(void);
 int ggpo_net_test_initial_state_chunk_rejected(uint32_t checksum_xor,
                                                uint32_t frame,
                                                uint32_t correction_id,

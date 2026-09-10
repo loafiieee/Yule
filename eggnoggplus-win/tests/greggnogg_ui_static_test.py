@@ -10,6 +10,7 @@ HTML = (ROOT / "greggnogg" / "index.html").read_text(encoding="utf-8")
 # Greggnogg uses its own live RGB controls; the native browser/Windows color
 # picker must never be reintroduced.
 assert 'type="color"' not in HTML.lower()
+assert 'buildColorBank(els["eggnogg-color"], {goal: doc.rules.eggnoggColor}' in EDITOR
 assert "color-channel-editor" in EDITOR
 assert 'slider.type = "range"' in EDITOR
 

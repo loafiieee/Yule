@@ -14,6 +14,7 @@
 #include "content_registry.h"
 #include "log.h"
 #include "map_script.h"
+#include "entity_package.h"
 
 #define MAPS_PREFIX "[maps]"
 
@@ -122,6 +123,8 @@ typedef struct AppearanceOverride {
 } AppearanceOverride;
 
 typedef struct RoomConfig {
+    int opponent_spawn_set;
+    int opponent_spawn;
     int ambient_set;
     int ambient;
     AppearanceOverride appearance;
@@ -200,7 +203,7 @@ typedef struct CustomMapRoom {
 } CustomMapRoom;
 
 typedef struct CustomMap {
-    char folder_id[CUSTOM_MAP_MAX_ID];
+    char folder_id[MAX_PATH];
     char id[CUSTOM_MAP_MAX_ID];
     char online_key[112];
     char online_sig[16];
@@ -232,6 +235,9 @@ typedef struct CustomMap {
     char script_full_path[MAX_PATH];
     char script_sha256[CONTENT_SHA256_HEX_SIZE];
     unsigned char* script_source;
+    unsigned char* entity_source;
+    size_t entity_size;
+    char entity_sha256[CONTENT_SHA256_HEX_SIZE];
     size_t script_size;
     uint64_t script_id;
     int is_preview;
@@ -265,6 +271,7 @@ static int g_custom_maps_inited = 0;
 static CustomMapRegistry g_custom_registry = { 0 };
 static CustomMap g_preview_map;
 static int g_preview_active = 0;
+static char g_preview_folder[MAX_PATH];
 static uint64_t g_preview_revision = 0;
 static RetiredRegistryBuffer* g_retired_registry_buffers = NULL;
 /* Native roomdefs retain pointers into the registry that most recently
@@ -423,6 +430,12 @@ static uint32_t weak_map_package_hash32(const char* json_text,
             h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
         }
     }
+    if (map->entity_sha256[0]) {
+        const unsigned char* p;
+        h = ((h * 16777619ull) + 0xeeu) % modp;
+        for (p = (const unsigned char*)map->entity_sha256; *p; ++p)
+            h = ((h * 16777619ull) + (uint64_t)(*p)) % modp;
+    }
     return (uint32_t)h;
 }
 
@@ -510,18 +523,19 @@ static void signature_add_map_folder_files(uint64_t* xor_accum,
         {
             const char* extension = strrchr(file_data.cFileName, '.');
             int is_script = _stricmp(file_data.cFileName, "map.lua") == 0;
+            int is_entities = _stricmp(file_data.cFileName, "entities.json") == 0;
             int is_png = extension && _stricmp(extension, ".png") == 0;
             char full_path[MAX_PATH];
             char digest[CONTENT_SHA256_HEX_SIZE];
             char err[128];
             uint64_t max_size = is_script
                 ? (uint64_t)CUSTOM_MAP_MAX_SCRIPT_BYTES
-                : CUSTOM_MAP_MAX_ASSET_BYTES;
+                : is_entities ? UINT64_C(1048576) : CUSTOM_MAP_MAX_ASSET_BYTES;
             static const char script_unreadable_marker[] =
                 "map.lua:unreadable-or-unsafe";
             static const char png_unreadable_marker[] =
                 "png:unreadable-or-unsafe";
-            if (is_script || is_png) {
+            if (is_script || is_entities || is_png) {
                 const char* unreadable_marker = is_script
                     ? script_unreadable_marker
                     : png_unreadable_marker;
@@ -544,47 +558,60 @@ static void signature_add_map_folder_files(uint64_t* xor_accum,
     FindClose(find_handle);
 }
 
+/* Shared traversal keeps discovery and reload detection in agreement. A package
+ * owns its descendants; ZIP wrapper directories are traversed, never registered.
+ * Depth counts directories below maps/. Reparse directories are never followed. */
+#define CUSTOM_MAP_SCAN_DEPTH 8u
+#define CUSTOM_MAP_SCAN_DIRECTORIES 4096u
+typedef void (*MapFolderVisitor)(void*,const WIN32_FIND_DATAA*,const char*,int);
+typedef struct MapFolderWalk {
+    MapFolderVisitor visit;void* user;unsigned visited;int limited;
+} MapFolderWalk;
+static void walk_map_folders(MapFolderWalk* walk,const char* parent,unsigned depth) {
+    char folder[MAX_PATH],pattern[MAX_PATH];WIN32_FIND_DATAA fd;HANDLE find;
+    if (!path_join(folder,sizeof(folder),"maps",parent) || !path_join(pattern,sizeof(pattern),folder,"*")) {walk->limited=1;return;}
+    find=FindFirstFileA(pattern,&fd);if(find==INVALID_HANDLE_VALUE) return;
+    do {
+        char relative[MAX_PATH],path[MAX_PATH],marker[MAX_PATH];DWORD json_attrs,map_attrs;int candidate,package;
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT ||
+            !strcmp(fd.cFileName,".") || !strcmp(fd.cFileName,"..") || fd.cFileName[0]=='_') continue;
+        if(depth>=CUSTOM_MAP_SCAN_DEPTH || walk->visited>=CUSTOM_MAP_SCAN_DIRECTORIES) {walk->limited=1;break;}
+        if(parent[0]) {
+            if(!path_join(relative,sizeof(relative),parent,fd.cFileName)) {walk->limited=1;continue;}
+        } else snprintf(relative,sizeof(relative),"%s",fd.cFileName);
+        if(!path_join(path,sizeof(path),"maps",relative)) {walk->limited=1;continue;}
+        walk->visited++;
+        json_attrs=path_join(marker,sizeof(marker),path,"data.json") ? GetFileAttributesA(marker) : INVALID_FILE_ATTRIBUTES;
+        map_attrs=path_join(marker,sizeof(marker),path,"data.map") ? GetFileAttributesA(marker) : INVALID_FILE_ATTRIBUTES;
+        candidate=json_attrs!=INVALID_FILE_ATTRIBUTES || map_attrs!=INVALID_FILE_ATTRIBUTES;
+        package=json_attrs!=INVALID_FILE_ATTRIBUTES && map_attrs!=INVALID_FILE_ATTRIBUTES;
+        walk->visit(walk->user,&fd,relative,candidate);
+        if(!package) walk_map_folders(walk,relative,depth+1);
+    } while(FindNextFileA(find,&fd));
+    FindClose(find);
+}
+static void visit_map_folders(MapFolderWalk* walk) {
+    DWORD attrs=GetFileAttributesA("maps");
+    if(attrs==INVALID_FILE_ATTRIBUTES || !(attrs&FILE_ATTRIBUTE_DIRECTORY) || (attrs&FILE_ATTRIBUTE_REPARSE_POINT)) return;
+    walk_map_folders(walk,"",0);
+}
+typedef struct MapSignatureAccum {uint64_t xor_accum,add_accum,count;} MapSignatureAccum;
+static void signature_visit_folder(void* user,const WIN32_FIND_DATAA* fd,const char* relative,int candidate) {
+    MapSignatureAccum* a=user;(void)candidate;
+    signature_add(&a->xor_accum,&a->add_accum,&a->count,
+        hash_signature_entry(relative,fd->dwFileAttributes,filetime_to_u64(&fd->ftLastWriteTime),0));
+    signature_add_map_folder_files(&a->xor_accum,&a->add_accum,&a->count,relative);
+}
 static uint64_t custom_maps_compute_signature(void) {
-    uint64_t xor_accum = 0;
-    uint64_t add_accum = 0;
-    uint64_t count = 0;
-    WIN32_FIND_DATAA fd;
-    HANDLE find_handle = FindFirstFileA("maps\\*", &fd);
-
-    if (find_handle == INVALID_HANDLE_VALUE) {
-        uint64_t marker = hash_signature_entry("maps_missing", 0, 0, 0);
-        signature_add(&xor_accum, &add_accum, &count, marker);
-    } else {
-        do {
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
-            if (fd.cFileName[0] == '_') continue;
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
-
-            signature_add(
-                &xor_accum, &add_accum, &count,
-                hash_signature_entry(
-                    fd.cFileName,
-                    fd.dwFileAttributes,
-                    filetime_to_u64(&fd.ftLastWriteTime),
-                    0
-                )
-            );
-            signature_add_map_folder_files(&xor_accum, &add_accum, &count, fd.cFileName);
-        } while (FindNextFileA(find_handle, &fd));
-
-        FindClose(find_handle);
-    }
-
-    {
-        uint64_t final_hash = 1469598103934665603ull;
-        const uint64_t version = 3ull;
-        final_hash = hash_bytes64(final_hash, &version, sizeof(version));
-        final_hash = hash_bytes64(final_hash, &xor_accum, sizeof(xor_accum));
-        final_hash = hash_bytes64(final_hash, &add_accum, sizeof(add_accum));
-        final_hash = hash_bytes64(final_hash, &count, sizeof(count));
-        return final_hash;
-    }
+    MapSignatureAccum accum={0};MapFolderWalk walk={signature_visit_folder,&accum,0,0};
+    uint64_t final_hash=1469598103934665603ull;const uint64_t version=4ull;
+    visit_map_folders(&walk);
+    final_hash=hash_bytes64(final_hash,&version,sizeof(version));
+    final_hash=hash_bytes64(final_hash,&accum.xor_accum,sizeof(accum.xor_accum));
+    final_hash=hash_bytes64(final_hash,&accum.add_accum,sizeof(accum.add_accum));
+    final_hash=hash_bytes64(final_hash,&accum.count,sizeof(accum.count));
+    final_hash=hash_bytes64(final_hash,&walk.limited,sizeof(walk.limited));
+    return final_hash;
 }
 
 static int glyph_allowed(char ch) {
@@ -706,9 +733,10 @@ static void optional_map_script_source_dispose(OptionalMapScriptSource* source) 
 /* map.lua is deliberately a single, direct package file. Opening the reparse
  * point itself and denying write/delete sharing keeps the validated bytes,
  * digest, and stored path tied to one regular file for the whole read. */
-static int read_optional_map_script_source(MapDiagnostics* diag,
+static int read_optional_package_source(MapDiagnostics* diag,
                                            const char* folder_path,
                                            int format_version,
+                                           const char* filename, size_t maximum_bytes,
                                            OptionalMapScriptSource* out) {
     char candidate[MAX_PATH];
     char folder_full[MAX_PATH];
@@ -731,8 +759,8 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
 
     if (!diag || !folder_path || !out) return 0;
     memset(out, 0, sizeof(*out));
-    if (!path_join(candidate, sizeof(candidate), folder_path, "map.lua")) {
-        diag_log(diag, 1, "[map.lua] error: script path is too long");
+    if (!path_join(candidate, sizeof(candidate), folder_path, filename)) {
+        diag_log(diag, 1, "[%s] error: script path is too long", filename);
         return 0;
     }
 
@@ -742,7 +770,7 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
                                      script_full, NULL);
     if (folder_length == 0 || folder_length >= (DWORD)sizeof(folder_full) ||
         script_length == 0 || script_length >= (DWORD)sizeof(script_full)) {
-        diag_log(diag, 1, "[map.lua] error: cannot form a bounded absolute package path");
+        diag_log(diag, 1, "[%s] error: cannot form a bounded absolute package path", filename);
         return 0;
     }
     length = strlen(folder_full);
@@ -751,9 +779,9 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
            !(length == 3 && folder_full[1] == ':')) {
         folder_full[--length] = '\0';
     }
-    if (!path_join(expected_full, sizeof(expected_full), folder_full, "map.lua") ||
+    if (!path_join(expected_full, sizeof(expected_full), folder_full, filename) ||
         _stricmp(expected_full, script_full) != 0) {
-        diag_log(diag, 1, "[map.lua] error: script must resolve directly inside its map folder");
+        diag_log(diag, 1, "[%s] error: script must resolve directly inside its map folder", filename);
         return 0;
     }
 
@@ -763,18 +791,18 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
         if (error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND) {
             return 1;
         }
-        diag_log(diag, 1, "[map.lua] error: cannot inspect optional script (Windows error %lu)",
+        diag_log(diag, 1, "[%s] error: cannot inspect optional script (Windows error %lu)", filename,
                  (unsigned long)error_code);
         return 0;
     }
     out->present = 1;
     if (format_version != 2) {
-        diag_log(diag, 1, "[map.lua] error: scripts require eggnogg-map/v2");
+        diag_log(diag, 1, "[%s] error: scripts require eggnogg-map/v2", filename);
         return 0;
     }
     if ((attrs & FILE_ATTRIBUTE_DIRECTORY) ||
         (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
-        diag_log(diag, 1, "[map.lua] error: script must be a direct, regular, non-reparse file");
+        diag_log(diag, 1, "[%s] error: script must be a direct, regular, non-reparse file", filename);
         return 0;
     }
 
@@ -788,7 +816,7 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
         !(folder_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
         (folder_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
         if (folder != INVALID_HANDLE_VALUE) CloseHandle(folder);
-        diag_log(diag, 1, "[map.lua] error: map folder must be a direct, non-reparse directory");
+        diag_log(diag, 1, "[%s] error: map folder must be a direct, non-reparse directory", filename);
         return 0;
     }
 
@@ -798,7 +826,7 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
                            FILE_FLAG_SEQUENTIAL_SCAN,
                        NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        diag_log(diag, 1, "[map.lua] error: cannot open script safely (Windows error %lu)",
+        diag_log(diag, 1, "[%s] error: cannot open script safely (Windows error %lu)", filename,
                  (unsigned long)GetLastError());
         CloseHandle(folder);
         return 0;
@@ -806,39 +834,39 @@ static int read_optional_map_script_source(MapDiagnostics* diag,
     if (!GetFileInformationByHandle(file, &info) ||
         (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY |
                                   FILE_ATTRIBUTE_REPARSE_POINT))) {
-        diag_log(diag, 1, "[map.lua] error: opened script is not a direct regular file");
+        diag_log(diag, 1, "[%s] error: opened script is not a direct regular file", filename);
         goto done;
     }
     if (info.nFileSizeHigh != 0 ||
-        info.nFileSizeLow > (DWORD)CUSTOM_MAP_MAX_SCRIPT_BYTES) {
-        diag_log(diag, 1, "[map.lua] error: script exceeds the 256 KiB package limit");
+        info.nFileSizeLow > (DWORD)maximum_bytes) {
+        diag_log(diag, 1, "[%s] error: file exceeds its package byte limit", filename);
         goto done;
     }
     expected_size = info.nFileSizeLow;
     out->bytes = (unsigned char*)malloc((size_t)expected_size + 1u);
     if (!out->bytes) {
-        diag_log(diag, 1, "[map.lua] error: out of memory while reading script");
+        diag_log(diag, 1, "[%s] error: out of memory while reading script", filename);
         goto done;
     }
     if (expected_size != 0 &&
         (!ReadFile(file, out->bytes, expected_size, &bytes_read, NULL) ||
          bytes_read != expected_size)) {
-        diag_log(diag, 1, "[map.lua] error: could not read the complete script");
+        diag_log(diag, 1, "[%s] error: could not read the complete script", filename);
         goto done;
     }
     if (!ReadFile(file, &extra_byte, 1, &extra_read, NULL) || extra_read != 0) {
-        diag_log(diag, 1, "[map.lua] error: script changed while it was being read");
+        diag_log(diag, 1, "[%s] error: script changed while it was being read", filename);
         goto done;
     }
     if (expected_size != 0 && memchr(out->bytes, '\0', expected_size)) {
-        diag_log(diag, 1, "[map.lua] error: embedded NUL bytes are not supported");
+        diag_log(diag, 1, "[%s] error: embedded NUL bytes are not supported", filename);
         goto done;
     }
     out->bytes[expected_size] = '\0';
     out->size = (size_t)expected_size;
     if (!content_registry_sha256_bytes(out->bytes, out->size, NULL,
                                        out->sha256, NULL, 0)) {
-        diag_log(diag, 1, "[map.lua] error: cannot hash validated bytes");
+        diag_log(diag, 1, "[%s] error: cannot hash validated bytes", filename);
         goto done;
     }
     snprintf(out->full_path, sizeof(out->full_path), "%s", script_full);
@@ -851,13 +879,19 @@ done:
     return ok;
 }
 
+static int read_optional_map_script_source(MapDiagnostics* diag, const char* folder_path,
+    int format_version, OptionalMapScriptSource* out) {
+    return read_optional_package_source(diag, folder_path, format_version,
+        "map.lua", CUSTOM_MAP_MAX_SCRIPT_BYTES, out);
+}
+
 static uint64_t map_script_id_from_package(const char* digest,
                                            const CustomMap* map) {
     static const char domain[] = "eggnoggplus/map-script-definition/v1";
     unsigned char canonical[(sizeof(domain) - 1u) +
                             (CONTENT_SHA256_HEX_SIZE - 1u) + 2u +
                             CUSTOM_MAP_MAX_CONTENT_TILES *
-                                (3u + CONTENT_KEY_MAX - 1u)];
+                                (3u + CONTENT_KEY_MAX - 1u) + CONTENT_SHA256_HEX_SIZE];
     uint8_t identity_digest[CONTENT_SHA256_SIZE];
     size_t position = 0;
     uint64_t value = 0;
@@ -871,6 +905,11 @@ static uint64_t map_script_id_from_package(const char* digest,
     position += sizeof(domain) - 1u;
     memcpy(canonical + position, digest, CONTENT_SHA256_HEX_SIZE - 1u);
     position += CONTENT_SHA256_HEX_SIZE - 1u;
+    if (map->entity_source) {
+        canonical[position++] = 0xee;
+        memcpy(canonical + position, map->entity_sha256, CONTENT_SHA256_HEX_SIZE - 1u);
+        position += CONTENT_SHA256_HEX_SIZE - 1u;
+    }
     canonical[position++] = (unsigned char)(map->content_tile_count & 0xff);
     canonical[position++] = (unsigned char)((map->content_tile_count >> 8) & 0xff);
     for (i = 0; i < map->content_tile_count; i++) {
@@ -925,13 +964,43 @@ static int custom_map_script_definition(const CustomMap* map,
     out_definition->source_len = map->script_size;
     out_definition->bindings = out_bindings;
     out_definition->binding_count = (size_t)map->content_tile_count;
+    out_definition->entity_layout.count=(uint32_t)map->source_room_count;
+    for(int room=0;room<map->source_room_count;room++) out_definition->entity_layout.rooms[room]=map->rooms[room].id;
     return 1;
+}
+
+static int custom_map_validate_entity_visuals(MapDiagnostics* diag,const CustomMap* map) {
+    EntityPackageLayout layout={0};layout.count=(uint32_t)map->source_room_count;
+    for(int room=0;room<map->source_room_count;room++) layout.rooms[room]=map->rooms[room].id;
+    char err[384];EntityPackage* package=entity_package_decode_layout((const char*)map->entity_source,map->entity_size,&layout,err,sizeof(err));
+    int valid=1;
+    if(!package) {diag_log(diag,1,"[entities.json] error: %s",err);return 0;}
+    for(uint32_t id=1;id<=entity_package_type_count(package);id++) {
+        EntityVisual visual;int found=0;
+        if(!entity_package_visual(package,id,&visual)) continue;
+        if(!strncmp(visual.sheet,"builtin:",8)) {
+            found=!strcmp(visual.sheet,"builtin:tiles") || !strcmp(visual.sheet,"builtin:sprites") ||
+                !strcmp(visual.sheet,"builtin:misc") || !strcmp(visual.sheet,"builtin:glyphs");
+            if(!found) diag_log(diag,1,"[entities.json][%s.visual.sheet] error: unknown built-in sheet '%s'",entity_package_type_key(package,id),visual.sheet);
+        } else {
+            int match=-1, matches=0;
+            for(int i=0;i<map->content_sheet_count;i++) if(!strcmp(visual.sheet,map->content_sheets[i].relative_path)) {match=i;matches++;}
+            if(matches>1) diag_log(diag,1,"[entities.json][%s.visual.sheet] error: '%s' has multiple grid declarations; entity sheets must be unambiguous",entity_package_type_key(package,id),visual.sheet);
+            else if(matches==0) diag_log(diag,1,"[entities.json][%s.visual.sheet] error: '%s' must reference a declared map tileset sheet",entity_package_type_key(package,id),visual.sheet);
+            else {
+                found=(uint64_t)visual.sprite+visual.frames<=(uint64_t)map->content_sheets[match].sprite_count;
+                if(!found) diag_log(diag,1,"[entities.json][%s.visual] error: animation range exceeds '%s' (%d sprites)",entity_package_type_key(package,id),visual.sheet,map->content_sheets[match].sprite_count);
+            }
+        }
+        if(!found) valid=0;
+    }
+    entity_package_free(package);return valid;
 }
 
 static int custom_map_attach_optional_script(MapDiagnostics* diag,
                                              const char* folder_path,
                                              CustomMap* map) {
-    OptionalMapScriptSource source;
+    OptionalMapScriptSource source, entities;
     MapScriptDefinition definition;
     MapScriptTileBinding bindings[CUSTOM_MAP_MAX_CONTENT_TILES];
     char chunk_name[MAX_PATH + 2];
@@ -939,9 +1008,29 @@ static int custom_map_attach_optional_script(MapDiagnostics* diag,
     int valid;
     if (!diag || !folder_path || !map) return 0;
     memset(&source, 0, sizeof(source));
+    memset(&entities, 0, sizeof(entities));
+    if (!read_optional_package_source(diag, folder_path, map->format_version,
+            "entities.json", 1024u * 1024u, &entities)) return 0;
+    if (entities.present) {
+        map->entity_source = entities.bytes;
+        map->entity_size = entities.size;
+        snprintf(map->entity_sha256, sizeof(map->entity_sha256), "%s", entities.sha256);
+        entities.bytes = NULL;
+    }
+    optional_map_script_source_dispose(&entities);
+    if(map->entity_source && !custom_map_validate_entity_visuals(diag,map)) return 0;
     if (!read_optional_map_script_source(diag, folder_path,
                                          map->format_version, &source)) {
         return 0;
+    }
+    if (!source.present && map->entity_source) {
+        source.bytes = calloc(1, 1);
+        if (!source.bytes || !content_registry_sha256_bytes(source.bytes, 0, NULL, source.sha256, NULL, 0)) {
+            optional_map_script_source_dispose(&source);
+            diag_log(diag, 1, "[entities.json] cannot prepare default empty map script"); return 0;
+        }
+        source.present = 1;
+        snprintf(source.full_path, sizeof(source.full_path), "entities.json/default-script");
     }
     if (!source.present) return 1;
 
@@ -973,7 +1062,10 @@ static int custom_map_attach_optional_script(MapDiagnostics* diag,
         return 0;
     }
     err[0] = '\0';
-    valid = map_script_validate(&definition, err, sizeof(err));
+    valid = map->entity_source
+        ? map_script_validate_content(&definition, (const char*)map->entity_source,
+                                      map->entity_size, err, sizeof(err))
+        : map_script_validate(&definition, err, sizeof(err));
     if (!valid) {
         diag_log(diag, 1, "[map.lua] error: %s",
                  err[0] ? err : "script validation failed");
@@ -1987,7 +2079,7 @@ static int parse_v2_tileset(MapDiagnostics* diag,
                             ParsedTileset* out_tileset) {
     static const char* const tileset_keys[] = {
         "sprite_sheet", "asset_sha256", "cell_w", "cell_h", "padding",
-        "native_layout", "tiles"
+        "native_layout", "tiles", "sheets"
     };
     static const char* const tile_keys[] = {
         "id", "symbol", "name", "native_glyph", "sprite_sheet",
@@ -2077,6 +2169,28 @@ static int parse_v2_tileset(MapDiagnostics* diag,
                      default_sheet.key);
             out_tileset->default_sheet_sprite_count =
                 default_sheet.sprite_count;
+        }
+    }
+    {
+        static const char* const sheet_keys[]={"sprite_sheet","asset_sha256","cell_w","cell_h","padding"};
+        JsonValue* sheets=json_object_get(tileset_value,"sheets");
+        if(sheets) {
+            if(sheets->type!=JSON_ARRAY || sheets->u.array_value.count>CUSTOM_MAP_MAX_CONTENT_SHEETS) {
+                diag_log(diag,1,"[data.json][tileset.sheets] error: expected at most 16 sheet declarations");top_valid=0;
+            } else for(int sheet_index=0;sheet_index<sheets->u.array_value.count;sheet_index++) {
+                JsonValue* value=sheets->u.array_value.items[sheet_index];char path[96],filename[128]={0},sha[65]={0};int w=16,h=16,padding=0,valid=1;ResolvedMapSheet resolved;
+                snprintf(path,sizeof(path),"tileset.sheets[%d]",sheet_index);
+                if(value->type!=JSON_OBJECT) {diag_log(diag,1,"[data.json][%s] error: expected object",path);top_valid=0;continue;}
+                reject_unknown_keys(diag,value,path,sheet_keys,5);
+                valid &= json_read_bounded_string(diag,value,"sprite_sheet",path,1,filename,sizeof(filename));
+                valid &= json_read_bounded_string(diag,value,"asset_sha256",path,0,sha,sizeof(sha));
+                valid &= json_read_int_range(diag,value,"cell_w",path,16,1,512,&w);
+                valid &= json_read_int_range(diag,value,"cell_h",path,16,1,512,&h);
+                valid &= json_read_int_range(diag,value,"padding",path,0,0,64,&padding);
+                if(!map_asset_direct_name_valid(filename)) {diag_log(diag,1,"[data.json][%s.sprite_sheet] error: expected a direct PNG filename",path);valid=0;}
+                if(valid && !resolve_map_sheet(diag,out_tileset,folder_path,path,filename,sha,w,h,padding,1,&resolved)) valid=0;
+                if(!valid) top_valid=0;
+            }
         }
     }
     if (top_valid && native_layout) {
@@ -2573,7 +2687,7 @@ static void parse_appearance(MapDiagnostics* diag, const JsonValue* value, const
 }
 
 static void parse_room_config(MapDiagnostics* diag, const JsonValue* value, const char* path, RoomConfig* config) {
-    static const char* const known_keys[] = { "ambient", "appearance", "hook" };
+    static const char* const known_keys[] = { "ambient", "appearance", "hook", "opponent_spawn" };
     JsonValue* ambient_value;
     JsonValue* appearance_value;
     JsonValue* hook_value;
@@ -2585,6 +2699,21 @@ static void parse_room_config(MapDiagnostics* diag, const JsonValue* value, cons
     }
 
     warn_unknown_keys(diag, value, path, known_keys, (int)(sizeof(known_keys) / sizeof(known_keys[0])));
+
+    {
+        JsonValue* spawn = json_object_get(value, "opponent_spawn");
+        if (spawn) {
+            int policy = -1;
+            if (spawn->type == JSON_STRING) {
+                if (strcmp(spawn->u.string_value, "default") == 0) policy = 0;
+                else if (strcmp(spawn->u.string_value, "always") == 0) policy = 1;
+                else if (strcmp(spawn->u.string_value, "never") == 0) policy = 2;
+            }
+            if (policy < 0) diag_log(diag, 1,
+                "[data.json][%s.opponent_spawn] error: expected default, always, or never", path);
+            else { config->opponent_spawn_set = 1; config->opponent_spawn = policy; }
+        }
+    }
 
     ambient_value = json_object_get(value, "ambient");
     if (ambient_value) {
@@ -2966,6 +3095,11 @@ static int registry_reserve(CustomMapRegistry* registry, int needed) {
     return 1;
 }
 
+static void custom_map_release_payload(CustomMap* map) {
+    if(map->content_transaction)content_registry_abort(map->content_transaction);
+    free(map->entity_source);free(map->script_source);
+    map->content_transaction=NULL;map->entity_source=NULL;map->script_source=NULL;
+}
 static void free_registry_map_array(CustomMap* maps, int count) {
     int i;
     if (!maps) return;
@@ -2974,6 +3108,8 @@ static void free_registry_map_array(CustomMap* maps, int count) {
             content_registry_abort(maps[i].content_transaction);
             maps[i].content_transaction = NULL;
         }
+        free(maps[i].entity_source);
+        maps[i].entity_source = NULL;
         free(maps[i].script_source);
         maps[i].script_source = NULL;
     }
@@ -3349,7 +3485,7 @@ static int register_custom_map(CustomMapRegistry* registry, const CustomMap* map
     return 1;
 }
 
-static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA* fd) {
+static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA* fd, const char* relative_folder) {
     char folder_path[MAX_PATH];
     char json_path[MAX_PATH];
     char map_path[MAX_PATH];
@@ -3371,7 +3507,7 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
     memset(content_owner, 0, sizeof(content_owner));
     diag.map_id = fd->cFileName;
 
-    if (!path_join(folder_path, sizeof(folder_path), "maps", fd->cFileName) ||
+    if (!path_join(folder_path, sizeof(folder_path), "maps", relative_folder) ||
         !path_join(json_path, sizeof(json_path), folder_path, "data.json") ||
         !path_join(map_path, sizeof(map_path), folder_path, "data.map")) {
         LOG_ERROR("%s[%s] path too long; skipping", MAPS_PREFIX, fd->cFileName);
@@ -3431,12 +3567,15 @@ static void scan_map_folder(CustomMapRegistry* registry, const WIN32_FIND_DATAA*
         snprintf(custom_map.online_key, sizeof(custom_map.online_key), "custom:%s:%s", id_lower, custom_map.online_sig);
     }
 
+    /* Keep the physical relative path separate from the leaf-name ID default. */
+    snprintf(custom_map.folder_id, sizeof(custom_map.folder_id), "%s", relative_folder);
     if (!register_custom_map(registry, &custom_map)) {
         diag_log(&diag, 1, "failed to register custom map (duplicate id/content namespace or out of memory)");
         goto cleanup;
     }
     custom_map.content_transaction = NULL;
     custom_map.script_source = NULL;
+    custom_map.entity_source = NULL;
 
     if (custom_map.native_k_marker_count > 0) {
         map_info(custom_map.id,
@@ -3469,6 +3608,8 @@ cleanup:
         content_registry_abort(custom_map.content_transaction);
         custom_map.content_transaction = NULL;
     }
+    free(custom_map.entity_source);
+    custom_map.entity_source = NULL;
     free(custom_map.script_source);
     custom_map.script_source = NULL;
     json_free_value(json_root);
@@ -3476,28 +3617,13 @@ cleanup:
     free(map_text);
 }
 
+static void scan_visit_folder(void* user,const WIN32_FIND_DATAA* fd,const char* relative,int candidate) {
+    if(candidate) scan_map_folder((CustomMapRegistry*)user,fd,relative);
+}
 static void scan_maps_directory(CustomMapRegistry* registry) {
-    WIN32_FIND_DATAA fd;
-    HANDLE find_handle = FindFirstFileA("maps\\*", &fd);
-
-    if (find_handle == INVALID_HANDLE_VALUE) {
-        LOG_INFO("%s no maps directory found; custom map registry is empty", MAPS_PREFIX);
-        return;
-    }
-
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
-        if (fd.cFileName[0] == '_') continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
-            LOG_WARN("%s[%s] skipping reparse-point map directory", MAPS_PREFIX,
-                     fd.cFileName);
-            continue;
-        }
-        scan_map_folder(registry, &fd);
-    } while (FindNextFileA(find_handle, &fd));
-
-    FindClose(find_handle);
+    MapFolderWalk walk={scan_visit_folder,registry,0,0};
+    visit_map_folders(&walk);
+    if(walk.limited) LOG_WARN("%s map scan reached its depth, directory-count or path limit",MAPS_PREFIX);
 }
 
 static void apply_custom_map(const CustomMap* map) {
@@ -3645,13 +3771,30 @@ static void rebuild_custom_map_registry(CustomMapRegistry* registry) {
         qsort(registry->maps, (size_t)registry->count, sizeof(*registry->maps), custom_map_compare);
     }
     if (g_preview_active) {
-        if (!registry_reserve(registry, registry->count + 1)) {
-            registry->rejected_count++;
-            LOG_ERROR("%s failed to append in-memory preview map", MAPS_PREFIX);
-            return;
+        if(g_preview_folder[0]) {
+            CustomMapRegistry preview={0};WIN32_FIND_DATAA fd;memset(&fd,0,sizeof(fd));
+            snprintf(fd.cFileName,sizeof(fd.cFileName),"%s",strrchr(g_preview_folder,'/')+1);
+            scan_map_folder(&preview,&fd,g_preview_folder);
+            if(preview.count!=1){registry->rejected_count++;registry_clear(&preview);return;}
+            CustomMap candidate=preview.maps[0];free(preview.maps);
+            /* Preview keeps authored namespaces. Replace a matching installed
+             * map in this temporary registry, never rewrite its script keys. */
+            for(int i=registry->count-1;i>=0;i--)if(!_stricmp(registry->maps[i].id,candidate.id)||
+                (candidate.content_owner[0]&&!_stricmp(registry->maps[i].content_owner,candidate.content_owner))) {
+                custom_map_release_payload(&registry->maps[i]);
+                memmove(&registry->maps[i],&registry->maps[i+1],(size_t)(registry->count-i-1)*sizeof(CustomMap));registry->count--;
+            }
+            if(!registry_reserve(registry,registry->count+1)){custom_map_release_payload(&candidate);registry->rejected_count++;return;}
+            candidate.is_preview=1;candidate.preview_revision=g_preview_revision;candidate.online_key[0]=0;candidate.online_sig[0]=0;
+            registry->maps[registry->count++]=candidate;
+        }else {
+            if (!registry_reserve(registry, registry->count + 1)) {
+                registry->rejected_count++;LOG_ERROR("%s failed to append in-memory preview map", MAPS_PREFIX);return;
+            }
+            registry->maps[registry->count++] = g_preview_map;
         }
-        registry->maps[registry->count++] = g_preview_map;
     }
+
 }
 
 static void custom_maps_reload_registry_if_needed(int force_reload) {
@@ -3678,6 +3821,10 @@ static void custom_maps_reload_registry_if_needed(int force_reload) {
         }
 
         rebuild_custom_map_registry(&reloaded);
+        if(g_preview_active&&g_preview_folder[0]&&(!reloaded.count||!reloaded.maps[reloaded.count-1].is_preview||reloaded.maps[reloaded.count-1].preview_revision!=g_preview_revision)) {
+            registry_clear(&reloaded);return;
+        }
+
         if (!force_reload && reloaded.rejected_count > 0 &&
             registry_missing_previous_package(&reloaded, &g_custom_registry)) {
             LOG_ERROR("%s reload rejected because a previously valid package is now invalid (%d rejected); keeping last known-good registry",
@@ -3734,7 +3881,7 @@ void custom_maps_shutdown(void) {
     g_custom_maps_signature = 0;
     g_custom_maps_failed_signature = 0;
     memset(&g_preview_map, 0, sizeof(g_preview_map));
-    g_preview_active = 0;
+    g_preview_active = 0;g_preview_folder[0]=0;
     g_preview_revision = 0;
     g_custom_maps_inited = 0;
     g_custom_maps_generation++;
@@ -3793,6 +3940,12 @@ void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void)) {
     g_engine_pinned_selector = selector;
     g_engine_pinned_generation = g_custom_maps_generation;
     free_unpinned_retired_registry_maps();
+    if (g_engine_pinned_map->has_eggnogg_color) {
+        map_info(g_engine_pinned_map->id, "Eggnogg color override RGB=%.6f,%.6f,%.6f",
+                 g_engine_pinned_map->eggnogg_color[0],
+                 g_engine_pinned_map->eggnogg_color[1],
+                 g_engine_pinned_map->eggnogg_color[2]);
+    }
 }
 
 static int appendf_counted(char* out, size_t out_sz, size_t* pos, const char* fmt, ...) {
@@ -3848,6 +4001,7 @@ int custom_maps_build_manifest_json(char* out, size_t out_sz) {
     for (int i = 0; i < g_custom_registry.count; i++) {
         const CustomMap* map = &g_custom_registry.maps[i];
         if (map->is_preview) continue;
+        if (map->entity_source) continue;
         if (!first) appendf_counted(out, out_sz, &pos, ",");
         first = 0;
         appendf_counted(out, out_sz, &pos, "{\"key\":");
@@ -3893,6 +4047,7 @@ int custom_maps_selector_for_key(const char* key, int* out_selector) {
     for (int i = 0; i < g_custom_registry.count; i++) {
         char map_key[160];
         if (g_custom_registry.maps[i].is_preview) continue;
+        if (g_custom_registry.maps[i].entity_source) continue;
         p = g_custom_registry.maps[i].online_key;
         copy_lower_ascii(map_key, sizeof(map_key), p && p[0] ? p : g_custom_registry.maps[i].id);
         if (strcmp(norm_key, map_key) == 0) {
@@ -3951,7 +4106,10 @@ int custom_maps_activate_script_for_selector(int selector,
         return 0;
     }
     map_script_deactivate();
-    if (!map_script_activate(&definition, host, err, err_cap)) {
+    if (!(map->entity_source
+            ? map_script_activate_content(&definition, host, (const char*)map->entity_source,
+                                          map->entity_size, err, err_cap)
+            : map_script_activate(&definition, host, err, err_cap))) {
         map_script_deactivate();
         if (err && err_cap && !err[0]) {
             custom_maps_set_script_error(err, err_cap,
@@ -3960,6 +4118,26 @@ int custom_maps_activate_script_for_selector(int selector,
         return 0;
     }
     return 1;
+}
+
+static int custom_map_room_opponent_spawn(const CustomMap* map, int source_room) {
+    if (!map || source_room < 0 || source_room >= map->source_room_count) return 0;
+    if (map->rooms[source_room].config.opponent_spawn_set)
+        return map->rooms[source_room].config.opponent_spawn;
+    return map->defaults_room.opponent_spawn_set ? map->defaults_room.opponent_spawn : 0;
+}
+
+static int custom_map_final_opponent_spawn(const CustomMap* map, int final_room) {
+    if (!map || final_room < 0 || final_room >= map->source_room_count * 2 - 1) return 0;
+    return custom_map_room_opponent_spawn(map, abs(final_room - (map->source_room_count - 1)));
+}
+
+int custom_maps_opponent_spawn_policy(int selector, int final_room) {
+    const CustomMap* map = g_engine_pinned_map;
+    if (selector < VANILLA_MAP_COUNT || !g_custom_maps_inited ||
+        !g_engine_pinned_registry_maps || !map || selector != g_engine_pinned_selector)
+        return 0;
+    return custom_map_final_opponent_spawn(map, final_room);
 }
 
 static void custom_map_content_view_copy(const CustomMap* map,
@@ -4233,6 +4411,10 @@ done:
         out_summary->has_eggnogg_color = map.has_eggnogg_color;
         memcpy(out_summary->eggnogg_color, map.eggnogg_color, sizeof(map.eggnogg_color));
         out_summary->source_room_count = map.source_room_count;
+        for (int room = 0; room < map.source_room_count && room < 9; ++room)
+            out_summary->opponent_spawn[room] = custom_map_room_opponent_spawn(&map, room);
+        for (int room = 0; room < map.source_room_count * 2 - 1 && room < 17; ++room)
+            out_summary->final_opponent_spawn[room] = custom_map_final_opponent_spawn(&map, room);
         out_summary->content_tile_count = map.content_tile_count;
         snprintf(out_summary->default_sheet_key,
                  sizeof(out_summary->default_sheet_key), "%s",
@@ -4245,6 +4427,9 @@ done:
         out_summary->native_k_marker_count = native_k_marker_count;
         out_summary->has_script = map.script_id != 0 && map.script_source != NULL;
         out_summary->script_size = map.script_size;
+        out_summary->has_entities = map.entity_source != NULL;
+        out_summary->entity_size = map.entity_size;
+        snprintf(out_summary->entity_sha256, sizeof(out_summary->entity_sha256), "%s", map.entity_sha256);
         out_summary->script_id = map.script_id;
         snprintf(out_summary->script_full_path,
                  sizeof(out_summary->script_full_path), "%s",
@@ -4263,6 +4448,8 @@ done:
     }
     parsed_tileset_abort(&tileset);
     if (map.content_transaction) content_registry_abort(map.content_transaction);
+    free(map.entity_source);
+    map.entity_source = NULL;
     free(map.script_source);
     map.script_source = NULL;
     json_free_value(root);
@@ -4274,6 +4461,38 @@ static void custom_maps_preview_set_error(char* err, size_t err_cap,
     if (!err || err_cap == 0u) return;
     snprintf(err, err_cap, "%s", message ? message : "preview map is invalid");
     err[err_cap - 1u] = '\0';
+}
+
+int custom_maps_install_preview_folder(const char* token,int* selector,char* error,size_t capacity) {
+    char previous[MAX_PATH];uint64_t old_revision;int old_active;
+    if(selector)*selector=-1;
+    if(!token||strlen(token)!=32||!selector){custom_maps_preview_set_error(error,capacity,"Invalid preview token.");return 0;}
+    for(size_t i=0;i<32;i++)if(!((token[i]>='0'&&token[i]<='9')||(token[i]>='a'&&token[i]<='f'))){custom_maps_preview_set_error(error,capacity,"Invalid preview token.");return 0;}
+    if(!g_custom_maps_inited)custom_maps_init();
+    snprintf(previous,sizeof(previous),"%s",g_preview_folder);old_active=g_preview_active;old_revision=g_preview_revision;
+    snprintf(g_preview_folder,sizeof(g_preview_folder),"_greggnogg_previews/%s",token);g_preview_active=1;if(!++g_preview_revision)++g_preview_revision;
+    custom_maps_reload_registry_if_needed(1);
+    if(g_custom_registry.count&&g_custom_registry.maps[g_custom_registry.count-1].is_preview&&g_custom_registry.maps[g_custom_registry.count-1].preview_revision==g_preview_revision) {
+        *selector=VANILLA_MAP_COUNT+g_custom_registry.count-1;if(error&&capacity)error[0]=0;return 1;
+    }
+    snprintf(g_preview_folder,sizeof(g_preview_folder),"%s",previous);g_preview_active=old_active;g_preview_revision=old_revision;
+    custom_maps_preview_set_error(error,capacity,"Preview package failed loader validation; see modframework.log.");return 0;
+}
+int custom_maps_preview_session_in_use(const char* token) {
+    char folder[MAX_PATH];
+    if(!token||strlen(token)!=32)return 0;
+    for(unsigned i=0;i<32;i++)if(!((token[i]>='0'&&token[i]<='9')||(token[i]>='a'&&token[i]<='f')))return 0;
+    snprintf(folder,sizeof(folder),"_greggnogg_previews/%s",token);
+    if(g_preview_active&&!strcmp(g_preview_folder,folder))return 1;
+    if(g_engine_pinned_map&&!strcmp(g_engine_pinned_map->folder_id,folder))return 1;
+    for(int i=0;i<g_custom_registry.count;i++)
+        if(!strcmp(g_custom_registry.maps[i].folder_id,folder))return 1;
+    return 0;
+}
+
+void custom_maps_clear_preview(void) {
+    if(!g_preview_active)return;
+    g_preview_active=0;g_preview_folder[0]=0;custom_maps_reload_registry_if_needed(1);
 }
 
 int custom_maps_install_preview_text(const char* json_text,
@@ -4293,6 +4512,7 @@ int custom_maps_install_preview_text(const char* json_text,
     int max_native_room_spawns = 0;
     int native_k_marker_count = 0;
     int previous_active;
+    char previous_folder[MAX_PATH];
     uint64_t revision;
     int installed = 0;
 
@@ -4346,6 +4566,7 @@ int custom_maps_install_preview_text(const char* json_text,
     if (!g_custom_maps_inited) custom_maps_init();
     previous = g_preview_map;
     previous_active = g_preview_active;
+    snprintf(previous_folder,sizeof(previous_folder),"%s",g_preview_folder);g_preview_folder[0]=0;
     g_preview_map = candidate;
     g_preview_active = 1;
     custom_maps_reload_registry_if_needed(1);
@@ -4361,6 +4582,7 @@ int custom_maps_install_preview_text(const char* json_text,
     } else {
         g_preview_map = previous;
         g_preview_active = previous_active;
+        snprintf(g_preview_folder,sizeof(g_preview_folder),"%s",previous_folder);
         custom_maps_reload_registry_if_needed(1);
         custom_maps_preview_set_error(err, err_cap,
                                       "preview map could not be installed atomically");
@@ -4373,4 +4595,34 @@ done:
     }
     json_free_value(root);
     return installed;
+}
+
+#ifdef CUSTOM_MAPS_TESTING
+int custom_maps_test_pin_folder(const char* folder_id) {
+    if (!folder_id) {
+        g_engine_pinned_registry_maps = NULL; g_engine_pinned_map = NULL;
+        g_engine_pinned_selector = -1; g_engine_pinned_generation = 0;
+        free_unpinned_retired_registry_maps(); return -1;
+    }
+    for (int i=0; i<g_custom_registry.count; ++i) {
+        if (strcmp(g_custom_registry.maps[i].folder_id, folder_id)) continue;
+        g_engine_pinned_registry_maps = g_custom_registry.maps;
+        g_engine_pinned_map = &g_custom_registry.maps[i];
+        g_engine_pinned_selector = VANILLA_MAP_COUNT + i;
+        g_engine_pinned_generation = g_custom_maps_generation;
+        free_unpinned_retired_registry_maps(); return g_engine_pinned_selector;
+    }
+    return -1;
+}
+#endif
+
+int custom_maps_pinned_visual_sheet(const char* filename,int sprite,char* key,size_t capacity) {
+    if(!g_engine_pinned_map || !filename || !key || !capacity || sprite<0) return 0;
+    for(int i=0;i<g_engine_pinned_map->content_sheet_count;i++) {
+        const MapContentSheet* sheet=&g_engine_pinned_map->content_sheets[i];
+        if(!strcmp(sheet->relative_path,filename) && sprite<sheet->sprite_count && strlen(sheet->key)<capacity) {
+            strcpy(key,sheet->key);return 1;
+        }
+    }
+    return 0;
 }

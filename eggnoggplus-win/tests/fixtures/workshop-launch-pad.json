@@ -1,0 +1,37 @@
+{
+  "schema": 2,
+  "capacity": 16,
+  "types": [
+    {
+      "key": "custom:launch_pad",
+      "regions": [
+        {
+          "id": 1,
+          "role": "sensor",
+          "layer": 1,
+          "mask": 1,
+          "x": -16,
+          "y": -3,
+          "width": 32,
+          "height": 6
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 4,
+        "scale_x": 2,
+        "scale_y": 0.375,
+        "tint": "#80C0FFFF"
+      }
+    }
+  ],
+  "placements": [
+    {
+      "name": "launch_pad",
+      "type": "custom:launch_pad",
+      "room": "center",
+      "x": 48,
+      "y": 64
+    }
+  ]
+}

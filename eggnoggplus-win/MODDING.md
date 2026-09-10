@@ -377,6 +377,9 @@ Notes:
 - `label` is the user-facing name shown in the mods menu.
 - `mod.input.list()` returns entries with `key`, `label`, `binding`, and `conflict`.
 - Bind overrides are stored in the mod's bind file (default `binds.cfg`).
+- Numeric `Key123` / `SDLK_123` names require a complete decimal integer from 0
+  through 2147483647; malformed, negative and overflowing names are rejected.
+  Leading/trailing whitespace is trimmed.
 - The mods menu supports live key capture: select a bind row, press `Enter`, then press the new key.
 
 ---
@@ -513,6 +516,120 @@ if mod.ui.button_at("x", "X", 1180, 20, 40, 28) then
 end
 ```
 
+Hitboxes retain fractional coordinates and use inclusive left/top and exclusive
+right/bottom edges. Adjacent controls therefore do not both activate on a shared
+boundary. Nonfinite or nonpositive bounds are ignored for hit testing and mouse
+capture.
+
+Responsive grids (API revision 7, capability `ui.responsive_grid`):
+
+```lua
+local cells, height, columns = mod.ui.grid_layout(40, 80, available_width, #items, {
+  min_cell_w = 120, cell_h = 28, gap = 6, max_cols = 4,
+})
+for i, cell in ipairs(cells) do
+  if mod.ui.button_at("item_" .. i, items[i], cell.x, cell.y, cell.w, cell.h) then
+    selected = i
+  end
+end
+```
+
+The pure layout helper returns independent bounds without moving the UI cursor.
+Columns fit the available width; a narrow container uses one narrower column.
+The last row retains the same cell width. Zero items returns an empty table,
+zero height and zero columns. Count must be an integer from 0 to 4096; dimensions
+must be finite and positive, gap nonnegative, and max_cols an integer from 1 to
+4096. Defaults are 120-pixel minimum width, 28-pixel height, 6-pixel gap and up to
+4096 columns. Coordinates must be within +/-10,000,000; dimensions and gap are
+bounded to 10,000,000.
+
+For a complete selectable list, API revision 12 / `ui.list_box` provides
+`selected, changed, scroll, activated, match_count = mod.ui.list_box(id, items,
+selected, opts)`. Items use the same `{id, label, disabled}` convention as tabs;
+keys must be unique strings or numbers. At most 4,096 items are accepted.
+
+- Bounds: `x`, `y`, `w` (default 240), `h` (168), `row_h` (28). Only complete
+  rows draw or receive pointer input; long labels are shortened to fit.
+- Keep the returned `scroll` between frames. It is a **zero-based row offset**,
+  unlike `list_window`'s pixel offset. `scroll_rows` applies a signed delta;
+  route wheel input to the hovered list yourself. The built-in scrollbar also
+  supports clicking and dragging.
+- `navigate`: `none`, `previous`, `next`, `page_up`, `page_down`, `first`, or
+  `last`. Navigation skips disabled rows and reveals the selected row. Route
+  keyboard/controller edges only to the focused control. `reveal=true` can
+  reveal an externally changed selection; omit it while manually scrolling.
+- `filter` performs case-insensitive literal label matching and retains source
+  order. Labels and filters are limited to 4,096 bytes. A hidden selection is
+  preserved but cannot activate; navigation selects a matching enabled row.
+- A click selects and activates a row. `focused=true, activate=true` activates
+  the current visible-in-filter enabled selection. `disabled=true` ignores
+  input. `changed` reports selection changes only, not scrolling/filtering.
+- `style` and `text_scale` customize appearance. Focus and selected-row outlines
+  use the active theme. No input is captured or polled internally.
+
+A complete 200-row browser with paging, disabled entries, filtering through a
+console command, and activation feedback is in `docs/examples/ui_list_browser.lua`.
+
+For large fixed-height lists, `mod.ui.list_window(count, row_h, viewport_h,
+scroll [, reveal_index])` (capability `ui.virtual_list`) returns a detached table
+with `first`, `last`, `offset_y`, clamped `scroll`, `max_scroll`, and `total_h`.
+Only the visible index range is calculated, so a million rows require no large
+bounds allocation. `reveal_index` scrolls the selected row into view; rows taller
+than the viewport align at the top. An empty list returns `first=1, last=0`.
+
+```lua
+local window = mod.ui.list_window(#items, 28, 280, scroll, selected)
+scroll = window.scroll
+for i = window.first, window.last do
+  local row_y = viewport_y + window.offset_y + (i - window.first) * 28
+  -- Render this row through your viewport's clipping/input handling.
+end
+```
+
+This helper does not draw, clip, consume wheel input, or set keyboard focus.
+It includes partially visible rows; restrict their rendering and hitboxes to the
+viewport. Pass `reveal_index` when selection changes, rather than continuously,
+to allow independent scrolling. Count is an integer from 0 to 1,000,000,
+row/viewport heights are finite from 1 to 10,000,000, and scroll must be finite
+within +/-10,000,000,000,000. Reveal indices are one-based and must exist.
+
+Sliders clamp values to their range, accept fixed or reversed ranges, and anchor
+step rounding at the requested minimum. A final clamp keeps rounded values
+within bounds even when the range is not an exact multiple of the step. `disabled=true`
+blocks mouse edits and renders a muted track.
+
+Keyboard/controller selection (API revision 8, capability `ui.navigation`):
+
+```lua
+mod.input.bind("menu_previous", "left", "Previous item")
+mod.input.bind("menu_next", "right", "Next item")
+
+-- In the focused control's render/update callback:
+local direction = 0
+if mod.input.pressed("menu_previous") then direction = -1 end
+if mod.input.pressed("menu_next") then direction = 1 end
+selected, changed = mod.ui.tabs("category", {
+  {id="maps", label="Maps"},
+  {id="locked", label="Locked", disabled=true},
+  {id="mods", label="Mods"},
+}, selected, {x=40, y=40, w=300, navigate=direction, wrap=true})
+```
+
+`tabs`/`segmented`, `item_grid` and `swatch_grid` accept `navigate=-1|0|1`,
+`wrap=true` (default false), and `disabled=true`. Table items may also specify
+`disabled=true`; mouse and navigation skip those entries. Route a press edge
+only to the focused control. The library does not bind keys or assign global
+focus. Use `mod.input` for named keyboard binds, or route
+`controllerbuttondown` events from `mod.on_event` into a navigation edge.
+
+For custom controls, `ui.navigate_items(items, selected, direction [, options])`
+returns the next selection key and a changed flag without drawing or consuming
+input. Keys follow the widgets' convention: `item.id`, then `item.value`, then
+the one-based index. Use unique keys and dense arrays of at most 4096 entries.
+An unknown selection starts at the first/last enabled entry; empty/all-disabled
+lists and a clamped boundary retain the previous selection. Direction zero
+preserves selection. Options are `wrap` and `disabled`.
+
 Styled immediate-mode widgets:
 
 ```lua
@@ -552,8 +669,75 @@ Widget helpers return `value, changed` where applicable:
 - `mod.ui.checkbox(id, value, opts) -> value, changed`
 - `mod.ui.tooltip(text [,opts])`
 
+Control navigation (API revision 10, capability `ui.control_navigation`):
+
+A complete keyboard example is in `docs/examples/ui_navigation.lua`. Use it as
+a mod entrypoint and open it with `mod.<your-mod-id>.open` in the console.
+Up/Down moves focus, Left/Right adjusts the slider, Enter activates, and Escape
+closes the demo. All values are local to the example.
+
+- Sliders accept `navigate=-1`, `0`, or `1` for one decrease/increase action.
+  `keyboard_step` sets a finite positive adjustment; otherwise a positive `step`
+  is used, or 1% of the range. Values clamp at the limits. Mouse input takes
+  precedence when both arrive in one frame.
+- `icon_button` and `checkbox` accept `focused=true, activate=true` to activate
+  once. An unfocused or disabled control ignores activation.
+- `focused=true` draws a visible outline on these controls and sliders.
+
+Route keyboard/controller **press edges** only to the focused control; these
+helpers do not poll global input or assign focus. Clear navigation/activation
+flags after the frame rather than retaining a held button as repeated clicks.
+
+```lua
+volume, changed = mod.ui.slider("volume", volume, 0, 1, {
+  focused = focus == "volume",
+  navigate = focus == "volume" and direction_edge or 0,
+  keyboard_step = 0.05,
+})
+enabled, changed = mod.ui.checkbox("enabled", enabled, {
+  focused = focus == "enabled",
+  activate = confirm_pressed,
+})
+```
+
+Scoped styles (API revision 9, capability `ui.scoped_style`) restore the entire
+previous style stack after a callback, including when it errors or
+pushes, pops, or switches themes. Callback arguments and return values (including
+nil values) are preserved; errors are rethrown after restoration. Nested scopes
+are supported. Scopes are isolated per coroutine, including while a callback is
+suspended; new coroutines use the base style rather than inheriting a scope.
+Theme registrations themselves remain persistent. Cyclic tables and nesting
+beyond 32 table levels are rejected; failed theme updates leave the active
+style unchanged.
+
+```lua
+local clicked = mod.ui.with_style({accent={0.2,0.9,0.7,1}}, function()
+  return mod.ui.button("apply", "Apply")
+end)
+```
+
+Interactive progress bars ignore input when disabled. Vertical meters fill from
+bottom to top by default; `reverse=true` fills from top to bottom, and pointer
+input follows that same direction. Nonfinite/empty bounds skip drawing and hit
+testing; NaN progress is normalized to zero.
+
+Named themes (API revision 11, capability `ui.themes`):
+
+```lua
+local names = mod.ui.theme_names() -- sorted, detached array
+mod.ui.set_theme("high_contrast") -- opaque black, white text, yellow accent
+mod.ui.define_theme("mint", {accent={0.2,0.9,0.7,1}})
+mod.ui.set_theme("mint")
+```
+
+Partial named themes inherit all `default_dark` values, including spacing and
+text scale. Registration copies the supplied style; later edits to the input
+table cannot mutate the registered theme. Unknown theme selection leaves the
+current style intact. The built-ins are `default_dark` and `high_contrast`.
+
 Style helpers:
 - `mod.ui.push_style(style)`, `mod.ui.pop_style()`
+- `mod.ui.with_style(style, callback, ...) -> callback results`
 - `mod.ui.theme(style)` merges into the active style.
 - `mod.ui.set_theme("default_dark")`
 - `mod.ui.current_style() -> table`
@@ -772,6 +956,7 @@ API summary:
 - `mod.ui.checkbox(id, value, opts) -> value, changed`
 - `mod.ui.tooltip(text [,opts])`
 - `mod.ui.push_style(style)`, `mod.ui.pop_style()`
+- `mod.ui.with_style(style, callback, ...) -> callback results`
 - `mod.ui.theme(style)`, `mod.ui.set_theme(name)`, `mod.ui.current_style()`
 
 Custom state API:
@@ -781,7 +966,14 @@ Custom state API:
 - `mod.ui.leave_state() -> bool`
 - Custom states are blank framework-managed states intended for fully custom Lua-driven screens.
 - While a custom state is active, `mod.ui.state_name()` returns the registered state name, `on_frame` continues to run, and `on_event` can fully consume input.
-- `mod.ui.define_state(name, { enter, update, render, event, leave, cursor }) -> bool` creates the state and routes lifecycle callbacks for that mod.
+- `mod.ui.define_state(name, { enter, update, render, event, leave, cursor }) -> bool, error` creates the state and routes lifecycle callbacks for that mod. Invalid callback types and failed native registration return false without replacing an existing definition.
+
+Custom screen transitions stop the current callback chain when `leave`, `enter`,
+`update`, or `render` switches the native screen. The previous screen does not
+render or apply cursor settings over its replacement. A redirect from `leave`
+does not repeat that callback on the next frame. Replacing a screen definition
+inside `update` likewise stops that frame's old render/cursor callbacks.
+
 - `cursor = false` disables the automatic custom-state mouse cursor. `cursor = { ... }` passes options to `mod.ui.draw_cursor`.
 
 ## Online rollback safety
@@ -1442,6 +1634,9 @@ Use integer interval 1..4294967295 and phase 0..interval-1.
 `map.has_tile(symbol_or_key)` tests declared custom bindings, allowing reusable
 scripts to register optional tile callbacks only when that binding exists.
 It is available during loading and callbacks, and does not inspect room placement.
+`map.tile_bindings()` returns detached `{symbol, key}` entries in manifest order
+for registering shared behavior across declared custom tiles. Mutating that list
+does not change the bindings; use `ipairs` for deterministic traversal.
 `map.tick()` returns the deterministic script
 clock. Ordinary mutable globals/captured state, `math.random`, bytecode, dynamic
 loading, debug/FFI/JIT/coroutine APIs, unbounded execution, and the numeric `^`
@@ -1600,3 +1795,57 @@ Prefer `mod.dofile("lib/foo.lua")` so extra scripts run in the same environment.
 Breaking changes bump `MOD_API_MAJOR` in `mod_api.h`. Additive public changes
 bump `MOD_API_REVISION`, append stable capability identifiers when discovery is
 useful, and update the manifest/runtime/schema/docs/native regression suite.
+
+
+## Contributing UI helpers
+
+Edit `ui_helpers.lua`, then run `python tools/embed_ui_helpers.py --write` to
+regenerate `ui_helpers.h`. The checked header keeps normal game builds independent
+of a Lua-file loader or generation tool. `tests/run_core_native_tests.ps1` checks
+source/header synchronization and executes the embedded production library under
+LuaJIT. Native VM ownership, input and rendering stay in `lua_manager.c`; shared
+finite hit-test geometry lives in `ui_geometry.h`.
+
+
+### Experimental managed entity host adapter
+
+Source map API 13 reserves the read-only `entity` namespace. An embedding host
+can activate a validated entity package with `map_script_activate_content` and
+register per-type `entity.on_update(type_key, callback)` behavior. Callbacks use
+`entity.get/set/spawn/remove/exists/list`; persistent data belongs in `map.state`.
+Combined script/entity snapshots and callback rollback are guarded-test covered.
+
+V2 map folders now load an optional direct `entities.json` file and activate its
+logical entities alongside map.lua. Without map.lua, declared velocity still runs.
+Entity-bearing maps are currently offline-only, including direct LAN sessions. See [the custom-content implementation status and contract](docs/custom-content-system.md#managed-map-runtime-integration-source-api-13)
+and [the internal update example](docs/examples/entity_update.lua). Native
+rendering, player interaction, equipment and complete lifecycle events remain
+under implementation.
+
+### Managed entity authoring workspace
+
+Greggnogg now links to [Content Workshop](greggnogg/content-workspace/README.md)
+for types, independent regions, placements, visual metadata and entity/Lua content
+export, including complete V2 map ZIPs with original map/assets retained. It targets
+the current offline managed API; room-local placement and native combat/equipment
+are still unfinished. The guide distinguishes metadata checks from
+runtime Lua validation and lists the pending visual acceptance checks.
+
+### Entity animation control (Map API 21)
+
+`entity.spawn(type, properties)` and `entity.set(handle, properties)` accept
+`animation_tick` (nonnegative exact integer) and `animation_paused` (boolean).
+Each instance starts at tick zero. `entity.get(handle)` returns both fields.
+Reset the tick to restart an animation; pause it to hold a frame while motion and
+callbacks continue. These values participate in rollback. See
+[the animation contract](docs/custom-content-system.md#per-object-animation-clocks-map-api-21).
+
+### Native defeat (Map API 22)
+
+Use `map.defeat_player(1)` or `map.defeat_player(2)` from tick/timer/entity update
+callbacks to request the normal native death transition. Requests commit after a
+successful tick and roll back on callback failure. Duplicate/dead targets return
+false. Queued targets disappear from `map.players()` immediately. The native
+engine handles corpse animation and sword drops. This API remains offline-only
+with entity content; equipment and generalized damage handling are unfinished.
+See the [transaction contract and example](docs/custom-content-system.md#native-defeat-transactions-map-api-22).

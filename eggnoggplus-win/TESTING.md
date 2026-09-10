@@ -20,6 +20,56 @@ The runners prepare the MinGW DLL search path before launching their test binari
 They do not launch the game. A clean run establishes parser, rollback, network-envelope,
 map-script, updater/recovery, Discord IPC, and audio-render regression coverage.
 
+## Duplicate-packet rollback regressions
+
+```powershell
+python tests/prematch_net_test.py --duplicate-chaos-only
+python tests/prematch_net_test.py --duplicate-wrap-chaos-only
+```
+
+These guarded runners compare every finalized state across 2,048 frames with
+seeded loss/delay/reordering and exact authenticated duplicates. The wrap profile
+duplicates both peers' traffic across uint32 frame wrap. They assert replay
+rejection, prediction/rollback, checksum acknowledgement and four history-ring
+generations. They use the deterministic fixture; native spawn/death/room soaks
+remain separate acceptance work.
+
+## UI layout and input bounds
+
+Run the core suite for the embedded Lua helpers and shared C hit-test geometry.
+For focused iteration, append `-UiOnly` to `tests/run_core_native_tests.ps1`;
+it retains the runtime preflight, API checks and generated-source check.
+It also checks slider navigation, focused button/checkbox activation, disabled
+controls, mouse precedence, and rejected state definitions preserving the old
+callback. Use docs/examples/ui_navigation.lua for keyboard and focus-outline
+visual acceptance in a custom mod screen.
+It covers scoped-style restoration on callback failure, nested/yielding coroutines,
+cyclic/deep style rejection, atomic theme updates, and disabled/reversed vertical
+progress input. For visual acceptance, draw differently styled sibling controls
+with `with_style` and confirm the next sibling keeps its original theme.
+In a mod UI, verify adjacent buttons activate only one control on their shared
+edge and that fractional positions match their drawn locations. Resize a
+`grid_layout` menu through one and several columns. Verify disabled sliders do
+not change on click/drag and that nonzero-minimum steps remain in bounds.
+Route named keyboard binds and controller-button events to previous/next actions
+for one focused
+control and verify disabled-item skipping, wrap and boundary behavior on tabs,
+item grids and swatches.
+The `list_window` helper only calculates visible rows; its caller supplies
+viewport clipping and wheel/keyboard handling.
+
+## Online hub text-field focus
+
+Type a username, click Password, type the password and click Log In without
+pressing Enter between fields. Repeat with Register. Verify Tab/Shift+Tab and
+up/down commit and move between fields, clicking the same field preserves the
+draft, and Escape restores the saved value. In Settings, enter an invalid local
+UDP port and click another row: the error and draft must stay visible and the
+clicked action must not run. Correct it and click away to save. Controller
+confirm/cancel and up/down should also work during editing. Blurring Search User
+must not send a friend request; clicking Search User again or Enter submits it.
+Use a disposable test account for registration/friend-request acceptance.
+
 ## Custom-map Eggnogg color
 
 In Greggnogg's Map inspector, enable the Eggnogg color override and choose a
@@ -304,3 +354,173 @@ independent combat geometry, the map editor, expanded UI library, and Linux supp
 remain open in `TODO.txt`. Native postfix and marked bounded-bytebeat playlist tracks are
 supported, and marked `engine=dollchan` tracks run in an isolated, memory- and
 execution-bounded JavaScript runtime. Unmarked JavaScript remains unsupported.
+
+## Per-room opponent spawning
+
+Run the local and paired-client checklist in
+[docs/opponent-spawn-testing.md](docs/opponent-spawn-testing.md). Greggnogg now
+exposes map defaults and room overrides. Automated checks cover parser and
+mirroring, native policy/patch sites, editor round trips and regression tests;
+live end-room fighting, subsequent deaths/respawns, goals and rollback still need
+acceptance. Use the same new framework build and exported package on both clients.
+
+
+### Managed entity package integration
+
+Run `./tests/run_map_script_test.ps1` for the map VM and managed entity adapter.
+The runner preflights the required 32-bit runtime DLLs before launching tests.
+`map_entity_runtime_test.c` exercises combined snapshots and callback transactions
+with real Lua: replay equality, failed activation preservation, malformed snapshot
+rejection, map/entity clock agreement, per-type update ordering, spawn deferral,
+instruction exhaustion, and sandbox restrictions. Low-level package/geometry tests
+remain available with `./tests/run_core_native_tests.ps1 -EntityOnly`.
+
+This does not replace live native gameplay or paired online acceptance. Production V2 map loading activates logical entity packages offline; see
+[the open integration stages](docs/custom-content-system.md).
+
+The core native runner also exercises managed entities through the production
+serializer fixture (EGG0/v12), including native+managed canonical resave equality
+and rejection of damaged extension identity before native or managed mutation.
+The trace analyzer keeps v9/v10/v11 support and adds the identity-bound v12 managed section.
+
+For serializer work, `./tests/run_core_native_tests.ps1 -SerializerOnly` runs the
+guarded native serializer plus common JavaScript/static checks, skipping unrelated
+earlier native executables. The full default runner still executes every group.
+
+## Nested map installation
+
+The guarded `tests/run_v2_map_test.ps1` fixture creates a ZIP-style wrapper with
+multiple nested folders and spaces, verifies selector/online-key discovery, and
+checks reload after removal. It also places a second apparent package inside the
+map assets directory and verifies that discovery stops at the actual package.
+For live acceptance, extract a map ZIP into `maps/` without flattening its enclosing
+folders and confirm that its normal display name appears in the pregame selector.
+
+### Content Workshop packaging and native sensor response
+
+Run `node --test greggnogg/content-workspace/*.test.js` for atlas geometry,
+complete-map byte preservation, nested folder import, invalid-input atomicity,
+attachment undo/redo and the shared native entity schema fixture. These use a DOM
+fixture; a real browser visual/accessibility pass is still required.
+
+Run `./tests/run_core_native_tests.ps1 -EntityOnly` for detached authored regions,
+stale handles and exact shared-budget boundaries. `./tests/run_map_script_test.ps1`
+runs the checked-in launch-pad Lua/entity pair with two native player host views,
+atomic velocity response, rejected-commit preservation and snapshot/replay equality.
+`./tests/run_core_native_tests.ps1 -SerializerOnly` checks the actual native writer
+and combined native/managed snapshot path. `./tests/run_v2_map_test.ps1` covers map
+visual admission, including ambiguous grid rejection and identical-grid sharing.
+
+For live offline acceptance, copy `docs/examples/entity_launch_pad.json` to a V2
+map as `entities.json`, and merge `entity_launch_pad.lua` into its map.lua. Position
+the pad under a playable ledge using generated-world pixels. Verify descending feet
+trigger one upward launch, rising players are not repeatedly launched, horizontal
+velocity is preserved, and authored sensor bounds agree with the visual overlay.
+Do not treat the mock-host test as proof of live movement/camera alignment. Managed
+entity maps remain excluded from online play until admission work is complete.
+
+### Managed native defeat acceptance
+
+API 22 adds a combined player velocity/defeat commit. Run guarded
+`tests/run_map_script_test.ps1` and `tests/run_core_native_tests.ps1 -SerializerOnly`.
+The moving-hazard example is executed by the real Lua VM with a deterministic
+host, including 100-tick replay and rejected commits. Native writer tests use
+protected player pages and a death callback fixture; they do not launch the game.
+Live acceptance must still check actual corpse/sword behavior, leader changes,
+simultaneous deaths and subsequent room transitions in a local custom map.
+
+### V2 preview transport work in progress
+
+`tests/run_core_native_tests.ps1 -PreviewOnly` verifies GGP2 package framing
+against the browser encoder fixture: exact lengths, bounded file sizes, direct
+filenames, Windows device-name rejection and non-mutating failure. Browser tests
+are in `greggnogg/preview-package.test.js`. The guarded V2 runner exercises staged
+folder activation with Lua/entities, execution, offline manifest exclusion,
+invalid replacement preservation, authored-ID override and normal-map restoration.
+The browser/local-runtime session handoff is connected in source. These tests
+do not prove live browser-to-game acceptance or browser permission behavior.
+
+Preview sessions use `yule://preview/session/<token>` with exactly 32 lowercase
+hexadecimal characters. The guarded PreviewOnly runner also tests the launch
+parser, including malformed, oversized and noncanonical tokens. IPC validates
+this action independently. The runtime receives, stages and validates the package
+at an update boundary before starting a local match. Uploads never execute Lua
+on the networking worker.
+
+The same guarded runner exercises the loopback HTTP worker with a real local
+socket: token rejection, CORS preflight, upload ownership transfer, repeated
+second-upload rejection, completion status, invalid packages and restart. The
+worker sends its response before draining unread request bytes, avoiding an
+abortive close that could discard an error response. Staging tests compare every
+written byte, refuse an existing session, reject invalid packets before creating
+folders, and preserve a file blocking the cache directory. Staging holds directory
+handles without delete sharing and rejects directory reparse points. Cache
+retirement now follows registry and engine-pin references. Tests preserve active
+files, user-added files and changed preview files, and prove that a cleared but
+engine-pinned map remains in use until unpinned. Older-process caches are not
+swept. The editor/game dispatch is connected; the guarded
+serializer runner compiles and exercises the integrated native source set.
+`greggnogg/preview-client.test.js` verifies upload-once behavior, lost-response
+recovery, delayed startup, token rejection and native failure reporting.
+
+`greggnogg/logic-studio.test.js` exercises the actual logic-studio module with a
+small UI harness: invalid blocks cannot be silently discarded by switching to
+Advanced, and opening another document does not compile the old workspace.
+
+`greggnogg/logic-runtime-fixture.js` builds an object-update block program.
+`logic-blocks.test.js` checks exact generated bytes against
+`tests/fixtures/blocks-object-motion.lua`; the guarded map-script runner loads
+that same file into the real content VM, executes movement and animation pause,
+and compares complete snapshots after restore/replay. This connects generator
+coverage to runtime execution instead of checking Lua text alone.
+
+The generated block fixtures additionally cover object creation (six live objects
+after five ticks) and removal (zero live objects). Both programs compare complete
+snapshots after restore/replay. `blocks-object-remove.lua` is generated from the
+same Blockly fixture builder and checked byte-for-byte by the JavaScript suite.
+
+Object callback block tests cover wrapper/body round-tripping, handwritten body
+preservation, and current-map pickers retaining missing serialized IDs. The shared
+runtime fixtures now execute periodic conditions, repeat loops, deterministic
+random and absolute-value math before comparing replay snapshots.
+
+Integrated object-tool regressions now export/import actual serialized Blockly
+layouts, rename the design, restore its callback workspace, and confirm editable
+action blocks remain. Deleting a design removes its block metadata. Malformed
+metadata rejects without modifying the input document; stale layouts yield to
+newer handwritten Lua. Unsupported block types cannot bypass the generator's
+supported-block list through nested callback metadata.
+
+`greggnogg/object-logic.test.js` runs the actual object panel module against a
+small DOM/CodeMirror harness and real headless Blockly workspace. It switches
+between update/spawn callbacks and Blocks/Advanced, checks independent source
+retention, and verifies disconnected blocks prevent destructive event/mode
+switches until repaired. This is behavioral coverage, not visual acceptance.
+
+`player-block-fixture.js` generates `blocks-players.lua`. Native tests execute it
+with both player slots, only player 2, and no players. They verify slot identity,
+preserved horizontal velocity, changed vertical velocity, one atomic commit for
+two players, and no write for an empty query. Generator tests reject ?this player?
+references outside their loop.
+
+`blocks-player-touching.lua` is generated from the real player/object overlap
+block. The native runtime exercises authored sensor bounds, two-player atomic
+responses, rollback replay, rejected writes, exact boundary contact and a nearby
+corner outside the player's circle. The corner case prevents a rectangular
+approximation from reporting false contact.
+
+Object rename regression coverage now includes a map-level creation block and a
+creation block in another object's callback. The tests verify regenerated names,
+restorable editable layouts and an unchanged input document. Reference rewriting
+only runs after regenerating the original layout and matching its source exactly.
+
+The generated object-group fixture runs from a map tick, changes only the selected
+object type, and leaves another type's velocity/animation state untouched. Native
+snapshot restore/replay compares the complete resulting content state. Generated
+loops guard each snapshot handle with entity.exists before querying its type.
+
+`object-motion-controls.lua` is generated from actual object-designer motion
+settings. Native tests assert exact fixed-point position and velocity after gravity,
+drag and terminal-speed clamping, then compare complete snapshots after replay.
+Object-tool tests cover export/import, rename and rejection of invalid settings.
+Dark-theme and pointer interaction changes still require live visual acceptance.

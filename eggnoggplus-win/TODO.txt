@@ -16,8 +16,9 @@ Release/security blockers:
       private-LAN-only dashboard now covers lookup, password reset, ban/unban,
       disconnect, rating reset, connected-player/build presence, queue order and wait,
       match participants/map/phase/direct-or-relay state, challenges, rematches, and the
-      friendship/request/block/mute graph; add account deletion, append-only audit logs,
-      durable transactional storage, and backup/restore operations.
+      friendship/request/block/mute graph; add account deletion and durable transactional
+      storage. Flushed admin audit records and verified offline backup/restore tooling
+      are implemented below; production operational acceptance remains.
 Netcode correctness and quality (open; the current rollback transport still has known
 desync and recovery failure modes):
     - P0: Replace the production pointer-dependent raw memory slabs with a fully typed,
@@ -80,7 +81,7 @@ desync and recovery failure modes):
       route health. The default-off small HUD now supplies the existing smoothed ping,
       input delay, and rollback count.
 
-    - theres a desync in the last room of vanilla 1 thats causing disconnects in online play.
+
 
 Runtime acceptance still required:
     - Verify initial sword tiles create one sword each through immediate local start,
@@ -204,6 +205,29 @@ Framework API release gate:
       are complete below; live GPU retirement and authoring soaks remain open.
 
 Feature backlog:
+    - Active implementation plan: docs/custom-content-system.md. Framework-owned
+      entity lifecycle/snapshot foundation, immutable type catalogs, and independent
+      body/sensor/combat rectangle queries, named package placement/identity, and
+      strict JSON package decoding, managed per-type Lua updates, and combined
+      script/entity rollback, and a native rollback extension are implemented;
+      guarded runtime/native tests cover these paths;
+      V2 entities.json discovery and offline logical updates now use the pinned
+      map registry. Map API 14 exposes deterministic region contacts with guarded
+      contact-driven motion/replay coverage; API 15 adds transactional spawn/removal
+      callbacks and initial-placement notification. Independent sprite metadata and
+      native draw submission are implemented with visual acceptance pending. API 16
+      adds named placement/type queries and discovery-time visual reference checks.
+      API 17 adds player observation; API 18 queues atomic native velocity
+      changes with two-player preflight and guarded native/runtime tests. API 19
+      exposes authored-region bounds and native contact radius. Native
+      defeat transactions now queue the native death routine (API 22), with a
+      moving-hazard example and guarded tests. Equipment, general damage/object
+      mutation and live acceptance remain open.
+      Greggnogg now integrates an Objects dialog into the current map and a
+      Custom tiles palette for placement. API 20 adds room-local mirrored
+      expansion; API 21 adds per-instance animation clocks and pause/restart.
+      Definition/component registration, collision/combat, weapons, online
+      admission and live browser/runtime acceptance remain required.
     - Finish the broad custom-content API as a coherent, polished system: additional
       weapons, entities/map objects, placement, lifecycle callbacks, validated metadata,
       online fingerprints/policy, examples, diagnostics, editor integration, and full
@@ -254,10 +278,146 @@ Feature backlog:
     - add linux and mac support.
     - allow custom maps to have custom heights/widths
     - heavily expand map.lua functions and make it easier to script/create mods and map lua scripts
-    - be able to choose when an opponent spawns in certain rooms rather than just not spawning them in the end rooms or spawning them always
+    - volume control for sfx/music
+    - custom map ambiances (basically a particle system)
 
 # Completed (source implementation and focused automated coverage)
 
+    - Map API 12 adds 32 named rollback-owned timers with delayed/repeating
+      callbacks, restart/cancel/remaining controls, stable registration-order
+      dispatch and cancellation of pending callbacks. Snapshot version 6 validates
+      timer state; callback faults restore the tick transaction. Timer replay,
+      scheduling, cancellation and corruption tests plus a timed-spring example
+      accompany MAP_FORMAT and the searchable API reference.
+
+
+    - Per-room opponent spawning in V1/V2: native/always/never map defaults and
+      source-room overrides, mirrored inheritance, strict parser validation, and
+      Greggnogg import/export/settings/history support. Nine narrowly verified
+      native gates separate respawn/end-room combat from goal completion while
+      preserving score/victory guards and initial/leader respawn behavior.
+      Guarded native policy and package tests pass; follow the remaining local/
+      two-client acceptance in docs/opponent-spawn-testing.md before release.
+
+
+    - UI API revision 12 adds a complete bounded list_box control: literal label
+      filtering, keyboard/controller paging and first/last navigation, disabled-row
+      skipping, automatic selection reveal, pointer selection/activation, draggable
+      scrollbar, row-based scroll ownership, fitting labels and themed focus.
+      Only visible full rows draw/hit-test; a 200-row browser demo and guarded
+      behavior tests cover filtering, navigation, bounds and pointer interaction.
+    - Failed map.state assignments now validate a replacement before committing:
+      invalid types, oversized strings and nonfinite numbers preserve existing
+      state and free capacity. Twelve guarded regression cases cover both paths.
+
+
+    - UI API revision 11 adds a built-in high_contrast theme and sorted, detached
+      theme_names discovery. Partial named themes inherit complete default_dark
+      values, preventing missing spacing/text fields from breaking controls.
+    - Custom-screen lifecycle callbacks stop after screen changes or definition
+      replacement, preventing stale rendering/cursor overrides and repeated leave
+      callbacks after redirects. Guarded Lua regressions cover each transition.
+
+    - UI API revision 10: slider keyboard/controller navigation with bounded
+      configurable steps and explicit mouse precedence; focused activation for
+      icon buttons/checkboxes; visible focus outlines. Input edges stay owned
+      by the calling mod. Guarded Lua tests cover limits, disabled/unfocused
+      controls, validation, activation, and mixed-input precedence. A complete
+      keyboard demo is in docs/examples/ui_navigation.lua. State definitions now
+      reject invalid callbacks/registration failures without replacing a working
+      screen or duplicating event routers.
+
+    - Classic last-room RNG desync fixed and user-confirmed September 7. The
+      alternate creepy sound pitch call at 0x424410 now uses cosmetic RNG; paired
+      LAN traces and a native hook regression establish the exact cause.
+
+    - Native display-size cache now follows actual SDL window dimensions after
+      fullscreen/focus transitions; the reported 1600x900 viewport with stale
+      1537x865 native projection is corrected. Gameplay dimensions stay under
+      rollback ownership; live camera/fullscreen acceptance remains required.
+
+    - Interactive progress bars respect disabled state, map vertical pointer input
+      to the displayed fill direction, normalize NaN progress, and skip invalid
+      bounds. Guarded Lua regression tests cover both orientations and reversal.
+    - Delayed duplicate-packet chaos tests now stop draining on duplicate-send
+      backpressure while preserving the next pending packet; the guarded receive
+      budget fixture verifies exact send count and retained queue ownership.
+
+    - UI API revision 9 adds with_style for temporary control styling, preserving
+      callback arguments/results and restoring the full previous stack on success
+      or failure, including nested scopes and unbalanced style changes. Guarded
+      native Lua tests exercise error identity, nil returns, nesting, coroutine isolation,
+      cyclic/deep table rejection, and atomic theme update failure.
+
+    - Windows and Linux/Wine installers create maps/ alongside mods/, explain
+      the extracted per-map folder layout, and preserve user maps on uninstall.
+      Windows lifecycle and Linux static/syntax checks pass; the POSIX integration
+      fixture also asserts map creation and preservation.
+
+    - UI API revision 7: responsive grid bounds with validated dimensions, detached
+      output and stable last-row sizing; constant-space list virtualization calculates
+      visible rows, scroll limits and selection reveal. Sliders anchor steps at the minimum,
+      clamp rounded values and handle fixed/reversed ranges. Embedded UI helpers
+      moved from lua_manager.c into ui_helpers.lua with a checked generated C
+      header; production bytes execute directly in guarded
+      LuaJIT regression tests. Broader navigation/accessibility work remains open.
+
+    - Online hub text fields commit valid drafts before clicking another field,
+      Log In/Register, tabs or background. Tab/Shift+Tab and up/down move text
+      focus; controller confirm/cancel/navigation work during editing. Invalid
+      settings retain their draft and block navigation. Same-field clicks do not
+      reset input; Escape cancels. Friend requests require explicit submission.
+      Extracted production mouse/key handlers pass isolated no-network tests;
+      live login-layout acceptance remains.
+    - Map API version 11 adds map.state_clear([prefix]) for puzzle/round resets:
+      literal prefix matching, removal counts, immediate slot reuse, strict argument
+      validation, and byte-identical snapshot replay covered by guarded Lua tests.
+    - Map API version 10 adds map.state_keys(): detached, bytewise-sorted key
+      enumeration for inspecting/clearing rollback-owned state. Tests cover empty
+      and full state, deletion/slot reuse, copy isolation, argument errors and
+      exact snapshot replay. Online peers require matching map API fingerprints.
+    - Keyboard binding parser extracted into input_binding.h with strict complete
+      decimal parsing, overflow rejection, whitespace handling and canonical-name
+      round trips. Malformed numeric names cannot silently become another key or
+      unbind an action. The guarded UI/API runner covers the production parser.
+    - UI API revision 8: previous/next selection on tabs, item grids and swatch
+      grids using owner-routed keyboard/controller edges. Navigation skips disabled
+      items, supports optional wrap and exposes a pure navigate_items helper for
+      custom controls. Global focus ownership and accessibility remain open.
+    - UI hit tests share finite, fractional, half-open bounds across immediate
+      widgets and native mouse capture. Invalid bounds cannot capture the screen;
+      adjacent controls do not both activate at a shared edge. Disabled sliders
+      ignore mouse edits, and tiny steps no longer overflow into the maximum.
+    - Paired netcode coverage now replays delayed/reordered datagrams as well as
+      immediate traffic. Focused 2,048-frame ordinary and bilateral uint32-wrap
+      duplicate/loss/delay runs preserve exact finalized state equality, cross four
+      history generations and verify replay rejection. Native entity soaks remain.
+    - Greggnogg goal color now uses the existing inline RGB/hex editor, with live
+      preview, exact fractional channels and grouped undo; native OS color pickers
+      remain excluded. Shared room-color controls retain their previous behavior.
+    - Admin persistence: password, ban/unban and rating changes write a detached
+      proposed record before publishing memory or notifying clients. Failed writes
+      retain old nested data and generate failure audit outcomes. Restore verifies
+      recovery bytes and distinguishes incomplete recovery from successful rollback.
+    - Server operations: admin maintenance emits correlated, flushed intent/outcome
+      audit records without passwords/form contents. Audit-write failure blocks mutation
+      or explicitly reports a completed action with missing outcome. Server updates
+      preserve JSONL logs. Offline backup/verify/restore tools validate all account,
+      rating and secret files, hash snapshots, retain a recovery copy and recover from
+      simulated partial-write failure. These do not replace multi-file transactions.
+    - Map API version 9 adds tile:get_sprite() for inspecting the active temporary
+      sprite, pixel offsets and remaining tick lifetime. Returns detached data or nil;
+      mutation cannot alter the native effect. Reset, mutation-isolation and rollback
+      replay coverage pass in the guarded map runtime suite.
+    - Preview color deployment mismatch: yule:// opened the installed AppData copy,
+      whose older DLL did not contain the Eggnogg-color feature. Preview help now
+      explains the installed-game target; map generation logs the active RGB override
+      for diagnosis. See docs/preview-color-fix-2026-09-05.md for installed-build checks.
+      The user confirmed the updated preview now displays the configured color.
+    - Map API version 8 adds map.tile_bindings(): detached symbol/key entries in
+      manifest order, available during load/callbacks for shared behavior registration.
+      Tests cover ordering, mutation isolation, empty lists, argument errors and
+      rollback replay. Matching online builds are required.
     - Map API version 7 adds map.has_tile(symbol_or_key), an immutable declaration
       query usable during load/callbacks for optional reusable script behavior.
       Missing native/custom bindings return false; callback references containing
@@ -460,7 +620,7 @@ Feature backlog:
       URL, redirect count, and allowlisted response-header metadata; automatic redirects
       are capped at five and refuse HTTPS downgrades. Ten-second phase timeouts and the
       eight-worker process ceiling remain. A real concurrent loopback WinHTTP test covers
-      redirect metadata, owner isolation, all eight slots, cancel/unload, deferred worker
+      redirect metadata, owner isolation, all nine slots, cancel/unload, deferred worker
       cleanup, slot reuse, and stale handles; static coverage pins the limits and wiring.
 
     - Private-LAN online-server administration baseline: a separate default-loopback,
@@ -1173,3 +1333,113 @@ Feature backlog:
       tint, and layer choices, including per-state automatic/disabled/custom policies.
     - Custom-map water ambience/effects: native water glyphs, per-room water colors,
       bubbles, boil, and fume ambience.
+
+    - Content Workshop atlas preview now imports inherited cell dimensions/padding
+      from data.json, supports rectangular cells and gutters, and fixes native glyph
+      border/stride cropping. Imports preserve work on failure, support undo/redo,
+      and persist settings in drafts. Entity loading rejects ambiguous multi-grid
+      PNG references; identical declarations still share a sheet. Asset packaging,
+      full-map integration and live visual acceptance remain unfinished.
+
+    - Content Workshop complete-map packaging: open one V2 map folder (including
+      nested wrappers), load its entities/Lua and preview PNGs, export a complete
+      ZIP preserving map/asset/supplementary file bytes and unchanged Lua. Imports
+      are atomic and undoable; references/ranges validate before export. Attached
+      files remain session-only with an export reminder. Room-local placement,
+      native combat/equipment, atlas authoring and live acceptance remain open.
+
+    - Map API 19 exposes authored regions with local/world bounds and player contact
+      radius, with detached values, stable ordering and shared execution accounting.
+      Launch-pad entity/Lua example uses authored sensor geometry and atomic native
+      player velocity writes. Native adapter and real VM tests cover both players,
+      exact budgets, stale handles, host failure and rollback replay. Native combat,
+      equipment and live sensor/movement acceptance remain unfinished.
+
+    - Greggnogg integration revision: Objects now edits the current map in a
+      dialog. Designs enter Custom tiles, normal map tools place/erase instances,
+      room edits retain references, and animated visuals render on the map.
+      Removed standalone map selection and preset/onboarding flow. Import/export
+      carries object callback editor metadata; mismatched manual Lua edits fail
+      explicitly. Native/API and live visual acceptance remain separate gates.
+
+    - Integrated custom-map Preview now uploads PNGs/entities/Lua through a
+      token-scoped loopback session and starts a validated local map. Staged
+      files retire only after registry/engine release, preserving edited and
+      unrelated files. Old-process cache cleanup and live browser/game acceptance
+      remain open. Map logic offers Blocks and highlighted Advanced Lua;
+      object callbacks also have highlighted editing. Invalid blocks stay visible
+      when switching modes instead of silently reverting to earlier Lua.
+
+    - Beginner object blocks include animation pause and horizontal flip. Shared
+      generated Lua now runs in native tests with entity updates and exact
+      snapshot replay; broader blocks coverage and live editor acceptance remain.
+
+    - Object creation/removal blocks now generate native-tested Lua; creation,
+      removal, animation pause and movement have shared browser/native fixtures
+      and exact snapshot replay coverage. Object type selection still needs a
+      current-map picker, and the complete beginner logic API remains unfinished.
+
+    - Object logic now has Blocks/Advanced per lifecycle event, current-map object
+      pickers, preserved callback layouts, and supplied event context. Added repeat,
+      periodic condition, deterministic random and extended math blocks; generated
+      runtime fixtures cover timing/random/loops with exact rollback replay.
+      Blockly popup containers now follow the active modal dialog. Live UI acceptance
+      and remaining broader content API work are still open.
+
+    - Object block persistence now has package round-trip and rename/restore
+      regressions. Metadata shape/size validation rejects malformed layouts;
+      stale metadata preserves newer Lua. Nested unsupported blocks reject during
+      generation. Live UI acceptance and broader API requirements remain open.
+
+    - Player observation blocks add active-player iteration, scoped position/speed/
+      radius values, and current-player velocity/defeat targets. Shared generated
+      Lua tests cover both slots, sparse presence and empty queries with atomic
+      native commits. Remaining API and live acceptance work is still open.
+
+    - Player/object overlap block checks authored regions by role with circle/AABB
+      geometry. Generated native tests cover response, replay, host rejection,
+      boundary contact and non-contact corners. Broader API/live gates remain.
+
+    - Object-group blocks select a design and provide scoped instance controls
+      inside map/object events, guarding snapshot handles against removal. Native
+      tests verify type filtering and replay. Full content API remains unfinished.
+
+    - Object designer motion controls add opt-in gravity, horizontal drag and
+      vertical speed limits, with metadata round-trip and exact native replay tests.
+      Both Blockly editors now use dark component colors and disable background
+      drag-to-pan. Detection-area roles and lack of automatic native terrain
+      collision are explicit. Local Map Lua docs updated; published page returned
+      HTTP 403 during verification. Live dropdown behavior remains unverified.
+
+Custom-content follow-up (September 10):
+  [x] Shared map/per-player block variables: read, set, change, clear, exists;
+      generated Lua verified in native player simulation and rollback replay.
+  [x] Put detection controls beside preview; disable shared sprite smoothing.
+  [ ] Verify dropdown interaction after toolbox drag in live Greggnogg; revised
+      pointer-up handling passes regression harness but requires live acceptance.
+  [ ] Named detection regions available to scripts and blocks.
+  [x] Solid custom regions with native player/physics response and rollback tests (API 25).
+  [ ] Double-jump authoring: verified input/ground state, indicator attachment,
+      collectible recharge, example map and beginner block workflow.
+
+Custom-content authoring follow-up:
+  [x] Variable creation dialog and name dropdowns; serialized name catalog.
+  [x] Per-instance variables with removal cleanup and rollback replay (API 24).
+  [x] Explicit movement default for new designs; velocity integration opt-in.
+  [ ] Verify dropdowns after toolbox drag in live UI; restore workspace and
+      popup focus roots before opening (automated interaction harness passes).
+  [ ] General coordinate query matching exact authored tiles or custom objects,
+      composable through ordinary equality/OR rather than patrol-specific commands.
+  [x] Solid custom hitboxes with native player/physics-object collision response (API 25).
+  [ ] Expand per-object state capacity beyond shared 64 entries / 12-character keys.
+
+  [x] API 25 solid-region purpose and editor checkbox: swept native player,
+      corpse, sword and hazard blocking; grounded flags, snapshot restoration,
+      native wall/floor/ceiling/diagonal/penetration tests.
+  [ ] Live game acceptance for solid surfaces, jump responsiveness, stacked
+      geometry and moving obstacles; moving-platform carry/rigid-body response.
+
+  [x] API 26 entity.at(x,y), bounded stable point query with mirrored region
+      geometry, detached handles and half-open edges; reusable object-at block
+      composes through OR and tracks renamed types. Native/runtime tests pass.
+  [ ] Complete coordinate detector with exact terrain-character lookup.

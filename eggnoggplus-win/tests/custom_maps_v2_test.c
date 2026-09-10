@@ -340,6 +340,58 @@ static void test_in_memory_v1_preview(void) {
     custom_maps_shutdown();
 }
 
+static void test_v2_preview_folder(void) {
+    char token[33],relative[96],folder[MAX_PATH],path[MAX_PATH+32],map[1024],error[256];int selector=-1;
+    const char* json=spawn_budget_v2_json();
+    const char* entities="{\"schema\":2,\"capacity\":8,\"types\":[{\"key\":\"demo:preview\",\"regions\":[],\"visual\":{\"sheet\":\"builtin:tiles\",\"sprite\":4}}],\"placements\":[{\"name\":\"first\",\"type\":\"demo:preview\",\"room\":\"center\",\"x\":48,\"y\":64,\"vx\":1}]}";
+    const char* source="entity.on_update('demo:preview',function(h) map.state.seen=true end)";
+    snprintf(token,sizeof(token),"%08lx%08lx%08x%08x",(unsigned long)GetCurrentProcessId(),(unsigned long)GetTickCount(),1u,2u);
+    snprintf(relative,sizeof(relative),"_greggnogg_previews/%s",token);snprintf(folder,sizeof(folder),"maps/%s",relative);
+    CreateDirectoryA("maps/_greggnogg_previews",NULL);CHECK(CreateDirectoryA(folder,NULL)!=0);
+    build_one_room_map(0,map,sizeof(map));
+    snprintf(path,sizeof(path),"%s/data.json",folder);CHECK(write_fixture_bytes(path,json,strlen(json)));
+    snprintf(path,sizeof(path),"%s/data.map",folder);CHECK(write_fixture_bytes(path,map,strlen(map)));
+    snprintf(path,sizeof(path),"%s/entities.json",folder);CHECK(write_fixture_bytes(path,entities,strlen(entities)));
+    snprintf(path,sizeof(path),"%s/map.lua",folder);CHECK(write_fixture_bytes(path,source,strlen(source)));
+    custom_maps_init();int before=custom_maps_total_selectors();
+    CHECK(custom_maps_install_preview_folder(token,&selector,error,sizeof(error)));CHECK(selector==before);
+    CHECK(custom_maps_total_selectors()==before+1);
+    selector=custom_maps_test_pin_folder(relative);CHECK(selector>=0);
+    CHECK(custom_maps_activate_script_for_selector(selector,NULL,error,sizeof(error)));CHECK(map_script_has_entities());
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));uint32_t cursor=0;EntityRenderView render;
+    CHECK(map_script_entity_render_next(&cursor,&render)&&render.x==49*256);
+    int needed=custom_maps_build_manifest_json(NULL,0);char* manifest=malloc((size_t)needed+1u);CHECK(manifest!=NULL);
+    if(manifest){custom_maps_build_manifest_json(manifest,(size_t)needed+1u);CHECK(strstr(manifest,"spawn_budget")==NULL);free(manifest);}
+    uint64_t generation=custom_maps_generation();
+    CHECK(write_fixture_bytes(path,"error('bad preview')",20));
+    CHECK(!custom_maps_install_preview_folder(token,&selector,error,sizeof(error)));CHECK(custom_maps_generation()==generation);
+    CHECK(!custom_maps_install_preview_folder("../bad",&selector,error,sizeof(error)));
+    CHECK(custom_maps_preview_session_in_use(token));
+    custom_maps_deactivate_script();custom_maps_clear_preview();
+    CHECK(custom_maps_preview_session_in_use(token)); /* Engine still holds the retired map. */
+    custom_maps_test_pin_folder(NULL);
+    CHECK(!custom_maps_preview_session_in_use(token));
+    CHECK(!custom_maps_preview_session_in_use("../bad"));
+    CHECK(custom_maps_total_selectors()==before);
+    {
+        char original[MAX_PATH],original_path[MAX_PATH+32];snprintf(original,sizeof(original),"maps/preview_original_%s",token);
+        CHECK(CreateDirectoryA(original,NULL)!=0);
+        snprintf(original_path,sizeof(original_path),"%s/data.json",original);CHECK(write_fixture_bytes(original_path,json,strlen(json)));
+        snprintf(original_path,sizeof(original_path),"%s/data.map",original);CHECK(write_fixture_bytes(original_path,map,strlen(map)));
+        (void)custom_maps_generation();CHECK(custom_maps_total_selectors()==before+1);
+        snprintf(path,sizeof(path),"%s/map.lua",folder);CHECK(write_fixture_bytes(path,source,strlen(source)));
+        CHECK(custom_maps_install_preview_folder(token,&selector,error,sizeof(error)));
+        CHECK(custom_maps_total_selectors()==before+1); /* Same authored ID is overridden, not duplicated. */
+        custom_maps_clear_preview();CHECK(custom_maps_total_selectors()==before+1);
+        needed=custom_maps_build_manifest_json(NULL,0);manifest=malloc((size_t)needed+1u);CHECK(manifest!=NULL);
+        if(manifest){custom_maps_build_manifest_json(manifest,(size_t)needed+1u);CHECK(strstr(manifest,"spawn_budget")!=NULL);free(manifest);}
+        CHECK(DeleteFileA(original_path)!=0);snprintf(original_path,sizeof(original_path),"%s/data.json",original);CHECK(DeleteFileA(original_path)!=0);CHECK(RemoveDirectoryA(original)!=0);
+    }
+    const char* names[]={"data.json","data.map","entities.json","map.lua"};
+    for(size_t i=0;i<4;i++){snprintf(path,sizeof(path),"%s/%s",folder,names[i]);CHECK(DeleteFileA(path)!=0);}CHECK(RemoveDirectoryA(folder)!=0);
+    custom_maps_shutdown();
+}
+
 static void test_native_room_spawn_budget(void) {
     char map_text[1024];
     CustomMapValidationSummary summary;
@@ -1298,12 +1350,205 @@ static void test_eggnogg_color(void) {
     CHECK(untouched[0] == 0.25f && untouched[1] == 0.5f && untouched[2] == 0.75f);
 }
 
+static void test_opponent_spawn(void) {
+    const char* invalid[] = {"null", "true", "0", "[]", "{}", "\"ALWAYS\"", "\"inherit\""};
+    const char* policies[] = {"default", "always", "never"};
+    char json[2048], map_text[1024];
+    CustomMapValidationSummary summary;
+    const char* bases[] = {v1_json(), spawn_budget_v2_json()};
+    build_one_room_map('^', map_text, sizeof(map_text));
+    for (size_t b = 0; b < 2; ++b) {
+        const char* base = bases[b];
+        CHECK(custom_maps_validate_package_text("legacy", ".", base, map_text, &summary));
+        CHECK(summary.opponent_spawn[0] == 0);
+        for (int policy = 0; policy < 3; ++policy) {
+            snprintf(json, sizeof(json), "%.*s,\"defaults\":{\"room\":{\"opponent_spawn\":\"%s\"}}}",
+                     (int)strlen(base) - 1, base, policies[policy]);
+            CHECK(custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+            CHECK(summary.opponent_spawn[0] == policy);
+            snprintf(json, sizeof(json), "%.*s,\"defaults\":{\"room\":{\"opponent_spawn\":\"never\"}},"
+                "\"rooms\":{\"center\":{\"opponent_spawn\":\"%s\"}}}",
+                (int)strlen(base) - 1, base, policies[policy]);
+            CHECK(custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+            CHECK(summary.opponent_spawn[0] == policy);
+        }
+        for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+            snprintf(json, sizeof(json), "%.*s,\"defaults\":{\"room\":{\"opponent_spawn\":%s}}}",
+                (int)strlen(base) - 1, base, invalid[i]);
+            CHECK(!custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+            snprintf(json, sizeof(json), "%.*s,\"rooms\":{\"center\":{\"opponent_spawn\":%s}}}",
+                (int)strlen(base) - 1, base, invalid[i]);
+            CHECK(!custom_maps_validate_package_text("legacy", ".", json, map_text, &summary));
+        }
+    }
+    {
+        char multi_map[4096];
+        const char* rows = strchr(strstr(map_text, "[center]"), '\n') + 1;
+        snprintf(multi_map, sizeof(multi_map), "[center]\n%s[inner]\n%s[outer]\n%s", rows, rows, rows);
+        const char* three = "{\"format\":\"eggnogg-map/v1\",\"id\":\"legacy\",\"name\":\"Policy\",\"author\":\"Test\","
+            "\"layout\":{\"kind\":\"mirrored_source_rooms\",\"room_format\":\"vanilla_33x12\",\"order\":[\"center\",\"inner\",\"outer\"]},"
+            "\"defaults\":{\"room\":{\"opponent_spawn\":\"never\"}},"
+            "\"rooms\":{\"center\":{\"opponent_spawn\":\"default\"},\"outer\":{\"opponent_spawn\":\"always\"}}}";
+        CHECK(custom_maps_validate_package_text("legacy", ".", three, multi_map, &summary));
+        CHECK(summary.source_room_count == 3);
+        CHECK(summary.final_opponent_spawn[0] == 1 && summary.final_opponent_spawn[1] == 2 &&
+              summary.final_opponent_spawn[2] == 0 && summary.final_opponent_spawn[3] == 2 &&
+              summary.final_opponent_spawn[4] == 1);
+    }
+    CHECK(custom_maps_opponent_spawn_policy(0, 0) == 0);
+    CHECK(custom_maps_opponent_spawn_policy(-1, 0) == 0);
+    CHECK(custom_maps_opponent_spawn_policy(999, 0) == 0);
+}
+
+static void check_entity_map_tick_value(int expected) {
+    char err[384];MapScriptSnapshot map;
+    size_t size=map_script_content_snapshot_size();unsigned char* bytes=malloc(size);
+    CHECK(bytes!=NULL);if(!bytes) return;
+    CHECK(map_script_dispatch_tick(err,sizeof(err)));
+    CHECK(map_script_dispatch_tick(err,sizeof(err)));
+    CHECK(map_script_content_snapshot_save(bytes,size,err,sizeof(err)));
+    memcpy(&map,bytes+MAP_SCRIPT_CONTENT_HEADER_BYTES,sizeof(map));
+    CHECK(map.state_count==1 && map.state[0].number_value==expected);
+    free(bytes);
+}
+static void test_entity_package_discovery(void) {
+    static const char json[]="{\"format\":\"eggnogg-map/v2\",\"id\":\"entity_discovery\",\"name\":\"Entity discovery\",\"author\":\"Test\",\"layout\":{\"kind\":\"mirrored_source_rooms\",\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]}}";
+    static const char entities[]="{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[]}],\"placements\":[{\"name\":\"orb\",\"type\":\"demo:orb\",\"vx\":1}]}";
+    static const char source[]="entity.on_update('demo:orb',function(h) map.state.seen=entity.get(h).x end)";
+    char folder_id[96],folder[MAX_PATH],entity_path[MAX_PATH+32],script_path[MAX_PATH+32];
+    char json_path[MAX_PATH+32],map_path[MAX_PATH+32],map_text[1024],err[384],changed[sizeof(entities)];
+    CustomMapValidationSummary summary;uint64_t generation,old_script_id,new_script_id;
+    WIN32_FILE_ATTRIBUTE_DATA info;int selector,needed;char* manifest;
+    snprintf(folder_id,sizeof(folder_id),"entity_discovery_%lu",(unsigned long)GetCurrentProcessId());
+    snprintf(folder,sizeof(folder),"maps\\%s",folder_id);
+    snprintf(entity_path,sizeof(entity_path),"%s\\entities.json",folder);
+    snprintf(script_path,sizeof(script_path),"%s\\map.lua",folder);
+    snprintf(json_path,sizeof(json_path),"%s\\data.json",folder);
+    snprintf(map_path,sizeof(map_path),"%s\\data.map",folder);
+    CHECK(CreateDirectoryA(folder,NULL)!=0);
+    build_one_room_map(0,map_text,sizeof(map_text));
+    CHECK(write_fixture_bytes(entity_path,entities,strlen(entities)));
+    CHECK(custom_maps_validate_package_text("entities",folder,json,map_text,&summary));
+    CHECK(summary.has_entities && summary.has_script && summary.script_size==0 && summary.entity_size==strlen(entities));
+    CHECK(!custom_maps_validate_package_text("entities",folder,v1_json(),map_text,&summary));
+    {
+        const char* room_json="{\"schema\":2,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[]}],\"placements\":[{\"name\":\"pad\",\"type\":\"demo:orb\",\"room\":\"center\",\"x\":8,\"vx\":2}]}";
+        CHECK(write_fixture_bytes(entity_path,room_json,strlen(room_json)));
+        CHECK(custom_maps_validate_package_text("entities",folder,json,map_text,&summary));
+        CHECK(write_fixture_bytes(entity_path,entities,strlen(entities)));
+    }
+    {
+        const char* sheets[]={"builtin:tiles","builtin:typo","missing.png"};
+        char visual_json[512];
+        for(int i=0;i<3;i++) {
+            snprintf(visual_json,sizeof(visual_json),"{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[],\"visual\":{\"sheet\":\"%s\",\"sprite\":0}}],\"placements\":[]}",sheets[i]);
+            CHECK(write_fixture_bytes(entity_path,visual_json,strlen(visual_json)));
+            CHECK(custom_maps_validate_package_text("entities",folder,json,map_text,&summary)==(i==0));
+        }
+        {
+            char png[MAX_PATH+32],map_json[1024];
+            snprintf(png,sizeof(png),"%s\\visual.png",folder);
+            CHECK(write_png_header_fixture(png,32,16,0x71));
+            snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"sprite_sheet\":\"visual.png\",\"cell_w\":16,\"cell_h\":16}}",(int)strlen(json)-1,json);
+            for(int frames=2;frames<=3;frames++) {
+                snprintf(visual_json,sizeof(visual_json),"{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[],\"visual\":{\"sheet\":\"visual.png\",\"sprite\":0,\"frames\":%d}}],\"placements\":[]}",frames);
+                CHECK(write_fixture_bytes(entity_path,visual_json,strlen(visual_json)));
+                CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary)==(frames==2));
+            }
+            snprintf(visual_json,sizeof(visual_json),"{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[],\"visual\":{\"sheet\":\"visual.png\",\"sprite\":0}}],\"placements\":[]}");
+            CHECK(write_fixture_bytes(entity_path,visual_json,strlen(visual_json)));
+            for(int width=16;width>=8;width-=8) {
+                snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"sprite_sheet\":\"visual.png\",\"cell_w\":16,\"cell_h\":16,\"tiles\":[{\"id\":\"grid\",\"symbol\":\"$\",\"native_glyph\":\"x\",\"cell_w\":%d}]}}",(int)strlen(json)-1,json,width);
+                CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary)==(width==16));
+            }
+            snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"sheets\":[{\"sprite_sheet\":\"visual.png\",\"cell_w\":32,\"cell_h\":16}]}}",(int)strlen(json)-1,json);
+            CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary));
+            snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"sheets\":[{\"sprite_sheet\":\"visual.png\",\"cell_w\":0}]}}",(int)strlen(json)-1,json);
+            CHECK(!custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary));
+            CHECK(DeleteFileA(png)!=0);
+        }
+        CHECK(write_fixture_bytes(entity_path,entities,strlen(entities)));
+    }
+
+    CHECK(write_fixture_bytes(entity_path,"{}",2));
+    CHECK(!custom_maps_validate_package_text("entities",folder,json,map_text,&summary));
+    CHECK(DeleteFileA(entity_path)!=0);
+    CHECK(CreateDirectoryA(entity_path,NULL)!=0);
+    CHECK(!custom_maps_validate_package_text("entities",folder,json,map_text,&summary));
+    CHECK(RemoveDirectoryA(entity_path)!=0);
+    CHECK(write_fixture_bytes(entity_path,entities,strlen(entities)));
+    CHECK(write_fixture_bytes(script_path,source,strlen(source)));
+    CHECK(write_fixture_bytes(json_path,json,strlen(json)));
+    CHECK(write_fixture_bytes(map_path,map_text,strlen(map_text)));
+    CHECK(custom_maps_validate_package_text("entities",folder,json,map_text,&summary));
+    old_script_id=summary.script_id;
+    CHECK(GetFileAttributesExA(entity_path,GetFileExInfoStandard,&info)!=0);
+    generation=custom_maps_generation();
+    needed=custom_maps_build_manifest_json(NULL,0);manifest=malloc((size_t)needed+1u);
+    CHECK(manifest!=NULL);
+    if(manifest) {custom_maps_build_manifest_json(manifest,(size_t)needed+1u);CHECK(!strstr(manifest,"entity_discovery:"));free(manifest);}
+    selector=custom_maps_test_pin_folder(folder_id);CHECK(selector>=0);
+    CHECK(custom_maps_activate_script_for_selector(selector,NULL,err,sizeof(err)));
+    CHECK(map_script_has_entities() && !map_script_network_admissible(err,sizeof(err)));
+    check_entity_map_tick_value(1);
+    memcpy(changed,entities,sizeof(changed));strstr(changed,"\"vx\":1")[5]='2';
+    CHECK(write_fixture_bytes(entity_path,changed,strlen(changed)));
+    CHECK(restore_file_write_time(entity_path,&info.ftLastWriteTime));
+    CHECK(custom_maps_generation()>generation);
+    CHECK(custom_maps_pinned_script_id(selector,&new_script_id)==1 && new_script_id==old_script_id);
+    CHECK(custom_maps_activate_script_for_selector(selector,NULL,err,sizeof(err)));
+    check_entity_map_tick_value(1); /* Pinned old source survives registry replacement. */
+    selector=custom_maps_test_pin_folder(folder_id);CHECK(selector>=0);
+    CHECK(custom_maps_pinned_script_id(selector,&new_script_id)==1 && new_script_id!=old_script_id);
+    CHECK(custom_maps_activate_script_for_selector(selector,NULL,err,sizeof(err)));
+    check_entity_map_tick_value(2);
+    custom_maps_deactivate_script();custom_maps_test_pin_folder(NULL);
+    CHECK(DeleteFileA(entity_path)!=0);CHECK(DeleteFileA(script_path)!=0);
+    CHECK(DeleteFileA(json_path)!=0);CHECK(DeleteFileA(map_path)!=0);CHECK(RemoveDirectoryA(folder)!=0);
+    (void)custom_maps_generation();
+}
+
+static void test_nested_zip_discovery(void) {
+    static const char json[]="{\"format\":\"eggnogg-map/v2\",\"id\":\"nested_zip_fixture\",\"name\":\"Nested ZIP Fixture\",\"author\":\"Test\",\"layout\":{\"kind\":\"mirrored_source_rooms\",\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]}}";
+    char outer[MAX_PATH],middle[MAX_PATH],folder[MAX_PATH],assets[MAX_PATH];
+    char json_path[MAX_PATH],map_path[MAX_PATH],asset_json[MAX_PATH],asset_map[MAX_PATH],map_text[1024],key[160];
+    char* manifest;int needed,selector=-1,total_before;uint64_t generation;
+    (void)custom_maps_generation();total_before=custom_maps_total_selectors();
+    snprintf(outer,sizeof(outer),"maps\\zip_wrapper_%lu",(unsigned long)GetCurrentProcessId());
+    CHECK(snprintf(middle,sizeof(middle),"%s\\Extracted archive",outer)<(int)sizeof(middle));
+    CHECK(snprintf(folder,sizeof(folder),"%s\\Map package",middle)<(int)sizeof(folder));
+    CHECK(snprintf(assets,sizeof(assets),"%s\\assets",folder)<(int)sizeof(assets));
+    CHECK(snprintf(json_path,sizeof(json_path),"%s\\data.json",folder)<(int)sizeof(json_path));
+    CHECK(snprintf(map_path,sizeof(map_path),"%s\\data.map",folder)<(int)sizeof(map_path));
+    CHECK(snprintf(asset_json,sizeof(asset_json),"%s\\data.json",assets)<(int)sizeof(asset_json));
+    CHECK(snprintf(asset_map,sizeof(asset_map),"%s\\data.map",assets)<(int)sizeof(asset_map));
+    CHECK(CreateDirectoryA(outer,NULL)!=0);CHECK(CreateDirectoryA(middle,NULL)!=0);
+    CHECK(CreateDirectoryA(folder,NULL)!=0);CHECK(CreateDirectoryA(assets,NULL)!=0);
+    build_one_room_map(0,map_text,sizeof(map_text));
+    CHECK(write_fixture_bytes(json_path,json,strlen(json)));CHECK(write_fixture_bytes(map_path,map_text,strlen(map_text)));
+    /* A valid package owns its descendants: this duplicate must not be scanned. */
+    CHECK(write_fixture_bytes(asset_json,json,strlen(json)));CHECK(write_fixture_bytes(asset_map,map_text,strlen(map_text)));
+    generation=custom_maps_generation();CHECK(custom_maps_total_selectors()==total_before+1);
+    needed=custom_maps_build_manifest_json(NULL,0);manifest=malloc((size_t)needed+1u);CHECK(manifest!=NULL);
+    if(manifest) {
+        custom_maps_build_manifest_json(manifest,(size_t)needed+1u);
+        CHECK(manifest_key_for_prefix(manifest,"custom:nested_zip_fixture:",key,sizeof(key)));
+        CHECK(custom_maps_selector_for_key(key,&selector));free(manifest);
+    }
+    CHECK(DeleteFileA(asset_json)!=0);CHECK(DeleteFileA(asset_map)!=0);CHECK(RemoveDirectoryA(assets)!=0);
+    CHECK(DeleteFileA(json_path)!=0);CHECK(DeleteFileA(map_path)!=0);CHECK(RemoveDirectoryA(folder)!=0);
+    CHECK(RemoveDirectoryA(middle)!=0);CHECK(RemoveDirectoryA(outer)!=0);
+    CHECK(custom_maps_generation()>generation);CHECK(custom_maps_total_selectors()==total_before);
+}
+
 int main(void) {
     content_registry_shutdown();
     test_v1_compatibility();
     test_eggnogg_color();
+    test_opponent_spawn();
     test_native_tentacle_headroom();
     test_in_memory_v1_preview();
+    test_v2_preview_folder();
     test_native_room_spawn_budget();
     test_v2_symbolic_builtin();
     test_v2_whole_symbol_override();
@@ -1315,6 +1560,8 @@ int main(void) {
     test_tileset_default_online_identity_and_view();
     test_map_script_validation_and_safety();
     test_map_script_online_identity();
+    test_entity_package_discovery();
+    test_nested_zip_discovery();
     content_registry_shutdown();
     if (g_failures != 0) {
         fprintf(stderr, "%d custom map v2 test(s) failed\n", g_failures);

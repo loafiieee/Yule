@@ -1,0 +1,128 @@
+Building native rollback serializer tests...
+state serializer tests: ALL OK
+atlas-renderer tests: OK
+✔ greggnogg\atlas-renderer.test.js (157.2032ms)
+✔ defaults round-trip and checked-in native examples validate (10.1266ms)
+✔ rejects duplicate and escaped duplicate keys without silently normalizing (0.5142ms)
+✔ schema, references, geometry, visual ranges and limits fail closed (1.3151ms)
+✔ rename preserves references and failure preserves the input (0.2608ms)
+✔ export ZIP keeps the exact entity and Lua bytes (1.3734ms)
+✔ export matches the shared native-loader fixture byte for byte (0.4513ms)
+✔ atlas inheritance, rectangular crops and padding match map grid rules (0.6369ms)
+✔ entity PNG grids reject ambiguity, while identical declarations agree (0.4954ms)
+✔ glyph preview includes the native one-pixel origin and nine-pixel stride (0.1982ms)
+✔ complete map export retains exact map, assets and unchanged Lua through nested import (8.2764ms)
+✔ map import rejects ambiguous roots, Windows collisions, traversal and invalid entities (3.107ms)
+✔ room expansion matches native source/mirror coordinates and orientation (0.2845ms)
+✔ ordinary maps become ready to use without asking for a format selection (1.4455ms)
+✔ launch-pad starter exports the exact fixture executed by the real Lua runtime (0.7121ms)
+✔ picture import declares and packages the asset without changing existing tiles or bytes (3.3901ms)
+✔ object design is owned by the current document and upgrades without modifying its source (2.9679ms)
+✔ painting objects preserves terrain, deduplicates cells and erases through the same tool (4.6762ms)
+✔ capacity failure leaves the existing map placements intact (1.0664ms)
+✔ object logic round trips without repeated generated callbacks or losing manual edits (1.3786ms)
+✔ rename preserves placements and callbacks; placed designs cannot be deleted (0.52ms)
+✔ object designer opens inside Greggnogg and the old entry redirects there (19.9869ms)
+✔ room duplication copies instances with distinct names and checks expanded capacity atomically (0.6675ms)
+✔ normal map package parsing retains generated Lua for editor metadata restoration (5.935ms)
+✔ actual map import accepts nested custom-object exports and restores the current-map callback model (6.5349ms)
+✔ actual map import rejects conflicting callback metadata without replacing the current map (6.666ms)
+✔ save validates an immutable snapshot while picture loading is pending (1.2088ms)
+✔ save rejects animation frames that extend beyond the picture sheet (0.6947ms)
+✔ map tools find and erase unsnapped room-local and legacy world-coordinate objects (0.3729ms)
+✔ actual painting ignores a previously selected blank terrain tile and supports explicit keyboard erasure (2.7226ms)
+Greggnogg editor-core tests passed: 121
+✔ greggnogg\editor-core.test.js (184.5981ms)
+✔ configuration fails closed (2.8733ms)
+✔ queue payload contains only public identity, queue, and HTTPS handoffs (2.1148ms)
+✔ join posts once and leave edits the exact owned message (1.9259ms)
+✔ matched post is edited now and deleted after one-day retention (0.686ms)
+✔ leave racing create edits the late message (0.3781ms)
+✔ a sub-two-second queue stay never creates a Discord message (0.2515ms)
+✔ the delayed post is created once only after its timer fires (0.374ms)
+✔ 429 response uses server retry_after instead of hardcoded route rates (0.2756ms)
+✔ invalid lifecycle values never reach Discord (0.1172ms)
+✔ orderly close retires active owned posts (0.5964ms)
+✔ pending create work is bounded without dropping owned cleanup (5.2256ms)
+✔ goal RGB controls preview exact channels and group a gesture into one undo (4.5869ms)
+✔ invalid goal RGB or hex input preserves the document (2.185ms)
+✔ shared RGB controls retain room palette behavior (1.8757ms)
+✔ public base and generated links are strict HTTPS routes (1.86ms)
+✔ redirect parser exposes only completed canonical yule intents (0.4722ms)
+✔ HTTP handoff is no-store and method bounded (1.6519ms)
+✔ redirect server refuses an accidental public bind (0.5921ms)
+✔ audit preserves append history and records correlated intent/outcome without secrets (29.2726ms)
+✔ audit failure blocks mutation and completion failure is explicitly distinguished (0.7126ms)
+✔ an interrupted final record cannot absorb later audit entries (10.5047ms)
+✔ live dashboard preserves focused, open, and edited maintenance while other regions refresh (4.0266ms)
+✔ live dashboard pauses hidden tabs, retries failures, and stops on expired sessions (1.2426ms)
+✔ live dashboard does not overlap requests after visibility changes (1.2826ms)
+✔ admin bind validation accepts only loopback/private literals by default (7.7372ms)
+✔ admin UI grants a private client session, requires CSRF, and dispatches actions (44.5818ms)
+✔ admin UI can be disabled explicitly (0.1467ms)
+✔ direct execution explains that the admin listener belongs to server.js (65.3774ms)
+✔ admin rejects DNS rebinding hostnames before granting sessions (3.7209ms)
+✔ offline backup verifies data and restores with a complete recovery copy (94.5695ms)
+✔ tampered backup is rejected before any destination changes (25.5246ms)
+✔ partial restore failure restores previous bytes and retains recovery snapshot (53.7851ms)
+✔ silent write corruption triggers verified recovery (60.1684ms)
+✔ silent recovery corruption is never reported as recovered (58.0637ms)
+✔ stores reject damaged existing files and have no inherited users (18.2912ms)
+✔ failed atomic replacement preserves destination and cleans temporary file (8.1438ms)
+✔ record updates publish only after persistence and preserve unrelated users (11.2801ms)
+ℹ tests 68
+ℹ suites 0
+ℹ pass 68
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 519.8048
+embedded UI source/header synchronization: OK
+compile source list checks: OK (44 implementation files)
+entity render native ABI and insertion checks passed
+release packaging fail-closed static checks: OK
+Linux Wine installer static/syntax checks: OK
+Linux Wine installer integration test: skipped on non-POSIX host
+public source exporter/static release guards: OK
+credential_hooks_static_test: all checks passed
+online_control_hooks_static_test: all checks passed
+online flow integration static checks: OK
+online native cursor static checks: OK
+online match network HUD static checks: OK
+online menu tick static checks: OK
+online active troubleshooter static checks: OK
+online LAN admin integration static checks: OK
+online server control safety: OK
+friend challenge map picker static checks: OK
+social controls static checks: OK
+private rematch static checks: OK
+online launch/deep-link static checks: OK
+one-shot updater handoff static checks: OK
+single frame-boundary capture static checks: OK
+desync_repro_static_test: all checks passed
+peer trace diff tests: OK
+fp_control_hooks_static_test: all checks passed
+simulation_geometry_static_test: all checks passed
+player colour static checks: OK
+Discord Rich Presence privacy/runtime wiring checks: OK
+bytebeat Lua/cache/resource wiring checks: OK
+Lua HTTP owner/cancellation/body-bound static checks: OK
+Greggnogg responsive color-editor static checks: OK
+owner-scoped Lua console command integration: OK
+removable Lua subscription integration static checks: OK
+public mod.online cosmetics-surface removal checks: OK
+Lua filesystem picker static checks: OK
+mod API manifest/runtime integration static checks: OK
+owner-scoped asset removal API wiring: OK
+bounded mod.json integration static checks: OK
+sandboxed Dollchan JavaScript build/security wiring checks: OK
+native/bounded/Dollchan music playlist and authoring controls: OK
+console catalog coverage: OK (70 dispatched, 70 catalog entries)
+Discord LFG server/bot privacy lifecycle checks: OK
+state-preserving online-server updater checks: OK
+repository-wide updater safety checks: OK
+installer lifecycle checks: OK
+net_backpressure_static_test: all checks passed
+window runtime static checks: OK
+PASS: guarded credential, TCP/control, FP, rollback envelope, serializer, and window native/static tests completed.

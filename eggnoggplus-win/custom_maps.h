@@ -9,6 +9,10 @@
 extern "C" {
 #endif
 
+#ifdef CUSTOM_MAPS_TESTING
+/* Fixture-only pinning without native fixed-address mapgen writes. */
+int custom_maps_test_pin_folder(const char* folder_id);
+#endif
 void custom_maps_init(void);
 void custom_maps_shutdown(void);
 /* Visual override from the installed map generation; no filesystem polling.
@@ -16,11 +20,11 @@ void custom_maps_shutdown(void);
 int custom_maps_pinned_eggnogg_color(int selector, float out_rgb[3]);
 void custom_maps_handle_mapgen_init(void (*orig_mapgen_init)(void));
 
-/*
- * Validate and install a V1 package carried by a local preview launch. The
- * package is process-local, never written to maps/, and excluded from online
- * manifests. On success out_selector receives its immediately usable selector.
- */
+/* Load the staged maps/_greggnogg_previews/<32-lowercase-hex-token> package.
+ * Authored namespaces are retained; preview overrides stay offline-only. */
+int custom_maps_install_preview_folder(const char* token,int* selector,char* error,size_t error_size);
+void custom_maps_clear_preview(void);
+/* Validate and install the legacy in-memory V1 text preview. */
 int custom_maps_install_preview_text(const char* json_text,
                                      const char* map_text,
                                      int* out_selector,
@@ -115,7 +119,14 @@ int custom_maps_content_sheet_for_key(const char* sheet_key,
                                       char* out_sha256,
                                       size_t out_sha256_size);
 
+/* Immutable pinned package policy for a generated room; no filesystem access.
+ * 0 native/default, 1 always respawn, 2 never respawn. Mirrored rooms share
+ * their source-room policy. Invalid/vanilla selectors return native behavior. */
+int custom_maps_opponent_spawn_policy(int selector, int final_room);
+
 typedef struct CustomMapValidationSummary {
+    int final_opponent_spawn[17]; /* generated mirrored room order */
+    int opponent_spawn[9]; /* resolved source-room policies */
     int has_eggnogg_color;
     float eggnogg_color[3];
     int format_version;
@@ -134,6 +145,9 @@ typedef struct CustomMapValidationSummary {
     int native_k_marker_count;
     int has_script;
     size_t script_size;
+    int has_entities;
+    size_t entity_size;
+    char entity_sha256[65];
     uint64_t script_id;
     char script_full_path[260];
     char script_sha256[65];
@@ -163,3 +177,10 @@ void custom_maps_deactivate_script(void);
 #ifdef __cplusplus
 }
 #endif
+
+/* Resolve a direct declared PNG filename within the pinned package only. */
+int custom_maps_pinned_visual_sheet(const char* filename,int sprite,char* key,size_t capacity);
+
+/* Whether a staged session is still referenced by the selected preview,
+ * current registry, or engine-pinned map. Safe at main-thread update boundaries. */
+int custom_maps_preview_session_in_use(const char* token);

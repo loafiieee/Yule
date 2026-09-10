@@ -281,6 +281,14 @@ static void* json_table_kind(lua_State* L, int index) {
     return result;
 }
 
+int mod_json_table_kind(lua_State* L, int index) {
+    void* kind;
+    if (!lua_istable(L, index)) return 0;
+    kind = json_table_kind(L, index);
+    return kind == &k_json_array_kind ? 1 : kind == &k_json_object_kind ? 2 : 0;
+}
+
+
 static int json_object_key_compare(const void* left, const void* right) {
     const JsonObjectKey* a = (const JsonObjectKey*)left;
     const JsonObjectKey* b = (const JsonObjectKey*)right;

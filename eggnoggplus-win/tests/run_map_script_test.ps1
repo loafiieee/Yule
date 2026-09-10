@@ -33,8 +33,8 @@ try {
     New-Item -ItemType Directory -Force -Path 'build' | Out-Null
     Write-Host 'Building isolated deterministic map.lua runtime tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-        'tests\map_script_test.c' 'map_script.c' `
-        -o 'build\map_script_test.exe' '-lluajit-5.1'
+        'tests\map_script_test.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'content_registry.c' 'mod_json.c' `
+        -o 'build\map_script_test.exe' '-lluajit-5.1' '-lbcrypt'
     if ($LASTEXITCODE -ne 0) {
         throw "Map script test compilation failed with exit code $LASTEXITCODE."
     }
@@ -44,8 +44,8 @@ try {
     }
     Write-Host 'Building checked-in spring demo behavior tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-        'tests\spring_demo_test.c' 'map_script.c' `
-        -o 'build\spring_demo_test.exe' '-lluajit-5.1'
+        'tests\spring_demo_test.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'content_registry.c' 'mod_json.c' `
+        -o 'build\spring_demo_test.exe' '-lluajit-5.1' '-lbcrypt'
     if ($LASTEXITCODE -ne 0) {
         throw "Spring demo test compilation failed with exit code $LASTEXITCODE."
     }
@@ -53,6 +53,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Spring demo tests failed with exit code $LASTEXITCODE."
     }
+    Write-Host 'Building managed entity package integration tests...'
+    & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
+        'tests\map_entity_runtime_test.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' `
+        'entity_package.c' 'entity_package_json.c' 'content_registry.c' 'mod_json.c' `
+        -o 'build\map_entity_runtime_test.exe' '-lluajit-5.1' '-lbcrypt'
+    if ($LASTEXITCODE -ne 0) { throw 'Managed entity integration test compilation failed.' }
+    & '.\build\map_entity_runtime_test.exe'
+    if ($LASTEXITCODE -ne 0) { throw 'Managed entity integration tests failed.' }
     Write-Host 'PASS: sandboxing, contact sensors, temporary visual offsets, rollback replay, contact phases, and faults are deterministic.' -ForegroundColor Green
 } finally {
     Pop-Location -ErrorAction SilentlyContinue

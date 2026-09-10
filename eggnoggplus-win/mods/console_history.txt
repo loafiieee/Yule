@@ -1,8 +1,3 @@
-dev on
-dev off
-help
-dev on
-help
 dev off
 help
 dev off
@@ -62,3 +57,8 @@ online.troubleshoot
 help
 exit
 net.diag
+ggpo.net rngtrace on
+dev on
+ggpo.net rngtrace on
+dev on
+ggpo.net rngtrace on

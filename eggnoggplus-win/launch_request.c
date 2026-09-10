@@ -374,6 +374,12 @@ int launch_request_decode_preview(const LaunchRequest* request,
     return 1;
 }
 
+int launch_request_preview_session_valid(const char* token) {
+    if(!token)return 0;
+    for(size_t i=0;i<32;i++)if(!((token[i]>='0'&&token[i]<='9')||(token[i]>='a'&&token[i]<='f')))return 0;
+    return token[32]==0;
+}
+
 static int parse_uri(const char* uri,
                      LaunchRequest* out,
                      char* error,
@@ -389,6 +395,11 @@ static int parse_uri(const char* uri,
     }
     route = uri + sizeof(scheme) - 1u;
     route_len = strlen(route);
+    if(ascii_starts_ci(route,"preview/session/")) {
+        const char* token=route+16u;
+        if(!launch_request_preview_session_valid(token)){set_error(error,error_cap,"invalid preview session token");return 0;}
+        out->action=LAUNCH_REQUEST_PREVIEW_SESSION;memcpy(out->target,token,33);return 1;
+    }
     if (ascii_starts_ci(route, "preview/v1z/")) {
         const char* target = route + 12u;
         size_t target_len = strlen(target);
@@ -575,6 +586,7 @@ const char* launch_request_action_name(LaunchRequestAction action) {
         case LAUNCH_REQUEST_CHALLENGE: return "challenge";
         case LAUNCH_REQUEST_PREVIEW_V1: return "preview/v1";
         case LAUNCH_REQUEST_PREVIEW_V1_PACKED: return "preview/v1z";
+        case LAUNCH_REQUEST_PREVIEW_SESSION: return "preview/session";
         default: return "none";
     }
 }

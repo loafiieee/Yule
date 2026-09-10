@@ -3,3 +3,13 @@ online.cfg
 online_server_data.json
 online_server_data.json.tmp
 online_server/__pycache__/
+
+online_server/*.jsonl
+
+build/ui_helpers_test.exe
+build/input_binding_test.exe
+build/online_capture_test.exe
+build/online_capture_under_test.h
+
+/build/rng_cosmetic_under_test.h
+/build/rng_cosmetic_test.exe

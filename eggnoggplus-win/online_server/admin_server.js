@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const http = require("http");
 const net = require("net");
+const {auditedAction} = require("./admin_audit");
 
 const DEFAULT_ADMIN_PORT = 47779;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -560,20 +561,14 @@ function startAdminServerFromEnv(env, api, options = {}) {
         }
         const action = String(form.get("action") || "");
         const username = String(form.get("username") || "");
-        let message = "";
-        if (action === "reset_password") {
-          message = api.resetPassword(username, String(form.get("password") || ""));
-        } else if (action === "ban") {
-          message = api.setBan(username, true, String(form.get("reason") || ""));
-        } else if (action === "unban") {
-          message = api.setBan(username, false, "");
-        } else if (action === "disconnect") {
-          message = api.disconnect(username);
-        } else if (action === "reset_rating") {
-          message = api.resetRating(username);
-        } else {
+        const message = auditedAction(options.audit || (() => {}), action, username, ip, () => {
+          if (action === "reset_password") return api.resetPassword(username, String(form.get("password") || ""));
+          if (action === "ban") return api.setBan(username, true, String(form.get("reason") || ""));
+          if (action === "unban") return api.setBan(username, false, "");
+          if (action === "disconnect") return api.disconnect(username);
+          if (action === "reset_rating") return api.resetRating(username);
           throw new Error("unknown maintenance action");
-        }
+        });
         log(`${ip} ${action} ${username}`);
         return redirect(res, `/?ok=${encodeURIComponent(message || "Maintenance action completed.")}`);
       }

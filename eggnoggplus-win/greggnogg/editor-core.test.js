@@ -61,7 +61,8 @@
   installLegacyPolyfills.call(this);
 
   var core;
-  if (typeof module === "object" && module.exports && typeof require === "function") {
+  // The legacy shim declares a local module below; var hoisting hides Node's module.
+  if (typeof require === "function") {
     core = require("./editor-core.js");
   } else {
     var fso = new ActiveXObject("Scripting.FileSystemObject");
@@ -296,6 +297,41 @@
   });
   delete forcedGoal.rules.eggnoggColor;
   assert(JSON.parse(core.serializeDataJson(forcedGoal)).rules.eggnogg_color === undefined, "resetting automatic removes manifest override");
+
+  var spawnDoc = core.deepClone(fresh);
+  var spawnId = spawnDoc.rooms[0].id;
+  spawnDoc.defaults.opponent_spawn = "always";
+  var spawnMap = core.serializeMapText(spawnDoc);
+  var spawnJson = core.serializeDataJson(spawnDoc);
+  var spawnParsed = core.parsePackage(spawnJson, spawnMap);
+  assert(spawnParsed.valid, "opponent spawn defaults import successfully");
+  assert(spawnParsed.document.defaults.opponent_spawn === "always", "map spawn default preserved");
+  assert(!Object.prototype.hasOwnProperty.call(spawnParsed.document.rooms[0], "opponent_spawn"), "absent room override retains inheritance");
+  assert(core.serializeDataJson(spawnParsed.document) === spawnJson, "inherited spawn policy canonical roundtrip");
+  ["default", "always", "never"].forEach(function (policy) {
+    spawnDoc.rooms[0].opponent_spawn = policy;
+    var serialized = core.serializeDataJson(spawnDoc);
+    var parsed = core.parsePackage(serialized, spawnMap);
+    assert(parsed.valid && parsed.document.rooms[0].opponent_spawn === policy, "explicit spawn policy retained: " + policy);
+    assert(JSON.parse(serialized).rooms[spawnId].opponent_spawn === policy, "explicit native overrides map default: " + policy);
+    assert(core.serializeDataJson(parsed.document) === serialized, "spawn override canonical roundtrip: " + policy);
+  });
+  [null, true, 0, "", "ALWAYS", "inherit", [], {}].forEach(function (invalid) {
+    spawnDoc.rooms[0].opponent_spawn = invalid;
+    assert(!core.validateDocument(spawnDoc).valid, "invalid authored room spawn rejected");
+    var raw = JSON.parse(spawnJson);
+    raw.rooms[spawnId].opponent_spawn = invalid;
+    var result = core.parsePackage(JSON.stringify(raw), spawnMap);
+    assert(!result.valid && result.errors.some(function (e) { return e.path === "rooms." + spawnId + ".opponent_spawn"; }), "invalid imported room spawn has precise diagnostic");
+    delete spawnDoc.rooms[0].opponent_spawn;
+    spawnDoc.defaults.opponent_spawn = invalid;
+    assert(!core.validateDocument(spawnDoc).valid, "invalid authored default spawn rejected");
+    raw = JSON.parse(spawnJson);
+    raw.defaults.room.opponent_spawn = invalid;
+    assert(!core.parsePackage(JSON.stringify(raw), spawnMap).valid, "invalid imported default spawn rejected");
+  });
+  delete spawnDoc.defaults.opponent_spawn;
+  assert(JSON.parse(core.serializeDataJson(spawnDoc)).defaults.room.opponent_spawn === undefined, "legacy maps omit spawn policy");
 
   var message = "Greggnogg editor-core tests passed: " + passed;
   if (typeof WScript !== "undefined") WScript.Echo(message);

@@ -7,3 +7,8 @@ the files it owns.
 
 Run `UNINSTALL.bat` for a conservative uninstall. Maps, mods, saves, and files
 changed after installation are preserved.
+
+The installer creates `maps/` beside `mods/` in the installed game folder.
+Extract each downloaded map into its own subfolder, for example
+`maps/MyMap/data.map` and `maps/MyMap/data.json`. Extract ZIP archives first;
+avoid an extra nested folder between `MyMap/` and these two files.

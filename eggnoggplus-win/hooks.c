@@ -13,6 +13,11 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include "native_room_reset.h"
+#include "opponent_spawn.h"
+#include "entity_package.h"
+#include "preview_bridge.h"
+#include "preview_stage.h"
+#include "content_tiles.h"
 
 #include <GL/gl.h>
 #ifdef __has_include
@@ -194,6 +199,9 @@ extern void SDL_free(void* mem);
 #define ADDR_MAIN_IS_FULLSCREEN       0x430AE0u
 #define ADDR_MAIN_SAVED_WINDOW_H      0x448360u
 #define ADDR_MAIN_SAVED_WINDOW_W      0x448364u
+// Verified wrapper_display_w/h loads in the shipped executable.
+#define ADDR_WRAPPER_DISPLAY_W         0x44812Cu
+#define ADDR_WRAPPER_DISPLAY_H         0x448128u
 #define ADDR_WRAPPER_DESKTOP_H         0x4EDB70u
 #define ADDR_WRAPPER_DESKTOP_W         0x4EDB74u
 #define ADDR_MAPGEN_INIT              0x437D30u
@@ -777,6 +785,8 @@ static fn_set_window_t               p_main_set_window = (fn_set_window_t)(uintp
 static fn_is_fullscreen_t            p_main_is_fullscreen = (fn_is_fullscreen_t)(uintptr_t)ADDR_MAIN_IS_FULLSCREEN;
 static volatile int*                 p_main_saved_window_h = (volatile int*)(uintptr_t)ADDR_MAIN_SAVED_WINDOW_H;
 static volatile int*                 p_main_saved_window_w = (volatile int*)(uintptr_t)ADDR_MAIN_SAVED_WINDOW_W;
+static volatile int*                 p_wrapper_display_w = (volatile int*)(uintptr_t)ADDR_WRAPPER_DISPLAY_W;
+static volatile int*                 p_wrapper_display_h = (volatile int*)(uintptr_t)ADDR_WRAPPER_DISPLAY_H;
 static volatile int*                 p_wrapper_desktop_h = (volatile int*)(uintptr_t)ADDR_WRAPPER_DESKTOP_H;
 static volatile int*                 p_wrapper_desktop_w = (volatile int*)(uintptr_t)ADDR_WRAPPER_DESKTOP_W;
 extern void* g_proxy_sdl_window;
@@ -1545,6 +1555,7 @@ enum {
 typedef struct OnlineLaunchRuntime {
     int parsed;
     int hub_open_requested;
+    int preview_started;
     int waiting_status_shown;
     DWORD deadline_ms;
     LaunchRequest request;
@@ -2440,6 +2451,11 @@ static int hooks_rng_caller_is_cosmetic(uintptr_t caller) {
     if (c >= 0x0041EF40u && c < 0x0041EFB0u) return 1; /* _do_whistle (whistle sound)         */
     if (c >= 0x0041F060u && c < 0x0041F110u) return 1; /* _slide_sound (sliding-sound pitch)   */
     if (c >= 0x004240FFu && c < 0x00424194u) return 1; /* _sound_creepy (ambience pitch)      */
+    /* Alternate pitch branch of that same sound block. The return at 424410
+     * writes only sound_creepy's voice +0x70/+0x74, then rejoins at 42412b.
+     * LAN trace 9D6036F5 frame 2190: this lone unisolated draw changed the
+     * gameplay seed while both players/entities remained byte-identical. */
+    if (c == 0x00424410u) return 1;
     /* Cosmetic particle-spawn loop INSIDE player_update_movement (a mixed gameplay
      * fn, so isolated per sub-range, NOT whole). The frnds @0x423EA6/0x423F1A/
      * 0x423F38/0x423F59/0x423F71 all write the spawned particle (disasm: esi = the
@@ -5765,6 +5781,14 @@ static void stop_ggpo_net(const char* source) {
 }
 
 static int can_start_ggpo_net(const char* source) {
+    char admission_error[192];
+    /* Held online setup replaces the previous offline map before admission. */
+    if (!g_online_pending_match.active &&
+        !map_script_network_admissible(admission_error, sizeof(admission_error))) {
+        console_push_line_rgb(admission_error, 0.98f, 0.45f, 0.45f);
+        LOG_WARN("ggpo.net: %s", admission_error);
+        return 0;
+    }
     char out[CONSOLE_LINE_TEXT];
     if (ggpo_loopback_active()) {
         snprintf(out, sizeof(out), "ggpo.net: skipped from %s (loopback active; press F3 to disable first)",
@@ -9576,6 +9600,7 @@ static int online_validate_pinned_map_script(int selector,
     uint64_t active_script_id = map_script_is_active()
         ? map_script_active_id() : 0;
     int pinned = custom_maps_pinned_script_id(selector, &expected_script_id);
+    if (!map_script_network_admissible(err, err_cap)) return 0;
     if (pinned < 0) {
         online_set_prematch_error(
             err, err_cap,
@@ -9715,6 +9740,7 @@ static int online_apply_synchronized_player_palettes(char* err, size_t err_cap) 
  * (selector -> game_reset -> switch to GAME). Exposed to Lua as
  * mod.game.start_match for bot/trainer mods that chain matches. */
 int hooks_start_native_match(int selector) {
+    if (!p_game_reset || !p_state_switch) return 0;
     if (ggpo_net_active()) return 0;              /* never yank an online match */
     if (g_online_pending_match.active) return 0;
     online_clear_waterfall_audio_state("mod match start");
@@ -11401,6 +11427,31 @@ static void online_cancel_capture(void) {
     online_hub_rebuild_rows();
 }
 
+/* A failed validation leaves capture active. Navigation must wait rather than
+ * discard the draft or activate an action with stale credentials/settings. */
+static int online_commit_setting_capture_for_navigation(void) {
+    if (!g_online_capture_active) return 1;
+    if (g_online_capture_kind != ONLINE_CAPTURE_SETTING) return 0;
+    online_commit_capture();
+    return !g_online_capture_active;
+}
+
+static int online_capture_is_setting_row(int row) {
+    return g_online_capture_active && g_online_capture_kind == ONLINE_CAPTURE_SETTING &&
+           row >= 0 && row < g_online_row_count &&
+           g_online_rows[row].kind == ONLINE_ROW_SETTING &&
+           g_online_rows[row].id == g_online_capture_target;
+}
+
+static void online_focus_selected_text_setting(void) {
+    int row = g_online_selected_row;
+    if (row >= 0 && row < g_online_row_count &&
+        g_online_rows[row].kind == ONLINE_ROW_SETTING &&
+        online_setting_is_text((OnlineHubSetting)g_online_rows[row].id)) {
+        online_begin_setting_capture((OnlineHubSetting)g_online_rows[row].id);
+    }
+}
+
 static void online_adjust_setting(OnlineHubSetting setting, int delta) {
     int online_config_changed = 1;
     if (delta == 0) delta = 1;
@@ -12713,7 +12764,12 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
                                0.98f * s, 0.84f, 0.94f, 1.00f, g_online_status);
     }
     online_hub_text(L->panel_x + 18.0f * s, L->panel_y + L->panel_h - L->footer_h + 12.0f * s,
-                    0.92f * s, 0.54f, 0.66f, 0.74f, "ESC");
+                    0.92f * s, 0.54f, 0.66f, 0.74f, g_online_capture_active ? "ESC CANCEL" : "ESC");
+    if (g_online_capture_active) {
+        online_hub_text_right(L->panel_x + L->panel_w - 18.0f * s,
+                              L->panel_y + L->panel_h - L->footer_h + 12.0f * s,
+                              0.72f * s, 0.54f, 0.66f, 0.74f, "TAB NEXT FIELD");
+    }
 }
 
 static void online_hub_render_ui(void) {
@@ -12941,6 +12997,8 @@ static void online_hub_render_ui(void) {
 }
 
 static void online_launch_clear(void) {
+    preview_bridge_cancel();
+    g_online_launch.preview_started = 0;
     memset(&g_online_launch.request, 0, sizeof(g_online_launch.request));
     g_online_launch.hub_open_requested = 0;
     g_online_launch.waiting_status_shown = 0;
@@ -12958,6 +13016,8 @@ static void online_launch_accept_request(const LaunchRequest* request,
                  launch_request_action_name(request->action),
                  source ? source : "external activation");
     }
+    preview_bridge_cancel();
+    g_online_launch.preview_started = 0;
     g_online_launch.request = *request;
     g_online_launch.hub_open_requested = 0;
     g_online_launch.waiting_status_shown = 0;
@@ -13079,6 +13139,7 @@ static int online_launch_pump(void) {
     int desired_queue;
     int friend_index;
 
+    preview_stage_collect(custom_maps_preview_session_in_use);
     online_launch_parse_process_args();
     online_launch_poll_forwarded_requests();
     action = g_online_launch.request.action;
@@ -13100,6 +13161,32 @@ static int online_launch_pump(void) {
      * reached its normal terminal state.
      */
     if (g_online_pending_match.active || g_online_active_match.active) return 0;
+    if(action==LAUNCH_REQUEST_PREVIEW_SESSION) {
+        char error[256],token[33];
+        unsigned char* bytes=NULL;
+        size_t size=0;
+        int selector=-1,success;
+        if(!g_online_launch.preview_started){
+            if(!preview_bridge_begin(g_online_launch.request.target,error,sizeof(error))){
+                LOG_WARN("preview.launch: %s",error);
+                online_launch_clear();return 0;
+            }
+            g_online_launch.preview_started=1;
+        }
+        if(!preview_bridge_take(token,&bytes,&size))return 0;
+        success=preview_stage_package("maps",token,bytes,size,error,sizeof(error));
+        free(bytes);
+        if(success)success=custom_maps_install_preview_folder(token,&selector,error,sizeof(error));
+        if(success){
+            success=hooks_start_native_match(selector);
+            if(!success)snprintf(error,sizeof(error),"Local match could not start.");
+        }
+        preview_bridge_finish(token,success);
+        if(success)LOG_INFO("preview.launch: started package selector %d",selector);
+        else LOG_WARN("preview.launch: package rejected (%s)",error);
+        online_launch_clear();
+        return success;
+    }
     if (action == LAUNCH_REQUEST_PREVIEW_V1 ||
         action == LAUNCH_REQUEST_PREVIEW_V1_PACKED) {
         char* json_text = NULL;
@@ -13256,6 +13343,7 @@ static void online_hub_open(void) {
 }
 
 static void __cdecl online_hub_enter(void) {
+    custom_maps_clear_preview();
     void* last = p_state_last ? p_state_last() : (void*)(uintptr_t)ADDR_MAIN_STATE;
     int abandoned = 0;
 
@@ -14201,6 +14289,14 @@ int hooks_online_hub_keydown(int sym, int scancode, int mod) {
             online_commit_capture();
             return 1;
         }
+        if (sym == SDLK_TAB || sym == SDLK_UP || sym == SDLK_DOWN) {
+            if (online_commit_setting_capture_for_navigation()) {
+                int direction = (sym == SDLK_UP || (sym == SDLK_TAB && (mod & KMOD_SHIFT))) ? -1 : 1;
+                online_move_selection(direction, 1);
+                online_focus_selected_text_setting();
+            }
+            return 1;
+        }
         if (sym == SDLK_BACKSPACE) {
             size_t len = strlen(g_online_capture_buf);
             if (len > 0) g_online_capture_buf[len - 1] = '\0';
@@ -14259,7 +14355,8 @@ int hooks_online_hub_keydown(int sym, int scancode, int mod) {
         case SDLK_TAB:
         case 'e': case 'E':
             if (!g_online_authed) {
-                online_move_selection(1, 1);
+                online_move_selection(sym == SDLK_TAB && (mod & KMOD_SHIFT) ? -1 : 1, 1);
+                if (sym == SDLK_TAB) online_focus_selected_text_setting();
                 return 1;
             }
             online_switch_tab(1);
@@ -14352,7 +14449,7 @@ int hooks_online_hub_mousemotion(int x, int y) {
     g_online_mouse_x = (float)x;
     g_online_mouse_y = (float)y;
     if (!is_online_hub_state_active()) return 0;
-    if (g_online_pending_match.active) {
+    if (g_online_capture_active || g_online_pending_match.active) {
         return 1;
     } else if (g_online_queue_mode) {
         return 1;
@@ -14373,6 +14470,7 @@ int hooks_online_hub_mousewheel(int y) {
     if (g_online_pending_match.active) return 1;
     if (g_online_queue_mode) return 1;
     if (!is_online_hub_state_active()) return 0;
+    if (y != 0 && !online_commit_setting_capture_for_navigation()) return 1;
     if (g_online_context_active) {
         if (y > 0) online_context_move_selection(-1);
         else if (y < 0) online_context_move_selection(1);
@@ -14414,6 +14512,22 @@ int hooks_online_hub_mousebutton(int x, int y, int button, int down) {
         return 1;
     }
     if (online_remembered_login_in_progress()) return 1;
+    if (g_online_capture_active) {
+        if (button != 1) return 1;
+        row = online_row_at_point((float)x, (float)y);
+        if (online_capture_is_setting_row(row)) return 1;
+        if (g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
+            if (!online_commit_setting_capture_for_navigation()) return 1;
+        } else if (g_online_capture_kind == ONLINE_CAPTURE_ADD_FRIEND &&
+                   row >= 0 && row < g_online_row_count &&
+                   g_online_rows[row].kind == ONLINE_ROW_ACTION &&
+                   g_online_rows[row].id == ONLINE_ACTION_ADD_FRIEND) {
+            online_commit_capture(); /* explicit click on Search User */
+            return 1;
+        } else {
+            online_cancel_capture(); /* blur never sends a friend request */
+        }
+    }
     if (button == 1 && g_online_context_active) {
         int action = online_context_action_at((float)x, (float)y);
         if (action) {
@@ -14469,7 +14583,15 @@ int hooks_online_hub_control_action(int action) {
         if (action != 6) return 1;
         online_server_disconnect(NULL);
     }
-    if (g_online_capture_active) return 1;
+    if (g_online_capture_active) {
+        if (action == 6) online_cancel_capture();
+        else if (action == 5) online_commit_capture();
+        else if ((action == 1 || action == 2) && online_commit_setting_capture_for_navigation()) {
+            online_move_selection(action == 1 ? -1 : 1, 1);
+            online_focus_selected_text_setting();
+        }
+        return 1;
+    }
     online_hub_rebuild_rows();
     if (g_online_context_active) {
         OnlineFriend* fr;
@@ -15683,6 +15805,20 @@ static void hooks_apply_content_interactions_to_body(uint32_t object_id,
     int sample;
     if (!body || IsBadReadPtr((const void*)body, THING_SIZE) ||
         IsBadWritePtr((void*)(body + THING_OFS_VX), sizeof(float) * 2u)) return;
+    /* Resolve against immutable custom solid geometry before script contacts.
+     * Only the verified player/corpse/sword/hazard body profiles reach this bridge. */
+    float solid_radius;
+    if(hooks_map_script_read_contact_radius(body,object_kind,&solid_radius)){
+        double sx=*(float*)(body+THING_OFS_X),sy=*(float*)(body+THING_OFS_Y);
+        unsigned contact=map_script_sweep_solids(*(float*)(body+THING_OFS_PREV_X),*(float*)(body+THING_OFS_PREV_Y),solid_radius,&sx,&sy);
+        if(contact){
+            *(float*)(body+THING_OFS_X)=(float)sx;*(float*)(body+THING_OFS_Y)=(float)sy;
+            if(contact&12u)*(float*)(body+THING_OFS_VX)=0;
+            if(contact&3u)*(float*)(body+THING_OFS_VY)=0;
+            if(object_kind==MAP_SCRIPT_OBJECT_PLAYER||object_kind==MAP_SCRIPT_OBJECT_DEAD_BODY)
+                *(uint8_t*)(body+0xADu)|=(uint8_t)contact;
+        }
+    }
     x = *(float*)(body + THING_OFS_X);
     y = *(float*)(body + THING_OFS_Y);
     vx = (float*)(body + THING_OFS_VX);
@@ -15849,6 +15985,87 @@ static uintptr_t hooks_map_script_body_for_object(const MapScriptObjectView* obj
         return (uintptr_t)thing;
     }
 }
+
+static int hooks_solid_box_data(uintptr_t base,int columns,int rows,int tw,int th,const unsigned char* table,double x,double y,double width,double height){
+    if(!isfinite(x)||!isfinite(y)||!isfinite(width)||!isfinite(height)||fabs(x)>4194303||fabs(y)>4194303||width<1.0/256||height<1.0/256||width>128||height>128)return -1;
+    if(!base||columns<=0||columns>32768||rows<=0||rows>32768||tw<=0||tw>512||th<=0||th>512)return -1;
+    int left=(int)floor((x-width*0.5)/tw),right=(int)ceil((x+width*0.5)/tw)-1;
+    int top=(int)floor((y-height*0.5)/th),bottom=(int)ceil((y+height*0.5)/th)-1;
+    if(left<0||top<0||right>=columns||bottom>=rows)return 1;
+    if((int64_t)(right-left+1)*(bottom-top+1)>256)return -1;
+    for(int row=top;row<=bottom;row++)for(int col=left;col<=right;col++){
+        size_t offset=((size_t)row*(size_t)columns+(size_t)col)*4u;if(base>UINTPTR_MAX-offset)return -1;
+        const unsigned char* cell=(const unsigned char*)(base+offset);if(IsBadReadPtr(cell,1))return -1;
+        uintptr_t property_offset=(unsigned)*cell*0x2Cu;if((uintptr_t)table>UINTPTR_MAX-property_offset)return -1;
+        const unsigned char* props=(const unsigned char*)((uintptr_t)table+property_offset);
+        if(IsBadReadPtr(props,3))return -1;
+        if(props[2])return 1;
+    }
+    return 0;
+}
+static int hooks_map_script_solid_box(void* userdata,double x,double y,double width,double height){
+    (void)userdata;
+    if(IsBadReadPtr((const void*)g_tilemap_data_ptr,sizeof(*g_tilemap_data_ptr))||IsBadReadPtr((const void*)g_tilemap_width,sizeof(int))||IsBadReadPtr((const void*)g_tilemap_height,sizeof(int))||IsBadReadPtr((const void*)g_tile_width,sizeof(int))||IsBadReadPtr((const void*)g_tile_height,sizeof(int)))return -1;
+    return hooks_solid_box_data(*g_tilemap_data_ptr,*g_tilemap_width,*g_tilemap_height,*g_tile_width,*g_tile_height,(const unsigned char*)(uintptr_t)0x55AB44u,x,y,width,height);
+}
+#ifdef EGGNOGGPLUS_SERIALIZER_TESTING
+int hooks_test_solid_box(const unsigned char* cells,int columns,int rows,const unsigned char* table,double x,double y,double width,double height){return hooks_solid_box_data((uintptr_t)cells,columns,rows,16,16,table,x,y,width,height);}
+#endif
+
+static int hooks_map_script_read_player(void* userdata,uint32_t slot,MapScriptObjectView* out) {
+    uintptr_t player;int kind;(void)userdata;
+    if(!out || slot>=2 || !p_player_slots || IsBadReadPtr(p_player_slots+slot,sizeof(uintptr_t))) return -1;
+    player=p_player_slots[slot];kind=hooks_map_script_kind_for_body(player);
+    if(kind!=MAP_SCRIPT_OBJECT_PLAYER) return 0;
+    if(IsBadReadPtr((const void*)(player+THING_OFS_X),sizeof(float)*6u)) return -1;
+    memset(out,0,sizeof(*out));out->object_id=slot;out->object_kind=MAP_SCRIPT_OBJECT_PLAYER;
+    out->x=*(const float*)(player+THING_OFS_X);out->y=*(const float*)(player+THING_OFS_Y);
+    out->vx=*(const float*)(player+THING_OFS_VX);out->vy=*(const float*)(player+THING_OFS_VY);
+    return 1;
+}
+
+static int hooks_map_script_commit_player_batch(uint32_t mask,uint32_t defeat_mask,const MapScriptObjectView players[2],fn_player_die_t defeat) {
+    uintptr_t bodies[2]={0,0};uint32_t targets=mask|defeat_mask;
+    if((targets&~3u) || (defeat_mask && !defeat))return 0;
+    for(uint32_t slot=0;slot<2;slot++)if(targets&(1u<<slot)) {
+        if(players[slot].object_id!=slot || players[slot].lifecycle_id || players[slot].object_kind!=MAP_SCRIPT_OBJECT_PLAYER ||
+           !isfinite(players[slot].vx) || !isfinite(players[slot].vy))return 0;
+        bodies[slot]=hooks_map_script_body_for_object(&players[slot]);
+        if(!bodies[slot] || IsBadWritePtr((void*)(bodies[slot]+THING_OFS_VX),sizeof(float)*2u))return 0;
+        if(defeat_mask&(1u<<slot)) {
+            if(IsBadWritePtr((void*)bodies[slot],THING_SIZE) ||
+               *(uint8_t*)(bodies[slot]+0x0bu)!=slot || *(uint8_t*)(bodies[slot]+PLAYER_OFS_STATE_ID)==9u)return 0;
+        }
+    }
+    if(targets==3u && bodies[0]==bodies[1])return 0;
+    /* No fallible VM work follows this all-target preflight. Native defeat owns
+     * corpse/sword creation, leader changes, animation and its RNG draws. */
+    for(uint32_t slot=0;slot<2;slot++)if(mask&(1u<<slot)) {
+        *(float*)(bodies[slot]+THING_OFS_VX)=players[slot].vx;
+        *(float*)(bodies[slot]+THING_OFS_VY)=players[slot].vy;
+    }
+    for(uint32_t slot=0;slot<2;slot++)if(defeat_mask&(1u<<slot))defeat((int)bodies[slot]);
+    return 1;
+}
+static int hooks_map_script_apply_player_velocities(void* userdata,uint32_t mask,const MapScriptObjectView players[2]) {
+    (void)userdata;return hooks_map_script_commit_player_batch(mask,0,players,NULL);
+}
+static int hooks_map_script_commit_players(void* userdata,uint32_t mask,uint32_t defeat_mask,const MapScriptObjectView players[2]) {
+    (void)userdata;return hooks_map_script_commit_player_batch(mask,defeat_mask,players,p_player_die_trampoline?hooked_player_die:NULL);
+}
+
+#ifdef EGGNOGGPLUS_SERIALIZER_TESTING
+int hooks_test_commit_players(uintptr_t* slots,uint32_t mask,uint32_t defeat_mask,const MapScriptObjectView players[2],fn_player_die_t defeat) {
+    uintptr_t* saved=p_player_slots;int result;p_player_slots=slots;
+    result=hooks_map_script_commit_player_batch(mask,defeat_mask,players,defeat);
+    p_player_slots=saved;return result;
+}
+int hooks_test_apply_player_velocities(uintptr_t* slots,uint32_t mask,const MapScriptObjectView players[2]) {
+    uintptr_t* saved=p_player_slots;int result;p_player_slots=slots;
+    result=hooks_map_script_apply_player_velocities(NULL,mask,players);
+    p_player_slots=saved;return result;
+}
+#endif
 
 static void hooks_map_script_apply_object(void* userdata,
                                           const MapScriptObjectView* object) {
@@ -17116,6 +17333,94 @@ static int install_detour(Detour* d, void* target, void* hook, size_t length) {
     return 1;
 }
 
+/* Verified native call sites: do not override game_is_win_condition globally.
+ * Its other callers control goals, crowd effects, and rendering. The five combat
+ * gates and game_update's loser-to-statue gate must agree with respawning, or an
+ * opponent allowed into an end room would be invulnerable/removed immediately. */
+static int hooks_opponent_spawn_gate(uintptr_t player, int respawn) {
+    int native_blocked = ((int (__cdecl *)(void))(uintptr_t)0x0041ED60u)();
+    uintptr_t leader = *g_game_leader;
+    int policy = custom_maps_opponent_spawn_policy(*g_hook_map_selector,
+                                                   *g_game_active_room);
+    return opponent_spawn_gate(policy, native_blocked, leader != 0,
+                               player != 0 && player != leader,
+                               *g_game_score_target, *g_game_score_player0,
+                               *g_game_score_player1, *g_game_end_countdown,
+                               respawn);
+}
+
+/* Native player_respawn holds its target in EBX at the replaced call. Use an
+ * explicit bridge instead of assuming the C compiler preserves an input register.
+ * force_align_arg_pointer handles this nested bridge's arbitrary stack alignment. */
+static int __attribute__((used, noinline, force_align_arg_pointer))
+hooks_opponent_respawn_target(uintptr_t player) {
+    return hooks_opponent_spawn_gate(player, 1);
+}
+static void __attribute__((naked)) hooks_opponent_respawn_bridge(void) {
+    __asm__ volatile("push %ebx\n\t"
+                     "call _hooks_opponent_respawn_target\n\t"
+                     "add $4, %esp\n\t"
+                     "ret\n\t");
+}
+static int __attribute__((force_align_arg_pointer)) hooks_opponent_transition_gate(void) {
+    uintptr_t leader = *g_game_leader;
+    uintptr_t opponent = leader == p_player_slots[0] ? p_player_slots[1]
+                                                    : p_player_slots[0];
+    return hooks_opponent_spawn_gate(opponent, 1);
+}
+static int __attribute__((force_align_arg_pointer)) hooks_opponent_combat_gate(void) {
+    return hooks_opponent_spawn_gate(0, 0);
+}
+
+typedef struct OpponentSpawnCallPatch {
+    uintptr_t address;
+    uint8_t expected[5];
+    uintptr_t replacement;
+} OpponentSpawnCallPatch;
+
+static int hooks_install_opponent_spawn_policy(void) {
+    const OpponentSpawnCallPatch patches[] = {
+        {0x00427FABu, {0xE8,0xB0,0x6D,0xFF,0xFF}, (uintptr_t)hooks_opponent_respawn_bridge},
+        {0x0042B1A0u, {0xE8,0xBB,0x3B,0xFF,0xFF}, (uintptr_t)hooks_opponent_transition_gate},
+        {0x00425974u, {0xE8,0xE7,0x93,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate},
+        {0x00426894u, {0xE8,0xC7,0x84,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate},
+        {0x00429C03u, {0xE8,0x58,0x51,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate},
+        {0x00429E3Au, {0xE8,0x21,0x4F,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate},
+        {0x00429F0Du, {0xE8,0x4E,0x4E,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate},
+        /* player_update_logic freezes deadtimer while the end-room predicate
+         * holds. Its part.38 callee simply normalizes game_is_win_condition. */
+        {0x0042A9DFu, {0xE8,0xFC,0x4B,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate},
+        {0x0042DF4Eu, {0xE8,0x0D,0x0E,0xFF,0xFF}, (uintptr_t)hooks_opponent_combat_gate}
+    };
+    /* All sites share the executable's .text protection. Acquire the entire
+     * span before writing anything; a mismatch/protection failure leaves all
+     * native calls intact. Initialization runs before gameplay starts. */
+    void* span = (void*)(uintptr_t)0x00425000u;
+    SIZE_T span_size = 0x9000u;
+    DWORD old_protect, ignored;
+    size_t i;
+    for (i = 0; i < sizeof(patches)/sizeof(patches[0]); ++i) {
+        if (IsBadReadPtr((void*)patches[i].address, 5) ||
+            memcmp((void*)patches[i].address, patches[i].expected, 5) != 0)
+            return 0;
+    }
+    if (!VirtualProtect(span, span_size, PAGE_EXECUTE_READWRITE, &old_protect)) return 0;
+    for (i = 0; i < sizeof(patches)/sizeof(patches[0]); ++i) {
+        uint32_t displacement = (uint32_t)(patches[i].replacement - patches[i].address - 5);
+        memcpy((void*)(patches[i].address + 1), &displacement, sizeof(displacement));
+    }
+    if (!FlushInstructionCache(GetCurrentProcess(), span, span_size)) {
+        for (i = 0; i < sizeof(patches)/sizeof(patches[0]); ++i)
+            memcpy((void*)patches[i].address, patches[i].expected, 5);
+        FlushInstructionCache(GetCurrentProcess(), span, span_size);
+        VirtualProtect(span, span_size, old_protect, &ignored);
+        return 0;
+    }
+    if (!VirtualProtect(span, span_size, old_protect, &ignored))
+        LOG_WARN("hooks_init: could not restore opponent spawn code protection");
+    return 1;
+}
+
 // Old-style link filter: allow either player selector to activate the same button.
 static int __cdecl mods_entry_player_filter_proxy(void* btn, int event_code) {
     if (!btn || !p_btn_player_filter) return 0;
@@ -17917,6 +18222,15 @@ static int online_advance_net_gameplay_tick(int arg0) {
 
     if (g_online_pending_match.active) return 0;
 
+    if (!map_script_network_admissible(err, sizeof(err))) {
+        stop_ggpo_net("managed entity admission");
+        online_hub_set_status(err);
+        console_push_line_rgb(err, 0.98f, 0.45f, 0.45f);
+        LOG_WARN("ggpo.net: %s", err);
+        return 0;
+    }
+
+
     /* This is one tentative wall-tick snapshot, not an input-ring assignment.
      * ggpo_net_advance commits it only after the current logical frame clears
      * every no-advance gate. Repeated stalled wall ticks therefore repoll and
@@ -18157,6 +18471,15 @@ static void hooks_window_refresh_geometry(const char* reason, int force_viewport
     if (dw <= 0 || dh <= 0) {
         dw = ww;
         dh = wh;
+    }
+    /* SDL fullscreen/focus transitions can change the real window without
+     * recreating it. Native wrapper_display_w/h otherwise keep the old size,
+     * making draw_reset's projection disagree with our corrected GL viewport.
+     * Use window coordinates here (also used by SDL mouse input), drawable
+     * pixels only for glViewport. Deterministic game_w/h remain tick-owned. */
+    if (ww > 0 && wh > 0) {
+        *p_wrapper_display_w = ww;
+        *p_wrapper_display_h = wh;
     }
     display = hooks_window_active_display();
     flags = hooks_window_flags();
@@ -18491,6 +18814,7 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
 }
 
 void hooks_runtime_shutdown(void) {
+    preview_bridge_shutdown();
     online_troubleshooter_reset();
     framework_tune_shutdown();
     discord_rpc_ext_shutdown();
@@ -19002,6 +19326,42 @@ static int content_bridge_sprite_batch_plot(void* user,
     return 1;
 }
 
+typedef void (__attribute__((regparm(1))) *fn_entity_native_draw_things)(int);
+static fn_entity_native_draw_things p_entity_draw_things_trampoline;
+static Detour g_entity_draw_things_detour;
+static int entity_resolve_sprite(void* user,const char* sheet,int index,int* sprite) {
+    char key[128];(void)user;
+    if(!strncmp(sheet,"builtin:",8)) return lua_manager_content_resolve_sprite(sheet,index,sprite);
+    return custom_maps_pinned_visual_sheet(sheet,index,key,sizeof(key)) &&
+        lua_manager_content_resolve_sprite(key,index,sprite);
+}
+static void draw_custom_entities_for_order(unsigned draw_order) {
+    /* World Y is inverted at translation. The caller selects actor-relative order. */
+    static const ContentBridgeDrawOps ops={NULL,(void*)(uintptr_t)ADDR_TURTLE_STATE,
+        CONTENT_BRIDGE_TURTLE_STATE_SIZE,entity_resolve_sprite,content_bridge_sprite_get,
+        content_bridge_turtle_trans,content_bridge_turtle_set_angle,content_bridge_turtle_set_scalex,
+        content_bridge_turtle_set_scaley,content_bridge_turtle_set_rgba,content_bridge_sprite_batch_plot,NULL};
+    uint32_t cursor=0;EntityRenderView view;
+    while(map_script_entity_render_next(&cursor,&view)) {
+        if(view.visual.layer!=draw_order)continue;
+        ContentTileRender render;memset(&render,0,sizeof(render));
+        snprintf(render.sprite_sheet,sizeof(render.sprite_sheet),"%s",view.visual.sheet);
+        render.sprite_index=(int)view.sprite;render.layer=(int)view.visual.layer;
+        render.offset_x=(float)(((double)view.x+view.visual.offset_x)/256.0-*g_camera_x);
+        render.offset_y=(float)(*g_camera_y-((double)view.y+view.visual.offset_y)/256.0);
+        render.scale_x=view.visual.scale_x/256.0f;render.scale_y=view.visual.scale_y/256.0f;
+        for(unsigned i=0;i<4;i++) render.tint[i]=((view.visual.rgba>>(24-8*i))&255)/255.0f;
+        (void)content_bridge_draw_visual(&render,&ops);
+    }
+}
+
+static void __attribute__((regparm(1))) hooked_entity_draw_things(int native_layer) {
+    /* Verified native call order: 1, 0, -1, -2 at game_render+0x655. */
+    if(native_layer==1)draw_custom_entities_for_order(0);
+    if(p_entity_draw_things_trampoline)p_entity_draw_things_trampoline(native_layer);
+    if(native_layer==-2)draw_custom_entities_for_order(1);
+}
+
 static int content_bridge_map_script_visual_override(
     void* user,
     uint32_t cell_index,
@@ -19202,6 +19562,10 @@ static void __cdecl hooked_mapgen_build_map(void) {
     script_host.rng_seed = g_native_seed ? *g_native_seed : 0u;
     script_host.log_fn = hooks_map_script_log;
     script_host.apply_object_fn = hooks_map_script_apply_object;
+    script_host.solid_box_fn = hooks_map_script_solid_box;
+    script_host.read_player_fn = hooks_map_script_read_player;
+    script_host.commit_players_fn = hooks_map_script_commit_players;
+    script_host.apply_player_velocities_fn = hooks_map_script_apply_player_velocities;
     err[0] = '\0';
     if (!custom_maps_activate_script_for_selector(selector, &script_host,
                                                    err, sizeof(err))) {
@@ -19413,6 +19777,16 @@ void hooks_init(void) {
     }
 
     custom_maps_init();
+    {
+        static const unsigned char expected[]={0x55,0xB9,0x18,0x00,0x00,0x00,0x57};
+        if(memcmp((void*)(uintptr_t)0x41C3F0u,expected,sizeof(expected)) ||
+           !install_detour(&g_entity_draw_things_detour,(void*)(uintptr_t)0x41C3F0u,
+                           (void*)hooked_entity_draw_things,sizeof(expected)))
+            LOG_ERROR("hooks_init: entity rendering hook unavailable");
+        else p_entity_draw_things_trampoline=(fn_entity_native_draw_things)g_entity_draw_things_detour.trampoline;
+    }
+    if (!hooks_install_opponent_spawn_policy())
+        LOG_WARN("hooks_init: opponent spawn policy unavailable; native call verification failed");
 
     if (!install_detour(&g_options_enter_detour, (void*)(uintptr_t)ADDR_OPTIONS_ENTER, (void*)&hooked_options_enter, 5)) {
         LOG_ERROR("hooks_init: failed to detour options enter");

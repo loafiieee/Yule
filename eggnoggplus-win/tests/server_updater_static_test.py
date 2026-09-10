@@ -36,6 +36,7 @@ for protected in (
     "ratings.json",
     "server_secret.key",
     "*.log",
+    "*.jsonl",
     "*.key",
     "*.env",
     "*.pid",

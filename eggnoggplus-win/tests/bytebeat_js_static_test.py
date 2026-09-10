@@ -44,6 +44,8 @@ for call in (
 assert "QJS_BUILD_LIBC" not in BUILD
 assert "bytebeat_chakra.c" in BUILD
 for contract in (
+    "wine_get_version",
+    "bbch_running_under_wine",
     "GetSystemDirectoryW",
     'wcscat(system_path, L"\\\\Chakra.dll")',
     "JS_RUNTIME_ALLOW_SCRIPT_INTERRUPT",

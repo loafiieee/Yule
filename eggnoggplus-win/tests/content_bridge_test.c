@@ -459,12 +459,30 @@ static void test_draw_and_native_fallback(void) {
     CHECK(memcmp(state.turtle, original, sizeof(original)) == 0);
 }
 
+static void test_independent_visual(void) {
+    ContentTileRender render;DrawState state;ContentBridgeDrawOps ops;
+    unsigned char before[CONTENT_BRIDGE_TURTLE_STATE_SIZE];
+    memset(&render,0,sizeof(render));strcpy(render.sprite_sheet,"builtin:tiles");
+    render.sprite_index=4;render.layer=1;render.offset_x=12.5f;render.offset_y=-8.25f;
+    render.scale_x=1;render.scale_y=-2;
+    for(int i=0;i<4;i++) render.tint[i]=1;
+    for(int failure=0;failure<=6;failure++) {
+        init_draw_state(&state);ops=draw_ops(&state);state.fail_operation=failure;
+        memcpy(before,state.turtle,sizeof(before));
+        CHECK(content_bridge_draw_visual(&render,&ops)==(failure==0));
+        CHECK(state.override_calls==0 && !memcmp(before,state.turtle,sizeof(before)));
+        if(!failure) {CHECK(state.trans_x==12.5 && state.trans_y==-8.25);CHECK(state.scale_y==-6 && state.resolved_index==4);}
+    }
+    init_draw_state(&state);ops=draw_ops(&state);render.offset_x=NAN;
+    CHECK(!content_bridge_draw_visual(&render,&ops) && state.resolve_calls==0);
+}
 int main(void) {
     content_tiles_shutdown();
     content_registry_shutdown();
     CHECK(register_tiles());
     test_layout_mapping_and_fail_closed_binding();
     test_draw_and_native_fallback();
+    test_independent_visual();
     content_tiles_shutdown();
     content_registry_shutdown();
     if (g_failures) {

@@ -125,6 +125,11 @@ int content_bridge_draw_action(const void* tile,
                                uint64_t deterministic_tick,
                                const ContentBridgeDrawOps* ops);
 
+/* Shared sprite submission for independent entities. Does not apply tile-local
+ * overrides. Restores the complete native turtle state on success and failure. */
+struct ContentTileRender;
+int content_bridge_draw_visual(const struct ContentTileRender* render,const ContentBridgeDrawOps* ops);
+
 #ifdef __cplusplus
 }
 #endif

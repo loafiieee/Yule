@@ -1171,6 +1171,9 @@ int main(int argc, char** argv) {
         SOCKET sender;
         char oversized[4096] = {0};
         uint32_t first, second;
+        if (!ggpo_net_test_delayed_duplicate_backpressure()) {
+            return fail("receive-budget", "delayed duplicate ignored backpressure", "");
+        }
         memset(g_state, 0x33, sizeof(g_state));
         err[0] = '\0';
         if (!ggpo_net_set_match_token(TEST_MATCH_TOKEN, err, sizeof(err)) ||
@@ -2671,6 +2674,8 @@ int main(int argc, char** argv) {
         trace = NULL;
         free(trace_scratch);
         trace_scratch = NULL;
+        printf("%s CHAOS AUTH rejected=%u\n", role,
+               (unsigned int)ggpo_net_auth_rejected_packets());
         printf("%s CHAOS PASS start=%u target=%u wrapped=%d checksum=%u frame=%u horizon=%u checksum_rx_next=%u checksum_peer_next=%u pred=%u rb=%u stalls=%u sim_drop=%u sim_delay=%u\n",
                role,
                (unsigned int)start_frame,

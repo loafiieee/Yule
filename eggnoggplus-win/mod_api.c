@@ -30,7 +30,14 @@ static const char* const k_mod_api_capabilities[] = {
     "online.status",
     "storage.v1",
     "texture.unregister",
-    "ui.native"
+    "ui.control_navigation",
+    "ui.list_box",
+    "ui.native",
+    "ui.navigation",
+    "ui.responsive_grid",
+    "ui.scoped_style",
+    "ui.themes",
+    "ui.virtual_list"
 };
 
 static void mod_api_set_error(char* error, size_t capacity, const char* message) {

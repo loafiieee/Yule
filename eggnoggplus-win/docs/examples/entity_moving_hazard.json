@@ -1,0 +1,37 @@
+{
+  "schema": 2,
+  "capacity": 16,
+  "types": [
+    {
+      "key": "demo:moving_hazard",
+      "regions": [
+        {
+          "id": 1,
+          "role": "hitbox",
+          "layer": 1,
+          "mask": 1,
+          "x": -6,
+          "y": -6,
+          "width": 12,
+          "height": 12
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 4,
+        "tint": "#FF6060FF"
+      }
+    }
+  ],
+  "placements": [
+    {
+      "name": "hazard",
+      "type": "demo:moving_hazard",
+      "room": "center",
+      "side": "both",
+      "x": 48,
+      "y": 64,
+      "vx": 0.5
+    }
+  ]
+}

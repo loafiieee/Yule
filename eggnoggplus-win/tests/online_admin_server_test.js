@@ -295,11 +295,13 @@ test("admin UI grants a private client session, requires CSRF, and dispatches ac
       return "rating reset";
     },
   };
+  const auditRecords = [];
   const server = startAdminServerFromEnv({
     ADMIN_HOST: "127.0.0.1",
     ADMIN_PORT: "0",
   }, api, {
     allowEphemeralPort: true,
+    audit: record => auditRecords.push(record),
     log: () => {},
   });
   assert.ok(server);
@@ -351,6 +353,7 @@ test("admin UI grants a private client session, requires CSRF, and dispatches ac
   );
   assert.equal(rejected.status, 403);
   assert.deepEqual(calls, []);
+  assert.deepEqual(auditRecords, []);
 
   const action = await request(
     port, "POST", "/action",
@@ -358,6 +361,10 @@ test("admin UI grants a private client session, requires CSRF, and dispatches ac
   );
   assert.equal(action.status, 303);
   assert.deepEqual(calls, [["ban", "player_1", true, "testing"]]);
+  assert.deepEqual(auditRecords.map(r => r.status), ["requested", "succeeded"]);
+  assert.equal(auditRecords[0].id, auditRecords[1].id);
+  assert.equal(auditRecords[0].actor, "127.0.0.1");
+  assert.ok(!JSON.stringify(auditRecords).includes("testing"));
 });
 
 test("admin UI can be disabled explicitly", () => {

@@ -25,6 +25,7 @@ raw_send = section(
     "static GgpoNetRawSendResult ggpo_net_send_raw_bytes",
     "static int ggpo_net_queue_sim_packet",
 )
+raw_send = raw_send[raw_send.index("sent = sendto("):]
 assert "sent != len" in raw_send
 assert "g_net.packets_sent++" in raw_send
 assert raw_send.index("g_net.packets_sent++") < raw_send.index(

@@ -20,12 +20,12 @@ PLAYER_SIZE = 0x15C
 THING_SIZE = 0x15C
 
 for contract in (
-    "sizeof(FullStateBlobHeader) == 0x25688u",
+    "sizeof(FullStateBlobHeader) == 0x25790u",
     "offsetof(FullStateBlobHeader, map_script_state) == 252u",
-    "offsetof(FullStateBlobHeader, transient_game_state) == 29700u",
-    "offsetof(FullStateBlobHeader, thing_info_state) == 30852u",
-    "offsetof(FullStateBlobHeader, room_info_state) == 31044u",
-    "offsetof(FullStateBlobHeader, particle_state) == 48520u",
+    "offsetof(FullStateBlobHeader, transient_game_state) == 29960u",
+    "offsetof(FullStateBlobHeader, thing_info_state) == 31112u",
+    "offsetof(FullStateBlobHeader, room_info_state) == 31304u",
+    "offsetof(FullStateBlobHeader, particle_state) == 48780u",
 ):
     assert contract in LUA_MANAGER
 
@@ -109,6 +109,59 @@ with tempfile.TemporaryDirectory(prefix="eggnoggplus_trace_diff_") as temp_name:
     assert report["right"]["state_sha256"] == hashlib.sha256(right_state).hexdigest()
     assert "state" not in report["left"]
     assert "schema" not in report
+
+    # v10 inserts a timer block before the old transient boundary; keep v9 tests below.
+    old = egg0_state()
+    current = bytearray(old[:29700] + bytes(260) + old[29700:EGG0_HEADER_SIZE] + bytes(4) + old[EGG0_HEADER_SIZE:])
+    struct.pack_into("<I", current, 4, 10)
+    altered = bytearray(current)
+    altered[29704] = 1
+    left.write_bytes(trace_record(29, 200, bytes(current)))
+    right.write_bytes(trace_record(29, 201, bytes(altered)))
+    timer_diff = run_tool("--json", left, right)
+    assert timer_diff.returncode == 1, timer_diff
+    timer_schema = json.loads(timer_diff.stdout)["schema"]
+    assert timer_schema["version"] == 10
+    assert timer_schema["first_difference"]["field"] == "timer_remaining"
+    assert timer_schema["first_difference"]["timer"] == 0
+    altered = bytearray(current)
+    altered[EGG0_HEADER_SIZE + 264 + PLAYER_SIZE + 0x34] = 1
+    right.write_bytes(trace_record(29, 201, bytes(altered)))
+    current_player = json.loads(run_tool("--json", left, right).stdout)["schema"]
+    assert current_player["first_difference"]["component"] == "player1"
+
+    # v11 preserves all native offsets; an optional managed extension is hashed separately.
+    version11 = bytearray(current)
+    struct.pack_into("<I", version11, 4, 11)
+    extension = bytearray(b"YMC1" + bytes(12) + version11[252:252+29708])
+    extension += b"YEP1" + b"a"*64 + bytes(4)
+    world = bytearray(32 + 8*32 + 520)
+    world[:4] = b"YEW1"
+    struct.pack_into("<I", world, 4, 1)
+    struct.pack_into("<I", world, 8, 8)
+    struct.pack_into("<I", world, 24, 1)
+    version11 += extension + world
+    changed11 = bytearray(version11)
+    changed11[-1] = 1
+    left.write_bytes(trace_record(29, 200, bytes(version11)))
+    right.write_bytes(trace_record(29, 201, bytes(changed11)))
+    entity_schema = json.loads(run_tool("--json", left, right).stdout)["schema"]
+    assert entity_schema["version"] == 11
+    assert entity_schema["changed_components"] == ["managed_content"]
+    assert entity_schema["first_difference"]["component"] == "managed_content"
+
+    version12 = bytearray(current)
+    struct.pack_into("<I", version12, 4, 12)
+    extension12 = b"YMC2" + bytes(range(32)) + bytes(12) + version12[252:252+29708]
+    extension12 += b"YEP1" + b"a"*64 + bytes(4) + world
+    version12 += extension12
+    changed12 = bytearray(version12)
+    changed12[-1] = 1
+    left.write_bytes(trace_record(29, 200, bytes(version12)))
+    right.write_bytes(trace_record(29, 201, bytes(changed12)))
+    current_schema = json.loads(run_tool("--json", left, right).stdout)["schema"]
+    assert current_schema["version"] == 12
+    assert current_schema["changed_components"] == ["managed_content"]
 
     # Recognized production EGG0/v9 blobs receive secret-safe component hashes
     # and exact schema locations in addition to the generic byte offset.

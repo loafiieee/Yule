@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "capacity": 8,
+  "types": [
+    {
+      "key": "demo:orb",
+      "regions": [
+        {
+          "id": 1,
+          "role": "solid",
+          "layer": 1,
+          "mask": 1,
+          "x": -8,
+          "y": -8,
+          "width": 16,
+          "height": 16
+        }
+      ]
+    },
+    {
+      "key": "demo:obstacle",
+      "regions": [
+        {
+          "id": 1,
+          "role": "solid",
+          "layer": 1,
+          "mask": 1,
+          "x": 64,
+          "y": 0,
+          "width": 16,
+          "height": 48
+        },
+        {
+          "id": 2,
+          "role": "solid",
+          "layer": 1,
+          "mask": 1,
+          "x": 0,
+          "y": 48,
+          "width": 128,
+          "height": 16
+        }
+      ]
+    }
+  ],
+  "placements": [
+    {
+      "name": "orb",
+      "type": "demo:orb",
+      "x": 16,
+      "y": 16,
+      "vx": 32
+    },
+    {
+      "name": "obstacle",
+      "type": "demo:obstacle"
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+Building framework-owned entity lifecycle tests...
+entity world: lifecycle, overflow atomicity, 2048-tick replay and strict snapshots passed
+Building entity Lua adapter tests...
+[string "entity.set(orb,{vx=9}) entity.spawn('demo:orb..."]:1: intentional rollback
+entity Lua adapter: named types, exact handles, validation and transactional callbacks passed
+Building entity package ownership tests...
+entity packages: canonical ownership, placement, identities and atomic restore passed
+PASS: nine opponent policy call sites match native executable; all-or-nothing patch preflight
+Building opponent spawn policy tests...
+PASS: opponent spawn policy preserves initial/leader respawns and match completion
+Production cosmetic RNG classifier extracted
+Building cosmetic RNG branch tests...
+Native cosmetic RNG branch classification: OK
+online capture production extraction and event wiring: OK
+Building online hub text focus tests...
+online hub commit-on-blur production handler tests: OK
+Building keyboard binding parser tests...
+strict keyboard binding parser and round-trip tests: OK
+Building mod API compatibility/capability tests...
+mod API compatibility tests: OK
+Building embedded UI helpers tests...
+List box filtering, bounded rendering, navigation and pointer tests: OK
+List browser demo and clipping checks: OK
+UI helpers responsive layout and slider tests: OK
+Building native room reset lifecycle tests...
+native room reset lifecycle tests: OK
+Building credential lifecycle tests...
+Credential Manager live roundtrip skipped (set EGGNOGGPLUS_CREDENTIAL_TEST_LIVE=1 to enable).
+credential_ext tests passed
+Building nonblocking TCP transport tests...
+ALL OK
+Building online control parser/lifecycle tests...
+online_control tests passed
+Building asset ownership and validation tests...
+asset ownership, canonical paths, overflow and reload tests: OK
+Building removable mod callback list tests...
+removable mod callback list tests: OK
+Building mod.http response/lifecycle tests...
+mod.http lifecycle tests: OK
+Building bounded Lua JSON parser/encoder tests...
+mod JSON parser/encoder tests: OK
+Building bounded text utility tests...
+text utility tests: OK
+Building RGBA image utility tests...
+image utility tests: OK
+Building console command catalog tests...
+console command catalog tests: OK
+Building console parser tests...
+console parser tests: OK
+Building bounded command history tests...
+command history tests: OK
+Building safe launch request parser tests...
+launch_request_test: all checks passed
+Building existing-process launch IPC tests...
+launch IPC tests passed
+Building window policy tests...
+window policy tests: OK
+Building canonical floating-point tick tests...
+fp control tests: ALL OK
+Building canonical rollback envelope codec tests...
+PASS: canonical rollback envelope codec tests
+Building privacy-bounded Discord Rich Presence tests...
+discord Rich Presence tests: OK
+Building bounded bytebeat expression/render tests...
+bytebeat expression/render tests: OK
+Building sandboxed Dollchan JavaScript compatibility tests...
+tune9 mode=0 rate=44100 block render: 0/16 ms (budget 211 ms)
+tune10 mode=2 rate=44100 block render: 78/93 ms (budget 211 ms)
+sandboxed Dollchan JavaScript tests: OK
+Building ahead-of-time Dollchan PCM stream tests...
+bytebeat producer stream tests: OK
+Building native rollback serializer tests...
+state serializer tests: ALL OK
+atlas-renderer tests: OK
+✔ greggnogg\atlas-renderer.test.js (82.587ms)
+Greggnogg editor-core tests passed: 121
+✔ greggnogg\editor-core.test.js (132.2095ms)
+✔ configuration fails closed (4.5644ms)
+✔ queue payload contains only public identity, queue, and HTTPS handoffs (7.0321ms)
+✔ join posts once and leave edits the exact owned message (1.5595ms)
+✔ matched post is edited now and deleted after one-day retention (0.9199ms)
+✔ leave racing create edits the late message (0.517ms)
+✔ a sub-two-second queue stay never creates a Discord message (0.2465ms)
+✔ the delayed post is created once only after its timer fires (0.2306ms)
+✔ 429 response uses server retry_after instead of hardcoded route rates (0.2673ms)
+✔ invalid lifecycle values never reach Discord (0.1413ms)
+✔ orderly close retires active owned posts (0.3986ms)
+✔ pending create work is bounded without dropping owned cleanup (4.7964ms)
+✔ goal RGB controls preview exact channels and group a gesture into one undo (3.7119ms)
+✔ invalid goal RGB or hex input preserves the document (1.0909ms)
+✔ shared RGB controls retain room palette behavior (1.1325ms)
+✔ public base and generated links are strict HTTPS routes (1.6025ms)
+✔ redirect parser exposes only completed canonical yule intents (0.3799ms)
+✔ HTTP handoff is no-store and method bounded (1.1248ms)
+✔ redirect server refuses an accidental public bind (1.4915ms)
+✔ audit preserves append history and records correlated intent/outcome without secrets (19.0658ms)
+✔ audit failure blocks mutation and completion failure is explicitly distinguished (0.3621ms)
+✔ an interrupted final record cannot absorb later audit entries (7.7353ms)
+✔ live dashboard preserves focused, open, and edited maintenance while other regions refresh (2.7654ms)
+✔ live dashboard pauses hidden tabs, retries failures, and stops on expired sessions (1.4077ms)
+✔ live dashboard does not overlap requests after visibility changes (1.0036ms)
+✔ admin bind validation accepts only loopback/private literals by default (4.6275ms)
+✔ admin UI grants a private client session, requires CSRF, and dispatches actions (42.961ms)
+✔ admin UI can be disabled explicitly (0.2697ms)
+✔ direct execution explains that the admin listener belongs to server.js (55.7343ms)
+✔ admin rejects DNS rebinding hostnames before granting sessions (4.1961ms)
+✔ offline backup verifies data and restores with a complete recovery copy (71.7203ms)
+✔ tampered backup is rejected before any destination changes (24.2569ms)
+✔ partial restore failure restores previous bytes and retains recovery snapshot (55.3759ms)
+✔ silent write corruption triggers verified recovery (53.6875ms)
+✔ silent recovery corruption is never reported as recovered (45.713ms)
+✔ stores reject damaged existing files and have no inherited users (13.3275ms)
+✔ failed atomic replacement preserves destination and cleans temporary file (6.3928ms)
+✔ record updates publish only after persistence and preserve unrelated users (12.6766ms)
+ℹ tests 39
+ℹ suites 0
+ℹ pass 39
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 473.5065
+embedded UI source/header synchronization: OK
+Traceback (most recent call last):
+  File "C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\tests\compile_sources_static_test.py", line 18, in <module>
+    assert not missing, f"compile.sh omits root implementation files: {missing}"
+           ^^^^^^^^^^^
+AssertionError: compile.sh omits root implementation files: ['entity_lua.c', 'entity_package.c', 'entity_package_json.c', 'entity_world.c']
+tests\compile_sources_static_test.py failed with exit code 1.
+At C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\tests\run_core_native_tests.ps1:311 char:13
++             throw "$script failed with exit code $LASTEXITCODE."
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (tests\compile_s...th exit code 1.:String) [], RuntimeException
+    + FullyQualifiedErrorId : tests\compile_sources_static_test.py failed with exit code 1.
+ 

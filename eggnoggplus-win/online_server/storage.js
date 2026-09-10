@@ -48,4 +48,21 @@ function atomicWriteFile(filename, text) {
   }
 }
 
-module.exports = { loadUserStore, atomicWriteFile };
+// Prepare a detached record and persist the complete next store before publishing
+// it. Failure leaves the live record (including nested arrays/objects) unchanged.
+// This is one-file atomic replacement, not a cross-store transaction.
+function updateUserRecord(filename, store, username, update, write = atomicWriteFile) {
+  if (!/^[a-z0-9_]{1,24}$/.test(username)) throw new Error("Invalid user name");
+  const record = structuredClone(store.users[username] || {});
+  const replacement = update(record) || record;
+  if (!replacement || typeof replacement !== "object" || Array.isArray(replacement)) {
+    throw new Error("Invalid replacement user record");
+  }
+  const users = Object.assign(Object.create(null), store.users);
+  users[username] = replacement;
+  write(filename, JSON.stringify({...store, users}, null, 2));
+  store.users[username] = replacement;
+  return replacement;
+}
+
+module.exports = { loadUserStore, atomicWriteFile, updateUserRecord };

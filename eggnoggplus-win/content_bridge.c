@@ -235,13 +235,10 @@ static float state_float(const unsigned char* state, size_t offset) {
     return value;
 }
 
-int content_bridge_draw_action(const void* tile,
-                               int mode,
-                               int x,
-                               int y,
-                               uint64_t deterministic_tick,
-                               const ContentBridgeDrawOps* ops) {
+static int draw_visual(const ContentTileRender* input,const ContentBridgeDrawOps* ops,int tile_override) {
     ContentTileRender render;
+    if(!input) return 0;
+    render=*input;
     unsigned char saved_state[CONTENT_BRIDGE_TURTLE_STATE_SIZE];
     double current_scale_x;
     double current_scale_y;
@@ -254,10 +251,10 @@ int content_bridge_draw_action(const void* tile,
     void* sprite;
     int i;
 
-    if (!content_tiles_render_for_action(tile, mode, x, y,
-                                         deterministic_tick, &render)) {
-        return 0;
-    }
+    if(!memchr(render.sprite_sheet,0,sizeof(render.sprite_sheet)) || !render.sprite_sheet[0] || render.sprite_index<0 ||
+       !isfinite(render.offset_x) || !isfinite(render.offset_y) || !isfinite(render.angle_degrees) ||
+       !isfinite(render.scale_x) || !isfinite(render.scale_y) || !render.scale_x || !render.scale_y) return 0;
+    for(i=0;i<4;i++) if(!isfinite(render.tint[i]) || render.tint[i]<0 || render.tint[i]>1) return 0;
     if (!ops || !ops->turtle_state ||
         ops->turtle_state_size < CONTENT_BRIDGE_TURTLE_STATE_SIZE ||
         !ops->resolve_sprite || !ops->sprite_get || !ops->turtle_trans ||
@@ -266,7 +263,7 @@ int content_bridge_draw_action(const void* tile,
         !ops->sprite_batch_plot || render.layer < 0 || render.layer > 1) {
         return 0;
     }
-    if (ops->visual_override) {
+    if (tile_override && ops->visual_override) {
         ContentBridgeVisualOverride override;
         override.sprite_index = render.sprite_index;
         override.offset_x = 0.0f;
@@ -327,4 +324,12 @@ int content_bridge_draw_action(const void* tile,
     }
     memcpy(ops->turtle_state, saved_state, sizeof(saved_state));
     return 1;
+}
+
+int content_bridge_draw_action(const void* tile,int mode,int x,int y,uint64_t tick,const ContentBridgeDrawOps* ops) {
+    ContentTileRender render;
+    return content_tiles_render_for_action(tile,mode,x,y,tick,&render) && draw_visual(&render,ops,1);
+}
+int content_bridge_draw_visual(const struct ContentTileRender* render,const ContentBridgeDrawOps* ops) {
+    return draw_visual(render,ops,0);
 }

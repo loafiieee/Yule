@@ -19,6 +19,8 @@ int mod_json_lua_array(lua_State* L);
 int mod_json_lua_object(lua_State* L);
 int mod_json_lua_is_null(lua_State* L);
 void mod_json_lua_push_null(lua_State* L);
+/* Decoder table identity; 1=array, 2=object, 0=untagged/non-table. */
+int mod_json_table_kind(lua_State* L, int index);
 
 #ifdef __cplusplus
 }

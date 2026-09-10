@@ -387,6 +387,15 @@ permitted only through an authenticated HELLO at frame zero before confirmation.
 keys, wrong keys, and wrong versions fail closed. This protects P2P integrity and
 authenticity only; packet contents and traffic metadata are not encrypted.
 
+### Text-field editing
+
+Online hub fields save valid edits when you click another field, Log In/Register,
+a tab or the background. Enter is optional. Tab/Shift+Tab and up/down commit and
+move field focus; Escape cancels the draft. Invalid settings keep focus and show
+the validation error. Clicking the current field preserves what you typed.
+Controller confirm/cancel and navigation also work while editing. Search User
+still requires an explicit submission; clicking away never sends a request.
+
 ### Secure password remembering
 
 `Remember me` is opt-in and disabled by default. The feature adds only the

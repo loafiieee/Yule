@@ -1,0 +1,668 @@
+Checking native-tick force integration...
+content_force_hooks_static_test: all checks passed
+Checking native-layout per-map tileset integration...
+map_tileset_hooks_static_test: all checks passed
+Checking bounded and padding-safe native atlas packing...
+map_atlas_loader_static_test: all checks passed
+Checking retired map-registry generation cleanup...
+custom map retirement static checks: OK
+Checking mod content-registry native visual options...
+lua_content_native_visual_static_test: all checks passed
+Checking map.lua native-hook integration...
+map_script_hooks_static_test: all checks passed
+Checking map.lua rollback-state integration...
+map_script_rollback_static_test: all checks passed
+Checking fail-closed online map.lua readiness...
+map_script_online_gate_static_test: all checks passed
+Building deterministic content registry behavior tests...
+content_registry_test: all checks passed
+Building deterministic content tile interaction tests...
+content_tiles_test: all checks passed
+Building generated-map render bridge tests...
+content_bridge_test: all checks passed
+Building isolated deterministic map.lua runtime tests...
+map.lua disabled for this rollback timeline: map.on_contact failed: tests/map.lua:2: unknown or read-only map object property
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: get_sprite expects no arguments
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options must be a table
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options has an unknown field 'offset_z'
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options.offset_y must be a number
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options.offset_y is non-finite or outside -4096..4096 pixels
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options.offset_y is non-finite or outside -4096..4096 pixels
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite options has an unknown field 'offset_y'
+map.lua disabled for this rollback timeline: map.on_enter failed: tests/map.lua:1: set_sprite expects sprite index, duration_ticks, and optional options
+map.lua disabled for this rollback timeline: map.on_contact failed: tests/map.lua:3: intentional limit fault
+map.lua disabled for this rollback timeline: map timer callback failed: tests/map.lua:1: timer fault
+map.lua disabled for this rollback timeline: map timer callback failed: tests/map.lua:1: timer fault
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: timer ticks are outside the supported integer range
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state_clear expects at most one prefix
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state strings may contain at most 63 bytes
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state accepts only nil, boolean, number, or short string
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state numbers must be finite
+map.lua disabled for this rollback timeline: map.on_tick failed: tests/map.lua:1: map.state strings may contain at most 63 bytes
+map_script_test: all checks passed
+Building checked-in spring demo behavior tests...
+spring demo fixture tests passed
+Building the V2 package/fixture regression test...
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour must be a 3-number array
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour must be a 3-number array
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour must be a 3-number array
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour must be a 3-number array
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour channel 2 must be numeric
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour channel 1 must be in 0.0..1.0
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rules.eggnogg_color] error: colour channel 0 must be in 0.0..1.0
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][line=1][col=219] error: number out of range
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][defaults.room.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.json][rooms.center.opponent_spawn] error: expected default, always, or never
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.map][room=center][line=6][row=3][col=17] error: glyph "T" expands upward into a 4-tile tentacle and needs 3 tiles of headroom
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.map][room=center][line=5][row=2][col=17] error: glyph "t" expands upward into a 3-tile tentacle and needs 2 tiles of headroom
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [ERROR] [maps][legacy] [data.map][room=center][line=4][row=1][col=17] error: glyph "s" expands upward into a 2-tile tentacle and needs 1 tiles of headroom
+[20:10:38] [WARN] [maps][legacy] warning: map has only one source room
+[20:10:38] [INFO] [maps] scanning maps/ for custom maps
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry ready: 6 custom maps (was 0)
+[20:10:38] [WARN] [maps][_greggnogg_preview] warning: map has only one source room
+[20:10:38] [INFO] [maps] scanning maps/ for custom maps
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry ready: 7 custom maps (was 6)
+[20:10:38] [INFO] [maps] installed in-memory preview map "Preview Test" at selector 11
+[20:10:38] [ERROR] [maps][_greggnogg_preview] [data.json][format] error: preview links currently accept eggnogg-map/v1 only
+[20:10:38] [WARN] [maps][spawn_budget] warning: map has only one source room
+[20:10:38] [ERROR] [maps][spawn_budget] [data.map][room=center] error: native room-reset spawn budget is 14/13 (K hazards=14, swords=0, mines=0); thing_new has 15 allocatable slots after skipping slot zero and two are reserved for players
+[20:10:38] [WARN] [maps][spawn_budget] warning: map has only one source room
+[20:10:38] [ERROR] [maps][spawn_budget] [data.map][room=center] error: native room-reset spawn budget is 14/13 (K hazards=5, swords=4, mines=5); thing_new has 15 allocatable slots after skipping slot zero and two are reserved for players
+[20:10:38] [WARN] [maps][spawn_budget] warning: map has only one source room
+[20:10:38] [WARN] [maps][spawn_budget] warning: map has only one source room
+[20:10:38] [WARN] [maps][symbol_test] warning: map has only one source room
+[20:10:38] [WARN] [maps][builtin_skin] warning: map has only one source room
+[20:10:38] [WARN] [maps][expanded_skin] warning: map has only one source room
+[20:10:38] [WARN] [maps][space_skin] warning: map has only one source room
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[2].symbol] error: duplicate symbol "$"
+[20:10:38] [ERROR] [maps][bad] [data.json][line=1][col=36] error: duplicate object key 'format'
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1]] error: unknown key "sprite_indx"
+[20:10:38] [ERROR] [maps][bad] [data.json][line=1][col=43] error: JSON strings cannot contain NUL
+[20:10:38] [ERROR] [maps][bad] [data.json][rules.score_target] error: expected null or positive integer
+[20:10:38] [WARN] [maps][bad] warning: map has only one source room
+[20:10:38] [ERROR] [maps][bad] [data.json][id] error: v2 requires a non-empty stable id
+[20:10:38] [ERROR] [maps][bad] [data.json][id] error: id is too long for a map content namespace
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1].layer] error: expected integer in 0..1
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1].collision] error: expected native, solid, pass_through, or hazard
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1].force_mode] error: expected add or set
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1].force_mode] error: force_mode requires force_x and/or force_y
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1].native_glyph] error: native collision requires a safe native_glyph (builtin overrides default to their symbol)
+[20:10:38] [ERROR] [maps][bad] [data.json][tileset.tiles[1].native_visual] error: expected replace or underlay
+[20:10:38] [WARN] [maps][asset_test] warning: map has only one source room
+[20:10:38] [WARN] [maps][geometry_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][geometry_test] [data.json][tileset.tiles[1]] error: sprite_index/frame_count exceeds the external sheet's 4 sprites
+[20:10:38] [WARN] [maps][asset_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][asset_test] [data.json][tileset.tiles[1].asset_sha256] error: declared SHA-256 does not match file bytes
+[20:10:38] [WARN] [maps][tileset_defaults] warning: map has only one source room
+[20:10:38] [ERROR] [maps][missing_default] [data.json][tileset.tiles[1].sprite_sheet] error: missing tile sheet and tileset has no default sprite_sheet
+[20:10:38] [WARN] [maps][native_default] warning: map has only one source room
+[20:10:38] [WARN] [maps][native_default] warning: map has only one source room
+[20:10:38] [WARN] [maps][native_default] warning: map has only one source room
+[20:10:38] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: map sheet needs at least 128 sprites because native tile actions address the first 128 cells; extra cells are allowed
+[20:10:38] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: native layout requires an external default sprite_sheet
+[20:10:38] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: native layout requires an external default map sheet
+[20:10:38] [ERROR] [maps][native_default] [data.json][tileset.native_layout] error: expected boolean
+[20:10:38] [INFO] [maps] scanning maps/ for custom maps
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_online_identity_test_54336] scanning folder: maps\v2_online_identity_test_54336
+[20:10:38] [INFO] [maps][v2_online_identity_test_54336] loading json: maps\v2_online_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_online_identity_test_54336] loading map: maps\v2_online_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_online_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][online_identity_test] registered: name="Online identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry ready: 7 custom maps (was 0)
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_online_identity_test_54336] scanning folder: maps\v2_online_identity_test_54336
+[20:10:38] [INFO] [maps][v2_online_identity_test_54336] loading json: maps\v2_online_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_online_identity_test_54336] loading map: maps\v2_online_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_online_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][online_identity_test] registered: name="Online identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry reloaded: 7 custom maps (was 7)
+[20:10:38] [INFO] [maps] scanning maps/ for custom maps
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] scanning folder: maps\v2_tileset_identity_test_54336
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] loading json: maps\v2_tileset_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] loading map: maps\v2_tileset_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_tileset_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][tileset_identity_test] registered: name="Tileset identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps] registry ready: 7 custom maps (was 0)
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] scanning folder: maps\v2_tileset_identity_test_54336
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] loading json: maps\v2_tileset_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] loading map: maps\v2_tileset_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_tileset_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][tileset_identity_test] registered: name="Tileset identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps] registry reloaded: 7 custom maps (was 7)
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] scanning folder: maps\v2_tileset_identity_test_54336
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] loading json: maps\v2_tileset_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_tileset_identity_test_54336] loading map: maps\v2_tileset_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_tileset_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][tileset_identity_test] registered: name="Tileset identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps] registry reloaded: 7 custom maps (was 7)
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][script_test] [map.lua] error: could not compile map.lua: ...in\eggnoggplus-win\build\map_script_package_test\map.lua:2: <name> or '...' expected near '<eof>'
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][script_test] [map.lua] error: could not initialize map.lua: ...in\eggnoggplus-win\build\map_script_package_test\map.lua:1: callback references an unknown map tile
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][script_test] [map.lua] error: scripts require eggnogg-map/v2
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][script_test] [map.lua] error: file exceeds its package byte limit
+[20:10:38] [WARN] [maps][script_test] warning: map has only one source room
+[20:10:38] [ERROR] [maps][script_test] [map.lua] error: script must be a direct, regular, non-reparse file
+[20:10:38] [INFO] [maps] scanning maps/ for custom maps
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] scanning folder: maps\v2_script_identity_test_54336
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] loading json: maps\v2_script_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] loading map: maps\v2_script_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_script_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][script_identity_test] registered: name="Script identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry ready: 7 custom maps (was 0)
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] scanning folder: maps\v2_script_identity_test_54336
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] loading json: maps\v2_script_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] loading map: maps\v2_script_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_script_identity_test_54336] warning: map has only one source room
+[20:10:38] [ERROR] [maps][v2_script_identity_test_54336] [map.lua] error: could not compile map.lua: ...gnoggplus-win\maps\v2_script_identity_test_54336\map.lua:1: <name> or '...' expected near '<eof>'
+[20:10:38] [ERROR] [maps][v2_script_identity_test_54336] map rejected: 1 errors, 1 warnings
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [ERROR] [maps] reload rejected because a previously valid package is now invalid (1 rejected); keeping last known-good registry
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] scanning folder: maps\v2_script_identity_test_54336
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] loading json: maps\v2_script_identity_test_54336\data.json
+[20:10:38] [INFO] [maps][v2_script_identity_test_54336] loading map: maps\v2_script_identity_test_54336\data.map
+[20:10:38] [WARN] [maps][v2_script_identity_test_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][script_identity_test] registered: name="Script identity test" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry reloaded: 7 custom maps (was 7)
+[20:10:38] [WARN] [maps][entities] warning: map has only one source room
+[20:10:38] [WARN] [maps][entities] warning: map has only one source room
+[20:10:38] [ERROR] [maps][entities] [entities.json] error: scripts require eggnogg-map/v2
+[20:10:38] [WARN] [maps][entities] warning: map has only one source room
+[20:10:38] [ERROR] [maps][entities] [map.lua] error: $.schema: expected number
+[20:10:38] [WARN] [maps][entities] warning: map has only one source room
+[20:10:38] [ERROR] [maps][entities] [entities.json] error: script must be a direct, regular, non-reparse file
+[20:10:38] [WARN] [maps][entities] warning: map has only one source room
+[20:10:38] [INFO] [maps] scanning maps/ for custom maps
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][entity_discovery_54336] scanning folder: maps\entity_discovery_54336
+[20:10:38] [INFO] [maps][entity_discovery_54336] loading json: maps\entity_discovery_54336\data.json
+[20:10:38] [INFO] [maps][entity_discovery_54336] loading map: maps\entity_discovery_54336\data.map
+[20:10:38] [WARN] [maps][entity_discovery_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][entity_discovery] registered: name="Entity discovery" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry ready: 7 custom maps (was 0)
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][entity_discovery_54336] scanning folder: maps\entity_discovery_54336
+[20:10:38] [INFO] [maps][entity_discovery_54336] loading json: maps\entity_discovery_54336\data.json
+[20:10:38] [INFO] [maps][entity_discovery_54336] loading map: maps\entity_discovery_54336\data.map
+[20:10:38] [WARN] [maps][entity_discovery_54336] warning: map has only one source room
+[20:10:38] [INFO] [maps][entity_discovery] registered: name="Entity discovery" author="Test" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry reloaded: 7 custom maps (was 7)
+[20:10:38] [INFO] [maps] detected maps/ change; rebuilding registry
+[20:10:38] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[20:10:38] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[20:10:38] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[20:10:38] [WARN] [maps][basketsword] warning: map has only one source room
+[20:10:38] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[20:10:38] [INFO] [maps][example_map] scanning folder: maps\example_map
+[20:10:38] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[20:10:38] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[20:10:38] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[20:10:38] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[20:10:38] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[20:10:38] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[20:10:38] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[20:10:38] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[20:10:38] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[20:10:38] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[20:10:38] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[20:10:38] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[20:10:38] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[20:10:38] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[20:10:38] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[20:10:38] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[20:10:38] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[20:10:38] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[20:10:38] [INFO] [maps] registry reloaded: 6 custom maps (was 7)
+custom_maps_v2_test: all checks passed
+PASS: V2 collision presets, forces, sensors, temporary visual offsets, native underlay, mirroring, registry identity, demo package, and parser regressions are valid.
+The visual bridge still needs the short in-game check documented in MAP_FORMAT.md.

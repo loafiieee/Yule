@@ -48,13 +48,13 @@ assert "if (rec.ban)" in login
 assert "account banned" in login
 assert "delete rec.ban" in shape
 assert "crypto.randomBytes(16)" in password
-assert "saveDB()" in password
+assert "updateUserRecord(DB_FILE, db, username" in password
 assert "destroyClient(client)" in password
-assert "rec.ban =" in ban
-assert "saveDB()" in ban
+assert "next.ban =" in ban
+assert "updateUserRecord(DB_FILE, db, username" in ban
 assert "destroyClient(client)" in ban
-assert "setRating(username, DEFAULT_ELO, DEFAULT_MMR)" in rating
-assert "saveRatings()" in rating
+assert "makeRating(username, DEFAULT_ELO, DEFAULT_MMR)" in rating
+assert "updateUserRecord(RATINGS_FILE, ratings, username" in rating
 assert "closeListener(adminServer)" in shutdown
 for live_surface in (
     "activeMatches.values()",

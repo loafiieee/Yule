@@ -43,6 +43,12 @@ assert "p_main_set_fullscreen" not in pre_swap
 assert "glViewport(0, 0, dw, dh);" in refresh
 assert "g_game_w_native" not in refresh
 assert "g_game_h_native" not in refresh
+assert "if (ww > 0 && wh > 0)" in refresh
+assert "*p_wrapper_display_w = ww;" in refresh
+assert "*p_wrapper_display_h = wh;" in refresh
+assert "ADDR_WRAPPER_DISPLAY_W         0x44812Cu" in HOOKS
+assert "ADDR_WRAPPER_DISPLAY_H         0x448128u" in HOOKS
+assert refresh.index("*p_wrapper_display_w = ww;") < refresh.index("glViewport(0, 0, dw, dh);")
 geometry_change_test = refresh[
     refresh.index("changed =") : refresh.index("if (dw > 0")
 ]

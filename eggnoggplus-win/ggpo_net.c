@@ -669,6 +669,7 @@ static int g_net_test_tamper_outgoing = 0;
 static int g_net_test_replay_outgoing = 0;
 static int g_net_test_suppress_checksum_payload = 0;
 static uint32_t g_net_test_state_chunk_would_block_remaining = 0u;
+static int g_net_test_duplicate_pressure_calls = -1;
 #endif
 static uint32_t g_net_config_input_delay = GGPO_NET_DEFAULT_INPUT_DELAY;
 /* When set, measured RTT may raise the effective input delay above the
@@ -1399,6 +1400,14 @@ static GgpoNetRawSendResult ggpo_net_send_raw_bytes(const void* data,
                                                      int len,
                                                      const struct sockaddr_in* addr) {
     int sent;
+#ifdef GGPO_NET_TEST
+    if (g_net_test_duplicate_pressure_calls >= 0) {
+        if (++g_net_test_duplicate_pressure_calls == 2) {
+            return ggpo_net_note_socket_send_error(WSAEWOULDBLOCK);
+        }
+        return GGPO_NET_RAW_SEND_SENT;
+    }
+#endif
     if (!data || len <= 0 || !addr || g_net.sock == INVALID_SOCKET) {
         return GGPO_NET_RAW_SEND_HARD_ERROR;
     }
@@ -1456,16 +1465,57 @@ static void ggpo_net_flush_sim_queue(void) {
         if (!q->valid) continue;
         if (!ggpo_net_tick_reached(g_net.service_tick, q->send_tick)) continue;
         result = ggpo_net_send_raw_bytes(q->bytes, q->len, &q->addr);
+#ifdef GGPO_NET_TEST
+        /* Replay the identical authenticated datagram after delay/reordering
+         * too; duplicating only immediate sends misses most chaos traffic. */
+        if (result == GGPO_NET_RAW_SEND_SENT && g_net_test_replay_outgoing) {
+            (void)ggpo_net_send_raw_bytes(q->bytes, q->len, &q->addr);
+        }
+#endif
         if (result == GGPO_NET_RAW_SEND_SENT ||
             result == GGPO_NET_RAW_SEND_HARD_ERROR) {
             q->valid = 0;
         }
-        if (result == GGPO_NET_RAW_SEND_WOULD_BLOCK) {
+        if (result == GGPO_NET_RAW_SEND_WOULD_BLOCK ||
+            g_net.socket_backpressured_this_tick) {
             ggpo_net_saturating_increment(&g_net.socket_send_work_deferred);
             break;
         }
     }
 }
+
+#ifdef GGPO_NET_TEST
+int ggpo_net_test_delayed_duplicate_backpressure(void) {
+    int old_replay = g_net_test_replay_outgoing;
+    int old_pressure = g_net.socket_backpressured_this_tick;
+    uint32_t old_blocks = g_net.socket_would_block_events;
+    uint32_t old_deferred = g_net.socket_send_work_deferred;
+    int ok;
+    if (g_net.active || ggpo_net_sim_pending_count() != 0u) return 0;
+    memset(g_net.sim_queue, 0, sizeof(g_net.sim_queue));
+    for (int i = 0; i < 2; i++) {
+        g_net.sim_queue[i].valid = 1;
+        g_net.sim_queue[i].send_tick = g_net.service_tick;
+        g_net.sim_queue[i].len = sizeof(GgpoNetPacketPrefix);
+    }
+    g_net.socket_backpressured_this_tick = 0;
+    g_net_test_replay_outgoing = 1;
+    g_net_test_duplicate_pressure_calls = 0;
+    ggpo_net_flush_sim_queue();
+    ok = g_net_test_duplicate_pressure_calls == 2 &&
+         !g_net.sim_queue[0].valid && g_net.sim_queue[1].valid &&
+         g_net.socket_backpressured_this_tick &&
+         g_net.socket_would_block_events == old_blocks + 1u &&
+         g_net.socket_send_work_deferred == old_deferred + 1u;
+    g_net_test_duplicate_pressure_calls = -1;
+    g_net_test_replay_outgoing = old_replay;
+    g_net.socket_backpressured_this_tick = old_pressure;
+    g_net.socket_would_block_events = old_blocks;
+    g_net.socket_send_work_deferred = old_deferred;
+    memset(g_net.sim_queue, 0, sizeof(g_net.sim_queue));
+    return ok;
+}
+#endif
 
 static int ggpo_net_sign_packet(void* data, int len) {
     GgpoNetPacketPrefix* prefix = (GgpoNetPacketPrefix*)data;
@@ -5956,6 +6006,26 @@ static void ggpo_net_handle_correction_control(const GgpoNetPacket* p) {
             ggpo_net_correction_protocol_error(p,
                                                "host changed the requested divergence frame");
             return;
+        }
+        /* An unsolicited host offer can arrive before our checksum detector.
+         * Preserve our divergent boundary before correction replay clears it. */
+        {
+            uint32_t divergence = p->correction_snapshot_frame;
+            GgpoNetHistoryEntry* tick =
+                &g_net.history[divergence % GGPO_NET_HISTORY_FRAMES];
+            GgpoNetRemoteChecksumEntry* remote =
+                &g_net.remote_checksums[divergence % GGPO_NET_HISTORY_FRAMES];
+            if (tick->valid && tick->frame == divergence) {
+                ggpo_net_capture_first_desync_repro(
+                    divergence, tick->post_checksum,
+                    (remote->valid && remote->frame == divergence)
+                        ? remote->checksum : 0u,
+                    remote->valid && remote->frame == divergence);
+            }
+            if (divergence != g_rng_last_dump_frame) {
+                g_rng_last_dump_frame = divergence;
+                ggpo_net_dump_rng_ring(divergence);
+            }
         }
         ggpo_net_reset_recv_state();
         g_net.correction_id = p->correction_id;

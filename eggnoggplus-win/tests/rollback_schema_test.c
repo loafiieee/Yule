@@ -50,7 +50,7 @@ static int failures = 0;
  * packed MapScript bridge. It is not evidence of a portable host-struct wire
  * contract; the production codec parses the resulting subdocument as LE. */
 _Static_assert(sizeof(MapScriptSnapshot) == ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES,
-               "test fixture must match embedded MapScriptSnapshot v5");
+               "test fixture must match embedded MapScriptSnapshot v6");
 _Static_assert(offsetof(MapScriptSnapshot, state) == 128u,
                "test fixture map snapshot header changed");
 
@@ -283,6 +283,9 @@ static RollbackSchemaState* make_valid_state(void) {
     snapshot->contacts[0].contact_scope = MAP_SCRIPT_CONTACT_SCOPE_CELL;
     snapshot->contacts[0].last_seen_tick = snapshot->tick;
 
+    snapshot->timer_count = 2u;
+    snapshot->timers[0].remaining = 60u;
+    snapshot->timers[0].interval = 120u;
     snapshot->velocity_limit_count = 1u;
     snapshot->velocity_limits[0].in_use = 1u;
     snapshot->velocity_limits[0].object_kind = MAP_SCRIPT_OBJECT_HAZARD;
@@ -359,7 +362,7 @@ static void test_round_trip(const RollbackSchemaState* state,
     err[0] = '\0';
     CHECK(rollback_schema_encoded_size(state, &wire_size, err, sizeof(err)),
           "valid state did not report an encoded size");
-    CHECK(wire_size == 35648u, "encoded size does not match the v1 section layout");
+    CHECK(wire_size == 35908u, "encoded size does not match the v2 section layout");
     wire = (uint8_t*)malloc(wire_size);
     wire_again = (uint8_t*)malloc(wire_size);
     CHECK(wire != NULL && wire_again != NULL, "wire allocation failed");
@@ -530,6 +533,17 @@ static void test_state_validation(const RollbackSchemaState* baseline) {
 
     RESET_BAD();
     snapshot = (MapScriptSnapshot*)bad->map_script_bytes;
+    snapshot->timers[0].remaining = 0;
+    refresh_map_checksum(bad);
+    expect_state_rejected(bad, "stopped repeating timer accepted");
+    RESET_BAD();
+    snapshot = (MapScriptSnapshot*)bad->map_script_bytes;
+    snapshot->timers[31].remaining = 1;
+    refresh_map_checksum(bad);
+    expect_state_rejected(bad, "undeclared active timer accepted");
+
+    RESET_BAD();
+    snapshot = (MapScriptSnapshot*)bad->map_script_bytes;
     snapshot->contacts[0].lifecycle_id++;
     refresh_map_checksum(bad);
     expect_state_rejected(bad, "stale map contact lifecycle was accepted");
@@ -616,7 +630,7 @@ static void test_wire_validation(const uint8_t* baseline, size_t wire_size) {
     }
 
     RESET_WIRE();
-    bad[4] = 2u;
+    bad[4] = 3u;
     refresh_wire_checksum(bad, wire_size);
     expect_wire_rejected(bad, wire_size, "unknown rollback schema version was accepted");
 

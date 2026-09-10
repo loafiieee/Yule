@@ -121,4 +121,13 @@ assert "GetExitCodeThread(worker, &exit_code)" in waiter
 assert "first desync snapshot file write failed" in waiter
 assert "first desync snapshot writer exceeded teardown deadline" in waiter
 
+
+# A host-initiated correction may precede the joining peer's own detector.
+offer = NET[NET.index('if (p->correction_phase == GGPO_NET_CORRECTION_OFFER) {'):]
+offer = offer[:offer.index('if (!ggpo_net_correction_tuple_matches_packet(p)) {')]
+assert offer.index('ggpo_net_capture_first_desync_repro(') < offer.index('ggpo_net_reset_recv_state();')
+assert 'tick->valid && tick->frame == divergence' in offer
+assert 'remote->valid && remote->frame == divergence' in offer
+assert 'ggpo_net_dump_rng_ring(divergence)' in offer
+
 print("desync_repro_static_test: all checks passed")

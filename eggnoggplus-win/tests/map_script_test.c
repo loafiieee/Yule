@@ -172,7 +172,7 @@ static void test_sensor_validation(const MapScriptTileBinding* bindings,
     MapScriptDefinition split_players = make_definition(441,
         "map.sensor('S', { objects = { 'alive_player', 'dead_body' } })",
         bindings, binding_count);
-    CHECK(MAP_SCRIPT_API_VERSION == UINT32_C(7));
+    CHECK(MAP_SCRIPT_API_VERSION == UINT32_C(27));
     CHECK(map_script_validate(&valid, error, sizeof(error)));
     CHECK(map_script_validate(&split_players, error, sizeof(error)));
     expect_validation_failure(421,
@@ -834,6 +834,10 @@ static void test_sprite_option_faults(const MapScriptTileBinding* bindings,
         const char* expected;
     } cases[] = {
         {
+            "map.on_enter('S', function(object, tile) tile:get_sprite(1) end)",
+            "get_sprite expects no arguments"
+        },
+        {
             "map.on_enter('S', function(object, tile) "
             "tile:set_sprite(7, 2, 'bad') end)",
             "options must be a table"
@@ -903,6 +907,13 @@ static void test_demo_runtime(const MapScriptTileBinding* bindings,
         "  map.state.object_name = tostring(object)\n"
         "  map.state.tile_name = tostring(tile)\n"
         "  object:set_velocity(object.vx, -8)\n"
+        "  tile:set_sprite(7, 2, { offset_x = 1.25, offset_y = -7 })\n"
+        "  local visual = tile:get_sprite()\n"
+        "  assert(visual.sprite_index == 7 and visual.offset_x == 1.25 and visual.offset_y == -7 and visual.ticks_left == 3)\n"
+        "  visual.sprite_index = 99\n"
+        "  assert(tile:get_sprite().sprite_index == 7)\n"
+        "  tile:reset_sprite()\n"
+        "  assert(tile:get_sprite() == nil)\n"
         "  tile:set_sprite(7, 2, { offset_x = 1.25, offset_y = -7 })\n"
         "end)\n"
         "map.on_leave('S', function(object, tile)\n"
@@ -1102,7 +1113,7 @@ static void test_velocity_limits(const MapScriptTileBinding* bindings,
     memset(&host_api, 0, sizeof(host_api));
     host_api.apply_object_fn = test_apply;
     host_api.userdata = &host;
-    CHECK(MAP_SCRIPT_SNAPSHOT_VERSION == 5u);
+    CHECK(MAP_SCRIPT_SNAPSHOT_VERSION == 6u);
     CHECK(map_script_activate(&definition, &host_api, error, sizeof(error)));
     memset(&object, 0, sizeof(object));
     object.object_id = 2;
@@ -1461,10 +1472,16 @@ static void test_optional_bindings(const MapScriptTileBinding* bindings,
                                     size_t binding_count) {
     static const char source[] =
         "assert(map.has_tile('S') and map.has_tile('demo:spring')) "
+        "local list = map.tile_bindings() "
+        "assert(#list == 3 and list[1].symbol == 'S' and list[1].key == 'demo:spring') "
+        "assert(list[2].symbol == 'F' and list[3].symbol == ' ') "
+        "list[1].key = 'changed' list[2] = nil "
+        "assert(map.tile_bindings()[1].key == 'demo:spring' and #map.tile_bindings() == 3) "
         "assert(not map.has_tile('X') and not map.has_tile('@')) "
         "assert(not map.has_tile('') and not map.has_tile('demo:spring' .. string.char(0) .. 'x')) "
         "if map.has_tile('X') then map.on_contact('X', function() end) end "
-        "map.on_tick(function() map.state.present = map.has_tile('S') end)";
+        "map.on_tick(function() map.state.present = map.has_tile('S') "
+        "map.state.first_key = map.tile_bindings()[1].key end)";
     MapScriptDefinition definition = make_definition(500, source, bindings, binding_count);
     MapScriptSnapshot baseline, future, replay;
     const MapScriptSnapshotStateEntry* entry;
@@ -1484,6 +1501,219 @@ static void test_optional_bindings(const MapScriptTileBinding* bindings,
     expect_validation_failure(503,
         "map.on_contact('demo:spring' .. string.char(0) .. 'x', function() end)",
         bindings, binding_count, "unknown map tile");
+    expect_validation_failure(504, "map.tile_bindings('S')", bindings, binding_count, "map.tile_bindings");
+    definition = make_definition(505, "assert(#map.tile_bindings() == 0)", NULL, 0);
+    CHECK(map_script_validate(&definition, error, sizeof(error)));
+}
+
+static void test_state_keys(const MapScriptTileBinding* bindings, size_t binding_count) {
+    static const char source[] =
+        "assert(#map.state_keys() == 0) "
+        "map.state.z = 1 map.state.a = false map.state.m = 'value' "
+        "local keys = map.state_keys() assert(#keys == 3 and keys[1] == 'a' and keys[2] == 'm' and keys[3] == 'z') "
+        "keys[1] = 'changed' assert(map.state_keys()[1] == 'a') "
+        "map.state.a = nil map.state.b = true "
+        "assert(map.state_keys()[1] == 'b') "
+        "map.on_tick(function() local keys = map.state_keys() "
+        "for _, key in ipairs(keys) do map.state[key] = nil end "
+        "map.state.first = keys[1] map.state.count = #keys end)";
+    MapScriptDefinition definition = make_definition(600, source, bindings, binding_count);
+    MapScriptSnapshot baseline, future, replay;
+    const MapScriptSnapshotStateEntry* entry;
+    char error[512];
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+    entry = state_entry(&future, "count");
+    CHECK(entry && entry->number_value == 3);
+    entry = state_entry(&future, "first");
+    CHECK(entry && strcmp(entry->string_value, "b") == 0);
+    CHECK(future.state_count == 2);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay, error, sizeof(error)));
+    CHECK(memcmp(&future, &replay, sizeof(future)) == 0);
+    expect_validation_failure(601, "map.state_keys(1)", bindings, binding_count, "map.state_keys");
+    definition = make_definition(602,
+        "for i = 1, 64 do map.state['k' .. i] = i end "
+        "local keys = map.state_keys() assert(#keys == 64 and keys[1] == 'k1' and keys[64] == 'k9') "
+        "map.state.k10 = nil assert(#map.state_keys() == 63)", bindings, binding_count);
+    CHECK(map_script_validate(&definition, error, sizeof(error)));
+}
+
+static void test_state_clear(const MapScriptTileBinding* bindings, size_t binding_count) {
+    static const char source[] =
+        "assert(map.state_clear() == 0) "
+        "map.state.round_a = 1 map.state.round_b = false map.state.score = 7 "
+        "assert(map.state_clear('missing') == 0) "
+        "assert(map.state_clear('round_') == 2 and map.state.score == 7) "
+        "assert(map.state_clear('') == 1) "
+        "for i = 1, 64 do map.state['k' .. i] = i end "
+        "assert(map.state_clear('k') == 64) "
+        "for i = 1, 64 do map.state['r' .. i] = i end "
+        "map.on_tick(function() local n = map.state_clear('r') "
+        "assert(n == 64) map.state.removed = n end)";
+    MapScriptDefinition definition = make_definition(610, source, bindings, binding_count);
+    MapScriptSnapshot baseline, future, replay;
+    const MapScriptSnapshotStateEntry* entry;
+    char error[512];
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    CHECK(baseline.state_count == 64);
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+    entry = state_entry(&future, "removed");
+    CHECK(future.state_count == 1 && entry && entry->number_value == 64);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay, error, sizeof(error)));
+    CHECK(memcmp(&future, &replay, sizeof(future)) == 0);
+    definition = make_definition(616,
+        "map.state.keep = 42 map.on_tick(function() map.state_clear('', true) end)",
+        bindings, binding_count);
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+    CHECK(future.state_count == baseline.state_count);
+    CHECK(memcmp(future.state, baseline.state, sizeof(future.state)) == 0);
+    expect_validation_failure(611, "map.state_clear(1)", bindings, binding_count, "prefix");
+    expect_validation_failure(612, "map.state_clear(nil)", bindings, binding_count, "prefix");
+    expect_validation_failure(613, "map.state_clear('', '')", bindings, binding_count, "prefix");
+    expect_validation_failure(614, "map.state_clear(string.rep('a', 32))", bindings, binding_count, "prefix");
+    expect_validation_failure(615, "map.state_clear(string.char(0))", bindings, binding_count, "prefix");
+}
+
+static void test_state_assignment_atomicity(const MapScriptTileBinding* bindings,
+                                            size_t binding_count) {
+    static const char* const invalid_values[] = {
+        "{}", "function() end", "0/0", "1/0", "-1/0", "string.rep('x', 64)"
+    };
+    size_t value_index;
+    int existing;
+    char source[1024];
+    char error[512];
+    MapScriptSnapshot baseline, future;
+    for (existing = 0; existing <= 1; ++existing) {
+        for (value_index = 0;
+             value_index < sizeof(invalid_values) / sizeof(invalid_values[0]);
+             ++value_index) {
+            MapScriptDefinition definition;
+            snprintf(source, sizeof(source),
+                "map.state.keep = 42 %s "
+                "map.on_tick(function() map.state.target = %s end)",
+                existing ? "map.state.target = 'original'" : "",
+                invalid_values[value_index]);
+            definition = make_definition(620 + (uint32_t)value_index + 10 * existing,
+                                         source, bindings, binding_count);
+            CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+            CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+            CHECK(!map_script_dispatch_tick(error, sizeof(error)));
+            CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+            CHECK(future.state_count == baseline.state_count);
+            CHECK(memcmp(future.state, baseline.state, sizeof(future.state)) == 0);
+        }
+    }
+}
+
+static void test_timers(const MapScriptTileBinding* bindings, size_t binding_count) {
+    const char* source =
+        "map.state.n=0 map.state.order='' "
+        "map.on_timer('pulse',function() map.state.n=map.state.n+1 "
+        "map.state.order=map.state.order..'p' end) "
+        "map.on_timer('stop',function() map.state.order=map.state.order..'s' "
+        "map.timer_cancel('pulse') end) "
+        "map.timer_start('pulse',1,2) map.timer_start('stop',5) "
+        "map.on_tick(function() map.state.remaining=map.timer_remaining('pulse') end)";
+    MapScriptDefinition definition = make_definition(650,source,bindings,binding_count);
+    MapScriptSnapshot baseline, future, replay, bad;
+    char error[512];
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline,error,sizeof(error)));
+    for (int i=0;i<5;++i) CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(state_entry(&future,"n")->number_value==3);
+    CHECK(strcmp(state_entry(&future,"order")->string_value,"ppps")==0);
+    CHECK(future.timers[0].remaining==0 && future.timers[0].interval==0);
+    CHECK(map_script_snapshot_load(&baseline,error,sizeof(error)));
+    for (int i=0;i<5;++i) CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay,error,sizeof(error)));
+    CHECK(memcmp(&future,&replay,sizeof(future))==0);
+    bad=baseline; bad.timers[31].remaining=1; bad.checksum=test_snapshot_checksum(&bad);
+    CHECK(!map_script_snapshot_load(&bad,error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&replay,error,sizeof(error)));
+    CHECK(memcmp(&future,&replay,sizeof(future))==0);
+    definition=make_definition(651,
+        "map.on_timer('a',function() assert(map.timer_cancel('b')) "
+        "map.timer_start('a',1) end) "
+        "map.on_timer('b',function() error('cancel failed') end) "
+        "map.timer_start('a',1) map.timer_start('b',1)",bindings,binding_count);
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(future.timers[0].remaining==1 && future.timers[1].remaining==0);
+    definition=make_definition(652,
+        "map.state.n=0 map.on_timer('a',function() map.state.n=1 error('timer fault') end) "
+        "map.timer_start('a',1)",bindings,binding_count);
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline,error,sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(state_entry(&future,"n")->number_value==0 && future.timers[0].remaining==1);
+    CHECK(map_script_snapshot_load(&baseline,error,sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error,sizeof(error)));
+    definition=make_definition(659,
+        "map.on_timer('a',function() map.timer_start('b',2) end) "
+        "map.on_timer('b',function() map.state.fired=true end) "
+        "map.timer_start('a',1) map.timer_start('b',1)",bindings,binding_count);
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(!state_entry(&future,"fired") && future.timers[1].remaining==2);
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(state_entry(&future,"fired") && state_entry(&future,"fired")->bool_value);
+    definition=make_definition(660,
+        "map.on_timer('a',function() end) map.timer_start('a',8,4) "
+        "map.on_tick(function() map.timer_start('a',3,-1) end)",bindings,binding_count);
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(future.timers[0].remaining==8 && future.timers[0].interval==4);
+    definition=make_definition(661,
+        "for i=1,32 do map.on_timer('t'..i,function() end) map.timer_start('t'..i,1000000000) end",
+        bindings,binding_count);
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+    CHECK(future.timer_count==32 && future.timers[31].remaining==999999999);
+    {
+        char example[4096];
+        FILE* file = fopen("docs/examples/map_timed_spring.lua", "rb");
+        CHECK(file != NULL);
+        if (file) {
+            size_t size = fread(example, 1, sizeof(example)-1, file);
+            example[size] = 0;
+            fclose(file);
+            definition = make_definition(662, example, bindings, binding_count);
+            CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+            for (int i=0; i<120; ++i) CHECK(map_script_dispatch_tick(error,sizeof(error)));
+            CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+            CHECK(state_entry(&future,"spring_active")->bool_value);
+            for (int i=0; i<60; ++i) CHECK(map_script_dispatch_tick(error,sizeof(error)));
+            CHECK(map_script_snapshot_save(&future,error,sizeof(error)));
+            CHECK(!state_entry(&future,"spring_active")->bool_value);
+        }
+    }
+    expect_validation_failure(653,"map.on_timer('x',function() end) map.on_timer('x',function() end)",bindings,binding_count,"duplicate");
+    expect_validation_failure(654,"map.timer_start('unknown',1)",bindings,binding_count,"unknown");
+    expect_validation_failure(655,"local n=1 map.on_timer('x',function() n=n+1 end)",bindings,binding_count,"upvalues");
+    expect_validation_failure(656,"map.on_timer('x',function() end) map.timer_start('x',0)",bindings,binding_count,"integer range");
+    expect_validation_failure(657,"map.on_timer('x',function() end) map.timer_start('x',1,0/0)",bindings,binding_count,"integer range");
+    expect_validation_failure(658,"for i=1,33 do map.on_timer('t'..i,function() end) end",bindings,binding_count,"limit");
 }
 
 int main(void) {
@@ -1508,6 +1738,10 @@ int main(void) {
     test_memory_limits(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_periodic_clock(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_optional_bindings(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_state_keys(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_timers(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_state_clear(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_state_assignment_atomicity(bindings, sizeof(bindings) / sizeof(bindings[0]));
     map_script_deactivate();
     test_inactive_snapshot();
     if (g_failures) {

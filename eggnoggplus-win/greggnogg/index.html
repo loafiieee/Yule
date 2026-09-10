@@ -9,6 +9,23 @@
   <link rel="stylesheet" href="editor.css">
   <script defer src="editor-core.js"></script>
   <script defer src="atlas-renderer.js"></script>
+  <script defer src="content-workspace/core.js"></script>
+  <script defer src="object-tools.js"></script>
+  <script defer src="preview-package.js"></script>
+  <script defer src="preview-client.js"></script>
+  <script defer src="object-logic.js"></script>
+  <script defer src="object-designer.js"></script>
+  <link rel="stylesheet" href="vendor/codemirror/lib/codemirror.css">
+  <script defer src="vendor/codemirror/lib/codemirror.js"></script>
+  <script defer src="vendor/codemirror/mode/lua/lua.js"></script>
+  <script defer src="vendor/codemirror/addon/edit/matchbrackets.js"></script>
+  <script defer src="vendor/codemirror/addon/edit/closebrackets.js"></script>
+  <script defer src="vendor/blockly/blockly_compressed.js"></script>
+  <script defer src="vendor/blockly/blocks_compressed.js"></script>
+  <script defer src="vendor/blockly/lua_compressed.js"></script>
+  <script defer src="vendor/blockly/msg/en.js"></script>
+  <script defer src="logic-blocks.js"></script>
+  <script defer src="logic-studio.js"></script>
   <script defer src="editor.js"></script>
 </head>
 <body>
@@ -31,14 +48,15 @@
     <div class="mode-launcher v2-disabled" aria-label="Greggnogg work mode">
       <button class="mode-button is-active" id="map-mode-button" type="button" aria-pressed="true">Map</button>
       <button class="mode-button" id="header-tile-lab-button" type="button">Tile Lab</button>
-      <button class="mode-button" id="header-script-button" type="button">Script</button>
       <label class="format-toggle compact" for="format-v2-toggle"><input id="format-v2-toggle" type="checkbox"><span>V2</span></label>
     </div>
 
     <nav class="command-actions" aria-label="Project actions">
+      <button class="mode-button" id="header-script-button" type="button">Map logic</button>
+      <button class="mode-button" id="object-designer-button" type="button">Objects</button>
       <button class="quiet-button" id="new-map-button" type="button"><span aria-hidden="true">＋</span> New</button>
       <button class="quiet-button" id="import-button" type="button"><span aria-hidden="true">⇧</span> Import</button>
-      <button class="primary-button" id="preview-button" type="button" title="Open this map in Yule; right-click to copy its preview link"><span aria-hidden="true">▶</span> Preview</button>
+      <button class="primary-button" id="preview-button" type="button" title="Preview the current map in EGGNOGG+"><span aria-hidden="true">▶</span> Preview</button>
       <button class="primary-button" id="export-button" type="button"><span aria-hidden="true">⇩</span> Export map</button>
       <button class="icon-button help-button" id="help-button" type="button" aria-label="Open keyboard shortcuts and help">?</button>
     </nav>
@@ -200,10 +218,12 @@
             <label class="field">Armed respawn limit <span>0 or more</span><input id="respawn-limit" type="number" min="0" step="1" value="4"></label>
           </div>
 
+          <label class="field">Default opponent spawn<select id="default-opponent-spawn"><option value="default">Native</option><option value="always">Always</option><option value="never">Never</option></select><span>Controls trailing-opponent respawns. Native keeps the original room rules.</span></label>
+
           <fieldset class="field-group">
             <legend>Eggnogg color</legend>
             <label><input id="eggnogg-color-enabled" type="checkbox"> Force a map-wide goal color</label>
-            <label class="field">Goal color<input id="eggnogg-color" type="color" value="#ffc966" disabled></label>
+            <div class="color-fields" id="eggnogg-color" hidden></div>
             <p>Colors E and ^ goals in every room. Uncheck to restore automatic player-derived color. Team targets 1 and 2 keep their team colors.</p>
           </fieldset>
 
@@ -223,6 +243,7 @@
 
           <div class="form-stack">
             <label class="field">Room ID <span>Used in both files</span><input id="room-id" type="text" maxlength="63" spellcheck="false" autocomplete="off"></label>
+            <label class="field">Opponent spawn<select id="room-opponent-spawn"><option value="inherit">Inherit map default</option><option value="default">Native</option><option value="always">Always</option><option value="never">Never</option></select><span>Applies to this source room and its mirrored copy.</span></label>
             <label class="field">Ambient effect
               <select id="room-ambient">
                 <option value="none">None</option>
@@ -292,7 +313,7 @@
     <button type="button" data-open-panel="palette"><span aria-hidden="true">▦</span>Tiles</button>
     <button type="button" id="mobile-rooms-button"><span aria-hidden="true">▤</span>Rooms</button>
     <button type="button" data-open-panel="inspector"><span aria-hidden="true">☷</span>Settings</button>
-    <button type="button" id="mobile-preview-button" title="Open this map in Yule; long-press to copy its preview link"><span aria-hidden="true">▶</span>Preview</button>
+    <button type="button" id="mobile-preview-button" title="Preview the current map in EGGNOGG+"><span aria-hidden="true">▶</span>Preview</button>
     <button type="button" id="mobile-export-button"><span aria-hidden="true">⇩</span>Export</button>
   </nav>
 
@@ -453,12 +474,13 @@
 
   <dialog class="editor-dialog script-dialog" id="script-dialog" aria-labelledby="script-heading">
     <div class="dialog-heading">
-      <div><p class="eyebrow">V2 SCRIPTING MODE</p><h2 id="script-heading">map.lua</h2><p>Deterministic map behavior only. The editor never executes this script.</p></div>
+      <div><h2 id="script-heading">Map logic <small>map.lua</small></h2></div>
       <button class="quiet-button" id="close-script-button" type="button">← Back to map</button>
     </div>
     <div class="script-workspace">
       <div class="script-editor-wrap">
-        <div class="script-toolbar"><button class="quiet-button" id="script-template-button" type="button">Insert starter</button><button class="quiet-button" id="script-format-button" type="button">Indent selection</button><span>Ctrl+Space: autocomplete</span></div>
+        <div class="script-toolbar"><button type="button" class="quiet-button" id="logic-blocks-button">Blocks</button><button type="button" class="quiet-button" id="logic-advanced-button">Advanced Lua</button><button class="quiet-button" id="script-template-button" type="button">Insert starter</button><button class="quiet-button" id="script-format-button" type="button">Indent selection</button><span>Ctrl+Space: autocomplete</span></div>
+        <div id="logic-status" role="status"></div><div id="logic-blocks" hidden></div>
         <textarea id="map-lua-editor" spellcheck="false" autocomplete="off" aria-label="map.lua source"></textarea>
         <div class="script-autocomplete" id="script-autocomplete" role="listbox" hidden></div>
       </div>
@@ -523,6 +545,7 @@
         <section><h3>Shortcuts</h3><dl><div><dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Choose drawing tool</dd></div><div><dt><kbd>I</kbd></dt><dd>Pick tile from grid</dd></div><div><dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd></div><div><dt><kbd>Ctrl</kbd> <kbd>Y</kbd></dt><dd>Redo</dd></div><div><dt><kbd>/</kbd></dt><dd>Search tiles</dd></div></dl></section>
       </div>
       <div class="help-tip"><strong>Faithful previews, safe output</strong><p>Greggnogg renders from the game’s original <code>data/*.png</code> atlases. Animated, procedural, and physics-driven objects are marked as approximations; package validation follows the Yule loader, not the preview.</p></div>
+      <div class="help-tip"><strong>Preview uses your installed Yule</strong><p>The Preview button opens the copy registered for Yule links. Keep that copy updated to use new map features such as custom Eggnogg colors; rebuilding a separate development folder does not update the installed game.</p></div>
       <div class="dialog-actions"><button class="primary-button" value="cancel">Got it</button></div>
     </form>
   </dialog>

@@ -1,0 +1,81 @@
+Building native rollback serializer tests...
+state serializer tests: ALL OK
+atlas-renderer tests: OK
+✔ greggnogg\atlas-renderer.test.js (69.1357ms)
+Greggnogg editor-core tests passed: 121
+✔ greggnogg\editor-core.test.js (84.8208ms)
+✔ configuration fails closed (2.9483ms)
+✔ queue payload contains only public identity, queue, and HTTPS handoffs (1.2398ms)
+✔ join posts once and leave edits the exact owned message (0.984ms)
+✔ matched post is edited now and deleted after one-day retention (0.4518ms)
+✔ leave racing create edits the late message (0.3249ms)
+✔ a sub-two-second queue stay never creates a Discord message (0.1597ms)
+✔ the delayed post is created once only after its timer fires (0.2133ms)
+✔ 429 response uses server retry_after instead of hardcoded route rates (0.4203ms)
+✔ invalid lifecycle values never reach Discord (0.3033ms)
+✔ orderly close retires active owned posts (0.4983ms)
+✔ pending create work is bounded without dropping owned cleanup (2.7351ms)
+✔ goal RGB controls preview exact channels and group a gesture into one undo (2.2195ms)
+✔ invalid goal RGB or hex input preserves the document (1.0312ms)
+✔ shared RGB controls retain room palette behavior (0.7226ms)
+✔ public base and generated links are strict HTTPS routes (1.089ms)
+✔ redirect parser exposes only completed canonical yule intents (0.2388ms)
+✔ HTTP handoff is no-store and method bounded (0.4477ms)
+✔ redirect server refuses an accidental public bind (0.3946ms)
+✔ audit preserves append history and records correlated intent/outcome without secrets (15.1555ms)
+✔ audit failure blocks mutation and completion failure is explicitly distinguished (0.2758ms)
+✔ an interrupted final record cannot absorb later audit entries (5.9117ms)
+✔ live dashboard preserves focused, open, and edited maintenance while other regions refresh (1.7499ms)
+✔ live dashboard pauses hidden tabs, retries failures, and stops on expired sessions (0.6449ms)
+✔ live dashboard does not overlap requests after visibility changes (0.4784ms)
+✔ admin bind validation accepts only loopback/private literals by default (4.3485ms)
+✔ admin UI grants a private client session, requires CSRF, and dispatches actions (23.4625ms)
+✔ admin UI can be disabled explicitly (0.1937ms)
+✔ direct execution explains that the admin listener belongs to server.js (47.3353ms)
+✔ admin rejects DNS rebinding hostnames before granting sessions (3.2601ms)
+✔ offline backup verifies data and restores with a complete recovery copy (57.1228ms)
+✔ tampered backup is rejected before any destination changes (18.8054ms)
+✔ partial restore failure restores previous bytes and retains recovery snapshot (47.1061ms)
+✔ silent write corruption triggers verified recovery (48.8304ms)
+✔ silent recovery corruption is never reported as recovered (45.2988ms)
+✔ stores reject damaged existing files and have no inherited users (9.028ms)
+✔ failed atomic replacement preserves destination and cleans temporary file (4.6836ms)
+✔ record updates publish only after persistence and preserve unrelated users (7.9846ms)
+ℹ tests 39
+ℹ suites 0
+ℹ pass 39
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 333.0991
+embedded UI source/header synchronization: OK
+compile source list checks: OK (44 implementation files)
+release packaging fail-closed static checks: OK
+Linux Wine installer static/syntax checks: OK
+Linux Wine installer integration test: skipped on non-POSIX host
+public source exporter/static release guards: OK
+credential_hooks_static_test: all checks passed
+online_control_hooks_static_test: all checks passed
+online flow integration static checks: OK
+online native cursor static checks: OK
+online match network HUD static checks: OK
+online menu tick static checks: OK
+online active troubleshooter static checks: OK
+online LAN admin integration static checks: OK
+online server control safety: OK
+friend challenge map picker static checks: OK
+social controls static checks: OK
+private rematch static checks: OK
+Traceback (most recent call last):
+  File "C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\tests\online_launch_static_test.py", line 94, in <module>
+    assert "if (map->is_preview) continue;" in CUSTOM_MAPS
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+tests\online_launch_static_test.py failed with exit code 1.
+At C:\Users\potato\Downloads\eggnoggplus-win\eggnoggplus-win\tests\run_core_native_tests.ps1:314 char:13
++             throw "$script failed with exit code $LASTEXITCODE."
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (tests\online_la...th exit code 1.:String) [], RuntimeException
+    + FullyQualifiedErrorId : tests\online_launch_static_test.py failed with exit code 1.
+ 

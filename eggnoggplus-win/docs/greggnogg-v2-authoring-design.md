@@ -1,6 +1,6 @@
 # Greggnogg V2 authoring proposal
 
-Status: interaction-design draft, 2026-09-05. This is a proposal for review and usability testing, not an accepted product decision or a shipped feature. V1 remains the only authoring mode exposed in Greggnogg. Completing this draft does not complete the TODO requirement to review the design, choose the application model, and test a prototype before enabling export.
+Status: interaction-design draft, 2026-09-05. Update 2026-09-07: the user delegated the application choice; a separate advanced workspace is selected for the broad custom-content system (see custom-content-system.md). Prototype/usability review and runtime integration remain outstanding. This is a proposal for review and usability testing, not an accepted product decision or a shipped feature. V1 remains the only authoring mode exposed in Greggnogg. Completing this draft does not complete the TODO requirement to review the design, choose the application model, and test a prototype before enabling export.
 
 ## Recommendation and scope
 

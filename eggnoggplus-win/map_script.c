@@ -1,3 +1,6 @@
+#include "content_registry.h"
+#include "entity_package.h"
+#include "entity_lua.h"
 #include "map_script.h"
 
 #include <float.h>
@@ -75,11 +78,26 @@ typedef struct MapScriptBindingOwned {
 
 typedef struct MapScriptRuntime {
     lua_State* L;
+    EntityPackage* entities;
+    unsigned char content_identity[32];
+    EntityLuaBinding entity_binding;
+    int entity_update_refs[ENTITY_WORLD_LIMIT];
+    int entity_spawn_refs[ENTITY_WORLD_LIMIT];
+    int entity_remove_refs[ENTITY_WORLD_LIMIT];
+    unsigned entity_event_depth;
+    int entity_dispatch_ref;
+    int entity_init_ref;
+    unsigned char* entity_checkpoint;
+    size_t entity_snapshot_bytes;
     size_t lua_bytes;
     size_t memory_limit;
     uint32_t instruction_budget;
     uint32_t instructions_left;
     uint32_t hook_step;
+    int player_write_phase;
+    uint32_t player_velocity_mask;
+    uint32_t player_defeat_mask;
+    MapScriptObjectView player_velocity[2];
 
     uint64_t script_id;
     uint64_t tick;
@@ -89,9 +107,14 @@ typedef struct MapScriptRuntime {
     int faulted;
     int locked_env_ref;
     int on_tick_ref;
+    uint32_t timer_count;
+    uint32_t timer_due;
+    char timer_names[MAP_SCRIPT_MAX_TIMERS][MAP_SCRIPT_STATE_KEY_MAX];
+    int timer_refs[MAP_SCRIPT_MAX_TIMERS];
+    MapScriptTimerState timers[MAP_SCRIPT_MAX_TIMERS];
     int object_userdata_ref;
     int tile_userdata_ref;
-    int safe_table_ref[5];
+    int safe_table_ref[6];
     int safe_function_ref[8];
 
     size_t binding_count;
@@ -130,8 +153,8 @@ typedef struct MapScriptTileUserdata {
 static const char g_state_metatable_key[] = "eggnoggplus.map_script.state.v1";
 static const char g_object_metatable_key[] = "eggnoggplus.map_script.object.v1";
 static const char g_tile_metatable_key[] = "eggnoggplus.map_script.tile.v1";
-static const char* const g_safe_table_names[5] = {
-    "map", "math", "string", "table", "bit"
+static const char* const g_safe_table_names[6] = {
+    "map", "math", "string", "table", "bit", "entity"
 };
 static const char* const g_safe_function_names[8] = {
     "assert", "error", "ipairs", "rawequal", "select", "tostring", "type", "unpack"
@@ -452,6 +475,7 @@ static int protected_call(MapScriptRuntime* runtime,
     lua_State* L = runtime->L;
     int status;
     const char* detail;
+    runtime->entity_event_depth = 0;
     runtime->instructions_left = runtime->instruction_budget;
     runtime->hook_step = runtime->instruction_budget < 1000u
                        ? runtime->instruction_budget : 1000u;
@@ -502,12 +526,12 @@ static void push_readonly_proxy(lua_State* L, int table_index) {
 static int table_is_allowed_global(const char* name) {
     return strcmp(name, "map") == 0 || strcmp(name, "math") == 0 ||
            strcmp(name, "string") == 0 || strcmp(name, "table") == 0 ||
-           strcmp(name, "bit") == 0;
+           strcmp(name, "bit") == 0 || strcmp(name, "entity") == 0;
 }
 
 static int safe_table_slot(const char* name) {
     int i;
-    for (i = 0; i < 5; ++i) {
+    for (i = 0; i < 6; ++i) {
         if (strcmp(name, g_safe_table_names[i]) == 0) return i;
     }
     return -1;
@@ -547,7 +571,7 @@ static int lock_script_environment_body(MapScriptRuntime* runtime,
     lua_newtable(L);
     backing_index = lua_gettop(L);
 
-    for (i = 0; i < 5; ++i) {
+    for (i = 0; i < 6; ++i) {
         int matches;
         lua_getglobal(L, g_safe_table_names[i]);
         if (runtime->safe_table_ref[i] == LUA_NOREF) {
@@ -690,6 +714,28 @@ static int lock_script_environment_body(MapScriptRuntime* runtime,
         lua_pop(L, 1);
     }
 
+    for (i = 0; i < runtime->timer_count; ++i) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, runtime->timer_refs[i]);
+        if (!set_function_environment(L, -1, environment_index)) {
+            lua_settop(L, globals_index - 1);
+            set_error(err, err_cap, "failed to lock map timer callback");
+            return 0;
+        }
+        lua_pop(L, 1);
+    }
+
+    for (i = 0; i < ENTITY_WORLD_LIMIT; ++i) {
+        int refs[3]={runtime->entity_update_refs[i],runtime->entity_spawn_refs[i],runtime->entity_remove_refs[i]};
+        for(int event=0;event<3;event++) {
+            if(refs[event]==MAP_SCRIPT_CALLBACK_NONE) continue;
+            lua_rawgeti(L,LUA_REGISTRYINDEX,refs[event]);
+            if(!set_function_environment(L,-1,environment_index)) {
+                lua_settop(L,globals_index-1);
+                set_error(err,err_cap,"failed to lock entity callback");return 0;
+            }
+            lua_pop(L,1);
+        }
+    }
     lua_pushvalue(L, environment_index);
     runtime->locked_env_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_settop(L, globals_index - 1);
@@ -756,6 +802,24 @@ static int find_binding_by_ref(MapScriptRuntime* runtime,
     return -1;
 }
 
+static int api_tile_bindings(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    size_t i;
+    if (lua_gettop(L) != 0) return luaL_error(L, "map.tile_bindings expects no arguments");
+    /* Return detached copies in manifest order; scripts cannot mutate the
+     * registered bindings or retain engine pointers through these tables. */
+    lua_createtable(L, (int)runtime->binding_count, 0);
+    for (i = 0; i < runtime->binding_count; ++i) {
+        lua_createtable(L, 0, 2);
+        lua_pushlstring(L, &runtime->bindings[i].symbol, 1);
+        lua_setfield(L, -2, "symbol");
+        lua_pushstring(L, runtime->bindings[i].qualified_key);
+        lua_setfield(L, -2, "key");
+        lua_rawseti(L, -2, (int)i + 1);
+    }
+    return 1;
+}
+
 static int api_has_tile(lua_State* L) {
     MapScriptRuntime* runtime = checked_runtime(L);
     size_t length;
@@ -816,6 +880,143 @@ static int api_on_tick(lua_State* L) {
     lua_pushvalue(L, 1);
     runtime->on_tick_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     return 0;
+}
+
+typedef struct EntityInvocation { int reference; EntityHandle handle; } EntityInvocation;
+static int invoke_entity_update_lua(lua_State* L) {
+    EntityInvocation* invocation = lua_touserdata(L, 1);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, invocation->reference);
+    entity_lua_push_handle(L, invocation->handle);
+    lua_call(L, 1, 0);
+    return 0;
+}
+
+static EntityHandle entity_find_placement(void* user,const char* key) {
+    return entity_package_placement(user,key);
+}
+static const char* entity_type_key(void* user,uint32_t type) {
+    return entity_package_type_key(user,type);
+}
+static int register_entity_callback(lua_State* L,int event) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    size_t length; const char* key; uint32_t id;
+    int* refs=event==1 ? runtime->entity_spawn_refs : event==2 ? runtime->entity_remove_refs : runtime->entity_update_refs;
+    if (!runtime->loading) return luaL_error(L, "entity callbacks register only while map.lua loads");
+    if (!runtime->entities) return luaL_error(L, "no entity package is active");
+    if (lua_gettop(L) != 2 || lua_type(L, 1) != LUA_TSTRING || !lua_isfunction(L, 2) ||
+        lua_iscfunction(L, 2) || function_has_upvalues(L, 2))
+        return luaL_error(L, "entity callback expects a type key and Lua callback without upvalues");
+    key = lua_tolstring(L, 1, &length);
+    id = entity_package_resolve_type(runtime->entities, key, length);
+    if (!id || id > ENTITY_WORLD_LIMIT) return luaL_error(L, "unknown entity type");
+    if (refs[id-1] != MAP_SCRIPT_CALLBACK_NONE)
+        return luaL_error(L, "duplicate entity callback");
+    lua_pushvalue(L, 2); refs[id-1] = luaL_ref(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+static int api_entity_on_update(lua_State* L) { return register_entity_callback(L,0); }
+static int api_entity_on_spawn(lua_State* L) { return register_entity_callback(L,1); }
+static int api_entity_on_remove(lua_State* L) { return register_entity_callback(L,2); }
+static void entity_lifecycle(lua_State* L,int event,EntityHandle h,const EntityValue* value) {
+    MapScriptRuntime* runtime=checked_runtime(L);int ref;
+    if(runtime->loading) return; /* Initial instances notify after all declarations. */
+    if(event==2){
+        char prefix[20];snprintf(prefix,sizeof(prefix),"o:%08x%08x:",(unsigned int)(h>>32),(unsigned int)h);
+        for(int i=0;i<MAP_SCRIPT_MAX_STATE_ENTRIES;i++)if(runtime->state[i].in_use&&runtime->state[i].key_len>=19&&!memcmp(runtime->state[i].key,prefix,19)){
+            memset(&runtime->state[i],0,sizeof(runtime->state[i]));runtime->state_count--;
+        }
+    }
+
+    ref=event==1 ? runtime->entity_spawn_refs[value->type_id-1] : runtime->entity_remove_refs[value->type_id-1];
+    if(ref==MAP_SCRIPT_CALLBACK_NONE) return;
+    if(runtime->entity_event_depth>=32) luaL_error(L,"entity lifecycle recursion exceeds 32 callbacks");
+    runtime->entity_event_depth++;
+    lua_rawgeti(L,LUA_REGISTRYINDEX,ref);
+    entity_lua_push_handle(L,h);entity_lua_push_value(L,value);
+    lua_call(L,2,0);
+    runtime->entity_event_depth--;
+}
+static int initialize_entity_lifecycle(lua_State* L) {
+    MapScriptRuntime* runtime=checked_runtime(L);EntityWorld* world=entity_package_world(runtime->entities);
+    EntityHandle* handles=lua_newuserdata(L,(size_t)entity_world_count(world)*sizeof(EntityHandle));
+    uint32_t cursor=0,count=0;EntityHandle h;EntityValue value;
+    while((h=entity_world_next(world,&cursor))) handles[count++]=h;
+    for(uint32_t i=0;i<count;i++) if(entity_world_read(world,handles[i],&value))
+        entity_lifecycle(L,1,handles[i],&value);
+    return 0;
+}
+
+static const char* timer_name(lua_State* L) {
+    size_t length;
+    const char* name;
+    if (lua_type(L, 1) != LUA_TSTRING) luaL_error(L, "timer name must be a string");
+    name = lua_tolstring(L, 1, &length);
+    if (!length || length >= MAP_SCRIPT_STATE_KEY_MAX || memchr(name, '\0', length))
+        luaL_error(L, "timer name must be 1-31 bytes without NULs");
+    return name;
+}
+static int timer_index(lua_State* L, MapScriptRuntime* runtime) {
+    const char* name = timer_name(L);
+    uint32_t i;
+    for (i = 0; i < runtime->timer_count; ++i)
+        if (strcmp(runtime->timer_names[i], name) == 0) return (int)i;
+    return luaL_error(L, "unknown map timer");
+}
+static int api_on_timer(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    const char* name = timer_name(L);
+    uint32_t i;
+    if (!runtime->loading) return luaL_error(L, "timers must be registered while map.lua loads");
+    if (lua_gettop(L) != 2 || !lua_isfunction(L, 2) || lua_iscfunction(L, 2) || function_has_upvalues(L, 2))
+        return luaL_error(L, "on_timer expects a name and Lua callback without upvalues");
+    for (i = 0; i < runtime->timer_count; ++i)
+        if (strcmp(runtime->timer_names[i], name) == 0) return luaL_error(L, "duplicate map timer");
+    if (i == MAP_SCRIPT_MAX_TIMERS) return luaL_error(L, "map timer limit reached");
+    lua_pushvalue(L, 2);
+    runtime->timer_refs[i] = luaL_ref(L, LUA_REGISTRYINDEX);
+    strcpy(runtime->timer_names[i], name);
+    runtime->timer_count++;
+    return 0;
+}
+static uint32_t timer_ticks(lua_State* L, int arg, int optional) {
+    lua_Number value;
+    if (optional && lua_gettop(L) < arg) return 0;
+    if (lua_type(L, arg) != LUA_TNUMBER) luaL_error(L, "timer ticks must be integers");
+    value = lua_tonumber(L, arg);
+    if (!isfinite(value) || value < (optional ? 0 : 1) || value > MAP_SCRIPT_TIMER_MAX_TICKS || value != floor(value))
+        luaL_error(L, "timer ticks are outside the supported integer range");
+    return (uint32_t)value;
+}
+static int api_timer_start(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    int index = timer_index(L, runtime);
+    uint32_t remaining, interval;
+    if (lua_gettop(L) < 2 || lua_gettop(L) > 3) return luaL_error(L, "timer_start expects name, delay, optional interval");
+    remaining = timer_ticks(L, 2, 0);
+    interval = timer_ticks(L, 3, 1);
+    runtime->timers[index].remaining = remaining;
+    runtime->timers[index].interval = interval;
+    runtime->timer_due &= ~(UINT32_C(1) << index);
+    return 0;
+}
+static int api_timer_cancel(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    int index = timer_index(L, runtime);
+    int active;
+    if (lua_gettop(L) != 1) return luaL_error(L, "timer_cancel expects a name");
+    active = runtime->timers[index].remaining != 0 || (runtime->timer_due & (UINT32_C(1) << index)) != 0;
+    memset(&runtime->timers[index], 0, sizeof(runtime->timers[index]));
+    runtime->timer_due &= ~(UINT32_C(1) << index);
+    lua_pushboolean(L, active);
+    return 1;
+}
+static int api_timer_remaining(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    int index = timer_index(L, runtime);
+    if (lua_gettop(L) != 1) return luaL_error(L, "timer_remaining expects a name");
+    lua_pushnumber(L, runtime->timers[index].remaining);
+    return 1;
 }
 
 static int lua_absolute_index(lua_State* L, int index) {
@@ -1179,6 +1380,59 @@ static int checked_state_key(lua_State* L,
     return 1;
 }
 
+static int state_key_order(const void* left, const void* right) {
+    const MapScriptSnapshotStateEntry* const* a = left;
+    const MapScriptSnapshotStateEntry* const* b = right;
+    return strcmp((*a)->key, (*b)->key);
+}
+
+static int api_state_keys(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    const MapScriptSnapshotStateEntry* entries[MAP_SCRIPT_MAX_STATE_ENTRIES];
+    size_t count = 0;
+    size_t i;
+    if (lua_gettop(L) != 0) return luaL_error(L, "map.state_keys expects no arguments");
+    for (i = 0; i < MAP_SCRIPT_MAX_STATE_ENTRIES; ++i) {
+        if (runtime->state[i].in_use) entries[count++] = &runtime->state[i];
+    }
+    /* Slot reuse and insertion history do not affect the public iteration order.
+     * strcmp is bytewise, unlike locale-dependent Lua string comparisons. */
+    qsort(entries, count, sizeof(entries[0]), state_key_order);
+    lua_createtable(L, (int)count, 0);
+    for (i = 0; i < count; ++i) {
+        lua_pushlstring(L, entries[i]->key, entries[i]->key_len);
+        lua_rawseti(L, -2, (int)i + 1);
+    }
+    return 1;
+}
+
+static int api_state_clear(lua_State* L) {
+    MapScriptRuntime* runtime = checked_runtime(L);
+    const char* prefix = "";
+    size_t length = 0;
+    int removed = 0;
+    size_t i;
+    if (lua_gettop(L) > 1) return luaL_error(L, "map.state_clear expects at most one prefix");
+    if (lua_gettop(L) == 1) {
+        if (lua_type(L, 1) != LUA_TSTRING)
+            return luaL_error(L, "map.state_clear prefix must be a string");
+        prefix = lua_tolstring(L, 1, &length);
+        if (length >= MAP_SCRIPT_STATE_KEY_MAX || memchr(prefix, '\0', length))
+            return luaL_error(L, "map.state_clear prefix must be 0-31 bytes without NULs");
+    }
+    for (i = 0; i < MAP_SCRIPT_MAX_STATE_ENTRIES; ++i) {
+        MapScriptSnapshotStateEntry* entry = &runtime->state[i];
+        if (entry->in_use && entry->key_len >= length &&
+            memcmp(entry->key, prefix, length) == 0) {
+            memset(entry, 0, sizeof(*entry));
+            runtime->state_count--;
+            removed++;
+        }
+    }
+    lua_pushinteger(L, removed);
+    return 1;
+}
+
 static int state_index(lua_State* L) {
     MapScriptRuntime* runtime = checked_runtime(L);
     const char* key;
@@ -1214,6 +1468,7 @@ static int state_newindex(lua_State* L) {
     const char* key;
     size_t key_length;
     int index;
+    MapScriptSnapshotStateEntry replacement;
     int first_free = -1;
     int i;
     if (!checked_state_key(L, 2, &key, &key_length)) return 0;
@@ -1228,32 +1483,25 @@ static int state_newindex(lua_State* L) {
         }
         return 0;
     }
-    if (index < 0) {
-        if (first_free < 0) return luaL_error(L, "map.state entry limit reached");
-        index = first_free;
-        runtime->state[index].in_use = 1;
-        runtime->state[index].key_len = (uint8_t)key_length;
-        memcpy(runtime->state[index].key, key, key_length);
-        runtime->state_count++;
-    } else {
-        uint8_t saved_key_length = runtime->state[index].key_len;
-        char saved_key[MAP_SCRIPT_STATE_KEY_MAX];
-        memcpy(saved_key, runtime->state[index].key, sizeof(saved_key));
-        memset(&runtime->state[index], 0, sizeof(runtime->state[index]));
-        runtime->state[index].in_use = 1;
-        runtime->state[index].key_len = saved_key_length;
-        memcpy(runtime->state[index].key, saved_key, sizeof(saved_key));
+    if (index < 0 && first_free < 0) {
+        return luaL_error(L, "map.state entry limit reached");
     }
+    /* Build the complete value before publishing it: Lua validation errors
+       must not erase an existing value or consume an unused state slot. */
+    memset(&replacement, 0, sizeof(replacement));
+    replacement.in_use = 1;
+    replacement.key_len = (uint8_t)key_length;
+    memcpy(replacement.key, key, key_length);
     switch (lua_type(L, 3)) {
         case LUA_TBOOLEAN:
-            runtime->state[index].type = MAP_SCRIPT_STATE_BOOL;
-            runtime->state[index].bool_value = (uint8_t)(lua_toboolean(L, 3) != 0);
+            replacement.type = MAP_SCRIPT_STATE_BOOL;
+            replacement.bool_value = (uint8_t)(lua_toboolean(L, 3) != 0);
             break;
         case LUA_TNUMBER: {
             double number = (double)lua_tonumber(L, 3);
             if (!isfinite(number)) return luaL_error(L, "map.state numbers must be finite");
-            runtime->state[index].type = MAP_SCRIPT_STATE_NUMBER;
-            runtime->state[index].number_value = canonical_double(number);
+            replacement.type = MAP_SCRIPT_STATE_NUMBER;
+            replacement.number_value = canonical_double(number);
             break;
         }
         case LUA_TSTRING: {
@@ -1262,14 +1510,19 @@ static int state_newindex(lua_State* L) {
             if (length >= MAP_SCRIPT_STATE_STRING_MAX) {
                 return luaL_error(L, "map.state strings may contain at most 63 bytes");
             }
-            runtime->state[index].type = MAP_SCRIPT_STATE_STRING;
-            runtime->state[index].string_len = (uint8_t)length;
-            memcpy(runtime->state[index].string_value, value, length);
+            replacement.type = MAP_SCRIPT_STATE_STRING;
+            replacement.string_len = (uint8_t)length;
+            memcpy(replacement.string_value, value, length);
             break;
         }
         default:
             return luaL_error(L, "map.state accepts only nil, boolean, number, or short string");
     }
+    if (index < 0) {
+        index = first_free;
+        runtime->state_count++;
+    }
+    runtime->state[index] = replacement;
     return 0;
 }
 
@@ -1714,6 +1967,30 @@ static int tile_set_sprite(lua_State* L) {
     return 0;
 }
 
+static int tile_get_sprite(lua_State* L) {
+    MapScriptTileUserdata* userdata = check_tile_userdata(L, 1);
+    MapScriptRuntime* runtime = userdata->runtime;
+    int index;
+    if (lua_gettop(L) != 1) return luaL_error(L, "get_sprite expects no arguments");
+    index = find_override(runtime, userdata->cell_index);
+    if (index < 0 || runtime->overrides[index].expires_after_tick <= runtime->tick) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, runtime->overrides[index].sprite_index);
+    lua_setfield(L, -2, "sprite_index");
+    lua_pushnumber(L, (lua_Number)runtime->overrides[index].offset_x_q /
+                      MAP_SCRIPT_RENDER_OFFSET_QUANTIZATION);
+    lua_setfield(L, -2, "offset_x");
+    lua_pushnumber(L, (lua_Number)runtime->overrides[index].offset_y_q /
+                      MAP_SCRIPT_RENDER_OFFSET_QUANTIZATION);
+    lua_setfield(L, -2, "offset_y");
+    lua_pushnumber(L, (lua_Number)(runtime->overrides[index].expires_after_tick - runtime->tick));
+    lua_setfield(L, -2, "ticks_left");
+    return 1;
+}
+
 static int tile_reset_sprite(lua_State* L) {
     MapScriptTileUserdata* userdata = check_tile_userdata(L, 1);
     MapScriptRuntime* runtime = userdata->runtime;
@@ -1739,6 +2016,7 @@ static int tile_index(lua_State* L) {
         lua_pushlstring(L, symbol, 1);
     } else if (strcmp(key, "mirrored") == 0) lua_pushboolean(L, userdata->mirrored != 0);
     else if (strcmp(key, "set_sprite") == 0) lua_pushcfunction(L, tile_set_sprite);
+    else if (strcmp(key, "get_sprite") == 0) lua_pushcfunction(L, tile_get_sprite);
     else if (strcmp(key, "reset_sprite") == 0) lua_pushcfunction(L, tile_reset_sprite);
     else lua_pushnil(L);
     return 1;
@@ -1908,6 +2186,82 @@ static int api_every(lua_State* L) {
     return 1;
 }
 
+static float contact_radius_for_kind(int object_kind);
+static int api_solid_box(lua_State* L){
+    MapScriptRuntime* runtime=checked_runtime(L);double values[4];
+    if(runtime->loading||!runtime->active||!runtime->host.solid_box_fn)return luaL_error(L,"terrain queries unavailable outside a gameplay host");
+    if(lua_gettop(L)!=4)return luaL_error(L,"solid_box expects center x, center y, width and height");
+    for(int i=0;i<4;i++){if(lua_type(L,i+1)!=LUA_TNUMBER)return luaL_error(L,"solid_box arguments must be numbers");values[i]=lua_tonumber(L,i+1);if(!isfinite(values[i]))return luaL_error(L,"solid_box arguments must be finite");}
+    if(fabs(values[0])>4194303||fabs(values[1])>4194303||values[2]<1.0/256.0||values[2]>128||values[3]<1.0/256.0||values[3]>128)return luaL_error(L,"solid_box coordinates or dimensions are out of range");
+    if(runtime->instructions_left<256){runtime->instructions_left=0;return luaL_error(L,"terrain query budget exceeded");}runtime->instructions_left-=256;
+    int result=runtime->host.solid_box_fn(runtime->host.userdata,values[0],values[1],values[2],values[3]);
+    if(result!=0&&result!=1)return luaL_error(L,"native terrain query failed");
+    lua_pushboolean(L,result);return 1;
+}
+static int api_players(lua_State* L) {
+    MapScriptRuntime* runtime=checked_runtime(L);int count=0;
+    if(lua_gettop(L)) return luaL_error(L,"players expects no arguments");
+    if(!runtime->active || runtime->loading) return luaL_error(L,"native players are available only during gameplay callbacks");
+    if(!runtime->host.read_player_fn) return luaL_error(L,"native player queries are unavailable in this host");
+    if(runtime->instructions_left<64u) {runtime->instructions_left=0;return luaL_error(L,"native player query instruction budget exceeded");}
+    runtime->instructions_left-=64u;
+    lua_createtable(L,2,0);
+    for(uint32_t slot=0;slot<2;slot++) {
+        MapScriptObjectView view;int status;memset(&view,0,sizeof(view));
+        status=runtime->host.read_player_fn(runtime->host.userdata,slot,&view);
+        if(status==0 || (runtime->player_defeat_mask&(1u<<slot))) continue;
+        if(status!=1 || view.object_id!=slot || view.lifecycle_id || view.object_kind!=MAP_SCRIPT_OBJECT_PLAYER ||
+           !object_physics_valid(&view) || !object_profile_valid(&view))
+            return luaL_error(L,"native player host returned an invalid view");
+        canonicalize_object(&view);
+        if(runtime->player_write_phase && (runtime->player_velocity_mask&(1u<<slot))) {
+            view.vx=runtime->player_velocity[slot].vx;view.vy=runtime->player_velocity[slot].vy;
+        }
+        lua_createtable(L,0,6);
+        lua_pushinteger(L,(int)slot+1);lua_setfield(L,-2,"player");
+        lua_pushnumber(L,view.x);lua_setfield(L,-2,"x");lua_pushnumber(L,view.y);lua_setfield(L,-2,"y");
+        lua_pushnumber(L,view.vx);lua_setfield(L,-2,"vx");lua_pushnumber(L,view.vy);lua_setfield(L,-2,"vy");
+        lua_pushnumber(L,contact_radius_for_kind(MAP_SCRIPT_OBJECT_PLAYER));lua_setfield(L,-2,"contact_radius");
+        lua_rawseti(L,-2,++count);
+    }
+    return 1;
+}
+static int api_set_player_velocity(lua_State* L) {
+    MapScriptRuntime* runtime=checked_runtime(L);MapScriptObjectView view;uint32_t slot;double player;float vx,vy;
+    if(!runtime->player_write_phase) return luaL_error(L,"set_player_velocity is available during tick/timer/entity update callbacks only");
+    if(lua_gettop(L)!=3 || lua_type(L,1)!=LUA_TNUMBER || lua_type(L,2)!=LUA_TNUMBER || lua_type(L,3)!=LUA_TNUMBER)
+        return luaL_error(L,"set_player_velocity expects player number, vx and vy");
+    player=lua_tonumber(L,1);if(player!=1 && player!=2) return luaL_error(L,"player number must be 1 or 2");
+    slot=(uint32_t)player-1;
+    if(runtime->player_defeat_mask&(1u<<slot))return luaL_error(L,"target player is pending defeat");
+    finite_float_value(L,2,&vx);finite_float_value(L,3,&vy);
+    if(!runtime->host.read_player_fn || (!runtime->host.apply_player_velocities_fn && !runtime->host.commit_players_fn))
+        return luaL_error(L,"atomic native player writes unavailable in this host");
+    if(runtime->instructions_left<64u) {runtime->instructions_left=0;return luaL_error(L,"native player write instruction budget exceeded");}
+    runtime->instructions_left-=64u;memset(&view,0,sizeof(view));
+    if(runtime->host.read_player_fn(runtime->host.userdata,slot,&view)!=1 || view.object_id!=slot || view.lifecycle_id ||
+       view.object_kind!=MAP_SCRIPT_OBJECT_PLAYER || !object_physics_valid(&view) || !object_profile_valid(&view))
+        return luaL_error(L,"target native player is unavailable or invalid");
+    view.vx=vx;view.vy=vy;canonicalize_object(&view);
+    runtime->player_velocity[slot]=view;runtime->player_velocity_mask|=1u<<slot;
+    return 0;
+}
+static int api_defeat_player(lua_State* L) {
+    MapScriptRuntime* runtime=checked_runtime(L);MapScriptObjectView view;double player;uint32_t slot;
+    if(!runtime->player_write_phase)return luaL_error(L,"defeat_player is available during tick/timer/entity update callbacks only");
+    if(lua_gettop(L)!=1 || lua_type(L,1)!=LUA_TNUMBER)return luaL_error(L,"defeat_player expects player number 1 or 2");
+    player=lua_tonumber(L,1);if(player!=1 && player!=2)return luaL_error(L,"player number must be 1 or 2");slot=(uint32_t)player-1;
+    if(!runtime->host.read_player_fn || !runtime->host.commit_players_fn)return luaL_error(L,"atomic native player defeat unavailable in this host");
+    if(runtime->instructions_left<64u){runtime->instructions_left=0;return luaL_error(L,"native player write instruction budget exceeded");}
+    runtime->instructions_left-=64u;
+    if(runtime->player_defeat_mask&(1u<<slot)){lua_pushboolean(L,0);return 1;}
+    memset(&view,0,sizeof(view));int status=runtime->host.read_player_fn(runtime->host.userdata,slot,&view);
+    if(!status){lua_pushboolean(L,0);return 1;}
+    if(status!=1 || view.object_id!=slot || view.lifecycle_id || view.object_kind!=MAP_SCRIPT_OBJECT_PLAYER || !object_physics_valid(&view) || !object_profile_valid(&view))return luaL_error(L,"target native player is invalid");
+    canonicalize_object(&view);
+    if(!(runtime->player_velocity_mask&(1u<<slot)))runtime->player_velocity[slot]=view;
+    runtime->player_defeat_mask|=1u<<slot;lua_pushboolean(L,1);return 1;
+}
 static int api_tick(lua_State* L) {
     MapScriptRuntime* runtime = checked_runtime(L);
     if (lua_gettop(L) != 0) return luaL_error(L, "map.tick expects no arguments");
@@ -1961,8 +2315,9 @@ static void replace_global_with_readonly_fields(lua_State* L,
 
 static int install_sandbox_entry(lua_State* L) {
     static const char* const map_fields[] = {
+        "on_timer", "timer_start", "timer_cancel", "timer_remaining",
         "on_contact", "on_enter", "on_leave", "on_tick", "sensor", "random",
-        "tick", "every", "has_tile", "state"
+        "tick", "solid_box", "players", "set_player_velocity", "defeat_player", "every", "has_tile", "tile_bindings", "state_keys", "state_clear", "state"
     };
     static const char* const math_fields[] = {
         /* Transcendental CRT/libm results are not bit-stable across every
@@ -2060,18 +2415,36 @@ static int install_sandbox_entry(lua_State* L) {
     lua_setfield(L, -2, "on_enter");
     lua_pushcfunction(L, api_on_leave);
     lua_setfield(L, -2, "on_leave");
+    lua_pushcfunction(L, api_on_timer);
+    lua_setfield(L, -2, "on_timer");
+    lua_pushcfunction(L, api_timer_start);
+    lua_setfield(L, -2, "timer_start");
+    lua_pushcfunction(L, api_timer_cancel);
+    lua_setfield(L, -2, "timer_cancel");
+    lua_pushcfunction(L, api_timer_remaining);
+    lua_setfield(L, -2, "timer_remaining");
     lua_pushcfunction(L, api_on_tick);
     lua_setfield(L, -2, "on_tick");
     lua_pushcfunction(L, api_sensor);
     lua_setfield(L, -2, "sensor");
     lua_pushcfunction(L, api_random);
     lua_setfield(L, -2, "random");
+    lua_pushcfunction(L,api_solid_box);lua_setfield(L,-2,"solid_box");
+    lua_pushcfunction(L,api_players);lua_setfield(L,-2,"players");
+    lua_pushcfunction(L,api_defeat_player);lua_setfield(L,-2,"defeat_player");
+    lua_pushcfunction(L,api_set_player_velocity);lua_setfield(L,-2,"set_player_velocity");
     lua_pushcfunction(L, api_tick);
     lua_setfield(L, -2, "tick");
     lua_pushcfunction(L, api_every);
     lua_setfield(L, -2, "every");
     lua_pushcfunction(L, api_has_tile);
     lua_setfield(L, -2, "has_tile");
+    lua_pushcfunction(L, api_tile_bindings);
+    lua_setfield(L, -2, "tile_bindings");
+    lua_pushcfunction(L, api_state_clear);
+    lua_setfield(L, -2, "state_clear");
+    lua_pushcfunction(L, api_state_keys);
+    lua_setfield(L, -2, "state_keys");
     (void)lua_newuserdata(L, 1);
     luaL_getmetatable(L, g_state_metatable_key);
     lua_setmetatable(L, -2);
@@ -2088,7 +2461,21 @@ static int install_sandbox_entry(lua_State* L) {
                                         sizeof(table_fields) / sizeof(table_fields[0]));
     replace_global_with_readonly_fields(L, "bit", bit_fields,
                                         sizeof(bit_fields) / sizeof(bit_fields[0]));
-    for (i = 0; i < 5; ++i) {
+    {
+        static const char* const fields[] = {"spawn", "get", "set", "remove", "exists", "list", "at", "solid_box", "contacts", "find", "type", "regions", "on_update", "on_spawn", "on_remove"};
+        lua_pushcfunction(L, invoke_entity_update_lua);
+        runtime->entity_dispatch_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        lua_pushcfunction(L,initialize_entity_lifecycle);
+        runtime->entity_init_ref=luaL_ref(L,LUA_REGISTRYINDEX);
+        entity_lua_push_api(L, &runtime->entity_binding);
+        lua_pushcfunction(L, api_entity_on_update);
+        lua_setfield(L, -2, "on_update");
+        lua_pushcfunction(L,api_entity_on_spawn);lua_setfield(L,-2,"on_spawn");
+        lua_pushcfunction(L,api_entity_on_remove);lua_setfield(L,-2,"on_remove");
+        lua_setglobal(L, "entity");
+        replace_global_with_readonly_fields(L, "entity", fields, sizeof(fields) / sizeof(fields[0]));
+    }
+    for (i = 0; i < 6; ++i) {
         lua_getglobal(L, g_safe_table_names[i]);
         if (lua_istable(L, -1)) {
             runtime->safe_table_ref[i] = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -2126,6 +2513,8 @@ static void destroy_runtime(MapScriptRuntime* runtime) {
         lua_close(runtime->L);
         runtime->L = NULL;
     }
+    entity_package_free(runtime->entities);
+    free(runtime->entity_checkpoint);
     memset(runtime, 0, sizeof(*runtime));
     free(runtime);
 }
@@ -2152,8 +2541,38 @@ static int definition_limits(const MapScriptDefinition* definition,
     return 1;
 }
 
+static void content_identity_u32(unsigned char* out, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) out[i] = (unsigned char)(value >> (8u*i));
+}
+static int bind_content_identity(MapScriptRuntime* runtime, const MapScriptDefinition* definition,
+    char* err, size_t err_cap) {
+    size_t bytes = 32u + 64u + definition->source_len +
+        runtime->binding_count * (1u + MAP_SCRIPT_TILE_KEY_MAX);
+    unsigned char* data = calloc(1, bytes);
+    size_t offset = 96u; int ok;
+    if (!data) { set_error(err, err_cap, "could not allocate content identity manifest"); return 0; }
+    memcpy(data, "YMCI0001", 8);
+    content_identity_u32(data+8, MAP_SCRIPT_API_VERSION);
+    content_identity_u32(data+12, (uint32_t)runtime->memory_limit);
+    content_identity_u32(data+16, runtime->instruction_budget);
+    content_identity_u32(data+20, (uint32_t)definition->source_len);
+    content_identity_u32(data+24, (uint32_t)runtime->binding_count);
+    content_identity_u32(data+28, runtime->rng_state);
+    if (runtime->entities) memcpy(data+32, entity_package_fingerprint(runtime->entities), 64);
+    if (definition->source_len) memcpy(data+offset, definition->source, definition->source_len);
+    offset += definition->source_len;
+    for (size_t i=0; i<runtime->binding_count; ++i) {
+        data[offset++] = (unsigned char)runtime->bindings[i].symbol;
+        memcpy(data+offset, runtime->bindings[i].qualified_key, strlen(runtime->bindings[i].qualified_key));
+        offset += MAP_SCRIPT_TILE_KEY_MAX;
+    }
+    ok = content_registry_sha256_bytes(data, bytes, runtime->content_identity, NULL, err, err_cap);
+    free(data); return ok;
+}
+
 static MapScriptRuntime* build_runtime(const MapScriptDefinition* definition,
                                        const MapScriptHost* host,
+                                       const char* package_json, size_t package_length,
                                        char* err,
                                        size_t err_cap) {
     MapScriptRuntime* runtime;
@@ -2193,11 +2612,13 @@ static MapScriptRuntime* build_runtime(const MapScriptDefinition* definition,
     runtime->rng_state = (host && host->rng_seed) ? host->rng_seed : MAP_SCRIPT_RNG_FALLBACK;
     runtime->locked_env_ref = LUA_NOREF;
     runtime->on_tick_ref = MAP_SCRIPT_CALLBACK_NONE;
+    for (size_t entity_index = 0; entity_index < ENTITY_WORLD_LIMIT; ++entity_index)
+        runtime->entity_update_refs[entity_index] = runtime->entity_spawn_refs[entity_index] = runtime->entity_remove_refs[entity_index] = MAP_SCRIPT_CALLBACK_NONE;
     runtime->object_userdata_ref = LUA_NOREF;
     runtime->tile_userdata_ref = LUA_NOREF;
     {
         int safe_index;
-        for (safe_index = 0; safe_index < 5; ++safe_index) {
+        for (safe_index = 0; safe_index < 6; ++safe_index) {
             runtime->safe_table_ref[safe_index] = LUA_NOREF;
         }
         for (safe_index = 0; safe_index < 8; ++safe_index) {
@@ -2211,6 +2632,24 @@ static MapScriptRuntime* build_runtime(const MapScriptDefinition* definition,
         destroy_runtime(runtime);
         return NULL;
     }
+    if (package_json) {
+        runtime->entities = entity_package_decode_layout(package_json, package_length, &definition->entity_layout, err, err_cap);
+        if (!runtime->entities) { destroy_runtime(runtime); return NULL; }
+        runtime->entity_snapshot_bytes = entity_package_snapshot_size(runtime->entities);
+        runtime->entity_checkpoint = malloc(runtime->entity_snapshot_bytes);
+        if (!runtime->entity_checkpoint) {
+            set_error(err, err_cap, "could not allocate entity rollback checkpoint");
+            destroy_runtime(runtime); return NULL;
+        }
+        runtime->entity_binding.world = entity_package_world(runtime->entities);
+        runtime->entity_binding.resolve_type = entity_package_resolve_type;
+        runtime->entity_binding.user = runtime->entities;
+        runtime->entity_binding.lifecycle = entity_lifecycle;
+        runtime->entity_binding.find_placement = entity_find_placement;
+        runtime->entity_binding.type_key = entity_type_key;
+        runtime->entity_binding.work_budget = &runtime->instructions_left;
+    }
+    if (!bind_content_identity(runtime, definition, err, err_cap)) { destroy_runtime(runtime); return NULL; }
     runtime->L = lua_newstate(capped_allocator, runtime);
     if (!runtime->L) {
         set_error(err, err_cap, "map.lua could not create a VM within its memory cap");
@@ -2246,6 +2685,12 @@ static MapScriptRuntime* build_runtime(const MapScriptDefinition* definition,
     if (!lock_script_environment(runtime, err, err_cap)) {
         destroy_runtime(runtime);
         return NULL;
+    }
+    if(runtime->entities) {
+        lua_rawgeti(runtime->L,LUA_REGISTRYINDEX,runtime->entity_init_ref);
+        if(!protected_call(runtime,0,0,"entity initial spawn failed",err,err_cap)) {
+            destroy_runtime(runtime);return NULL;
+        }
     }
     runtime->active = 1;
     return runtime;
@@ -2332,13 +2777,29 @@ static int invoke_contact_callback(MapScriptRuntime* runtime,
 static int invoke_tick_callback(MapScriptRuntime* runtime,
                                 char* err,
                                 size_t err_cap) {
+    uint32_t i;
+    runtime->timer_due = 0;
+    for (i = 0; i < runtime->timer_count; ++i) {
+        if (runtime->timers[i].remaining && --runtime->timers[i].remaining == 0) {
+            runtime->timer_due |= UINT32_C(1) << i;
+            runtime->timers[i].remaining = runtime->timers[i].interval;
+        }
+    }
+    for (i = 0; i < runtime->timer_count; ++i) {
+        if (!(runtime->timer_due & (UINT32_C(1) << i))) continue;
+        runtime->timer_due &= ~(UINT32_C(1) << i);
+        lua_rawgeti(runtime->L, LUA_REGISTRYINDEX, runtime->timer_refs[i]);
+        if (!protected_call(runtime, 0, 0, "map timer callback failed", err, err_cap)) return 0;
+    }
     if (runtime->on_tick_ref == MAP_SCRIPT_CALLBACK_NONE) return 1;
     lua_rawgeti(runtime->L, LUA_REGISTRYINDEX, runtime->on_tick_ref);
     return protected_call(runtime, 0, 0, "map.on_tick failed", err, err_cap);
 }
 
-static void snapshot_payload_restore(MapScriptRuntime* runtime,
+static void restore_map_payload(MapScriptRuntime* runtime,
                                      const MapScriptSnapshot* snapshot) {
+    runtime->timer_due = 0;
+    memcpy(runtime->timers, snapshot->timers, sizeof(runtime->timers));
     runtime->tick = snapshot->tick;
     runtime->rng_state = snapshot->rng_state;
     runtime->faulted = (snapshot->flags & MAP_SCRIPT_FLAG_FAULTED) != 0;
@@ -2355,11 +2816,29 @@ static void snapshot_payload_restore(MapScriptRuntime* runtime,
            sizeof(runtime->velocity_limits));
 }
 
+static int snapshot_save_payload(MapScriptSnapshot* out, char* err, size_t err_cap);
+static int checkpoint_save(MapScriptSnapshot* out, char* err, size_t err_cap) {
+    if (g_runtime->entities && !entity_package_save(g_runtime->entities,
+            g_runtime->entity_checkpoint, g_runtime->entity_snapshot_bytes)) {
+        set_error(err, err_cap, "could not checkpoint entities"); return 0;
+    }
+    return snapshot_save_payload(out, err, err_cap);
+}
+static void snapshot_payload_restore(MapScriptRuntime* runtime, const MapScriptSnapshot* snapshot) {
+    runtime->player_write_phase=0;runtime->player_velocity_mask=0;runtime->player_defeat_mask=0;
+    if (runtime->entities) {
+        /* Private buffer saved by checkpoint_save; no untrusted bytes or allocations. */
+        (void)entity_package_load(runtime->entities, runtime->entity_checkpoint, runtime->entity_snapshot_bytes);
+    }
+    restore_map_payload(runtime, snapshot);
+}
+
 static void runtime_fault(MapScriptRuntime* runtime, const char* message) {
     char log_message[512];
     int i;
     if (!runtime || runtime->faulted) return;
     runtime->faulted = 1;
+    runtime->player_write_phase=0;runtime->player_velocity_mask=0;runtime->player_defeat_mask=0;
     memset(runtime->overrides, 0, sizeof(runtime->overrides));
     memset(runtime->contacts, 0, sizeof(runtime->contacts));
     memset(runtime->velocity_limits, 0, sizeof(runtime->velocity_limits));
@@ -2414,7 +2893,7 @@ int map_script_validate(const MapScriptDefinition* definition,
                         size_t err_cap) {
     MapScriptRuntime* temporary;
     if (err && err_cap) err[0] = '\0';
-    temporary = build_runtime(definition, NULL, err, err_cap);
+    temporary = build_runtime(definition, NULL, NULL, 0, err, err_cap);
     if (!temporary) return 0;
     destroy_runtime(temporary);
     return 1;
@@ -2427,7 +2906,7 @@ int map_script_activate(const MapScriptDefinition* definition,
     MapScriptRuntime* replacement;
     MapScriptRuntime* previous;
     if (err && err_cap) err[0] = '\0';
-    replacement = build_runtime(definition, host, err, err_cap);
+    replacement = build_runtime(definition, host, NULL, 0, err, err_cap);
     if (!replacement) {
         if (err && err_cap && err[0]) remember_error(NULL, err);
         return 0;
@@ -2649,7 +3128,7 @@ static int dispatch_contact_profile(MapScriptContactView* contact,
                   contact->cell_index);
         return 0;
     }
-    if (!map_script_snapshot_save(&before, callback_error, sizeof(callback_error))) {
+    if (!checkpoint_save(&before, callback_error, sizeof(callback_error))) {
         set_error(err, err_cap, "%s", callback_error);
         return 0;
     }
@@ -3002,6 +3481,36 @@ static PendingObjectUpdate* pending_object(PendingObjectUpdate* pending,
     return &pending[*count - 1];
 }
 
+typedef struct EntityDispatch {
+    MapScriptRuntime* runtime;
+    uint32_t remaining;
+    char error[384];
+} EntityDispatch;
+static int dispatch_entity_update(EntityWorld* world, EntityHandle handle, void* user) {
+    EntityDispatch* dispatch = user;
+    MapScriptRuntime* runtime = dispatch->runtime;
+    EntityValue value; int reference, ok; uint32_t original_budget, consumed;
+    EntityInvocation invocation;
+    if (!entity_world_read(world, handle, &value) || !value.type_id || value.type_id > ENTITY_WORLD_LIMIT) return 0;
+    reference = runtime->entity_update_refs[value.type_id-1];
+    if (reference == MAP_SCRIPT_CALLBACK_NONE) return 1;
+    if (!dispatch->remaining) {
+        set_error(dispatch->error, sizeof(dispatch->error), "entity update phase instruction budget exceeded"); return 0;
+    }
+    original_budget = runtime->instruction_budget;
+    runtime->instruction_budget = dispatch->remaining;
+    invocation.reference = reference; invocation.handle = handle;
+    lua_rawgeti(runtime->L, LUA_REGISTRYINDEX, runtime->entity_dispatch_ref);
+    lua_pushlightuserdata(runtime->L, &invocation);
+    ok = protected_call(runtime, 1, 0, "entity.on_update failed", dispatch->error, sizeof(dispatch->error));
+    /* Charge one extra hook quantum for each callback's unmeasured tail. */
+    consumed = dispatch->remaining - runtime->instructions_left;
+    if (runtime->hook_step > dispatch->remaining - consumed) dispatch->remaining = 0;
+    else dispatch->remaining -= consumed + runtime->hook_step;
+    runtime->instruction_budget = original_budget;
+    return ok;
+}
+
 int map_script_dispatch_tick(char* err, size_t err_cap) {
     MapScriptRuntime* runtime = g_runtime;
     MapScriptSnapshot before;
@@ -3024,10 +3533,11 @@ int map_script_dispatch_tick(char* err, size_t err_cap) {
         set_error(err, err_cap, "%s", runtime->last_error);
         return 0;
     }
-    if (!map_script_snapshot_save(&before, callback_error, sizeof(callback_error))) {
+    if (!checkpoint_save(&before, callback_error, sizeof(callback_error))) {
         set_error(err, err_cap, "%s", callback_error);
         return 0;
     }
+    runtime->player_write_phase=0;runtime->player_velocity_mask=0;runtime->player_defeat_mask=0;
     memset(pending, 0, sizeof(pending));
     for (i = 0; i < MAP_SCRIPT_MAX_CONTACTS; ++i) {
         MapScriptSnapshotContact* contact = &runtime->contacts[i];
@@ -3053,6 +3563,7 @@ int map_script_dispatch_tick(char* err, size_t err_cap) {
         memset(contact, 0, sizeof(*contact));
         runtime->contact_count--;
     }
+    runtime->player_write_phase=1;
     callback_error[0] = '\0';
     if (!invoke_tick_callback(runtime, callback_error, sizeof(callback_error))) {
         snapshot_payload_restore(runtime, &before);
@@ -3060,8 +3571,29 @@ int map_script_dispatch_tick(char* err, size_t err_cap) {
         set_error(err, err_cap, "%s", runtime->last_error);
         return 0;
     }
+    if (runtime->entities) {
+        EntityDispatch dispatch;
+        memset(&dispatch, 0, sizeof(dispatch)); dispatch.runtime = runtime;
+        dispatch.remaining = runtime->instruction_budget;
+        if (!entity_world_update(entity_package_world(runtime->entities), dispatch_entity_update, &dispatch)) {
+            snapshot_payload_restore(runtime, &before);
+            runtime_fault(runtime, dispatch.error[0] ? dispatch.error : "entity update or motion failed");
+            set_error(err, err_cap, "%s", runtime->last_error); return 0;
+        }
+    }
+    for(i=0;i<2;i++) if(runtime->player_velocity_mask&(1u<<i)) {
+        if(!apply_velocity_limit(runtime,&runtime->player_velocity[i],callback_error,sizeof(callback_error))) {
+            snapshot_payload_restore(runtime,&before);runtime_fault(runtime,callback_error);
+            set_error(err,err_cap,"%s",runtime->last_error);return 0;
+        }
+    }
     for (i = 0; i < (int)pending_count; ++i) {
         callback_error[0] = '\0';
+        if(pending[i].object.object_id<2 && pending[i].object.object_kind==MAP_SCRIPT_OBJECT_PLAYER &&
+           (runtime->player_velocity_mask&(1u<<pending[i].object.object_id))) {
+            pending[i].object.vx=runtime->player_velocity[pending[i].object.object_id].vx;
+            pending[i].object.vy=runtime->player_velocity[pending[i].object.object_id].vy;
+        }
         canonicalize_object(&pending[i].object);
         if (!apply_velocity_limit(runtime, &pending[i].object,
                                   callback_error, sizeof(callback_error))) {
@@ -3071,6 +3603,16 @@ int map_script_dispatch_tick(char* err, size_t err_cap) {
             return 0;
         }
     }
+    if((runtime->player_velocity_mask || runtime->player_defeat_mask) && !(runtime->host.commit_players_fn ? runtime->host.commit_players_fn(runtime->host.userdata,runtime->player_velocity_mask,runtime->player_defeat_mask,runtime->player_velocity) : runtime->host.apply_player_velocities_fn(runtime->host.userdata,runtime->player_velocity_mask,runtime->player_velocity))) {
+        snapshot_payload_restore(runtime,&before);runtime_fault(runtime,"atomic native player commit rejected");
+        set_error(err,err_cap,"%s",runtime->last_error);return 0;
+    }
+    for(i=0;i<MAP_SCRIPT_MAX_CONTACTS;i++) {
+        MapScriptSnapshotContact* contact=&runtime->contacts[i];
+        if(contact->in_use && contact->object_id<2 && contact->object_kind==MAP_SCRIPT_OBJECT_PLAYER &&
+           (runtime->player_velocity_mask&(1u<<contact->object_id))) contact_store_object(contact,&runtime->player_velocity[contact->object_id]);
+    }
+    runtime->player_write_phase=0;runtime->player_velocity_mask=0;runtime->player_defeat_mask=0;
     runtime->tick++;
     for (i = 0; i < MAP_SCRIPT_MAX_SPRITE_OVERRIDES; ++i) {
         MapScriptSnapshotSpriteOverride* override = &runtime->overrides[i];
@@ -3161,7 +3703,7 @@ size_t map_script_snapshot_size(void) {
     return sizeof(MapScriptSnapshot);
 }
 
-int map_script_snapshot_save(MapScriptSnapshot* out,
+static int snapshot_save_payload(MapScriptSnapshot* out,
                              char* err,
                              size_t err_cap) {
     MapScriptRuntime* runtime = g_runtime;
@@ -3177,6 +3719,8 @@ int map_script_snapshot_save(MapScriptSnapshot* out,
     out->total_size = (uint32_t)sizeof(*out);
     if (runtime && runtime->active) {
         out->script_id = runtime->script_id;
+        out->timer_count = runtime->timer_count;
+        memcpy(out->timers, runtime->timers, sizeof(out->timers));
         out->tick = runtime->tick;
         out->rng_state = runtime->rng_state;
         out->flags = runtime->faulted ? MAP_SCRIPT_FLAG_FAULTED : 0;
@@ -3194,6 +3738,13 @@ int map_script_snapshot_save(MapScriptSnapshot* out,
     }
     out->checksum = snapshot_checksum(out);
     return 1;
+}
+
+int map_script_snapshot_save(MapScriptSnapshot* out, char* err, size_t err_cap) {
+    if (g_runtime && g_runtime->entities) {
+        set_error(err, err_cap, "entity runtime requires combined content snapshot"); return 0;
+    }
+    return snapshot_save_payload(out, err, err_cap);
 }
 
 static int validate_state_entries(const MapScriptSnapshot* snapshot,
@@ -3508,6 +4059,22 @@ int map_script_snapshot_validate(const MapScriptSnapshot* snapshot,
         set_error(err, err_cap, "map script snapshot has non-zero reserved fields");
         return 0;
     }
+    if (snapshot->timer_count > MAP_SCRIPT_MAX_TIMERS ||
+        (!snapshot->script_id && snapshot->timer_count) ||
+        (g_runtime && g_runtime->active && g_runtime->script_id == snapshot->script_id &&
+         snapshot->timer_count != g_runtime->timer_count)) {
+        set_error(err, err_cap, "invalid map timer definition count");
+        return 0;
+    }
+    for (uint32_t timer = 0; timer < MAP_SCRIPT_MAX_TIMERS; ++timer) {
+        const MapScriptTimerState* state = &snapshot->timers[timer];
+        if (state->remaining > MAP_SCRIPT_TIMER_MAX_TICKS || state->interval > MAP_SCRIPT_TIMER_MAX_TICKS ||
+            (state->interval && !state->remaining) ||
+            (timer >= snapshot->timer_count && (state->remaining || state->interval))) {
+            set_error(err, err_cap, "invalid map timer state");
+            return 0;
+        }
+    }
     if (snapshot->script_id == 0) {
         if (snapshot->tick != 0 || snapshot->rng_state != 0 || snapshot->flags != 0 ||
             snapshot->state_count != 0 || snapshot->override_count != 0 ||
@@ -3549,10 +4116,13 @@ int map_script_snapshot_load(const MapScriptSnapshot* snapshot,
                              size_t err_cap) {
     uint64_t expected = (g_runtime && g_runtime->active)
                       ? g_runtime->script_id : UINT64_C(0);
+    if (g_runtime && g_runtime->entities) {
+        set_error(err, err_cap, "entity runtime requires combined content snapshot"); return 0;
+    }
     if (!map_script_snapshot_validate(snapshot, expected, err, err_cap)) return 0;
     if (expected == 0) return 1;
     /* A validated load is a fixed-size POD copy: no Lua execution/allocation. */
-    snapshot_payload_restore(g_runtime, snapshot);
+    restore_map_payload(g_runtime, snapshot);
     if (g_runtime->faulted) {
         /* Error strings are diagnostics rather than rollback state. Restore a
          * fixed message so a faulted timeline never inherits whichever local
@@ -3563,4 +4133,105 @@ int map_script_snapshot_load(const MapScriptSnapshot* snapshot,
         g_last_error[0] = '\0';
     }
     return 1;
+}
+
+int map_script_validate_content(const MapScriptDefinition* definition,
+    const char* package_json, size_t length, char* err, size_t err_cap) {
+    MapScriptRuntime* temporary;
+    if (err && err_cap) err[0] = 0;
+    if (!package_json) { set_error(err, err_cap, "entity package JSON is required"); return 0; }
+    temporary = build_runtime(definition, NULL, package_json, length, err, err_cap);
+    if (!temporary) return 0;
+    destroy_runtime(temporary);
+    return 1;
+}
+
+int map_script_activate_content(const MapScriptDefinition* definition,
+    const MapScriptHost* host, const char* package_json, size_t length, char* err, size_t err_cap) {
+    MapScriptRuntime* replacement;
+    MapScriptRuntime* previous;
+    if (err && err_cap) err[0] = 0;
+    if (!package_json) { set_error(err, err_cap, "entity package JSON is required"); return 0; }
+    replacement = build_runtime(definition, host, package_json, length, err, err_cap);
+    if (!replacement) return 0;
+    previous = g_runtime; g_runtime = replacement; g_last_error[0] = 0;
+    destroy_runtime(previous); return 1;
+}
+
+/* Same-platform host snapshot; the map payload already has a version and checksum.
+ * The entity payload has its immutable package fingerprint and strict LE decoder.
+ * This is not an online transport envelope or an admission authorization. */
+int map_script_has_entities(void) { return g_runtime && g_runtime->entities; }
+int map_script_network_admissible(char* err, size_t err_cap) {
+    if (err && err_cap) err[0] = 0;
+    if (!map_script_has_entities()) return 1;
+    set_error(err, err_cap, "Managed entity maps are offline-only until online content admission is implemented.");
+    return 0;
+}
+size_t map_script_content_snapshot_size(void) {
+    return MAP_SCRIPT_CONTENT_HEADER_BYTES + sizeof(MapScriptSnapshot) +
+        (g_runtime ? g_runtime->entity_snapshot_bytes : 0u);
+}
+int map_script_content_snapshot_save(void* bytes, size_t size, char* err, size_t err_cap) {
+    unsigned char* out = bytes;
+    MapScriptSnapshot map;
+    if (!bytes || size != map_script_content_snapshot_size()) {
+        set_error(err, err_cap, "combined snapshot size mismatch"); return 0;
+    }
+    if (!snapshot_save_payload(&map, err, err_cap)) return 0;
+    memset(out, 0, MAP_SCRIPT_CONTENT_HEADER_BYTES); memcpy(out, "YMC2", 4);
+    if (g_runtime) memcpy(out + 4, g_runtime->content_identity, 32);
+    memcpy(out + MAP_SCRIPT_CONTENT_HEADER_BYTES, &map, sizeof(map));
+    if (g_runtime && g_runtime->entities && !entity_package_save(g_runtime->entities,
+            out + MAP_SCRIPT_CONTENT_HEADER_BYTES + sizeof(map), g_runtime->entity_snapshot_bytes)) {
+        set_error(err, err_cap, "could not save combined entity state"); return 0;
+    }
+    return 1;
+}
+int map_script_content_snapshot_validate(const void* bytes, size_t size, char* err, size_t err_cap) {
+    const unsigned char* in = bytes;
+    MapScriptSnapshot map;
+    uint64_t expected = g_runtime && g_runtime->active ? g_runtime->script_id : UINT64_C(0);
+    if (err && err_cap) err[0] = 0;
+    if (!bytes || size != map_script_content_snapshot_size() || memcmp(in, "YMC2", 4) ||
+            !bytes_are_zero(in + 36, 12)) {
+        set_error(err, err_cap, "invalid combined snapshot header or size"); return 0;
+    }
+    if (g_runtime ? memcmp(in + 4, g_runtime->content_identity, 32) != 0 : !bytes_are_zero(in + 4, 32)) {
+        set_error(err, err_cap, "combined snapshot script/package/configuration identity mismatch"); return 0;
+    }
+    memcpy(&map, in + MAP_SCRIPT_CONTENT_HEADER_BYTES, sizeof(map));
+    if (!map_script_snapshot_validate(&map, expected, err, err_cap)) return 0;
+    if (g_runtime && g_runtime->entities && !entity_package_validate_for_tick(g_runtime->entities,
+            in + MAP_SCRIPT_CONTENT_HEADER_BYTES + sizeof(map), g_runtime->entity_snapshot_bytes, map.tick)) {
+        set_error(err, err_cap, "invalid or mismatched combined entity state"); return 0;
+    }
+    return 1;
+}
+int map_script_content_snapshot_load(const void* bytes, size_t size, char* err, size_t err_cap) {
+    const unsigned char* in = bytes;
+    MapScriptSnapshot map;
+    uint64_t expected = g_runtime && g_runtime->active ? g_runtime->script_id : UINT64_C(0);
+    if (!map_script_content_snapshot_validate(bytes, size, err, err_cap)) return 0;
+    memcpy(&map, in + MAP_SCRIPT_CONTENT_HEADER_BYTES, sizeof(map));
+    if (g_runtime && g_runtime->entities && !entity_package_load(g_runtime->entities,
+            in + MAP_SCRIPT_CONTENT_HEADER_BYTES + sizeof(map), g_runtime->entity_snapshot_bytes)) {
+        set_error(err, err_cap, "invalid or mismatched combined entity state"); return 0;
+    }
+    if (expected) {
+        restore_map_payload(g_runtime, &map);
+        if (g_runtime->faulted) remember_error(g_runtime, "map.lua fault restored from rollback state");
+        else { g_runtime->last_error[0] = 0; g_last_error[0] = 0; }
+    }
+    return 1;
+}
+
+int map_script_entity_render_next(uint32_t* cursor,struct EntityRenderView* out) {
+    return g_runtime && g_runtime->active && g_runtime->entities &&
+        entity_package_render_next(g_runtime->entities,cursor,out);
+}
+
+unsigned map_script_sweep_solids(double old_x,double old_y,double radius,double* x,double* y){
+    if(!g_runtime||!g_runtime->active||!g_runtime->entities||!x||!y||!isfinite(old_x)||!isfinite(old_y)||!isfinite(*x)||!isfinite(*y)||!isfinite(radius)||radius<0||radius>128)return 0;
+    return entity_world_sweep_solids(entity_package_world(g_runtime->entities),old_x,old_y,radius,x,y);
 }

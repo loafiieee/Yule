@@ -651,6 +651,7 @@
     /* An empty appearance object is semantically meaningful to the loader's
      * primary/mirror copy rules, so preserve authored presence. */
     if (hasOwn(defaults, "appearance")) data.defaults.room.appearance = defaultAppearance;
+    if (hasOwn(defaults, "opponent_spawn")) data.defaults.room.opponent_spawn = defaults.opponent_spawn;
     /* V1 ids are opaque loader strings, not display labels. Trimming an
      * imported id changes selector/online identity, so retain it verbatim. */
     var id = typeof document.id === "string" ? document.id : "";
@@ -668,6 +669,7 @@
       var appearance = appearanceToJson(room.appearance, false);
       if (hasOwn(room, "appearance")) config.appearance = appearance;
       if (room.hook === null) config.hook = null;
+      if (hasOwn(room, "opponent_spawn")) config.opponent_spawn = room.opponent_spawn;
       data.rooms[room.id] = config;
     });
     return data;
@@ -983,10 +985,12 @@
         };
         if (hasOwn(config, "appearance")) entry.appearance = deepClone(config.appearance);
         if (hasOwn(config, "hook")) entry.hook = config.hook;
+        if (hasOwn(config, "opponent_spawn")) entry.opponent_spawn = config.opponent_spawn;
         return entry;
       })
     };
     if (hasOwn(defaultsRoom, "appearance")) document.defaults.appearance = deepClone(defaultsRoom.appearance);
+    if (hasOwn(defaultsRoom, "opponent_spawn")) document.defaults.opponent_spawn = defaultsRoom.opponent_spawn;
 
     validateRawManifest(json, format, errors, warnings);
 
@@ -1088,8 +1092,9 @@
       pushSchemaError(errors, "room_config_type", path + " must be an object.", path);
       return;
     }
-    warnUnknownKeys(config, ["ambient", "appearance", "hook"], path, warnings);
+    warnUnknownKeys(config, ["ambient", "appearance", "hook", "opponent_spawn"], path, warnings);
     if (config.ambient !== undefined && !validAmbient(config.ambient)) pushSchemaError(errors, "ambient", path + ".ambient must be a supported alias or integer 0..9.", path + ".ambient");
+    validateOpponentSpawn(config.opponent_spawn, path + ".opponent_spawn", errors);
     validateRawAppearance(config.appearance, path + ".appearance", errors, warnings);
     if (config.hook !== undefined && config.hook !== null) pushSchemaError(errors, "unsupported_hook", path + ".hook must be omitted or null; map.lua is discovered at package level.", path + ".hook");
   }
@@ -1221,7 +1226,7 @@
 
   function validateV2Manifest(json, assets, errors, warnings) {
     var tileset = json.tileset;
-    var topKeys = ["sprite_sheet", "asset_sha256", "cell_w", "cell_h", "padding", "native_layout", "tiles"];
+    var topKeys = ["sprite_sheet", "asset_sha256", "cell_w", "cell_h", "padding", "native_layout", "tiles", "sheets"];
     var tileKeys = ["id", "symbol", "name", "native_glyph", "sprite_sheet", "asset_sha256", "sprite_index", "frame_count", "frame_ticks", "animation", "layer", "mirror_with_room", "random_phase", "native_visual", "offset_x", "offset_y", "scale_x", "scale_y", "angle_degrees", "tint", "cell_w", "cell_h", "padding", "collision", "force_mode", "force_x", "force_y", "max_speed_x", "max_speed_y"];
     var safeNative = "!#()*+-12:=@ACEFHIOPQSWXZ^_`cefilmquvwx|";
     var assetLookup = Object.create(null);
@@ -1306,6 +1311,19 @@
     var topGeometryAuthored = hasOwn(tileset, "cell_w") || hasOwn(tileset, "cell_h") || hasOwn(tileset, "padding");
     var defaultSheetInfo = null;
     if (typeof tileset.sprite_sheet === "string" && tileset.sprite_sheet) defaultSheetInfo = resolveSheet(tileset.sprite_sheet, tileset.asset_sha256, topCellW, topCellH, topPadding, topGeometryAuthored, "tileset");
+    if (tileset.sheets !== undefined) {
+      if (!Array.isArray(tileset.sheets) || tileset.sheets.length > 16) pushSchemaError(errors, "sheets_array", "tileset.sheets must contain at most 16 declarations.", "tileset.sheets");
+      else tileset.sheets.forEach(function (entry, index) {
+        var path = "tileset.sheets[" + index + "]";
+        if (!isPlainObject(entry)) { pushSchemaError(errors, "sheet_object", "Expected a sheet object.", path); return; }
+        rejectUnknownKeys(entry, ["sprite_sheet", "asset_sha256", "cell_w", "cell_h", "padding"], path, errors);
+        if (typeof entry.sprite_sheet !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.png$/i.test(entry.sprite_sheet)) pushSchemaError(errors, "sheet_png", "Expected a direct PNG filename.", path);
+        var w = validateIntegerField(entry, "cell_w", path, 1, 512, 16, errors);
+        var h = validateIntegerField(entry, "cell_h", path, 1, 512, 16, errors);
+        var padding = validateIntegerField(entry, "padding", path, 0, 64, 0, errors);
+        resolveSheet(entry.sprite_sheet, entry.asset_sha256, w, h, padding, true, path);
+      });
+    }
     if (tileset.native_layout === true) {
       if (!defaultSheetInfo || !defaultSheetInfo.external) pushSchemaError(errors, "native_layout_sheet", "tileset.native_layout requires an external default PNG sheet.", "tileset.native_layout");
       else if (defaultSheetInfo.known && defaultSheetInfo.cells < 128) pushSchemaError(errors, "native_layout_cells", "tileset.native_layout requires at least 128 cells in the default sheet.", "tileset.native_layout");
@@ -1380,6 +1398,12 @@
     });
     if (Object.keys(sheetConfigs).length > 16) pushSchemaError(errors, "sheet_config_count", "The tileset uses more than 16 unique external sheet configurations.", "tileset");
     if (totalKnownCells > 8192) warnings.push(makeIssue("warning", "aggregate_atlas_pressure", "External sheet configurations total " + totalKnownCells + " cells. Parsing can succeed, but the runtime atlas may be unable to append all of them.", { path: "tileset" }));
+  }
+
+  function validateOpponentSpawn(value, path, errors) {
+    if (value !== undefined && value !== "default" && value !== "always" && value !== "never") {
+      errors.push(makeIssue("error", "opponent_spawn", path + " must be default, always, or never.", { path: path }));
+    }
   }
 
   function validAmbient(value) {
@@ -1568,6 +1592,7 @@
         }
       }
       stats.spawnCandidates[roomId || String(roomIndex)] = candidates.length;
+      if (room) validateOpponentSpawn(room.opponent_spawn, "rooms." + roomId + ".opponent_spawn", errors);
       var ambient = room && room.ambient;
       if ((ambient === 9 || ambient === "boil" || ambient === "fumes") && shallowWater === 0) warnings.push(makeIssue("warning", "boil_without_shallow_water", "Room \"" + (roomId || roomIndex + 1) + "\" uses boil/fumes ambience without any shallow-water w cells.", { path: "rooms." + roomIndex + ".ambient", roomId: roomId || null }));
       if (room && room.hook !== undefined && room.hook !== null) errors.push(makeIssue("error", "unsupported_hook", "Room hooks must be omitted or null; V2 map.lua is discovered at package level.", { path: "rooms." + roomId + ".hook", roomId: roomId || null }));
@@ -1630,6 +1655,7 @@
     var defaults = document.defaults && document.defaults.room ? document.defaults.room : document.defaults;
     if (defaults) {
       if (defaults.ambient !== undefined && !validAmbient(defaults.ambient)) errors.push(makeIssue("error", "default_ambient", "Default room ambient must be a supported name or integer from 0 to 9.", { path: "defaults.room.ambient" }));
+      validateOpponentSpawn(defaults.opponent_spawn, "defaults.room.opponent_spawn", errors);
       validateAppearance(defaults.appearance, "defaults.room.appearance", errors, null);
     }
     if (format === FORMAT_V2) {
@@ -2210,6 +2236,7 @@
     serializeMapText: serializeMapText,
     buildDataObject: buildDataObject,
     serializeDataJson: serializeDataJson,
+    findDuplicateJsonKeys: findDuplicateJsonKeys,
     parsePackage: parsePackage,
     parseProject: parseProject,
     parsePackageFiles: parsePackageFiles,

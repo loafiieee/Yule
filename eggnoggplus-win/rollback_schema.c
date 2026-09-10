@@ -158,16 +158,18 @@ _Static_assert(DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
  * its packed little-endian snapshot directly in map_script_bytes. The wire
  * parser below still reads every field as explicit LE; future non-x86/native
  * adapters must build that canonical subdocument field by field. */
+_Static_assert(offsetof(MapScriptSnapshot, timer_count) == 29448u, "timer count offset changed");
+_Static_assert(offsetof(MapScriptSnapshot, timers) == 29452u, "timer payload offset changed");
 _Static_assert(sizeof(MapScriptSnapshot) == ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES,
-               "MapScriptSnapshot v5 size changed; bump the rollback schema");
+               "MapScriptSnapshot v6 size changed; bump the rollback schema");
 _Static_assert(offsetof(MapScriptSnapshot, state) == RB_MS_STATE_OFFSET,
-               "MapScriptSnapshot v5 header changed");
+               "MapScriptSnapshot v6 header changed");
 _Static_assert(offsetof(MapScriptSnapshot, overrides) == RB_MS_OVERRIDE_OFFSET,
-               "MapScriptSnapshot v5 override layout changed");
+               "MapScriptSnapshot v6 override layout changed");
 _Static_assert(offsetof(MapScriptSnapshot, contacts) == RB_MS_CONTACT_OFFSET,
-               "MapScriptSnapshot v5 contact layout changed");
+               "MapScriptSnapshot v6 contact layout changed");
 _Static_assert(offsetof(MapScriptSnapshot, velocity_limits) == RB_MS_LIMIT_OFFSET,
-               "MapScriptSnapshot v5 velocity layout changed");
+               "MapScriptSnapshot v6 velocity layout changed");
 
 static void rb_set_error(char* err, size_t err_cap, const char* fmt, ...) {
     va_list ap;
@@ -713,6 +715,18 @@ static int rb_validate_map_script(const RollbackSchemaState* state,
         (override_count != 0u || contact_count != 0u || limit_count != 0u)) {
         rb_set_error(err, err_cap, "faulted map script retains active effects");
         return 0;
+    }
+    {
+        uint32_t timer_count = rb_read_u32(ms + 29448u);
+        if (timer_count > 32u) { rb_set_error(err, err_cap, "invalid timer count"); return 0; }
+        for (i = 0; i < 32u; ++i) {
+            uint32_t remaining = rb_read_u32(ms + 29452u + i * 8u);
+            uint32_t interval = rb_read_u32(ms + 29456u + i * 8u);
+            if (remaining > 1000000000u || interval > 1000000000u ||
+                (interval && !remaining) || (i >= timer_count && (remaining || interval))) {
+                rb_set_error(err, err_cap, "invalid timer state"); return 0;
+            }
+        }
     }
     return rb_validate_map_state_entries(ms, state_count, err, err_cap) &&
            rb_validate_map_overrides(state, ms, tick, override_count, err, err_cap) &&

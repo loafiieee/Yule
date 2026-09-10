@@ -11,6 +11,7 @@ SOURCE = INSTALLER.read_text(encoding="utf-8")
 
 assert SOURCE.startswith("#!/usr/bin/env bash\n")
 assert "set -Eeuo pipefail" in SOURCE
+assert 'mkdir -p -- "$INSTALL_DIR/mods" "$INSTALL_DIR/maps"' in SOURCE
 assert "--game-path" in SOURCE and "--wine-prefix" in SOURCE
 assert "--uninstall" in SOURCE and "--skip-protocol" in SOURCE
 assert "WINEPREFIX" in SOURCE and '"--yule-uri=$uri"' in SOURCE

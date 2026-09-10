@@ -1,0 +1,45 @@
+compile source list checks: OK (44 implementation files)
+release packaging fail-closed static checks: OK
+Linux Wine installer static/syntax checks: OK
+Linux Wine installer integration test: skipped on non-POSIX host
+public source exporter/static release guards: OK
+credential_hooks_static_test: all checks passed
+online_control_hooks_static_test: all checks passed
+online flow integration static checks: OK
+online native cursor static checks: OK
+online match network HUD static checks: OK
+online menu tick static checks: OK
+online active troubleshooter static checks: OK
+online LAN admin integration static checks: OK
+online server control safety: OK
+friend challenge map picker static checks: OK
+social controls static checks: OK
+private rematch static checks: OK
+online launch/deep-link static checks: OK
+one-shot updater handoff static checks: OK
+single frame-boundary capture static checks: OK
+desync_repro_static_test: all checks passed
+peer trace diff tests: OK
+fp_control_hooks_static_test: all checks passed
+simulation_geometry_static_test: all checks passed
+player colour static checks: OK
+Discord Rich Presence privacy/runtime wiring checks: OK
+bytebeat Lua/cache/resource wiring checks: OK
+Lua HTTP owner/cancellation/body-bound static checks: OK
+Greggnogg responsive color-editor static checks: OK
+owner-scoped Lua console command integration: OK
+removable Lua subscription integration static checks: OK
+public mod.online cosmetics-surface removal checks: OK
+Lua filesystem picker static checks: OK
+mod API manifest/runtime integration static checks: OK
+owner-scoped asset removal API wiring: OK
+bounded mod.json integration static checks: OK
+sandboxed Dollchan JavaScript build/security wiring checks: OK
+native/bounded/Dollchan music playlist and authoring controls: OK
+console catalog coverage: OK (70 dispatched, 70 catalog entries)
+Discord LFG server/bot privacy lifecycle checks: OK
+state-preserving online-server updater checks: OK
+repository-wide updater safety checks: OK
+installer lifecycle checks: OK
+net_backpressure_static_test: all checks passed
+window runtime static checks: OK

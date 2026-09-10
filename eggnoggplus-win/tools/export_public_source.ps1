@@ -54,7 +54,8 @@ $allowedRootFiles = @(
     'UPDATER.md',
     'compile.sh',
     'genstubs.py',
-    'mod.schema.json'
+    'mod.schema.json',
+    'ui_helpers.lua'
 )
 $allowedRootExtensions = @('.c', '.h', '.s')
 $allowedTrees = @(
@@ -93,7 +94,7 @@ $deniedPrefixes = @(
 )
 $deniedExtensions = @(
     '.a', '.dll', '.dmp', '.exe', '.lib', '.log', '.o', '.obj', '.pdb',
-    '.pyc', '.tmp', '.zip'
+    '.pyc', '.tmp', '.zip', '.jsonl'
 )
 
 function Normalize-RepoPath([string]$Path) {

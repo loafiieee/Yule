@@ -34,4 +34,14 @@ yule-src-public/
 .github/
 .vscode/
 eggnoggplus-win.zip
+eggnoggplus-win/eggnoggplus.exe
+eggnoggplus-win/data/font8x8.png
+eggnoggplus-win/data/glow.png
+eggnoggplus-win/data/greetz.txt
+eggnoggplus-win/data/misc.png
+eggnoggplus-win/data/sprites.png
+eggnoggplus-win/data/tiles.png
+eggnoggplus-win/data/tune.txt
+eggnoggplus-win/data/tune[1-7].txt
+eggnoggplus-win/data/tune-work.txt
 

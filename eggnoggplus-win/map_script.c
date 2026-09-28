@@ -4556,13 +4556,15 @@ static int bind_content_identity(MapScriptRuntime* runtime, const MapScriptDefin
     unsigned char* data = calloc(1, bytes);
     size_t offset = 96u; int ok;
     if (!data) { set_error(err, err_cap, "could not allocate content identity manifest"); return 0; }
-    memcpy(data, "YMCI0001", 8);
+    memcpy(data, "YMCI0002", 8);
     content_identity_u32(data+8, MAP_SCRIPT_API_VERSION);
     content_identity_u32(data+12, (uint32_t)runtime->memory_limit);
     content_identity_u32(data+16, runtime->instruction_budget);
     content_identity_u32(data+20, (uint32_t)definition->source_len);
     content_identity_u32(data+24, (uint32_t)runtime->binding_count);
-    content_identity_u32(data+28, runtime->rng_state);
+    /* The RNG seed is rollback state, not immutable package identity. Peers
+     * can construct the same map at different pre-sync native RNG positions;
+     * the host snapshot supplies the authoritative script RNG state. */
     if (runtime->entities) memcpy(data+32, entity_package_fingerprint(runtime->entities), 64);
     if (definition->source_len) memcpy(data+offset, definition->source, definition->source_len);
     offset += definition->source_len;

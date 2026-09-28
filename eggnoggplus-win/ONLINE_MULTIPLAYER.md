@@ -368,7 +368,14 @@ the exact mapgen-pinned script is active and non-faulted (or the package declare
 the synchronized seed, native reset, and native start are installed does it transactionally
 allocate history/transfer storage and require the peer's matching 32-bit structural layout
 ID plus exact capacity. Missing proof waits; mismatch aborts before hold release. The
-client stays in the hub if that work outlasts the timer. Once frame zero is locally restorable,
+server seed is parsed as the full unsigned 32-bit value and installed on both
+peers, including a deterministic nonzero fallback for the rare zero value.
+Map-script RNG state lives in the rollback snapshot; the immutable content
+identity covers the script, entity package, bindings, and limits rather than
+the peer's pre-sync RNG position. The joiner can therefore validate and load
+the host's authoritative initial state even when its local setup consumed a
+different number of random values. The client stays in the hub if that work
+outlasts the timer. Once frame zero is locally restorable,
 it reports READY and still waits until the server has received READY from both
 clients and broadcasts the gameplay-start commit. Pre-commit failure is an
 explicit no-contest setup abort with no win/loss screen or Elo change. Setup has

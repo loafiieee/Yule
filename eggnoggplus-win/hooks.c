@@ -8633,6 +8633,7 @@ static int online_parse_long_range(const char* s, long lo, long hi, long* out) {
 }
 
 static void online_hub_set_status(const char* msg) {
+    if (strcmp(g_online_status, msg ? msg : "") == 0) return;
     text_copy(g_online_status, sizeof(g_online_status), msg ? msg : "");
     if (msg && msg[0]) {
         LOG_INFO("online.hub: %s", msg);
@@ -9955,11 +9956,9 @@ static int online_prepare_pending_match_state(char* err, size_t err_cap) {
     if (g_hook_map_selector) {
         *g_hook_map_selector = g_online_pending_match.selector;
     }
-    if (g_online_pending_match.seed) {
-        (void)lua_manager_game_set_rng_seed(g_online_pending_match.seed);
-        if (g_native_seed) *g_native_seed = g_online_pending_match.seed;
-        if (g_native_mrand_seed) *g_native_mrand_seed = g_online_pending_match.seed;
-    }
+    (void)lua_manager_game_set_rng_seed(g_online_pending_match.seed);
+    if (g_native_seed) *g_native_seed = g_online_pending_match.seed;
+    if (g_native_mrand_seed) *g_native_mrand_seed = g_online_pending_match.seed;
     memset(&g_online_active_match, 0, sizeof(g_online_active_match));
     if (!p_game_reset) {
         LOG_ERROR("online.prematch: game_reset is unavailable");
@@ -10071,6 +10070,7 @@ static void online_server_begin_pending_match(const char* line) {
     char text[128];
     char queue[32];
     int value = 0;
+    uint32_t match_seed = 0u;
     OnlineControlJsonResult map_key_result;
     OnlineControlJsonResult auth_token_result;
     online_pending_match_reset();
@@ -10093,7 +10093,14 @@ static void online_server_begin_pending_match(const char* line) {
     if (online_json_get_int(line, "local_port", &value)) g_online_pending_match.local_port = value;
     if (online_json_get_int(line, "peer_port", &value)) g_online_pending_match.peer_port = value;
     if (online_json_get_int(line, "input_delay", &value)) g_online_pending_match.input_delay = value;
-    if (online_json_get_int(line, "seed", &value)) g_online_pending_match.seed = (unsigned int)value;
+    if (online_control_json_get_uint32(line, "seed", &match_seed) !=
+        ONLINE_CONTROL_JSON_OK) {
+        online_abort_prematch_setup("server sent a missing or invalid match seed");
+        return;
+    }
+    /* Native and map-script RNGs need a nonzero shared starting value even
+     * for the rare valid zero sent by the server. */
+    g_online_pending_match.seed = match_seed ? match_seed : UINT32_C(0x6D2B79F5);
     online_json_get_string(line, "p2p_role", g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role));
     online_json_get_string(line, "peer_host", g_online_pending_match.peer_host, sizeof(g_online_pending_match.peer_host));
     online_json_get_string(line, "p2p_token", g_online_pending_match.p2p_token, sizeof(g_online_pending_match.p2p_token));

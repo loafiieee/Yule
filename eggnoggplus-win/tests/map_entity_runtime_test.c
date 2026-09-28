@@ -31,6 +31,28 @@ static MapScriptDefinition definition(const char* source) {
     MapScriptDefinition d;memset(&d,0,sizeof(d));d.script_id=987;
     d.source=source;d.source_len=strlen(source);return d;
 }
+static void test_snapshot_accepts_authoritative_seed(void) {
+    MapScriptDefinition d=definition("map.on_tick(function() map.state.roll=map.random(1,100) end)");
+    MapScriptHost host={0};
+    size_t bytes;
+    unsigned char *snapshot,*loaded;
+    MapScriptSnapshot restored;
+    host.rng_seed=UINT32_C(0x12345678);
+    assert(map_script_activate_content(&d,&host,package,strlen(package),error,sizeof(error)));
+    bytes=map_script_content_snapshot_size();
+    snapshot=malloc(bytes);loaded=malloc(bytes);assert(snapshot&&loaded);
+    assert(map_script_content_snapshot_save(snapshot,bytes,error,sizeof(error)));
+    memcpy(&restored,snapshot+MAP_SCRIPT_CONTENT_HEADER_BYTES,sizeof(restored));
+    assert(restored.rng_state==host.rng_seed);
+    host.rng_seed=UINT32_C(0x87654321);
+    assert(map_script_activate_content(&d,&host,package,strlen(package),error,sizeof(error)));
+    assert(map_script_content_snapshot_validate(snapshot,bytes,error,sizeof(error)));
+    assert(map_script_content_snapshot_load(snapshot,bytes,error,sizeof(error)));
+    assert(map_script_content_snapshot_save(loaded,bytes,error,sizeof(error)));
+    memcpy(&restored,loaded+MAP_SCRIPT_CONTENT_HEADER_BYTES,sizeof(restored));
+    assert(restored.rng_state==UINT32_C(0x12345678));
+    free(snapshot);free(loaded);map_script_deactivate();
+}
 static void read_entity(const unsigned char* bytes,size_t size,int32_t x,uint32_t count) {
     EntityPackage* p=entity_package_decode(package,strlen(package),error,sizeof(error));
     EntityValue value;assert(p);
@@ -603,6 +625,7 @@ static void test_native_mine_trigger_queue(void) {
     d=definition("map.on_tick(function() map.trigger_mine_at(0,0) end)");assert(map_script_activate_content(&d,NULL,package,strlen(package),error,sizeof(error)));assert(!map_script_dispatch_tick(error,sizeof(error))&&strstr(error,"mine triggering is unavailable"));map_script_deactivate();
 }
 int main(void) {
+    test_snapshot_accepts_authoritative_seed();
     test_solid_regions();
     test_instance_variables_and_manual_motion();
     test_spawn_initial_values();
@@ -669,7 +692,8 @@ int main(void) {
         assert(!map_script_content_snapshot_load(initial,size,error,sizeof(error)) && strstr(error,"identity"));
         host.rng_seed=123;
         assert(map_script_activate_content(&d,&host,package,strlen(package),error,sizeof(error)));
-        assert(!map_script_content_snapshot_load(initial,size,error,sizeof(error)) && strstr(error,"identity"));
+        assert(map_script_content_snapshot_load(initial,size,error,sizeof(error)));
+        assert(map_script_content_snapshot_save(copy,size,error,sizeof(error)) && !memcmp(copy,initial,size));
         changed=d;changed.memory_limit_bytes=MAP_SCRIPT_DEFAULT_MEMORY_BYTES;
         changed.instruction_budget=MAP_SCRIPT_DEFAULT_INSTRUCTIONS;
         assert(map_script_activate_content(&changed,NULL,package,strlen(package),error,sizeof(error)));

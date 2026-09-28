@@ -97,6 +97,9 @@ assert "Online server update required" in handle
 assert "server rejected the required capability handshake" in handle
 
 begin_match = function_body("online_server_begin_pending_match")
+assert 'online_control_json_get_uint32(line, "seed", &match_seed)' in begin_match
+assert 'server sent a missing or invalid match seed' in begin_match
+assert 'match_seed ? match_seed : UINT32_C(0x6D2B79F5)' in begin_match
 assert "OnlineControlJsonResult map_key_result" in begin_match
 assert "map_key_result != ONLINE_CONTROL_JSON_OK" in begin_match
 assert "!g_online_pending_match.map_key[0]" in begin_match

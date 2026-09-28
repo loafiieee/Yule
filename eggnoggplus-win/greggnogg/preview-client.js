@@ -19,6 +19,7 @@
       if(!response.ok)throw Error('EGGNOGG+ rejected the preview connection.');
       connected=true;
       const data=await response.json();
+      if(!Number.isInteger(data.api)||data.api<2)throw Error('Your installed EGGNOGG+ runtime is too old for V2 map previews. Update or reinstall Yule, then try again.');
       if(data.state==='done'){status('Preview started.');return;}
       if(data.state==='error')throw Error('EGGNOGG+ could not load this preview. See mods/modframework.log for the map diagnostic.');
       if(data.state==='waiting'&&!sent){

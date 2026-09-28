@@ -21,6 +21,14 @@ void rgba_box_blur(const unsigned char* source,
                    int height,
                    int radius);
 
+/* Decodes a PNG into malloc-owned, tightly packed RGBA8 with the vendored,
+ * platform-independent decoder. This is a compatibility fallback for valid
+ * variants rejected by Eggnogg's older decoder. The caller must free pixels. */
+int rgba_load_image_portable(const char* full_path,
+                             unsigned char** out_pixels,
+                             int* out_width,
+                             int* out_height);
+
 #ifdef __cplusplus
 }
 #endif

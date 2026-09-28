@@ -51,6 +51,7 @@ M=T=&gt;(/* original Dollchan expression */),M(t/5000)</code></pre>
 
 <section id="rates"><h2>Source sample rate versus mixer output rate</h2>
 <div class="callout note"><strong><code>sample_rate</code></strong> controls the formula's <code>t</code>, tempo, and pitch. <strong><code>output_rate</code></strong> controls only the SDL device. They are independent.</div>
+<p>The Framework section in <strong>Options → Mods</strong> also provides persistent 0..100 Music and SFX master controls. Music scales native/glitch and Yule playlist output plus mod music files. SFX scales the native synth, generated voices, and mod sound files. Per-mod and per-play values multiply these player-owned settings.</p>
 <ul>
   <li><code>sample_rate</code>: 4,000..48,000 Hz, default 8,000.</li>
   <li>Global <code>music_output_rate</code>: 8,000..192,000 Hz, normally 48,000 to avoid destructive downsampling of 32–48 kHz formulas.</li>

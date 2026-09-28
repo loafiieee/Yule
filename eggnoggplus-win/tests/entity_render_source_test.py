@@ -26,7 +26,12 @@ assert read(0x41c456,6) == bytes.fromhex("d8 25 60 a3 55 00")
 source=(root/"hooks.c").read_text(encoding="utf-8")
 assert "regparm(1)" in source
 hook = source[source.index("static void __attribute__((regparm(1))) hooked_entity_draw_things"):]
-assert hook.index("if(native_layer==1)draw_custom_entities_for_order(0)") < hook.index("p_entity_draw_things_trampoline(native_layer)") < hook.index("if(native_layer==-2)draw_custom_entities_for_order(1)")
+behind = "if(native_layer==1){draw_custom_entities_for_order(0);draw_custom_player_sprites_for_order(0);}"
+front = "if(native_layer==-2){draw_custom_entities_for_order(1);draw_custom_player_sprites_for_order(1);}"
+assert hook.index(behind) < hook.index("p_entity_draw_things_trampoline(native_layer)") < hook.index(front)
+assert "hooks_should_skip_draw_player_body" in source
+assert "map_script_player_sprite(slot,&view)" in source
+assert "render.angle_degrees=view.visual.rotation/256.0f" in source
 assert "if(view.visual.layer!=draw_order)continue;" in source
 assert "map_script_entity_render_next(&cursor,&view)" in source
 print("entity render native ABI and insertion checks passed")

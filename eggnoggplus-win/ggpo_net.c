@@ -5156,6 +5156,28 @@ static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int go
         return;
     }
 
+    {
+        uint32_t validated_checksum = 0u;
+        err[0] = '\0';
+        if (!ggpo_ext_validate_rollback_transport_blob(g_net.recv_state,
+                                                        g_net.recv_state_len,
+                                                        &validated_checksum,
+                                                        err,
+                                                        sizeof(err)) ||
+            validated_checksum != p->state_checksum) {
+            LOG_ERROR("ggpo.net: host initial state rejected before apply epoch=%u (%s)",
+                      (unsigned int)p->state_epoch,
+                      err[0] ? err : "checksum mismatch");
+            /* Every chunk has already passed session authentication and the
+             * complete blob is deterministic for this epoch. Retrying cannot
+             * repair a package/YMC3 identity mismatch and only turns the
+             * admission failure into a confusing setup timeout. */
+            g_net.peer_disconnected = 1;
+            ggpo_net_reset_recv_state();
+            return;
+        }
+    }
+
     err[0] = '\0';
     if (!ggpo_net_capture_local_render_geometry(err, sizeof(err))) {
         LOG_ERROR("ggpo.net: host state could not preserve local render geometry (%s)",

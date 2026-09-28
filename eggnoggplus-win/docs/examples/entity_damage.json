@@ -1,0 +1,64 @@
+{
+  "schema": 2,
+  "capacity": 16,
+  "types": [
+    {
+      "key": "demo:blade",
+      "regions": [
+        {
+          "id": 1,
+          "name": "attack",
+          "role": "hitbox",
+          "layer": 2,
+          "mask": 4,
+          "x": -5,
+          "y": -5,
+          "width": 10,
+          "height": 10
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 4,
+        "tint": "#FF7070FF"
+      }
+    },
+    {
+      "key": "demo:crate",
+      "regions": [
+        {
+          "id": 1,
+          "name": "receiver",
+          "role": "hurtbox",
+          "layer": 4,
+          "mask": 2,
+          "x": -8,
+          "y": -8,
+          "width": 16,
+          "height": 16
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 0,
+        "tint": "#E8B060FF"
+      }
+    }
+  ],
+  "placements": [
+    {
+      "name": "blade",
+      "type": "demo:blade",
+      "room": "center",
+      "x": 80,
+      "y": 80
+    },
+    {
+      "name": "crate",
+      "type": "demo:crate",
+      "room": "center",
+      "x": 80,
+      "y": 80
+    }
+  ]
+}

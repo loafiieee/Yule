@@ -7,6 +7,7 @@
       "regions": [
         {
           "id": 1,
+          "name": "body",
           "role": "body",
           "layer": 1,
           "mask": 1,

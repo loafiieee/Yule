@@ -98,7 +98,8 @@ assert "server rejected the required capability handshake" in handle
 
 begin_match = function_body("online_server_begin_pending_match")
 assert "OnlineControlJsonResult map_key_result" in begin_match
-assert "map_key_result < ONLINE_CONTROL_JSON_NOT_FOUND" in begin_match
+assert "map_key_result != ONLINE_CONTROL_JSON_OK" in begin_match
+assert "!g_online_pending_match.map_key[0]" in begin_match
 assert "online_match_protocol_compatible" in begin_match
 lookup = begin_match.index("custom_maps_selector_for_key")
 unknown_abort = begin_match.index(

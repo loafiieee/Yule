@@ -20,6 +20,31 @@ The runners prepare the MinGW DLL search path before launching their test binari
 They do not launch the game. A clean run establishes parser, rollback, network-envelope,
 map-script, updater/recovery, Discord IPC, and audio-render regression coverage.
 
+## Authored camera acceptance
+
+In a V2 map's `map.lua`, set a point camera from `map.on_tick` using
+`map.set_camera_point(200, 120, 0.5)`. Confirm the larger view draws complete
+terrain at the edges, then call `map.clear_camera()` on a later tick and confirm
+native following returns without a jump in player position or altered movement.
+Repeat with zoom 2, after death/respawn, and while crossing differently sized
+rooms. In Greggnogg, use the corresponding Game blocks and verify preview and
+exported map behavior agree. With two clients, check identical point/zoom
+presentation through rollback and reconnect; offline mod freecam should take
+priority only on the local offline render. Check the native camera still controls
+respawn and room bounds throughout.
+
+## Linux/Wine installer acceptance
+
+Run `python3 tests/linux_installer_integration_test.py` on Linux and check the
+packaged ZIP with `python3 tests/linux_installer_static_test.py`. On a KDE Plasma
+machine with Wine and native Steam, extract the Linux ZIP and run
+`bash install-linux.sh`. Confirm the summary reports `shortcut`, `deep_links`,
+and `steam` as `ok`; an absent or sandboxed Steam must give a specific status
+and reason. Find EGGNOGG+ in the application menu, open a harmless `yule://`
+link from the browser, and launch its non-Steam shortcut from Steam. Verify
+both launch the same installed game and Wine prefix. Then rerun the installer
+and uninstall; custom maps, mods, saves, and modified files must remain.
+
 ## Duplicate-packet rollback regressions
 
 ```powershell
@@ -33,6 +58,26 @@ duplicates both peers' traffic across uint32 frame wrap. They assert replay
 rejection, prediction/rollback, checksum acknowledgement and four history-ring
 generations. They use the deterministic fixture; native spawn/death/room soaks
 remain separate acceptance work.
+
+The guarded paired UDP relay also has named, seeded impairment profiles:
+
+```powershell
+python tests/prematch_net_test.py --relay-matrix-only
+python tests/prematch_net_test.py --relay-profile=mixed --relay-seed=0xC0FFEE56
+python tests/prematch_net_test.py --relay-matrix-only --relay-wrap
+python tests/prematch_net_test.py --relay-matrix-only --relay-correction
+python tests/prematch_net_test.py --relay-matrix-only --relay-correction --relay-seed=0xC0FFEE56
+```
+
+The matrix runs burst loss, jitter/reordering, duplicates, bandwidth limiting,
+and a mixed profile. Each paired run compares all 2,048 confirmed gameplay
+states and checks that the requested impairment occurred. The optional seed
+replays the relay's impairment choices; thread scheduling can still change
+exact packet timing. `--relay-wrap` runs each profile across uint32 frame
+wrap; `--relay-correction` combines it with coordinated correction and an
+injected would-block send. The relay reports expected Windows ICMP resets
+separately and fails on other socket errors. Native entity lifecycle still
+needs this transport matrix coverage.
 
 ## UI layout and input bounds
 
@@ -364,6 +409,56 @@ mirroring, native policy/patch sites, editor round trips and regression tests;
 live end-room fighting, subsequent deaths/respawns, goals and rollback still need
 acceptance. Use the same new framework build and exported package on both clients.
 
+## Variable-room live traversal
+
+Use a V2 `variable_cells` map with adjacent rooms wider than, equal to, and narrower
+than the current viewport. Walk both directions across every seam and verify that the
+camera eases horizontally and vertically toward the new player position, centers a room
+smaller than the viewport, and never snaps to a vanilla 528-by-192-pixel boundary.
+Trigger a native `m` mine by landing on it in the center room
+and in both mirrored outer halves; its fuse must remain on the touched tile, complete its
+normal wind-up, explode once, and restore that same tile. Stand near a different mine in
+the same source-room design but on the opposite placed-room instance while the first fuse
+finishes; the remote explosion must not damage either player or arm the second mine.
+
+Give one player GO, leave the other more than one viewport behind, and repeat the forced
+respawn while moving in both directions. The trailing player must search and respawn in
+the GO player's current authored room. In a room wider than 33 cells, hold the GO player
+near the far-right floor and confirm the trailing player respawns near that position rather
+than being pulled back toward column 31. Repeat with no markers, deny-only markers, shared
+allow markers, and player-specific allow markers. A player-specific allow marker is an
+intentional whitelist for that player, so the chosen marker should win over the nearest
+ordinary floor. Finally repeat the seam, mine and forced-respawn checks after death and
+room revisit and in a two-client rollback match. Fall completely below a custom-height
+room with no room beneath it. The normal death delay must finish once and respawn the
+player; it must not remain at the bottom of the pit indefinitely while the respawn timer
+is repeatedly held at one. In each non-33-wide room, collide the
+players with each other and push a sword or spike ball against each side wall; separation
+must use the visible authored edges without snapping either body to a hidden 528-pixel
+boundary. Drop both physics objects below a short room and confirm they are removed at
+that room's bottom rather than remaining active down to the tallest room's height.
+Walk a player off a closed portion of that short room and confirm fall death occurs at
+its authored bottom, starts immediately, and does not slow the entire game or repeat the
+death sequence. Then place a connected room directly below, carve a pit over the
+authored bottom doorway, and confirm falling through transfers the player alive. Test the
+doorway's **Can cross** choices with P1, P2 and the current GO player, and test **Room
+focus** once with GO-only focus and once with crossing-player focus; a denied player must
+remain in the source room while an allowed non-GO player using crossing focus must move
+the camera/active room. Repeat after locking the doorway through map Lua: the locked opening
+must rewind the crossing like a solid edge without killing the player. In Greggnogg, attempt to paint a start or respawn marker on empty space, a wall,
+water and a hazard; each click must be rejected immediately, while a safe `@` floor with
+open space above remains placeable and previews normally.
+For a graph map, place the same room design twice and give it a source-room
+respawn marker. Choose a spawn marker tile, switch **Markers apply to** to
+**This placed copy**, then move or erase that marker in only one copy. Revisit
+both copies and confirm the other still inherits the design marker. Use
+**Reset this copy's respawn markers to room design** and confirm inheritance
+returns without changing the source design. In Full map, choose a different
+safe start/facing for P1 in the starting copy; leave P2
+on **Use room design**. Preview, then export and reopen the package. Verify the
+same P1/P2 starts, facing, and copy-specific respawn eligibility in both paths;
+undo/redo the marker edits and check that only the selected copy changes.
+
 
 ### Managed entity package integration
 
@@ -462,6 +557,14 @@ swept. The editor/game dispatch is connected; the guarded
 serializer runner compiles and exercises the integrated native source set.
 `greggnogg/preview-client.test.js` verifies upload-once behavior, lost-response
 recovery, delayed startup, token rejection and native failure reporting.
+
+For custom ambiance acceptance, choose a custom room effect in the ordinary
+room inspector and confirm the selector does not flash back to `none`. Its
+animated particles must appear immediately in the main map canvas, in the room
+effect dialog, and in the launched game preview. The game log should contain one
+`[ambiance] active` line for the room. Any `[ambiance] could not queue` warning
+identifies an invalid or unavailable picture sheet/frame instead of failing
+silently.
 
 `greggnogg/logic-studio.test.js` exercises the actual logic-studio module with a
 small UI harness: invalid blocks cannot be silently discarded by switching to

@@ -1,1445 +1,228 @@
 # Open work
 
-Hands-on commands and the remaining live acceptance order are consolidated in
-`TESTING.md`.
+Completed implementation history is archived in docs/completed-work.md.
+Hands-on and live acceptance procedures are in TESTING.md.
 
-Release/security blockers:
-    - Protect the account/control channel with TLS, certificate/hostname validation, and
-      hardened session authentication. It is currently strict and bounded, but still raw
-      TCP; passwords and match tokens are visible to an on-path observer.
-    - Add IPv6 P2P sockets and IPv6 candidate exchange.
-    - Replace the peer-reported compatibility hints with a complete deterministic
-      compatibility manifest covering game/framework/protocol versions, gameplay mods,
-      content-registry state, maps/assets, rules, and relevant config. Define the public
-      content policy and stronger integrity/anti-cheat boundary.
-    - Harden match-result validation and production persistence/operations. The
-      private-LAN-only dashboard now covers lookup, password reset, ban/unban,
-      disconnect, rating reset, connected-player/build presence, queue order and wait,
-      match participants/map/phase/direct-or-relay state, challenges, rematches, and the
-      friendship/request/block/mute graph; add account deletion and durable transactional
-      storage. Flushed admin audit records and verified offline backup/restore tooling
-      are implemented below; production operational acceptance remains.
-Netcode correctness and quality (open; the current rollback transport still has known
-desync and recovery failure modes):
-    - P0: Replace the production pointer-dependent raw memory slabs with a fully typed,
-      versioned, pointer-free deterministic state and native capture/apply adapter. The
-      standalone canonical envelope foundation now covers explicit compatibility and
-      map-script identity, roles, a fixed 16-slot occupancy/allocator model, stable behavior
-      IDs, ordered danger references, tiles, strict canonical decoding, and failed-decode
-      atomicity. It is not wired into GGPO: active entity bytes `0x02..0x157` are still an
-      opaque bridge, native allocator semantics remain partly unresolved, MapScript's
-      producer is still packed x86 little-endian, and there is no checked stable-ID/pointer
-      reconstruction or transactional native commit. Finish those pieces and require
-      semantic native save-load-save equality across spawn/despawn/death/slot reuse.
-    - P0: Finish the simulation-field checksum audit and formally separate presentation
-      state. Gameplay RNG, simulation camera X/Y, camera-shake amplitude/decay, `_game_w`
-      (used by native loser-respawn and horizontal camera-clamp branches), `_game_h`
-      (used by vertical camera and camera-relative ambient paths), and `_resumed` (used to
-      clear buffered attacks), and the `_mine_anim` same-tick activation guard at
-      `0x541EFC` are now checksum-authoritative under canonicalization v7 and have
-      production-serializer regressions. Shake amplitude/decay decide whether native
-      camera update consumes zero or two gameplay RNG draws, and its prior-tick camera-X
-      result can change loser respawn. Online play pins the clean post-tick RNG/camera/
-      shake state and both authoritative simulation dimensions
-      across local `adjust_layout` writes before every live, rollback, and correction
-      capture/tick, then restores each client's local dimensions for rendering. Live/
-      offline, network-live, rollback, correction, loopback, and self-test native updates
-      now cross one canonical x87/MXCSR tick guard. Audit every remaining native/entity/map
-      input and prove each exclusion. Continue auditing the remaining masked transient,
-      entity, tile, and map fields against every native reader before expanding the mask.
-    - P1: Finish the secret-free per-session repro bundle around the completed automatic
-      paired first-divergence snapshots: add the complete content/map/mod/rules
-      compatibility-manifest fingerprint, a full-session input trace, network-chaos
-      event spill beyond the completed bounded 8,192-event history, and sequence-aware
-      RTT/jitter/loss/reorder measurements. The first-snapshot metadata already records an
-      independently generated reproducible chaos seed, bilateral executable/framework
-      build fingerprints, rollback layout and deterministic transport-config identity, FP
-      controls, plus current transport/rollback/stall/correction/chaos counters.
-    - P1: Extend the guarded 2,048-frame nonzero-input paired coverage to native entity
-      spawn/despawn/death/reuse. The ordinary and uint32-wrap paired runs
-      byte-compare every finalized canonical pre-frame state and post-frame checksum through
-      all 2,048 frames; the long correction run injects a real mismatch after ring reuse and
-      reconverges through the same target. Together they cover four 512-slot history
-      generations, prediction/rollback on both roles, seeded ordinary loss and variable
-      delay/reordering, bilateral checksum-ACK drain, and authenticated shutdown after
-      ordinary and active-correction phases.
-    - P1: Add seeded loss, burst-loss, delay, reordering, duplication, would-block, and
-      bandwidth-limit matrices at the resend/history boundaries. Add native soaks across
-      rooms, deaths, respawns, scoring, reset, hazards, custom maps, window/render variants,
-      and differing floating-point modes; require bounded stalls and reproducible failures.
-    - P1: Finish priority classes and adaptive pacing for input, ACK, heartbeat, state,
-      and correction traffic. The control-first baseline now caps state/correction bursts,
-      retains exact queued datagrams and transfer cursors across local socket backpressure,
-      and exposes would-block/hard-error/deferred counters. Add selective correction-chunk
-      ACK/resend, a shared byte budget, bandwidth/congestion control, and sustained
-      input-versus-bulk competition tests rather than relying on a fixed eight-chunk cap.
-    - P1/P2: Replace service-tick RTT and fixed margins with monotonic sequence-aware
-      RTT/jitter/loss measurements, safe-boundary adaptive input delay, and GGPO-style time
-      sync with bounded replay/catch-up work instead of freeze-then-ignore behavior.
-    - P2: Add authenticated NAT rebinding, coordinated direct-to-relay failover, MTU
-      discovery, congestion/pacing, and richer player-visible jitter, loss, stall, and
-      route health. The default-off small HUD now supplies the existing smoothed ping,
-      input delay, and rollback count.
+## Current priorities
 
+### P0 - Two-dimensional room layout
 
+- Complete live and paired rollback acceptance for room-graph maps, including
+  horizontal/vertical transitions, graph starts, exits, traversal ownership,
+  spawn/reset, exact placed-room objects, camera bounds, preview, and export.
+- Finish per-instance goal/progression overrides.
+- Keep mirrored maps compatible and convertible without changing geometry.
+- Complete Greggnogg's live full-map usability pass: direct room creation,
+  resizing, dragging, symmetrical/free switching, edge previews, deletion,
+  diagnostics, keyboard access, and repair after layout changes.
 
-Runtime acceptance still required:
-    - Verify initial sword tiles create one sword each through immediate local start,
-      online start, and in-game restart; then leave/revisit the room and confirm normal
-      respawning. The native double-reset path is guarded and lifecycle fixtures pass,
-      but the user's intermittent duplicate-sword report needs live confirmation.
-    - Soak room transitions and mine explosions through ordinary rollback and coordinated
-      correction on two live clients. Confirm every transition reaches the new room
-      palette and every temporary mine tint returns to it. The active-match palette
-      sidecar and focused native/static coverage are complete; this remains visual
-      acceptance because the colour block is deliberately absent from gameplay checksums.
-    - Restart with the installed verified DLL and compare every online-screen cursor
-      directly with the vanilla main menu. Verify identical global scale, black shadow,
-      red/yellow pulse, hotspot, and topmost ordering at every F1/window/fullscreen/DPI
-      combination. During a live match also open pause Options, both input-remapping
-      pages, and Mods; verify both player-selection cursors and the mouse stay visible and
-      usable while the neutral-input background simulation advances. Source/static
-      coverage is complete, but live visual acceptance is not.
-    - Toggle the small Match Network HUD from Online Settings and `ggpo.net hud` during a
-      two-client match. Verify default-off persistence, immediate on/off behavior, readable
-      top-right layout across F1/fullscreen/DPI sizes, no display outside active gameplay/
-      paused Options, and plausible ping under controlled added latency.
-    - Verify the login's compact square `Remember me` checkbox at the smallest window,
-      including mouse/keyboard/controller hitboxes, direct remembered sign-in to the hub
-      menus, cancellation/failure recovery, and a live remembered-login lifecycle.
-    - Run two real clients through retry, slow prematch setup, countdown, immediate first
-      gameplay tick, provisional/confirmed result toasts, hub requeue, disconnect, and abort
-      paths. Include first-vote waiting, second-vote same-map private rematch, decline,
-      close, queue cancellation, block cancellation, disconnect, and expiry; confirm a
-      rematch after a competitive result is unranked and does not change Elo. The
-      checked-out client and server source require control v3/match v3/P2P v17 plus
-      packet-auth, social-controls, private-rematch, and UDP-relay capabilities. The public
-      server now passes control-v3/match-v4/P2P-v17 TCP+UDP discovery preflight, but the
-      relay-capability revision and real relay game round still need deployment/acceptance.
-      Test loopback (two clients on one PC), LAN, and public routes; no source-only test
-      replaces this live game round.
-    - Soak pause/options, both players' input-remapping pages, console, and Mods during a
-      match and verify simulation continues with neutral menu input and that the native
-      selection cursors plus mouse remain visible/usable; audit any additional native
-      screens before supporting them.
-    - Test both local control sets under both server player assignments, including mixed
-      keyboard/controller input, and confirm they control only the assigned fighter.
-      Select visibly different skin/clothing colors on each client and confirm the choices
-      follow the server-assigned P1/P2 fighters after setup and socket retries.
-    - Soak one gameplay-affecting and one cosmetic-only mod through assignment, retries,
-      normal completion, and aborts; verify only gameplay owners suspend/guard and that
-      they resume exactly once with neutral transient state.
-    - Test F1 presets, F11, maximize normalization, `-windowed`, `-fullscreen`, and
-      `-borderless` across unlike-resolution monitors and 100-200% DPI. Confirm online
-      viewport/UI/mouse alignment after moves and resizes.
-    - Run the documented **V2 Symbolic Tile Demo** visual pass: the declared-once
-      external atlas/grid, automatic `native_layout` rendering for ordinary unlisted
-      vanilla `@` cells, per-tile sheet exceptions, animation/tint, solid custom cells,
-      full-width six-pixel scripted spring lower-body/probe sensor when walking into or
-      landing on its left/center/right edges, no premature trigger above it, one launch
-      across adjoining binding-scoped spring cells, calibrated roughly 53-pixel launches
-      (`-4.0` for living players, `-2.8` for sword/K hazard) instead of sharing an unsafe
-      raw velocity across their different native gravity scales, and an eight-tick
-      rollback-owned upward limit that rejects delayed unarmed-kick speed stacking even
-      after sensor exit. Verify explicit living-player/sword/K-hazard interaction plus
-      dead-body exclusion: a corpse on the pad must settle and complete native respawn
-      without launching or flashing the spring. Verify mine-style native terrain
-      underlay beneath the spring, and the user-tuned temporary active-sprite alignment
-      while collision/underlay remain fixed. Also verify the full-cell mirrored fan body
-      sensor, verified player/dead-body/sword/hazard native profiles and reusable-slot
-      kind/lifecycle isolation, built-in
-      transform/layer, native fallback, mirrored outer rooms, tint hot reload, invalid
-      `map.lua` last-known-good behavior, and rollback across active contacts/overrides.
-      Repeated atlas-retirement memory and two-client script/fingerprint soaks remain
-      release QA; parser, sandbox, snapshot, identity, and tick-owner paths have focused
-      automated coverage.
-    - Verify the updater's in-game status/toggle/no-freeze behavior, then exercise a release
-      copy against production HTTPS through the automatic `YuleUpdater.exe` handoff,
-      including safe-menu deferral, orderly close/relaunch, abrupt process/machine
-      interruption, and multiple instances. Parser/hash/staging, helper-owned
-      apply/recovery cut points, exact argument forwarding, installer routing, and loopback
-      download are covered by guarded disposable-root tests.
-    - Register the public Yule Discord application ID for release, configure it in
-      `mods/modframework.cfg` (or the release compiler define), and exercise every documented
-      coarse activity with a real Discord desktop client. Include Discord absent/restart,
-      rapid state changes, both the Mods > Framework and Online Settings toggles, and an
-      IPC privacy inspection proving no account/opponent/map/match/endpoint/token/party/
-      button data leaves the game. The
-      dependency-free nonblocking client, closed enum contract, rate limit, config handling,
-      native tests, static wiring tests, and documentation are complete.
-    - Run the documented bytebeat/floatbeat live-audio pass: play both
-      examples, test cache reuse and unique-cache exhaustion/clear, loop/stop, volume/gain/
-      fade extremes, mod unload/reload, and confirm generated playback remains audible with
-      SDL2_mixer deliberately unavailable. Also force
-      tune 8 with `music.play 8`, compare the original formula's melody/delayed voice/drum
-      entrance/noise envelope against Dollchan at 44,100 Hz, force the current editable
-      complex tunes 9 and 10 and verify each declared mode/rate/output-rate combination,
-      verify the
-      mixer-upgrade log reports 48,000 Hz, test `music.output_rate` persistence and a
-      per-track `output_rate` override, test all four Dollchan modes, edit/save hot
-      reload, music On/Off, a native-postfix transition, and return to shuffle. The
-      bounded JS-256-style compiler, isolated system-Chakra-JIT
-      playlist runtime with core-only QuickJS-NG fallback, block renderer, exact Dollchan
-      formula/function/Math/output contract, private random state, source/memory/
-      adaptive-interrupt ceilings, native playlist adapter, floatbeat math/time surface,
-      exact PCM/WAV renderers, author
-      diagnostics/info API, per-mod cache/voice ownership, CPU/sample/memory ceilings,
-      docs, native tests, and static Lua/build coverage are complete.
-    - Deploy the Discord LFG bridge with a real bot token, one permission-bounded channel,
-      and public HTTPS `/yule/` reverse proxy to the loopback redirect. Exercise both queues,
-      duplicate joins, queue changes, immediate matches, leave/disconnect, clean SIGTERM,
-      Discord 429 recovery, and both buttons on a registered Windows client. Inspect the
-      Discord message and service logs for the documented absence of credentials, ratings,
-      match IDs, endpoints, rendezvous data, tokens, and mentions. Source lifecycle/privacy
-      tests, strict handoff tests, queue-left/challenge-right button ordering, graceful
-      cleanup, deployment docs, and guarded test integration are complete.
+### P0 - Finish variable room dimensions
 
-Framework API release gate:
-    - Owner-scoped `mod.console.register` is complete: canonical `mod.<id>.*`
-      namespaces, console autocomplete/help integration, typed or raw arguments,
-      duplicate rejection, gameplay suspension, removable handles, unload cleanup,
-      API capability/revision discovery, documentation, and guarded coverage are in.
-    - P1: Finish explicit asset ownership/removal and repeated hot-reload memory tests for
-      mod spritesheets and retired GPU atlases before promising long-running live
-      authoring. Texture/font removal APIs and focused CPU allocation/reload coverage
-      are complete below; live GPU retirement and authoring soaks remain open.
+- Run the mixed small/normal/large live pass in TESTING.md in both directions.
+- Live-verify the bounded camera easing, narrow-room centering, immediate
+  no-destination pit death and normal timer completion after the ungrounded
+  respawn-gate fix, mines
+  triggered by players/swords/spike balls, revisits, short-room physics cleanup,
+  GO-distance respawns, death statues, and rollback.
+- Fix any fixed-33/fixed-12 reader found by that pass.
+- Add paired live rollback acceptance before declaring this complete.
 
-Feature backlog:
-    - Active implementation plan: docs/custom-content-system.md. Framework-owned
-      entity lifecycle/snapshot foundation, immutable type catalogs, and independent
-      body/sensor/combat rectangle queries, named package placement/identity, and
-      strict JSON package decoding, managed per-type Lua updates, and combined
-      script/entity rollback, and a native rollback extension are implemented;
-      guarded runtime/native tests cover these paths;
-      V2 entities.json discovery and offline logical updates now use the pinned
-      map registry. Map API 14 exposes deterministic region contacts with guarded
-      contact-driven motion/replay coverage; API 15 adds transactional spawn/removal
-      callbacks and initial-placement notification. Independent sprite metadata and
-      native draw submission are implemented with visual acceptance pending. API 16
-      adds named placement/type queries and discovery-time visual reference checks.
-      API 17 adds player observation; API 18 queues atomic native velocity
-      changes with two-player preflight and guarded native/runtime tests. API 19
-      exposes authored-region bounds and native contact radius. Native
-      defeat transactions now queue the native death routine (API 22), with a
-      moving-hazard example and guarded tests. Equipment, general damage/object
-      mutation and live acceptance remain open.
-      Greggnogg now integrates an Objects dialog into the current map and a
-      Custom tiles palette for placement. API 20 adds room-local mirrored
-      expansion; API 21 adds per-instance animation clocks and pause/restart.
-      Definition/component registration, collision/combat, weapons, online
-      admission and live browser/runtime acceptance remain required.
-    - Finish the broad custom-content API as a coherent, polished system: additional
-      weapons, entities/map objects, placement, lifecycle callbacks, validated metadata,
-      online fingerprints/policy, examples, diagnostics, editor integration, and full
-      native/runtime tests. The declarative tile registry, V2 map bridge, and bounded
-      map-local Lua behavior VM are complete slices, not the whole API.
-    - Add moving/self-propelled custom hazards as the next V2 entity slice: validated
-      spawn/placement schema, deterministic lifecycle/update state, collision ownership,
-      rollback serialization, online policy/fingerprint enforcement, diagnostics, demo,
-      and native/runtime tests. Do not represent these as tile force fields or render
-      offsets. Native `K` is only a pass-through room-reset marker for a separate type-3
-      point-mass hazard with a hardcoded vanilla sprite; do not use it as the programmable
-      entity implementation. Its unchecked `thing_new(3)` risk is now bounded by the
-      completed strict package audit: any K-bearing room above 13 combined K/sword/mine
-      reset spawners is rejected, with exact per-kind diagnostics. The completed map-sensor
-      bridge may identify and change velocity on an already-spawned verified K hazard,
-      but it does not make its marker, allocation, sprite, or lifecycle programmable.
-    - Design the full custom-entity geometry API after that entity slice: independently
-      editable physics bodies, sensor/trigger regions, combat hitboxes and hurtboxes,
-      collision layers/masks, per-frame/state geometry, Lua inspection/mutation rules,
-      deterministic broad/narrow phase ordering, rollback serialization, validation,
-      diagnostics, and an editor/debug overlay. The bounded V2 tile `map.sensor` API
-      completed below intentionally does not mutate native sprite-derived combat boxes.
-    - Expand the UI library heavily, including reusable responsive layout, controls,
-      focus/navigation, scrolling, theming, accessibility, and robust hitbox scaling.
-    - Greggnogg is the separate, standalone V1 map editor website; it is deliberately
-      not built into the game client. V2 switching, Tile Lab, and map.lua authoring are
-      retired from the shipped UI. V2 packages are detected and refused without
-      mutation, and an older browser V2 draft is archived locally before a fresh V1
-      document is created. The native crowd preview still reconstructs the executable's
-      sparse spectator masks from original `sprites.png` gray-mask pixels.
-    - Redesign Greggnogg V2 authoring before implementing it again:
-      Draft workflow and scope proposal: docs/greggnogg-v2-authoring-design.md.
-      Source-conformance review is complete; product choice, prototype and user
-      usability review remain open before enabling any V2 authoring UI.
-      - [ ] Write and review a complete object-authoring interaction design before
-        exposing another V2 toggle. Cover asset import, drawing, animation timelines,
-        collision/native fallback, forces, scripting, deletion, package identity,
-        validation, error recovery, and the relationship between tile and map behavior.
-      - [ ] Decide whether V2 belongs in a separate application/mode with its own
-        document model instead of extending the compact V1 room editor.
-      - [ ] Prototype the chosen workflow separately and run full map-creation usability
-        tests before connecting it to real package export.
-      - [ ] Keep arbitrary custom-entity bodies, sensors, combat hitboxes, and hurtboxes
-        out of the tile UI until the runtime has an explicit validated geometry model.
-    - Clean up the framework source without changing behavior: split oversized files,
-      use consistent formatting and names, remove duplication, document tricky module
-      boundaries, and keep the build and tests updated as code moves.
-    - add linux and mac support.
-    - allow custom maps to have custom heights/widths
-    - heavily expand map.lua functions and make it easier to script/create mods and map lua scripts
-    - volume control for sfx/music
-    - custom map ambiances (basically a particle system)
+### P0 - Authored camera controls
 
-# Completed (source implementation and focused automated coverage)
+- Point/zoom/release controls, readback, beginner blocks, bounded rollback
+  state, and draw-only integration are implemented and guarded. Live in-game,
+  preview, and paired online acceptance remain before release.
+- Add rollback-safe camera actions to follow a player, object, room, or point;
+  set/animate target and offset; lock/release following; set room/world
+  bounds; shake with bounded strength/duration; and reset native behavior.
+- Verify render zoom remains separate from native simulation dimensions across
+  variable rooms, deaths, transitions, and split-player online play.
+- Define easing, interruption, death/room-change reset, split-player targeting,
+  viewport limits, rollback, online admission, and preview cleanup.
+- Expose observations and beginner blocks, with an editor camera-frame preview.
 
-    - Map API 12 adds 32 named rollback-owned timers with delayed/repeating
-      callbacks, restart/cancel/remaining controls, stable registration-order
-      dispatch and cancellation of pending callbacks. Snapshot version 6 validates
-      timer state; callback faults restore the tick transaction. Timer replay,
-      scheduling, cancellation and corruption tests plus a timed-spring example
-      accompany MAP_FORMAT and the searchable API reference.
+### P1 - Essential Blockly coverage
 
+Convenience blocks must compile to documented general APIs. Avoid hidden
+automatic movement, combat, and feature-specific behavior.
 
-    - Per-room opponent spawning in V1/V2: native/always/never map defaults and
-      source-room overrides, mirrored inheritance, strict parser validation, and
-      Greggnogg import/export/settings/history support. Nine narrowly verified
-      native gates separate respawn/end-room combat from goal completion while
-      preserving score/victory guards and initial/leader respawn behavior.
-      Guarded native policy and package tests pass; follow the remaining local/
-      two-client acceptance in docs/opponent-spawn-testing.md before release.
+- Control flow: wait/timer continuation. Repeat-until, stop-loop, list iteration,
+  and safe early event/function return are complete.
+- Data: first-class object and player reference values, vector construction,
+  components/arithmetic, deterministic list selection, and strict number/text/
+  boolean conversion are complete. General scalar
+  clamp, interpolation, range mapping, min/max, sign, point distance/direction,
+  rounding, square root, and degree trigonometry blocks are complete. Bounded
+  list creation, length/empty tests, indexing, search, and iteration are complete.
+- Rooms/progression: checkpoints and goal/win controls. Atomic scripted movement
+  to a placed room, current player room observations, placed/source room identity,
+  geometry, mirroring, start, and count reporters are complete. Exit lock actions
+  and conditions are complete.
+- Camera: follow, bounds, shake, and animated targets. Point target, zoom,
+  release, and current override reporters are implemented.
+- Presentation: indicators, animations, sprite transforms, draw layers,
+  palette/color controls, and particle emit/stop.
+- Gameplay: clone/reset state, equipment/status, damage/heal, attack records,
+  team rules, and object/player contact queries.
+- Audio: play/stop/fade/loop after map-owned package audio exists.
+- Improve block search, descriptions, connection errors, dropdown stability,
+  keyboard access, copy/paste, undo, and compact workspace layout.
 
+## Map and Greggnogg features
 
-    - UI API revision 12 adds a complete bounded list_box control: literal label
-      filtering, keyboard/controller paging and first/last navigation, disabled-row
-      skipping, automatic selection reveal, pointer selection/activation, draggable
-      scrollbar, row-based scroll ownership, fitting labels and themed focus.
-      Only visible full rows draw/hit-test; a 200-row browser demo and guarded
-      behavior tests cover filtering, navigation, bounds and pointer interaction.
-    - Failed map.state assignments now validate a replacement before committing:
-      invalid types, oversized strings and nonfinite numbers preserve existing
-      state and free capacity. Twelve guarded regression cases cover both paths.
+### Room, spawn, goal, and progression
 
+- Complete spawn control with starting loadouts, paired rollback tests, and live
+  initial/death/transition acceptance. Starts and deny/shared/player-specific
+  respawn overlays already exist, including placed-copy starts and marker
+  overrides in room graphs. Opponent Never now gates new room-entry spawns
+  without killing an existing fighter; symmetrical outer rooms inherit the
+  traditional no-opponent default. Preview/export policy parity is guarded,
+  including reordered symmetrical room nodes and side-room starts, but both
+  paths still need live acceptance. Verify that Never suppresses a new trailing
+  fighter without a death animation, while an already living fighter remains.
+- Add checkpoints and signal/condition-driven exits for co-op/puzzle maps
+  without requiring a kill. Static both/P1/P2/GO doorway access and GO/either-
+  crossing room focus are implemented.
+- Add goal ownership/priority by player, side, or team, including single-goal
+  asymmetric maps and deterministic simultaneous contact resolution.
+- Express asymmetric maps through room_graph instead of another layout system.
+- Add map/per-room traversal, checkpoint, facing, loadout, and goal defaults.
 
-    - UI API revision 11 adds a built-in high_contrast theme and sorted, detached
-      theme_names discovery. Partial named themes inherit complete default_dark
-      values, preventing missing spacing/text fields from breaking controls.
-    - Custom-screen lifecycle callbacks stop after screen changes or definition
-      replacement, preventing stale rendering/cursor overrides and repeated leave
-      callbacks after redirects. Guarded Lua regressions cover each transition.
+### Map-owned audio
 
-    - UI API revision 10: slider keyboard/controller navigation with bounded
-      configurable steps and explicit mouse precedence; focused activation for
-      icon buttons/checkboxes; visible focus outlines. Input edges stay owned
-      by the calling mod. Guarded Lua tests cover limits, disabled/unfocused
-      controls, validation, activation, and mixed-input precedence. A complete
-      keyboard demo is in docs/examples/ui_navigation.lua. State definitions now
-      reject invalid callbacks/registration failures without replacing a working
-      screen or duplicating event routers.
+- Package validated music/SFX with size, format, duration, memory, channel, and
+  path limits.
+- Add play/stop/fade/loop APIs, volume buses, fingerprints, diagnostics,
+  preview, examples, and beginner blocks.
+- Build the tune maker on that system with pattern/timeline editing, tempo,
+  instruments, undo, validation, assignment, and an Advanced source view.
 
-    - Classic last-room RNG desync fixed and user-confirmed September 7. The
-      alternate creepy sound pitch call at 0x424410 now uses cosmetic RNG; paired
-      LAN traces and a native hook regression establish the exact cause.
+### Particles and ambiance
 
-    - Native display-size cache now follows actual SDL window dimensions after
-      fullscreen/focus transitions; the reported 1600x900 viewport with stale
-      1537x865 native projection is corrected. Gameplay dimensions stay under
-      rollback ownership; live camera/fullscreen acceptance remains required.
+- Finish live custom ambiance/particle preview and room-change acceptance.
+- Add particle bursts, player/object attachment,
+  deterministic collision-aware effects, and named start/stop controls.
+- Particle emitter motion easing is implemented independently of the
+  particle's visual transition curve; live preview/gameplay acceptance remains.
+- Rectangle, filled ellipse, and diagonal line emitter spawn shapes are
+  implemented with matching engine/editor previews and format validation.
+- Keep cosmetic particles outside gameplay checksums unless explicitly declared
+  as rollback-owned gameplay.
 
-    - Interactive progress bars respect disabled state, map vertical pointer input
-      to the displayed fill direction, normalize NaN progress, and skip invalid
-      bounds. Guarded Lua regression tests cover both orientations and reversal.
-    - Delayed duplicate-packet chaos tests now stop draining on duplicate-send
-      backpressure while preserving the next pending packet; the guarded receive
-      budget fixture verifies exact send count and retained queue ownership.
+### Editor usability
 
-    - UI API revision 9 adds with_style for temporary control styling, preserving
-      callback arguments/results and restoring the full previous stack on success
-      or failure, including nested scopes and unbalanced style changes. Guarded
-      native Lua tests exercise error identity, nil returns, nesting, coroutine isolation,
-      cyclic/deep table rejection, and atomic theme update failure.
+- Finish live usability acceptance for the room-graph canvas. Placement, zoom,
+  fit-to-view, visual room previews, direct creation/copy/flip placement,
+  deterministic arrangement repair, inline error diagnostics, selection,
+  dragging, per-instance tile flip/color-bank controls, branches, loops,
+  deletion, direct room entry, and undo/redo are implemented.
+- Keep object design inside the current map and placement in Custom tiles.
+- Continue live dropdown/popup, recovery, import, preview, reopen/export, high
+  DPI, keyboard navigation, and small-window testing. Full-map rooms now support
+  directional keyboard selection and validated one-cell movement with undo;
+  complete the wider keyboard and live accessibility pass.
+- Finish live Crowd tile rendering acceptance. Its editor inspector now reports
+  the native 0x3E backdrop frame; inspect any remaining in-game discrepancy.
 
-    - Windows and Linux/Wine installers create maps/ alongside mods/, explain
-      the extracted per-map folder layout, and preserve user maps on uninstall.
-      Windows lifecycle and Linux static/syntax checks pass; the POSIX integration
-      fixture also asserts map creation and preservation.
+## Custom content and scripting
 
-    - UI API revision 7: responsive grid bounds with validated dimensions, detached
-      output and stable last-row sizing; constant-space list virtualization calculates
-      visible rows, scroll limits and selection reveal. Sliders anchor steps at the minimum,
-      clamp rounded values and handle fixed/reversed ranges. Embedded UI helpers
-      moved from lua_manager.c into ui_helpers.lua with a checked generated C
-      header; production bytes execute directly in guarded
-      LuaJIT regression tests. Broader navigation/accessibility work remains open.
+### Broad custom-content API
 
-    - Online hub text fields commit valid drafts before clicking another field,
-      Log In/Register, tabs or background. Tab/Shift+Tab and up/down move text
-      focus; controller confirm/cancel/navigation work during editing. Invalid
-      settings retain their draft and block navigation. Same-field clicks do not
-      reset input; Escape cancels. Friend requests require explicit submission.
-      Extracted production mouse/key handlers pass isolated no-network tests;
-      live login-layout acceptance remains.
-    - Map API version 11 adds map.state_clear([prefix]) for puzzle/round resets:
-      literal prefix matching, removal counts, immediate slot reuse, strict argument
-      validation, and byte-identical snapshot replay covered by guarded Lua tests.
-    - Map API version 10 adds map.state_keys(): detached, bytewise-sorted key
-      enumeration for inspecting/clearing rollback-owned state. Tests cover empty
-      and full state, deletion/slot reuse, copy isolation, argument errors and
-      exact snapshot replay. Online peers require matching map API fingerprints.
-    - Keyboard binding parser extracted into input_binding.h with strict complete
-      decimal parsing, overflow rejection, whitespace handling and canonical-name
-      round trips. Malformed numeric names cannot silently become another key or
-      unbind an action. The guarded UI/API runner covers the production parser.
-    - UI API revision 8: previous/next selection on tabs, item grids and swatch
-      grids using owner-routed keyboard/controller edges. Navigation skips disabled
-      items, supports optional wrap and exposes a pure navigate_items helper for
-      custom controls. Global focus ownership and accessibility remain open.
-    - UI hit tests share finite, fractional, half-open bounds across immediate
-      widgets and native mouse capture. Invalid bounds cannot capture the screen;
-      adjacent controls do not both activate at a shared edge. Disabled sliders
-      ignore mouse edits, and tiny steps no longer overflow into the maximum.
-    - Paired netcode coverage now replays delayed/reordered datagrams as well as
-      immediate traffic. Focused 2,048-frame ordinary and bilateral uint32-wrap
-      duplicate/loss/delay runs preserve exact finalized state equality, cross four
-      history generations and verify replay rejection. Native entity soaks remain.
-    - Greggnogg goal color now uses the existing inline RGB/hex editor, with live
-      preview, exact fractional channels and grouped undo; native OS color pickers
-      remain excluded. Shared room-color controls retain their previous behavior.
-    - Admin persistence: password, ban/unban and rating changes write a detached
-      proposed record before publishing memory or notifying clients. Failed writes
-      retain old nested data and generate failure audit outcomes. Restore verifies
-      recovery bytes and distinguishes incomplete recovery from successful rollback.
-    - Server operations: admin maintenance emits correlated, flushed intent/outcome
-      audit records without passwords/form contents. Audit-write failure blocks mutation
-      or explicitly reports a completed action with missing outcome. Server updates
-      preserve JSONL logs. Offline backup/verify/restore tools validate all account,
-      rating and secret files, hash snapshots, retain a recovery copy and recover from
-      simulated partial-write failure. These do not replace multi-file transactions.
-    - Map API version 9 adds tile:get_sprite() for inspecting the active temporary
-      sprite, pixel offsets and remaining tick lifetime. Returns detached data or nil;
-      mutation cannot alter the native effect. Reset, mutation-isolation and rollback
-      replay coverage pass in the guarded map runtime suite.
-    - Preview color deployment mismatch: yule:// opened the installed AppData copy,
-      whose older DLL did not contain the Eggnogg-color feature. Preview help now
-      explains the installed-game target; map generation logs the active RGB override
-      for diagnosis. See docs/preview-color-fix-2026-09-05.md for installed-build checks.
-      The user confirmed the updated preview now displays the configured color.
-    - Map API version 8 adds map.tile_bindings(): detached symbol/key entries in
-      manifest order, available during load/callbacks for shared behavior registration.
-      Tests cover ordering, mutation isolation, empty lists, argument errors and
-      rollback replay. Matching online builds are required.
-    - Map API version 7 adds map.has_tile(symbol_or_key), an immutable declaration
-      query usable during load/callbacks for optional reusable script behavior.
-      Missing native/custom bindings return false; callback references containing
-      embedded NULs no longer match a valid prefix. Guarded runtime/replay coverage
-      passes. Online peers require the same API compatibility fingerprint.
-    - Netcode service-clock wrap: timer initialization at tick zero uses the previous
-      serial tick instead of a future tick, avoiding unsigned elapsed-time underflow
-      and immediate recovery timeout. Guarded tests cover starting at zero and a
-      running checksum timer crossing uint32 wrap through its timeout boundary.
-    - Custom-map Eggnogg color: optional rules.eggnogg_color RGB in V1/V2 forces
-      stationary/waving Eggnogg and its round-end particles; omitted keeps native
-      player-derived colors. Greggnogg adds a toggle/picker, live canvas preview,
-      strict import/export validation, draft restoration, and undo/redo. Native
-      parsing and editor regressions pass. Browser/game visual acceptance remains.
-    - Duplicate initial room spawns: the original game's countdown resets the room
-      before setting started, then its first update can reset it again while old room
-      is still -1. Skip only that second mode-9 dispatch at countdown 90, preserving
-      room-entry bookkeeping and later room revisits. This covers all reset tile
-      actions, including sword/K spawns, using rollback-owned native state. Guarded
-      lifecycle fixtures and hook wiring pass; see docs/sword-spawn-audit-2026-09-04.md.
-    - Map-script authoring helper: map.every(interval[, phase]) provides a deterministic
-      periodic predicate with strict integer bounds, optional phase, and no mutable
-      timer/RNG state. Map API version 6 participates in the rollback compatibility
-      fingerprint. Tests cover phase/default behavior, rollback replay, malformed
-      arguments, and integer clock arithmetic beyond Lua's exact numeric tick range.
+- Finish one coherent workflow for weapons, equipment, entities, placement,
+  lifecycle callbacks, metadata, diagnostics, online fingerprints/policy,
+  examples, editor integration, and native/runtime tests.
+- Finish moving/self-propelled objects as managed entities with authored motion
+  and lifecycle state, rather than automatic tile force fields.
+- Finish editable bodies, sensors, hurtboxes, hitboxes, collision layers/masks,
+  per-animation geometry, deterministic ordering, debug overlays, and rollback.
+- Add first-class team policy and paired online acceptance for managed entities.
+- Add moving-platform carry/rigid-body response and live solid-surface tests.
 
-    - Deeper transport/serializer audit: synchronized initial state cannot be replaced
-      by conflicting same-epoch chunks; strict probe JSON rejects duplicate keys,
-      trailing garbage, invalid IPv4, and out-of-range unsigned fields. Native snapshot
-      capture/apply preflights scalar/slab access and rejects invalid role tags before
-      mutation. Canonicalization v7 normalizes erased raw role pointers consistently;
-      both peers need matching builds. Full guarded and paired suites pass.
-    - Server safety/persistence audit: bound raw UTF-8 control frames, reject repeated
-      authentication on one connection, isolate inherited account/token keys, and
-      contain malformed dispatch input. Corrupt existing stores/secrets fail startup;
-      store writes use flushed atomic replacement. Private admin Host validation
-      closes the DNS-rebinding path. Transactional multi-file storage remains open.
-    - Framework API revision 6: add owner-scoped mod.font.unregister_glyph and
-      mod.texture.unregister, rebuild remaining declarations on removal, and reject
-      inactive-owner edits. Fix glyph cache ownership/reservations, canonical texture
-      registration keys, truncated paths, image-size overflow, and allocation bookkeeping.
-      Native cache regressions and 100 texture reset cycles pass; Lua API wiring has
-      static coverage. Live rendering acceptance remains required. Details and test
-      evidence: docs/framework-audit-2026-09-04.md.
+### Player and combat control
 
-    - Netcode receive/error-path audit: cap both GGPO and reachability-probe UDP
-      polling at 64 attempts per service call, including invalid traffic; skip
-      consumed oversized datagrams and asynchronous UDP reset errors within that
-      budget. TCP setup now checks Winsock/nonblocking failures, rejects invalid
-      targets, and closes failed select polls instead of reporting pending forever.
-      Invalid receive buffers no longer close a healthy TCP connection. Probe
-      numeric fields reject signs, overflow, and numeric-prefix garbage. Native
-      socket regressions, the full authenticated paired suite, and production DLL
-      linkage cover the changes. See docs/netcode-audit-2026-09-04.md for scope and
-      remaining limitations; the last-room report above is still open.
-    - Live LAN admin dashboard: automatically refresh server activity, totals,
-      queues/challenges/rematches, social relationships, and filtered account rows
-      every two seconds. Preserve focused controls, open maintenance panels, and
-      unsaved form values; pause hidden tabs, bound requests, prevent overlap, and
-      retry interruptions without clearing the last view. Expired sessions stop
-      polling. Same-origin external script and fetch permissions retain CSRF and
-      private-client gates. Endpoint and lifecycle tests pass; real-browser visual
-      acceptance remains required.
+- Complete weapons/equipment creation, equip/drop/transfer, animation,
+  collision/damage, ownership/team policy, rollback, and editor UI.
+- Complete explicit player attributes/status: health, healing, invulnerability,
+  lives, checkpoints, cooldowns, teams, effects, UI, and callbacks.
+- Broaden player presentation/observations: pose/frame, equipment, status,
+  animation, transforms, palettes, visibility, room identity, camera, goals,
+  and progression.
+- The native combat bridge already reports verified punch, kick, held/thrown
+  sword, spike-ball, and post-windup mine damage. Remaining work is team policy,
+  managed-entity online acceptance, and paired live verification.
 
-    - Console code cleanup: moved the command list, argument parser, and saved command
-      history out of `hooks.c` into small tested modules. Autocomplete now includes every
-      command that can actually run, including the GGPO test commands, `mods.cfg.*`
-      shortcuts, and `online`. Invalid huge numbers, `nan`, and `inf` are rejected instead
-      of reaching framework settings. The production build and full test suite pass.
+### Input policy
 
-    - Console image cleanup: moved the pure RGBA box-downsample and blur loops out of
-      `hooks.c` into `image_util.c/.h`. OpenGL capture and texture ownership stay in the
-      console code, while pixel math now has strict standalone compilation and native
-      tests for averaging, clamped edges, alpha, and invalid/in-place inputs. The
-      production build and full guarded suite pass.
+- Add policy-gated raw keyboard/mouse/controller input for offline maps and
+  non-gameplay UI.
+- Define focus loss, controller identity, simultaneous input, repeat behavior,
+  editor simulation, and explicit online restrictions.
 
-    - Common text safety cleanup: replaced the private `hooks.c` copy/ellipsis/byte-size
-      helpers with a small `text_util.c/.h` module and explicit names at all 143 call
-      sites. Bounded copies now safely support overlapping buffers. A native test covers
-      null input, truncation, overlap, in-place ellipsis, tiny limits, and byte labels;
-      the production build and full guarded suite pass.
+## Netcode and release blockers
 
-    - First source cleanup pass: moved `mod.fs` and the asynchronous `mod.http` worker
-      pool out of `lua_manager.c` into focused modules, cutting about 800 unrelated lines
-      from the Lua manager. Each module now owns its Windows/Lua includes, limits, API
-      registration, and tests while the manager only supplies stable mod ownership and
-      lifecycle calls. The filesystem search also no longer mistakes a directory
-      junction whose name matches the target for a file. The production build,
-      documentation audit, strict standalone compiles, and full guarded suite pass.
+### P0 correctness
 
-    - Filesystem picker consistency: the adjacent folder picker is now an owner-bound
-      wide-character dialog with strict UTF-8 titles/results and a neutral default label,
-      while recursive lookup skips directory reparse points/junctions in addition to its
-      existing depth bound. Both native dialogs attach to the active window. Static
-      ownership/Unicode/traversal checks and the public API/spec text pin the behavior.
+- Replace pointer-dependent native slabs with typed, versioned, pointer-free
+  deterministic state and a transactional capture/apply adapter.
+- Finish stable native entity IDs, allocator reconstruction, and semantic
+  save-load-save equality through spawn, death, removal, and slot reuse.
+- Finish the checksum audit and gameplay/presentation boundary.
+- Replace compatibility hints with a complete manifest covering builds,
+  protocols, gameplay mods, content, maps/assets, rules, and configuration.
 
-    - Lua HTTP request-target correctness: strict UTF-8/embedded-NUL validation now runs
-      before worker creation; workers reject non-HTTP(S) schemes and URL credentials,
-      preserve the query returned separately by `WinHttpCrackUrl`, strip client-only
-      fragments, synthesize `/` only for a genuinely empty path, and bound the combined
-      wide request target. Static lifecycle/request construction checks, API docs, and the
-      HTTP hardening spec pin the fix.
+### P1 transport and diagnostics
 
-    - Bounded strict `mod.json`: deterministic encode and full-document decode now cover
-      finite numbers, UTF-8/Unicode escapes and surrogate pairs, explicit null, preserved
-      array/object kind, shallow empty-container helpers, lexically sorted object keys,
-      duplicate rejection, and path/byte-aware failures without code evaluation or
-      metamethod calls. Both directions enforce 32 levels, 65,536 nodes, 256-KiB strings,
-      and 1-MiB input/output, while rejecting cycles, sparse/mixed tables, non-finite
-      numbers, malformed UTF-8, ambiguous types, and trailing data. API revision 2 and
-      `json.v1`, real LuaJIT native regressions, source/build/docs checks, a design spec,
-      and complete examples pin the release contract.
+- Complete secret-free repro bundles with input traces, compatibility manifest,
+  extended chaos history, and sequence-aware network measurements.
+- Extend long paired and uint32-wrap coverage through native entity lifecycle.
+- Extend the seeded paired relay profiles (burst loss, jitter/reorder,
+  duplicates, bandwidth, and mixed) through native entity lifecycle. Normal
+  and uint32-wrap runs each check impairment counters and 2,048 confirmed
+  gameplay states; the normal matrix also passes with an alternate seed.
+  Coordinated correction with injected would-block now runs through the
+  impaired relay matrix on three seeds. Broader seed sweeps remain.
+- Add priority classes, selective correction ACK/resend, byte budgets,
+  congestion control, adaptive delay, bounded catch-up, and time sync.
+- Add authenticated NAT rebinding, direct-to-relay failover, MTU discovery,
+  IPv6, and richer route diagnostics.
 
-    - Public API-1 compatibility policy and discovery: manifests now distinguish a
-      breaking `api_version` major from an additive minimum `api_revision`, may require up
-      to 32 validated stable `api_requires` identifiers, and are rejected during both
-      discovery and final load before entry-script side effects when requirements cannot
-      be met. `mod.api` exposes major, revision, sorted capabilities, `has`, and `require`;
-      flat API-1 compatibility fields and the local-only mismatch escape remain. The
-      deprecation/removal rules, schema, console diagnostics, native compatibility matrix,
-      Lua/build integration checks, and full reference examples are pinned.
+### Account and service security
 
-    - Removable owner-scoped Lua subscriptions: `mod.on_frame`, `mod.on_tick`,
-      `mod.on_tick_post`, `mod.on_event`, `mod.on_layout`, and `config.on_action` now
-      return handles with idempotent `remove()`. Dispatch snapshots stable subscription
-      IDs, so callbacks can safely remove themselves or later callbacks and newly added
-      handlers wait until the next dispatch. Unload still clears every remaining registry
-      reference. API revision 4 exposes `events.removable`; a focused native callback-list
-      stress test, Lua wiring checks, full runtime link, and API documentation pin the
-      registration, removal, memory, and cleanup contract.
+- Add TLS with certificate/hostname validation to account/control traffic.
+- Harden authentication, match-result validation, production storage, account
+  deletion, operational recovery, and transactional persistence.
+- Complete deployment/live acceptance for relay, Discord services, updater,
+  and public service configuration.
 
-    - General owner-safe file picker: `mod.fs.pick_file(options)` provides bounded custom
-      display-name/pattern filters, optional All-files exposure and initial filter choice,
-      owner-enabled validation, Unicode Win32 dialogs, long UTF-8 result paths, distinct
-      cancellation/native-error reporting, and strict pre-dialog rejection of malformed
-      UTF-8, embedded NULs, paths, controls, metacharacters, and excessive counts/lengths.
-      The character-specific helper remains only as a deprecated API-1 compatibility
-      wrapper. Static source/build/docs coverage and complete API examples pin the public
-      contract.
+### Framework release quality
 
-    - Clean public-source release path: `tools/export_public_source.ps1` builds a
-      flattened, fresh-history Yule source tree from an explicit tracked-file allowlist,
-      includes the native framework, online server/admin/LFG/redirect services, installer,
-      updater, maps/mod examples, docs site, and tests, and overlays a developer README,
-      contribution/security guidance, Git attributes/ignores, and safe example configs.
-      It hard-excludes runtime/game binaries, build output, caches, logs, dumps, account/
-      rating databases, server secrets, player configs, and the retired cosmetics package,
-      scans exported text for credential/private-key patterns, records source provenance,
-      and has both working-tree review and committed-HEAD export smoke coverage.
+- Finish sprite/font/texture ownership removal and GPU atlas hot-reload so long
+  authoring sessions do not leak.
+- Split oversized sources, remove duplication, standardize formatting/names,
+  and document module boundaries without changing behavior.
+- Add Native Linux support and a native macOS plan/build.
+- Expand responsive UI, controls, scrolling, navigation, themes,
+  accessibility, and scaled hitboxes.
 
-    - Match-protocol-v4 correction/result race repair: native win polling and GAME-to-MAIN
-      terminal transitions are deferred while either peer is inside a coordinated
-      correction barrier, preventing a joiner's known-divergent READY state from ending
-      the match before the host COMMIT can be applied and mutually released. The corrected
-      transition is released after bilateral correction completion. A terminal transport
-      error now polls an already-authoritative native winner before teardown and otherwise
-      sends `match_transport_failure` instead of fabricating a local loss; the server
-      resolves bilateral failures as a no-contest and never turns the two peers' failures
-      into conflicting winner reports. Static client ordering and real server protocol
-      coverage pin both paths.
+## Live acceptance
 
-    - Release-default Discord Rich Presence hardening: the public Yule Application ID
-      `1531027934004117664` is compiled into every normal build, presence defaults on when
-      no config exists, a valid local ID may override it, and a stale blank/invalid
-      override now preserves the compiled default instead of silently making the feature
-      unavailable. Native parser and static build/wiring tests pin the shipped ID, default
-      state, override behavior, toggle persistence, and privacy contract.
+Detailed procedures live in TESTING.md. The release pass still includes:
 
-    - Window diagnostics log de-noising: transient SDL focus/attention flag changes no
-      longer count as geometry changes, so routine window events cannot spam identical
-      `window[event]` INFO lines. Actual display, logical window size, drawable size, and
-      DPI-affecting changes remain logged.
+- duplicate initial sword spawning and room revisit;
+- variable-room seams, mines, GO respawns, physics cleanup, and rollback;
+- online room/mine palette restoration;
+- cursor, pause/options, remapping, Mods, window/fullscreen/DPI, and network HUD;
+- two-client assignments, retries, rematches, disconnects, relay, correction,
+  and result settlement;
+- V2 symbolic tiles, custom solids, contacts, graphics, and hot reload;
+- custom solid surfaces, moving platforms, and entity combat;
+- custom ambiance/audio, updater, Discord, installers, and production services.
+- Linux/Wine installer: confirm application-menu launch, browser `yule://`
+  dispatch, native Steam launch, and maintenance/uninstall on KDE Plasma.
+  Automated WSL tests cover registration, URI argument forwarding, failure
+  reporting, retry, and shortcut cleanup; Flatpak/Snap Steam remains explicitly
+  unsupported until its sandbox launch path can be verified.
 
-    - Hostable developer documentation site: `docs-site/` contains 31 dependency-free
-      HTML pages covering installation, framework architecture/building, content/map-Lua
-      APIs, V1/V2 maps, configuration, console, audio/Dollchan tracks,
-      online/server/LFG/deep links, updater/releases, testing, and security. Its
-      developer-oriented second-generation format now uses
-      task-based global navigation, per-page contents, page/member search, individual API
-      deep links, namespace filters, responsive three-pane layout, and light/dark modes.
-      Every public ordinary-mod registration, global/mod alias, exported compatibility
-      bridge, higher-level UI/animation method, content transaction, map callback/object/
-      tile method, metadata property, and command constant has an individual signature,
-      description, parameter/return/failure contract, constraints, and example. A
-      dependency-free source/API coverage checker pins 21 namespaces and 269 documented
-      members while auditing all 31 pages for structure, links, and fragments.
-
-    - Small toggleable online-match network HUD: Online Settings and
-      `ggpo.net hud [on|off]` share a default-off persisted `match_hud` preference. Active
-      gameplay/paused Options renders one muted top-right line using the existing smoothed
-      peer RTT, local input delay, and rollback count without adding protocol traffic.
-      State/config/console/render wiring has focused static coverage; live visual and
-      controlled-latency acceptance remains listed above.
-
-    - Owner-safe bounded `mod.http`: opaque handles belong to their creating mod,
-      outstanding work is canceled on unload, canceled slots cannot be freed/reused until
-      their WinHTTP worker actually publishes completion, worker response buffers remain
-      private until publication, and both declared and streaming bodies are capped at
-      8 MiB. Successful and HTTP-error terminal polls now include bounded status, final
-      URL, redirect count, and allowlisted response-header metadata; automatic redirects
-      are capped at five and refuse HTTPS downgrades. Ten-second phase timeouts and the
-      eight-worker process ceiling remain. A real concurrent loopback WinHTTP test covers
-      redirect metadata, owner isolation, all nine slots, cancel/unload, deferred worker
-      cleanup, slot reuse, and stale handles; static coverage pins the limits and wiring.
-
-    - Private-LAN online-server administration baseline: a separate default-loopback,
-      dependency-free listener has no password/login page, refuses public/wildcard binds,
-      rejects non-private clients, and uses automatic random IP-bound HttpOnly/SameSite
-      sessions plus CSRF-protected POST actions. The Yule-styled dashboard provides live
-      player/client presence, ordered queues, match participants and network phase,
-      challenges/rematches, the full social graph, account search, password reset,
-      ban/unban, force disconnect, and rating reset through existing server
-      persistence/lifecycle paths without exposing credentials, match tokens, or raw P2P
-      endpoints. It shuts down with the service and has real HTTP
-      private-session/CSRF/action/rendering tests plus deployment docs.
-
-    - Abandoned public cosmetics transport API removal: `mod.online` now exposes only its
-      useful read-only status table. Compile-disabled profile/asset setters, readers,
-      applied-revision calls, and cosmetic revision status fields are no longer exported
-      or documented, avoiding a dead API-1 compatibility promise.
-
-    - Bounded and Dollchan-compatible tracks in the native music playlist: a marked
-      contiguous `data/tune*.txt` file can use the allocation-free bounded numeric grammar
-      or an isolated system Chakra JIT with a core-only QuickJS-NG compatibility fallback,
-      both matching Dollchan's JavaScript function shape, shortened Math names, `int`,
-      scalar/stereo-array returns, bytebeat,
-      signed-bytebeat, floatbeat, and funcbeat output conversion. JavaScript tracks have a
-      private 64-MiB heap, 8-MiB source cap, adaptive bounded compile/callback watchdogs,
-      and no host filesystem/process/network/DOM modules. The Windows JIT is loaded only
-      from the system directory with reliable interruption; the fallback has an additional
-      256-KiB stack cap and no `quickjs-libc`/std/os. Contiguous blocks of up to 4,096
-      source frames cross the JavaScript boundary once, rather than once per sample, while
-      preserving sequential formula state and stereo channel holds. JavaScript runs on a
-      dedicated producer which completely prefills a bounded eight-block PCM ring; the
-      real-time callback only performs nonblocking consumption and source-rate conversion.
-      Both engines stream through Eggnogg's stereo callback with
-      volume, hot reload, no gameplay RNG, an optional 4,000-48,000 Hz source rate
-      (8,000 Hz default), and engine-specific CPU ceilings. The framework upgrades the
-      Ghidra-confirmed vanilla 22,050-Hz SDL mixer request to a configurable 48,000-Hz
-      default before audio opens,
-      preventing destructive downsampling/aliasing for every accepted track rate while
-      preserving unrelated explicit audio requests and the vanilla path if detouring fails.
-      `music_output_rate`, `music.output_rate`, and optional marker `output_rate` can select
-      8,000-192,000 Hz independently of the formula's source rate.
-      Native postfix tracks, shuffle,
-      and the music setting remain compatible. “Steady On Tim” is restored verbatim from
-      Dollchan, declares bytebeat at 44,100 Hz, and its pre-drum reference samples match
-      Dollchan byte-for-byte. The shipped 76-KiB “Impromptu” regression declares its
-      native 32,000-Hz unsigned-bytebeat format, and consecutive full blocks of it plus
-      the current 44,100-Hz unsigned-bytebeat “Last Fountain” match independent
-      Dollchan-compatible hashes over both channels and their first 8,192 source frames,
-      while compiling/rendering within duration-aware watchdog budgets. Console controls
-      list titles/formats/gaps, flag unmarked
-      general JavaScript, retally files added
-      while open, inspect selection, force a track, and restore shuffle using the
-      Ghidra-confirmed native tally/random/settings globals. Parser, original-track,
-      stereo/mode/isolation/limit, and static callback/build coverage are in the guarded
-      core suite; audible comparison remains in `TESTING.md`.
-    - Native `K` hazard spawn-budget prerequisite: Ghidra confirms the 16-record thing
-      pool skips slot zero and must reserve two of the 15 allocatable slots for players.
-      V1/V2 package validation now counts every `K`, sword, and mine reset spawner in each
-      room and rejects a K-bearing room above the conservative 13-object limit with exact
-      per-kind diagnostics, before the native unchecked `thing_new(3)` path is reachable.
-      Mine-only/sword-only rooms keep their established fail-safe/recycling behavior, so
-      existing high-mine maps remain valid. The maximum/count/limit are exposed to package
-      tooling and registration logs. Generic `native_glyph: "K"` remains excluded because
-      non-map registry owners do not pass this package audit. Guarded parser/runtime-fixture
-      tests cover the exact limit, over-limit K, combined spawners, and compatibility.
-    - Native custom-map crash containment: package validation now rejects `T`, `t`, and `s`
-      anchors whose upward expansion would leave the 33x12 room, preventing the recovered
-      `tentacle()` null write. The native reset-spawn action is also detoured at its exact
-      six-byte boundary and checks failed sword/hazard allocations before the original
-      unchecked write at `0x43CA88`; an exhausted fixed thing pool now skips that spawn and
-      records a warning instead of terminating the game. Guarded C and static hook tests
-      cover both paths.
-    - Greggnogg preview state-boundary safety: an accepted in-memory preview now ends the
-      former menu/game update immediately after `game_reset` and the state switch. The
-      recovered crash dump proved the old callback resumed into `reset_room`, duplicated
-      the center room's eight `K` hazards, and exhausted the thing pool on the second pass.
-      Preview launch now reports its destructive transition to both native and custom-state
-      callers, with static ordering coverage; installed-map startup behavior is unchanged.
-    - Privacy-bounded Discord LFG bridge: the Node control server waits two seconds, then
-      posts one configured channel embed only for a player who is still in a public casual/
-      competitive queue after normal matchmaking. Challenges never create posts. HTTPS
-      buttons use the existing validated friend-challenge and same-queue flows. It never
-      receives ratings, match IDs, endpoints, credentials,
-      rendezvous/auth data, or arbitrary links; mentions are disabled and there is no
-      direct match route, Gateway, intents, commands, or inbound bot listener. Duplicate
-      joins coalesce, generation ownership makes create/leave races safe, and exact posts
-      are edited in place to remove their buttons and show matched/left/changed/offline/
-      shutdown status. Matched posts remain visible for one day and are then deleted;
-      other inactive states remain as history. REST
-      timeouts, responses, retries, 429 delays, tracked users, and logs are bounded. A
-      loopback-only, no-store redirect exposes only the completed canonical public
-      `yule://` routes behind deployment TLS; its landing page launches the protocol and
-      attempts to close itself, with a visible manual-close fallback when browser policy
-      refuses. Node and static tests cover payload privacy,
-      lifecycles, rates, strict links/methods/headers/binds, server call ordering, and clean
-      shutdown; real Discord/proxy/client acceptance remains above.
-    - Expanded audio/music with bounded bytebeat and floatbeat: the existing mod-relative
-      file SFX/music, owned channels/volumes, native synth IDs, mixer decoding, and WAV
-      fallback now include a purpose-built JS-256-style numeric compiler with decimal/hex/
-      binary literals, sample/rate/seconds variables, JavaScript 32-bit bit operators,
-      short-circuit logic/conditionals, fixed Math functions, and byte-offset diagnostics.
-      It renders canonical mono PCM16 in bytebeat or normalized floatbeat mode with
-      gain and click fades, never evaluates general code or writes temporary files, and
-      mixes through Eggnogg's already-open audio callback without requiring SDL2_mixer or
-      opening a competing legacy SDL device. Expression/node/depth/sample/
-      operation limits plus per-mod 16-chunk/4-MiB exact-key caches bound CPU and memory;
-      stop, clear, status, validate-without-playback, unload cleanup, and diagnostics are
-      exposed through `mod.audio`. The allocation-free/nonblocking callback bridge owns at
-      most 8 voices per mod and 32 globally. Strict native grammar/render tests, full proxy
-      compile, and static ownership/build tests are complete; audible in-game acceptance
-      remains above.
-    - Privacy-bounded Discord Rich Presence: a dependency-free local Windows RPC client
-      lazily connects to Discord desktop through overlapped, incremental, 64-KiB-bounded
-      pipe I/O without blocking gameplay. A closed enum maps menus, local play, hub/sign-in/
-      social, queues, prematch, and casual/competitive/private matches to fixed text; the
-      payload cannot accept usernames, opponents, maps, Elo, match IDs, endpoints,
-      credentials, tokens, party/join secrets, buttons, routes, or arbitrary strings.
-      Activity changes coalesce behind a 4.1-second limiter, malformed/closed IPC retries
-      at a bounded cadence, settings persist atomically, unavailable deployment config is
-      explicit, the public Application ID can be validated/saved/applied immediately with
-      `discord.app`, and ordinary quit closes without loader-lock work. Guarded native and static
-      tests cover parsing, every activity, privacy exclusions, wire frames, bounds,
-      no-wait wiring, settings, shutdown, and production linkage; registered-app/live-client
-      acceptance remains above.
-    - One-shot updater handoff: the injected updater downloads and verifies the
-      complete replacement set, captures each original target's exact size/SHA-256 (or
-      absence), and durably stages Journal V3 without renaming a mapped DLL.
-      `YuleUpdater.exe` is built and installer-shipped outside `latest.json`; Start Menu,
-      Steam, direct launches, and `yule://` route straight to `eggnoggplus.exe`. Once a
-      verified transaction is ready, the framework waits for a safe menu, launches the
-      helper with its exact PID, and the helper requests orderly `WM_CLOSE`, waits for exit,
-      replaces/recovers the mapped proxy, relaunches, and exits without force termination.
-      Under the root-specific mutex
-      it revalidates pristine staging and original
-      preconditions, owns write-through swaps, whole-set commit/rollback, legacy V1/V2 and
-      no-journal `.old` recovery, cleanup, regular-file checks, privacy-safe logging, and
-      shell-free exact argument forwarding. A pristine transaction with no mutation evidence
-      is safely discarded and restaged if its download or original precondition changed;
-      once swaps/backups/quarantines exist, unsafe or ambiguous evidence still blocks relaunch
-      without guessing. The mod scanner ignores the updater-owned staging directory. The
-      maintenance installer refuses a running same-install helper and invokes the bundled,
-      verified helper in recovery-only mode before replacing release files whenever staging
-      or legacy backups exist; it aborts rather than writing across unresolved evidence. The
-      installer records hash ownership and removes only an unchanged
-      helper; the release builder requires byte identity with the verified build artifact,
-      exact agreement between requested/source/compiled framework versions, payload-first/
-      atomic-manifest-last publication, and rejects a helper that imports any replaceable
-      runtime DLL, but excludes the helper from its replaceable channel manifest. The
-      helper itself refuses disk mutation while another process runs the same installed
-      game executable.
-      This prevents both self-locking `libwinpthread-1.dll.old` cleanup failures and
-      multi-client mapped-DLL commits. Guarded disposable-root
-      tests cover partial and complete power-cut states, valid/corrupt commits, safe stale-
-      pristine restaging, changed originals, corrupt staging/journals, legacy backup restoration, forwarding edge cases,
-      verified install/routing/uninstall, and the existing updater recovery/loopback matrix;
-      production HTTPS and abrupt-machine acceptance remain above.
-    - Linux/Wine installer: the release ZIP now includes a native Bash installer and safe
-      uninstall wrapper for the existing Windows game build. It validates the HTTPS channel,
-      exact sizes and SHA-256 hashes, preserves vanilla SDL, installs the same updater helper,
-      records hash ownership, and creates an XDG desktop launcher plus `yule://` handler bound
-      to one Wine prefix. Uninstall restores SDL and removes only unchanged owned files while
-      preserving maps, mods, saves, and local modifications. POSIX integration coverage uses
-      a fake game, local signed channel, Wine command, and MIME database without launching the
-      game; native Linux builds and distro packages remain future work.
-    - Online player palette synchronization: host/P1 and join/P2 capture their local
-      built-in skin/clothing choices before every socket attempt, exchange only those two
-      bounded IDs through a dedicated fixed-size authenticated packet, and require exact
-      bilateral receipt/echo before prematch READY. Socket retry preserves the local tuple
-      while clearing stale peer proof; malformed counts, out-of-range IDs, and conflicting
-      same-session tuples fail closed. The choices are applied to their server player slots
-      only after the final authoritative frame-zero restore, while the generic cosmetic
-      profile/asset channel remains compile-disabled and palette settings remain outside
-      rollback/checksums. The guarded pair uses deliberately different choices on each
-      peer across the prematch matrix, and static coverage pins role capture, restore/apply
-      ordering, and serializer separation; live visual assignment remains release QA.
-    - Automatic paired first-desync snapshot preservation: the detecting peer and the host
-      correction responder each copy the exact retained canonical post-frame boundary
-      before correction can replace it, then a background worker writes analyzer-compatible
-      binary state plus versioned ASCII metadata under `mods\desync_repros`. A symmetric
-      opaque pair tag correlates the files without persisting raw session IDs; metadata
-      excludes credentials, endpoints, usernames, and tokens. Temporary files are flushed
-      and atomically replaced, copied state is erased, teardown waits for bounded worker
-      completion, and allocation/thread failure remains retryable. Bilateral
-      executable/framework build IDs, rollback layout IDs/capacity, and a deterministic
-      transport-config ID make incompatible reports visible. The guarded short and
-      2,047-frame loss/delay correction pairs require exactly one opposite snapshot per
-      role and reciprocal identities, while static coverage pins the capture boundary,
-      privacy rules, background-I/O ordering, and cleanup. Full-session traces, the
-      complete content/map/mod/rules manifest fingerprint, lossless spill for more than
-      8,192 pre-divergence chaos events, and sequence-aware network measurements remain
-      open above. Each capture also includes an independent reproducible chaos seed and a
-      chronological privacy-safe history of simulated drop, delay, and queue-overflow
-      events (service tick, packet type, and outcome only); both guarded correction cases
-      require the recorded count to equal the complete event total through divergence.
-    - Safe LFG launch intents and `yule://` links: strict bounded switches/routes open the
-      hub, social inbox, casual/competitive queue, or the existing compatible-map friend
-      challenge picker. Auth-required actions wait for remembered/manual login, challenges
-      wait for a complete friend snapshot, and every intent expires after two minutes or
-      cancels when leaving the hub. A per-login-session, message-only Windows broker owns
-      validated activation handoff: a protocol launch forwards to the already-running game,
-      grants it foreground permission, and exits before SDL creates a second window. Normal
-      direct launches remain multi-instance for local testing, and an intent arriving during
-      a match waits instead of becoming an out-of-band forfeit. There is deliberately no raw endpoint, direct-session,
-      credential, match-ID, or token route; malformed/conflicting actions and URI injection
-      syntax reject the entire intent. The per-user installer handler uses a single quoted
-      envelope, refuses an existing owner, never registers after incomplete adoption, and
-      uninstall removes only its exact manifest-receipted registry tree. Native parser,
-      static runtime, isolated HKCU installer lifecycle, protocol documentation, full proxy
-      compilation, and guarded
-      source/link coverage are complete; the separate privacy-bounded Discord consumers
-      are completed below.
-    - Guarded established-match disconnect phases: the ordinary paired case now advances
-      deterministic nonzero inputs through frame 2,048 and mutual checksum confirmation
-      through frame 2,047 before the host sends an authenticated terminal `BYE`; the joiner
-      must receive the explicit peer-disconnected result while still servicing gameplay.
-      A second paired case injects a real canonical mismatch and permits shutdown only
-      after the normal REQUEST/OFFER correction barrier is active with a host-owned
-      nonzero correction ID and snapshot. A third waits until that OFFER has authenticated
-      the joiner's RECEIVING phase, covering shutdown during snapshot transfer. The host
-      treats RECEIVING as a real bilateral boundary and does not start bulk correction
-      chunks until it authenticates that tuple, rather than allowing a fast transfer to
-      skip the observable phase. A fourth
-      carries the mismatch through snapshot staging and deterministic replay, then shuts
-      the host down specifically in COMMIT while the joiner is READY with the same nonzero
-      barrier identity and transcript. A fifth advances through receiver APPLIED and shuts
-      down in host RELEASE, proving replay completion cannot be mistaken for a successful
-      mutual release. A sixth reverses the terminating role: the joiner sends `BYE` from
-      RELEASE_ACK and the host attributes it to the exact RELEASE/RELEASE_ACK tuple. The
-      authenticated terminal tuple is retained for diagnostics if the host consumed the
-      acknowledgment and cleared its active barrier one service tick before `BYE`. Both
-      roles prove local transport teardown across every stable correction phase, the hidden two-process
-      runner exposes focused modes and includes all six in its full matrix, and native
-      entity lifecycle coverage remains explicitly open.
-    - Bilateral private rematch: a committed confirmed result creates a bounded
-      server-owned offer only while both exact participants remain connected, idle, and
-      mutually unblocked. The first explicit vote waits and notifies the opponent; the
-      second revalidates the exact prior map through normal matchmaking and starts a fresh
-      match with new IDs, roles, seed, rendezvous, and packet-auth data. Rematches are
-      private/unranked even after competitive play. Queueing, blocking, disconnecting,
-      declining, closing the actionable toast, expiry, or another match cancels the offer;
-      terminal replay cannot resurrect it. The compact non-modal result toast supplies
-      countdown-aware mouse buttons, `R`/`N`, and distinct controller X/Y actions without
-      restoring a fullscreen result screen. The required server capability, deployment
-      preflight, isolated wait/accept/decline/expiry/queue/block/disconnect runtime
-      coverage, client static contracts, protocol documentation, and guarded compile are complete; live
-      two-client acceptance remains listed above.
-    - Server-derived friend presence: authenticated server state now distinguishes online,
-      casual queue, competitive queue, match setup, active match, and offline without
-      trusting a client-published status. Snapshots refresh at every queue/match boundary,
-      the Friends UI displays readable color-coded labels, and challenge controls disappear
-      while a friend is busy (with matching server-side rejection). Blocked entries still
-      expose no presence. The isolated multi-client server test covers queue, setup,
-      committed-match, and restored-online transitions; static coverage pins every
-      lifecycle refresh and the client labels.
-    - Persistent server-backed social block/mute controls: the Friends tab now has a
-      focusable mouse/keyboard/controller context menu for Challenge, Mute/Unmute, Block,
-      Unfriend, and Unblock. Mutes are private per-friend notification preferences:
-      challenges remain visible/actionable but do not create pop-up toasts. Blocks
-      atomically remove mutual friendship, both request directions, pending challenges,
-      and prevent either blocked pairing in casual or competitive queues. The blocker's
-      snapshot exposes only the blocked username, never presence or Elo; the other player
-      receives generic unavailability, and unblocking does not restore friendship.
-      Normalized lists persist in the account database, the client requires the explicit
-      social-controls server capability, deployment preflight checks it, and isolated
-      server runtime/static tests cover persistence, privacy, challenge suppression,
-      interaction rejection, and queue exclusion.
-    - Single canonical capture per simulation boundary: live play, ordinary rollback, and
-      coordinated correction now capture each post-tick state once as the next frame's
-      retained pre-state, then reuse that exact blob instead of recapturing mutable live
-      memory. One checksum-canonical scratch pass produces both the boundary CRC and optional
-      component summary, so history, checksum publication, correction snapshots, and desync
-      diagnostics cannot observe different versions of the same frame. Initial and received
-      authoritative snapshots seed the same boundary cache; failed live ticks restore the
-      exact retained pre-state. Correction replay now treats immutable role-local input
-      rings as authoritative and uses finalized history only when an acknowledged ring
-      generation is absent, preventing stale pre-rollback history or delayed ACK viewpoints
-      from trapping a fully received correction barrier. A valid transition delivered on
-      the timeout boundary is consumed before no-progress failure. Serializer/analyzer and
-      static contracts, four consecutive lossy correction runs, the exact 2,048-frame
-      byte-comparison chaos soak, and the complete guarded prematch matrix pass.
-    - Authoritative friend-challenge map picker: challenging an online friend now requests
-      the complete intersection of both sanitized map manifests, presents every compatible
-      map in a cancellable keyboard/controller/mouse left-right picker, and sends the exact
-      selected key. Request IDs and exact begin/choice/end counts reject stale or truncated
-      responses. Control protocol v3 bounds manifests to 4,096 entries; the server validates
-      friendship, presence, and the selected key before creating the challenge, stores and
-      displays its map label for both players, then recomputes the intersection at accept
-      before forcing that exact map with each client's local selector. Queue matchmaking
-      remains random and no longer mutates recent-map history during compatibility probes.
-      Static client contracts and an isolated two-client server runtime test cover the full
-      picker, invalid-key rejection, challenge/accept flow, and differing local selectors.
-    - Yule installer v2 lifecycle: the interactive picker now selects
-      `eggnoggplus.exe` directly while `-GamePath` accepts either the executable or folder.
-      The release zip includes `UNINSTALL.bat`; its conservative uninstall preflights the
-      vanilla forwarder, restores `SDL2_real.dll`, removes the exact recorded Start Menu/
-      Steam entries, deletes only safe relative managed files whose current SHA-256 still
-      matches the install receipt, and preserves the game, mods, configuration, modified
-      files, and untracked files. The v2 manifest records the executable and per-file
-      path/hash/size ownership receipt. Channel entries now require bounded safe paths plus
-      valid size/SHA-256 metadata, downloads verify both, and an incomplete fresh adoption
-      removes newly added exact-hash files and restores vanilla instead of leaving a broken
-      half-install. An isolated loopback lifecycle test covers EXE selection, verified
-      install, modified/user-file preservation, vanilla restoration, manifest cleanup,
-      missing-forwarder fail-closed behavior, and offline first-install rollback.
-    - Expanded player-palette readability: the nearly-black custom charcoal choice is now
-      a visible dark charcoal (`0.20, 0.22, 0.25`). A static palette regression prevents
-      any solid expanded choice from returning to effectively black luminance.
-    - Rollback-safe peer-local room/mine palettes: native `game_update` consumes
-      `_game_do_lerp_colours` early, but room changes and mine effects can set it later in
-      the same tick for the next update. Rollback transport intentionally scrubs that flag
-      and `_lerp_time`, while the 48-float `0x541F6C..0x54202B` colour block is
-      checksum-excluded presentation state; loading only half of that group could lose the
-      pending transition and leave an old room or mine tint visible. Active-match ordinary
-      rollback and coordinated correction now capture and atomically restore the coherent
-      flag/timer/block as a peer-local sidecar before replay, without changing gameplay
-      checksums or preserving a prior map's palette during prematch load. The production
-      serializer test covers byte-exact restoration plus invalid/NaN no-partial-write
-      rejection, and static coverage pins capture/load/restore ordering. A two-client
-      visual soak remains under Runtime acceptance.
-    - Multi-generation paired rollback soak: the seeded nonzero-input chaos case now runs
-      through frame 2,047, reusing the 512-slot history ring four complete times under 20%
-      loss and one-to-eight-tick delay/reordering. Both roles exercise prediction and
-      rollback, byte-match every finalized canonical pre-frame state and post-frame
-      checksum, and drain cumulative checksum proof in both directions. Each peer streams
-      its retained canonical history to a private temporary trace which the supervisor
-      parses structurally and compares frame-by-frame before deleting it. The Python runner
-      drains both child output pipes concurrently; its old
-      sequential `communicate` order could fill the idle child's Windows pipe, block that
-      peer inside debug logging, and manufacture a 600-tick network timeout. Failure
-      output now includes the complete secret-free `net.diag` snapshot.
-    - Paired uint32 frame-wrap rollback soak: a second authenticated 2,048-frame chaos
-      session begins at `UINT32_MAX - 1023`, crosses `UINT32_MAX -> 0` halfway through, and
-      finishes at frame 1,023. A test-only synchronized epoch rebase preserves the exact
-      canonical starting boundary, quarantines pre-rebase packets, and recreates the neutral
-      prediction/ACK prefix that a naturally long-running session already owns; production
-      sessions still reach the same serial boundary only by advancing normally. Every frame
-      in the measured interval travels through the lossy socket path. Both roles predict,
-      rollback, survive 20% loss plus one-to-eight-tick delay/reordering, byte-match all
-      2,048 canonical states and post-frame checksums across the wrap, and drain cumulative
-      checksum proof in both directions. The focused wrap runner, static rebase contract,
-      and complete guarded prematch matrix pass.
-    - Secret-safe schema-aware peer-trace diff utility: `tools/peer_trace_diff.py` now streams and
-      structurally validates the canonical trace format used by the paired chaos runner,
-      including strict nonzero/size-bounded records and consecutive uint32 frames across
-      wrap. It reports the first divergent record/frame, state length or byte offset,
-      finalized post-frame checksum, and SHA-256 of each state without printing state
-      contents. Recognized canonical EGG0/v9 states additionally expose SHA-256 for every
-      non-overlapping header/map-script/native/player/things/tilemap component, every
-      differing entity slot, the changed-tile count, and the exact first header field,
-      map-script entry, player field, entity slot/field, or tile index/x/y/cell byte. Strict
-      magic/version/count/size/dimension/header validation falls back to the generic report
-      for older or arbitrary traces rather than guessing. Native compile-time offset/size
-      assertions require a version bump if the mirrored 32-bit layout changes. Plain and
-      JSON output retain stable exit codes for identical, divergent, and invalid traces.
-      Guarded tests cover exact wrap equality, every schema location class,
-      byte/checksum/length/count differences, empty/truncated/oversized input, and broken
-      frame sequences. Automatic per-session repro capture remains open above.
-    - Long-session forced mismatch and coordinated correction: a guarded paired case enables
-      20% loss plus variable delay/reordering from the start, drives changing nonzero input
-      past one complete 512-slot ring generation, and injects one-sided canonical divergence
-      at frame 600. The asymmetric checksum path requests the host snapshot, agrees on
-      correction `D=600`, one bounded resume frame, and the exact replay transcript,
-      survives authenticated duplicate replay plus a forced correction-chunk `would-block`
-      without advancing its send cursor, and releases cleanly. Both roles then continue
-      through frame 2,047 with prediction and rollback, agree on the final checksum, and
-      drain the new correction generation's cumulative checksum proof in both directions.
-      The original short correction case remains as a fast focused regression; both focused
-      modes and the complete guarded prematch matrix pass.
-    - Committed disconnect/forfeit and normal-result settlement: deliberate local exits send the
-      server's committed `match_abort` forfeit signal instead of an ordinary loss guess, so
-      the still-connected opponent receives an immediate confirmed win. The server keeps
-      one exact terminal response per connected participant and idempotently replays it
-      when a queued P2P-disconnect loss report arrives after resolution, eliminating the
-      misleading `invalid or stale match result` status without letting old messages alter
-      a new match. Native result detection is pinned to the terminal end countdown (leader/
-      loser identity) with positive-target final score as a fallback. Normal reports now
-      include the synchronized winning player slot; the server maps that slot through its
-      recorded host/join assignment, so an inverted client-local win/loss interpretation
-      cannot manufacture conflicting winners. Reporting no longer tears down rollback or
-      changes state: a live countdown/final-winner gate also blocks previously queued hub
-      handoffs and terminal control messages while GAME owns the presentation. Eggnogg
-      completes its native win animation and returns to main first, then the client stops
-      transport and opens the online hub. Static client/server checks
-      and live TCP protocol coverage pin legacy conflict rejection, slot-authoritative
-      agreement, disconnect replay, and the deferred native return.
-    - Bounded hostile-NAT UDP relay fallback: the rendezvous server still chooses one
-      deterministic direct loopback/LAN/public route first. A genuinely fresh client socket
-      generation switches both peers together to a server relay marker on the existing UDP
-      port. The client resolves that marker through its already-validated control hostname.
-      Relay admission is limited to active match-owned observed endpoints, the server-recorded
-      sender player slot, protocol-v17 packet bounds/types, and per-endpoint packet/byte
-      budgets; peer HMAC/replay validation remains end to end, and amplification is one for
-      one to the authenticated opponent endpoint. Setup aborts revoke immediately; a
-      successful relayed result retains only the authenticated endpoints for a 15-second
-      native-presentation grace, then revokes them. The isolated runtime test proves initial
-      direct routing, symmetric fallback after a fresh-socket retry, and byte-exact binary
-      forwarding before and after result consensus. Established mid-game rebinding/resume
-      remains open above.
-    - State-preserving online-server updater: `online_server/update_server.sh` shallow-clones
-      the latest configured branch into a disposable directory, runs Node/static/two-client
-      protocol tests before downtime, stages only non-runtime server files, stops systemd for
-      the swap, restarts, and runs the local TCP+UDP deployment probe. It never stages account
-      JSON, ratings, server secrets, logs, environment files, PID/socket files, `node_modules`,
-      or caches. Exact overwritten/new application files are tracked for rollback if start or
-      health validation fails; the live runtime state remains in place throughout.
-    - State-preserving repository-wide updater: `tools/update_repository.sh` validates a
-      fresh clone, accepts fast-forwards only, replaces/prunes tracked repository files, and
-      advances the real branch/index without touching the complete live `online_server/`
-      tree, runtime configuration/logs/caches/build output, editor settings, extra configured
-      preserve paths, or untracked community content. Staged/non-runtime local edits and
-      mismatched untracked collisions fail closed, while byte-identical upstream additions
-      are adopted for safe first-run bootstrap; dry-run output, post-copy comparison, and
-      automatic file/index/ref rollback are covered by isolated throwaway-repository tests.
-    - Once-per-frame local-input commit boundary: hook-side physical input remains a
-      tentative wall-tick sample until frame-zero, correction, frame-advantage, prediction,
-      and checksum-retirement gates all permit simulation. Stalled updates repoll without
-      assigning the blocked future frame, while an already committed logical-frame retry
-      remains immutable. A guarded two-peer regression holds one peer transport-only,
-      forces a prediction hard stall through 32 stale samples, changes the physical value,
-      proves only the fresh value is committed on recovery, and checksum-confirms both
-      peers afterward. Adaptive input delay and GGPO-style time sync remain open above.
-    - Failure-atomic live rollback ticks: after saving a canonical pre-state, a native
-      advance that later fails checksum or clean simulation-state capture reloads that
-      exact pre-state before the online session aborts. Setup also has an explicit
-      `start_state_loaded` no-advance gate instead of relying on earlier hold/layout/link
-      ordering. A guarded paired injection fails clean-geometry capture after both native
-      ticks, then proves both peers remain on frame zero with byte-identical restored state.
-    - Strict online control transport: atomic queued writes/backpressure, strict flat JSON,
-      framing limits, independent connect/auth deadlines, secret cleanup, and complete
-      all-or-nothing map manifests. A 30-second authenticated heartbeat keeps idle hubs
-      and long matches alive across the server's receive-idle timeout. TLS remains the
-      release blocker listed above.
-    - Authenticated P2P UDP, introduced in v16 and retained by the current v17 wire
-      protocol: per-match 256-bit tokens, directional HMAC-SHA-256/128, CSPRNG sessions,
-      constant-time verification, replay window, and fail-closed key use.
-    - Post-content rollback-state layout freeze: server-managed P2P attempts now begin as
-      socket/auth-only held sessions with zero rollback capacity. After the exact selected
-      map/content, synchronized seed, native reset, and native start state are installed,
-      transactional finalization measures a versioned structural layout, allocates all 512
-      history slabs and state-transfer buffers, and rejects a changed refinalization. Peers
-      must prove the same non-cryptographic 32-bit structural layout ID and exact capacity;
-      setup waits for missing proof and aborts on any mismatch before hold release, after
-      which the host captures the authoritative initial state. Retry clears the old proof
-      and reannounces the new session's layout. This slice originally reused the formerly
-      receiver-unused v16 `last_checksum` slot; current v17 retains it as
-      `state_layout_id`. Its semantics are not a broad old-DLL compatibility promise: the
-      managed binary fingerprint rejects mixed old/new DLLs. The layout ID describes
-      structure, while the server-selected `map_key` chooses the advertised package; its
-      32-bit signature is not cryptographic content identity, and the complete
-      deterministic compatibility manifest remains open above.
-    - Wrap-safe input/history rings: uint32 serial ordering, a single-generation receive
-      window (283 retained frames and 228 future frames), stale/far-future rejection,
-      generation-aware input/history writes, retained-checksum filtering, and wrap-safe
-      rollback/prediction/diagnostic scans. Reordered redundant inputs no longer regress
-      the newest command marker or make prediction use a future command. The deterministic
-      native test pins both admission edges, 512-slot aliases, out-of-order prediction,
-      history preservation, and UINT32_MAX wrap. This foundation is retained by the
-      wire-breaking v17 confirmation and recovery protocol described below.
-    - Reliable v17 remote-input confirmation: every authenticated INPUT packet carries a
-      monotonic cumulative ACK and a 512-bit SACK. Same-frame inputs are immutable; the
-      live edge and oldest unresolved holes are resent before the defensive tail; neither
-      reordered data nor ACKs can regress prediction or confirmation. Checksum publication,
-      comparison, correction detection, and history retirement stay at or below the mutual
-      contiguous-input and finalized-history horizon.
-    - Hard v17 input/checksum recoverability: prediction stops permanently at the oldest
-      unresolved-input boundary while transport continues selective resend, rather than
-      resuming after a timeout. Generation-scoped cumulative checksum ACKs advance only
-      after successful comparison; live-edge plus go-back-N checksum resend and proof from
-      both directions prevent history retirement until delivery completes. A checksum
-      no-progress timeout disconnects instead of overwriting required state.
-    - Transactional received-state application: complete start/correction transfers are
-      transport-canonical prevalidated against the existing rollback-blob schema, size, and
-      advertised checksum before mutation. Apply uses a preallocated raw backup, verifies
-      the resulting canonical live state, restores and byte-verifies the exact prior state
-      on failure, and treats a failed restore as terminal. A guarded native regression now
-      drives the production serializer through raw byte-identical roundtrip, canonical
-      transport validation and pointer rejection, canonical load scrubbing, and a failed
-      preflight with zero partial mutation. This completes raw-blob transaction safety,
-      not the still-open typed native schema/adapter.
-    - Mutually confirmed v17 correction barrier: REQUEST/OFFER/RECEIVING/READY/COMMIT/
-      APPLIED/RELEASE/RELEASE_ACK freezes both simulations on one exact divergence frame,
-      continues authenticated input/ACK recovery, stages and validates a complete host
-      snapshot without receiver mutation, pins the same role-stable input span on both
-      peers, then makes both peers rewind and deterministically replay it. The replay
-      transcript covers epoch, generation, D/R frames, snapshot checksum, input pairs,
-      and pre/post state checksums; only matching APPLIED/RELEASE proofs retire the old
-      checksum generation. Conflicting tuples and failed apply/replay fail closed; policy
-      changes are rejected during a barrier, and bounded no-progress disconnects. The
-      paired guarded case forces an
-      asymmetric divergence under 20% loss, delay/reordering, and authenticated duplicate
-      replay, then proves matching snapshot/resume/transcript and drained checksum ACKs.
-    - UDP socket-backpressure baseline: raw sends now distinguish physical success,
-      retryable `WSAEWOULDBLOCK`/`WSAENOBUFS`, and hard Winsock errors. Retryable pressure
-      leaves delayed datagrams and full/delta transfer cursors in place; hard failures are
-      counted and cannot strand a delayed-queue entry forever. Every service tick gives
-      fresh INPUT/ACK/HELLO traffic the first send opportunity, then drains delayed work,
-      and caps initial/correction bulk bursts at eight datagrams. Compiled-out cosmetic
-      profile/asset cursors also advance only after accepted sends. `net.diag` and
-      `ggpo.net` expose would-block, hard-error, and deferred-work counters. The paired
-      correction regression forces a state-chunk would-block under seeded loss/delay,
-      proves physical-send count plus full/delta cursors do not advance, then completes
-      the bilateral correction with matching transcript/checksum proofs; a static test
-      pins error classification, queue retention, control-first order, and cursor rules.
-    - Canonical rollback envelope v1 foundation: an independently tested, bounded section
-      codec explicitly encodes compatibility identity, controller/player roles, fixed
-      16-slot occupancy/allocator metadata, stable behavior IDs, ordered danger-slot
-      references, tiles, and the existing MapScript snapshot subdocument. It rejects
-      truncation, overflow, directory/reserved corruption, invalid enums/booleans/floats,
-      noncanonical free slots, cross-section lifecycle mismatches, wrong session/script
-      identity, and noncanonical re-encoding without partially changing its output. This
-      is deliberately a foundation only: the opaque active-entity bridge and native
-      capture/reconstruction/transaction adapter remain in the P0 item above.
-    - Checksum-authoritative gameplay RNG, camera/shake, simulation dimensions, resume-
-      input, and mine-activation baseline: rollback canonicalization v6 retains
-      `_mrand_seed`, camera X/Y, camera-shake amplitude/decay, `_game_w`, `_game_h`,
-      `_resumed`, and the `_mine_anim` last-tick guard at `0x541EFC` instead of masking them
-      as presentation state. Native
-      `player_update_logic` uses `_game_w * 0.5` as the loser-respawn threshold,
-      `game_update_camera` uses it for horizontal clamping, and `game_update` reads
-      `_game_h` for vertical camera clamps and camera-relative ambient sampling; `_resumed`
-      clears buffered attacks. Score and mine paths deterministically add shake, while
-      shake amplitude/decay control whether `game_update_camera` consumes zero or two
-      gameplay RNG draws and writes camera X/Y; prior-tick camera X feeds loser respawn.
-      `_mine_anim` checks its last-tick guard before the sound call, tile mutation, and
-      shake write, so restoring it preserves same-tick second-mine suppression. Only the
-      adjacent sword-sound and crowd-cheer debounce stamps remain masked. The crowd timer
-      can change whether native `game_update` draws a near-win chant pitch, so the verified
-      sound-only return site `0x42C9B8` now uses cosmetic RNG instead of advancing the
-      gameplay seed during a rollback replay.
-      The old peer-local cosmetic-RNG route for camera shake is removed. Rollback
-      apply restores every authoritative field. The online loop captures authoritative
-      post-tick RNG/camera/shake/dimensions and restores them before every live, rollback, and
-      correction pre-state/tick, preventing local `adjust_layout` writes from becoming
-      simulation input; it restores each client's dimensions afterward for rendering.
-      Checked 1..4096 extents, authoritative apply preflight, and an all-destinations-first
-      combined setter prevent invalid or partially restored camera/geometry state.
-      Serializer, paired, and static regressions prove checksum sensitivity, finite-value
-      rejection, apply restoration, same-tick mine suppression across save/load, different
-      local aspect ratios, out-of-tick shake restoration, simulation/render separation,
-      and call ordering. A failed post-tick clean capture restores the saved canonical
-      pre-state before abort.
-    - Canonical floating-point simulation controls: every native GAME update and its
-      deterministic content interactions now run inside one per-tick control guard with
-      vanilla-compatible x87 `0x037F` (64-bit extended precision, nearest/even, masked
-      exceptions) and MXCSR `0x00001F80` (nearest/even, gradual underflow, DAZ off). The
-      exact caller x87 control word and MXCSR are restored on success or reported failure;
-      offline live, GGPO live, rollback/correction replay, loopback, local, and self-test
-      paths converge on the same primitive. A native hostile-mode/nested/restoration/
-      subnormal test and static call-path test cover the boundary, and desync dumps now
-      record raw x87 plus MXCSR instead of a truncated `_controlfp` diagnostic.
-    - Server match-protocol deployment guard: the client now requires a flat `server_info`
-      capability handshake before login, rechecks auth/match version fields, and fails
-      before queue/P2P setup on incompatibility. A public TCP+UDP preflight and isolated
-      two-client runtime test prove that both peers receive one shared 64-hex match key
-      and distinct probe keys. The pre-gate public service passed the
-      control-v3/match-v4/P2P-v17 TCP+UDP discovery preflight; the new build-gate
-      capability deliberately requires another matching server deployment and public
-      preflight before the next client can sign in. The real two-game direct/relay round
-      remains in Runtime acceptance. Each authenticated map manifest now also sends
-      the client's framework label, exact control/match/P2P tuple, and deterministic
-      build/game-EXE/framework-DLL fingerprints. The client requires the server's explicit
-      build-gate capability before login. The server records and logs the manifest,
-      rejects missing/old fields before queue or challenge entry, filters pairing by exact
-      supported protocol and build tuples, rechecks at match creation, and sends the
-      checked versions/build diagnostic in `match_found`. This closes both the silent
-      v16/v17 mixed-client stall and same-protocol/different-binary late abort without
-      pretending incompatible authenticated layouts are safe. Runtime coverage includes
-      unadvertised-client and exact-build mismatch rejection, while the
-      guarded native transport runner now separately proves current direct and symmetric-
-      relay prematch handshakes and cannot hang forever behind its own Windows timeout
-      cleanup. Legacy
-      unauthenticated fallback remains forbidden.
-    - Bounded P2P connection retry: three fresh sockets/mappings, one deterministic
-      server-selected loopback/LAN/public route per attempt, authenticated fresh-session
-      recovery when only one peer rolls its socket, and clean hub recovery after exhaustion.
-    - Prematch preparation behind the countdown: connection, native reset, state transfer,
-      and neutral frame zero complete before GAME is shown. Match protocol 3 keeps both
-      clients behind the hub until each reports a restorable frame zero and the server
-      commits gameplay; every pre-commit timeout, abort, disconnect, stale setup, or
-      impossible ready-without-loaded postcondition fails before readiness is published;
-      premature result is a no-contest instead of a fake win/loss.
-    - Online simulation through the audited pause/options, player-one/player-two native
-      input-remapping, console, and Mods overlays, with one tick owner per screen, menu
-      input neutralized, and both local control sets merged into the assigned fighter.
-    - Server-managed build/map compatibility gates and automatic suspension/guarding of
-      framework-managed gameplay Lua for the full match lifecycle.
-    - Toast-only online results: completed matches return to one stable hub state with the
-      native main menu as Back owner and a compact bottom-right notification; the fullscreen
-      win/loss/game-over state and its menu transitions are gone. Provisional toast display
-      is separate from exact-match tracking, delayed server confirmation refreshes a hidden
-      toast safely, requeue is gated until confirmation, and abort/no-contest clears the
-      provisional outcome. Normal results require two reports naming the same winner;
-      unilateral timeouts and conflicts are no-contests with no Elo change. A commit plus
-      immediate forfeit result in one TCP batch resolves directly without entering a
-      server-deleted GAME.
-    - V2 custom-map parser and declarative content tile bridge: a sheet/grid can be
-      declared once at `tileset` scope and inherited by every listed tile, with optional
-      per-tile sheet exceptions. `native_layout` validates only the safety-critical
-      128-cell native prefix, accepts arbitrary declared grid geometry and appended custom
-      cells, and applies that prefix to every ordinary unlisted map glyph while leaving
-      native collision/update logic authoritative. Any printable source symbol (including
-      space and vanilla/multi-cell glyphs) can still be explicitly overridden; safe
-      single-cell behavior is selected through `native_glyph` or native solid/pass-
-      through/hazard presets. Native `K` remains excluded from generic `native_glyph`, but
-      direct map markers now pass a strict per-room 13-object combined K/sword/mine
-      reset-spawn audit before their unchecked native allocation path is reachable.
-      Deterministic
-      add/set/clamped force fields affect players
-      and verified type-2 swords in the fixed 16-slot native thing pool in offline,
-      local/loopback, GGPO-live, and rollback-replay ticks. Players use center/half-tile-
-      foot sampling; swords use their native center-only collision point. Exact-cell
-      de-duplication, mirrored force direction, atomic reload, and behavior-
-      sensitive fingerprints. External packing removes declared gutters and preflights
-      the engine's fixed 8,192-record global sprite capacity before entering its unsafe
-      allocator. The selectable demo covers the 128-cell native prefix plus appended
-      spring frames, an external animated solid tile, unlisted native `@` terrain,
-      scripted spring/fan behavior,
-      transform/layer, deliberate fallback, and mirrored rooms; one command tests
-      registry validation/identity, inherited defaults, native-prefix bounds/flexible grid, legacy
-      force math, draw-base restore, hook integration, parser, and fixture. External PNG
-      bytes are always hashed into map/online identity; `asset_sha256` remains only an
-      optional pin, not an authoring requirement. Native world-to-cell lookup now matches
-      the executable's nonnegative truncate/floor boundaries exactly (the removed
-      half-cell bias caused right-edge/early scripted contacts). `native_visual: underlay`
-      reproduces the native surface-base composition used by mines without inheriting
-      mine behavior, keeping ordinary terrain visually continuous beneath custom props.
-    - Deterministic V2 `map.lua` behavior foundation: an optional direct 256 KiB script
-      keeps JSON focused on visuals/native collision while providing bounded enter,
-      contact, leave, and map-tick callbacks; finite object position/velocity changes;
-      mirrored exact-cell metadata; temporary per-cell sprites; fixed typed `map.state`;
-      and snapshotted RNG. It runs in a separate memory/instruction-capped sandbox with
-      no filesystem/network/OS/module/debug/FFI/JIT/dynamic-code access, rejects bytecode,
-      the cross-runtime `^`/pow operator, and unsnapshotted callback state, and faults
-      closed. Exact retained source bytes and
-      canonical bindings affect the existing package signature/server map key (still a
-      non-cryptographic compatibility hint); activation uses the pinned map
-      generation. Managed online prematch additionally requires that exact pinned script
-      id to be active and healthy before layout publication/READY; failure aborts with a
-      clear hub error and server `match_abort` instead of silently dropping behavior. Its
-      pointer-free state, object lifecycle generations, explicit object kinds,
-      cell/binding-scoped contacts, temporary velocity limits, overrides, clock, RNG, and
-      fault flag are embedded in map-script API/snapshot v5 and rollback blob v9/layout
-      schema 6. The real VM test executes the
-      demo spring/fan callbacks, mirrored direction, timed sprite, enter/stay/leave, and
-      snapshot/lifecycle replay. Strict load-time `map.sensor` declarations now provide
-      fixed-point tile boxes, center/native-radius-body/feet/custom object boxes,
-      compatible player plus explicit alive-player/dead-body/sword/hazard filters, room
-      mirroring, inclusive edges, exact-cell or binding-union contact scope, and stable y/x
-      neighborhood dispatch from immutable pre-callback coordinates. The demo spring uses
-      its complete width and a six-pixel lower-body/probe band; adjoining spring cells are
-      one contact. Its alive-player-only filter deliberately excludes dead bodies so they
-      can settle and pass the native respawn gate. Its per-kind `-4.0`/`-2.8` targets
-      compensate for living-player versus native-thing gravity to yield approximately
-      equal 53-pixel rises, while a kind/lifecycle-keyed temporary `min_vy` limit persists
-      for eight rollback-owned ticks and catches native kick velocity added after contact
-      has ended. The fan uses its full cell.
-      Bindings without sensors retain player center/half-tile-foot and sword
-      center probes. Read-only object kind, id, and verified contact radius are exposed;
-      verified K type-3 point hazards can opt in, while exact type/updater/lifecycle checks
-      prevent stale leaves from writing into recycled or differently typed pool slots.
-      `tile:set_sprite` also accepts a strict
-      optional render table: fixed 1/256-pixel additive X/Y offsets are applied after
-      atlas cropping and expire/reset/rollback atomically with the per-cell sprite. The
-      demo's active spring uses a render-only user-tuned offset, leaving its terrain,
-      collision, and sensor stationary.
-      Raw native callbacks, additional native object types, spawned/moving custom
-      entities, weapons, and the broader content API remain open above.
-    - General window policy source repair: F1 3:2 presets, F11, maximize normalization,
-      display-aware fullscreen cache, safe event-boundary recreation, desktop borderless,
-      launch-flag conflict handling, and local-only viewport refresh.
-    - Secure opt-in credential implementation: exact server/account Windows Credential
-      Manager targets, save only after `auth_ok`, deletion on opt-out/rejection/identity
-      change, malformed-record cleanup, and secure memory clearing. A valid remembered
-      account now authenticates automatically, hides the login form while pending, and
-      opens directly into the hub menus with backend-neutral player-facing copy.
-    - Exact native framework cursor integration: the fake built-in cursor and later
-      white/custom-scale approximation were removed. Online UI, automatic custom-state
-      cursors, and no-option `mod.ui.draw_cursor()` now share the game's actual two-pass
-      renderer with native global scale, shadow, pulse color, hotspot, and state restore;
-      online still queues it only once/topmost. Live online Options, both remap pages, and
-      Mods now preserve both native player-cursor enable flags across the hidden gameplay
-      tick and receive a final real native mouse pass, so advancing the peer cannot make
-      the menu unusable. Live acceptance remains listed above.
-    - Active online connectivity troubleshooter: `online.troubleshoot`/`net.trouble`
-      independently tests the configured server's TCP control and UDP rendezvous paths
-      without blocking the frame loop, validates the exact UDP source/sequence, reports
-      RTT plus the server-observed public endpoint, and inspects active Windows IPv4
-      adapters for carefully labeled VPN/NAT/CGNAT evidence. Console-first use loads the
-      persisted/default target before probing; Windows route selection identifies the
-      actual server interface, while fallback prefers a physical adapter so an unrelated
-      active Radmin/VPN interface is reported without being mistaken for Eggnogg's route.
-      It explicitly distinguishes
-      likely 100.64/10 CGNAT from ordinary private-address NAT that requires comparing the
-      router WAN address, then appends the secret-free `net.diag` route/attempt/packet
-      snapshot. Native loopback/parser/profile smoke tests, static command/privacy/pump
-      coverage, build linkage, console docs, testing instructions, and design spec are
-      complete; live network-matrix acceptance remains above.
-    - Framework version checking: asynchronous launch check, live Mods-menu
-      status/retry/install actions, and a bounded dismissible update notification.
-    - Automatic transactional framework updates: default-on, SHA-256/size verification,
-      bounded downloads, reserved-namespace path safety, V2 integrity journal,
-      complete-set verified roll-forward, conservative rollback/quarantine recovery,
-      single-writer locking, and restart-required status. The isolated one-command test
-      runs a real loopback apply plus reduced-journal and recovery regressions entirely in
-      disposable build directories. The direct-import helper gap remains in Feature
-      backlog instead of being described as power-fail-safe.
-    - Atomic updater-owned config writes that preserve comments and unrelated settings;
-      main-menu mode persistence now uses this API instead of rewriting a fixed buffer.
-    - Configurable Lua cursor options for deliberate custom sprite/index, scale, hotspot,
-      tint, and layer choices, including per-state automatic/disabled/custom policies.
-    - Custom-map water ambience/effects: native water glyphs, per-room water colors,
-      bubbles, boil, and fume ambience.
-
-    - Content Workshop atlas preview now imports inherited cell dimensions/padding
-      from data.json, supports rectangular cells and gutters, and fixes native glyph
-      border/stride cropping. Imports preserve work on failure, support undo/redo,
-      and persist settings in drafts. Entity loading rejects ambiguous multi-grid
-      PNG references; identical declarations still share a sheet. Asset packaging,
-      full-map integration and live visual acceptance remain unfinished.
-
-    - Content Workshop complete-map packaging: open one V2 map folder (including
-      nested wrappers), load its entities/Lua and preview PNGs, export a complete
-      ZIP preserving map/asset/supplementary file bytes and unchanged Lua. Imports
-      are atomic and undoable; references/ranges validate before export. Attached
-      files remain session-only with an export reminder. Room-local placement,
-      native combat/equipment, atlas authoring and live acceptance remain open.
-
-    - Map API 19 exposes authored regions with local/world bounds and player contact
-      radius, with detached values, stable ordering and shared execution accounting.
-      Launch-pad entity/Lua example uses authored sensor geometry and atomic native
-      player velocity writes. Native adapter and real VM tests cover both players,
-      exact budgets, stale handles, host failure and rollback replay. Native combat,
-      equipment and live sensor/movement acceptance remain unfinished.
-
-    - Greggnogg integration revision: Objects now edits the current map in a
-      dialog. Designs enter Custom tiles, normal map tools place/erase instances,
-      room edits retain references, and animated visuals render on the map.
-      Removed standalone map selection and preset/onboarding flow. Import/export
-      carries object callback editor metadata; mismatched manual Lua edits fail
-      explicitly. Native/API and live visual acceptance remain separate gates.
-
-    - Integrated custom-map Preview now uploads PNGs/entities/Lua through a
-      token-scoped loopback session and starts a validated local map. Staged
-      files retire only after registry/engine release, preserving edited and
-      unrelated files. Old-process cache cleanup and live browser/game acceptance
-      remain open. Map logic offers Blocks and highlighted Advanced Lua;
-      object callbacks also have highlighted editing. Invalid blocks stay visible
-      when switching modes instead of silently reverting to earlier Lua.
-
-    - Beginner object blocks include animation pause and horizontal flip. Shared
-      generated Lua now runs in native tests with entity updates and exact
-      snapshot replay; broader blocks coverage and live editor acceptance remain.
-
-    - Object creation/removal blocks now generate native-tested Lua; creation,
-      removal, animation pause and movement have shared browser/native fixtures
-      and exact snapshot replay coverage. Object type selection still needs a
-      current-map picker, and the complete beginner logic API remains unfinished.
-
-    - Object logic now has Blocks/Advanced per lifecycle event, current-map object
-      pickers, preserved callback layouts, and supplied event context. Added repeat,
-      periodic condition, deterministic random and extended math blocks; generated
-      runtime fixtures cover timing/random/loops with exact rollback replay.
-      Blockly popup containers now follow the active modal dialog. Live UI acceptance
-      and remaining broader content API work are still open.
-
-    - Object block persistence now has package round-trip and rename/restore
-      regressions. Metadata shape/size validation rejects malformed layouts;
-      stale metadata preserves newer Lua. Nested unsupported blocks reject during
-      generation. Live UI acceptance and broader API requirements remain open.
-
-    - Player observation blocks add active-player iteration, scoped position/speed/
-      radius values, and current-player velocity/defeat targets. Shared generated
-      Lua tests cover both slots, sparse presence and empty queries with atomic
-      native commits. Remaining API and live acceptance work is still open.
-
-    - Player/object overlap block checks authored regions by role with circle/AABB
-      geometry. Generated native tests cover response, replay, host rejection,
-      boundary contact and non-contact corners. Broader API/live gates remain.
-
-    - Object-group blocks select a design and provide scoped instance controls
-      inside map/object events, guarding snapshot handles against removal. Native
-      tests verify type filtering and replay. Full content API remains unfinished.
-
-    - Object designer motion controls add opt-in gravity, horizontal drag and
-      vertical speed limits, with metadata round-trip and exact native replay tests.
-      Both Blockly editors now use dark component colors and disable background
-      drag-to-pan. Detection-area roles and lack of automatic native terrain
-      collision are explicit. Local Map Lua docs updated; published page returned
-      HTTP 403 during verification. Live dropdown behavior remains unverified.
-
-Custom-content follow-up (September 10):
-  [x] Shared map/per-player block variables: read, set, change, clear, exists;
-      generated Lua verified in native player simulation and rollback replay.
-  [x] Put detection controls beside preview; disable shared sprite smoothing.
-  [ ] Verify dropdown interaction after toolbox drag in live Greggnogg; revised
-      pointer-up handling passes regression harness but requires live acceptance.
-  [ ] Named detection regions available to scripts and blocks.
-  [x] Solid custom regions with native player/physics response and rollback tests (API 25).
-  [ ] Double-jump authoring: verified input/ground state, indicator attachment,
-      collectible recharge, example map and beginner block workflow.
-
-Custom-content authoring follow-up:
-  [x] Variable creation dialog and name dropdowns; serialized name catalog.
-  [x] Per-instance variables with removal cleanup and rollback replay (API 24).
-  [x] Explicit movement default for new designs; velocity integration opt-in.
-  [ ] Verify dropdowns after toolbox drag in live UI; restore workspace and
-      popup focus roots before opening (automated interaction harness passes).
-  [ ] General coordinate query matching exact authored tiles or custom objects,
-      composable through ordinary equality/OR rather than patrol-specific commands.
-  [x] Solid custom hitboxes with native player/physics-object collision response (API 25).
-  [ ] Expand per-object state capacity beyond shared 64 entries / 12-character keys.
-
-  [x] API 25 solid-region purpose and editor checkbox: swept native player,
-      corpse, sword and hazard blocking; grounded flags, snapshot restoration,
-      native wall/floor/ceiling/diagonal/penetration tests.
-  [ ] Live game acceptance for solid surfaces, jump responsiveness, stacked
-      geometry and moving obstacles; moving-platform carry/rigid-body response.
-
-  [x] API 26 entity.at(x,y), bounded stable point query with mirrored region
-      geometry, detached handles and half-open edges; reusable object-at block
-      composes through OR and tracks renamed types. Native/runtime tests pass.
-  [ ] Complete coordinate detector with exact terrain-character lookup.
+Add concrete test steps to TESTING.md. Keep this file limited to unfinished
+product and engineering work.

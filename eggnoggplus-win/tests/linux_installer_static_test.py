@@ -1,55 +1,56 @@
+"""Packaging, syntax, and guard checks for the rewritten Linux installer."""
 from pathlib import Path
+import re
 import shutil
 import subprocess
-
+import sys
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "dist" / "installer" / "linux" / "install-linux.sh"
-UNINSTALLER = ROOT / "dist" / "installer" / "linux" / "UNINSTALL-LINUX.sh"
-RELEASE = (ROOT / "tools" / "build_release.ps1").read_text(encoding="utf-8")
-SOURCE = INSTALLER.read_text(encoding="utf-8")
+LINUX = ROOT / "dist/installer/linux"
+SHELL = LINUX / "install-linux.sh"
+PYTHON = LINUX / "install-linux.py"
+UNINSTALL = LINUX / "UNINSTALL-LINUX.sh"
+BUILD = (ROOT / "tools/build_release.ps1").read_text(encoding="utf-8")
+SOURCE = PYTHON.read_text(encoding="utf-8")
 
-assert SOURCE.startswith("#!/usr/bin/env bash\n")
-assert "set -Eeuo pipefail" in SOURCE
-assert 'mkdir -p -- "$INSTALL_DIR/mods" "$INSTALL_DIR/maps"' in SOURCE
-assert "--game-path" in SOURCE and "--wine-prefix" in SOURCE
-assert "--uninstall" in SOURCE and "--skip-protocol" in SOURCE
-assert "WINEPREFIX" in SOURCE and '"--yule-uri=$uri"' in SOURCE
-assert "x-scheme-handler/yule" in SOURCE
-assert "yule-eggnoggplus.desktop" in SOURCE
-assert "xdg-mime query default" in SOURCE
-assert "xdg-mime default yule-eggnoggplus.desktop" in SOURCE
-assert "sha256sum" in SOURCE and "SHA-256 mismatch" in SOURCE
-assert "item.get('overwrite') is not True" in SOURCE
-assert "64 * 1024 * 1024" in SOURCE
-assert "non-local release URLs must use HTTPS" in SOURCE
-assert "SDL2_real.dll" in SOURCE and "ADOPTED_VANILLA" in SOURCE
-assert "YuleUpdater.exe" in SOURCE
-assert "managed_files" in SOURCE and "preserved modified managed file" in SOURCE
-assert "install-linux.json" in SOURCE
-assert "maps, mods, saves, and modified files were preserved" in SOURCE
-assert "eval " not in SOURCE
-assert "rm -rf /" not in SOURCE
+assert SHELL.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash\n")
+assert 'exec python3 "$script_dir/install-linux.py" "$@"' in SHELL.read_text(encoding="utf-8")
+assert 'install-linux.sh" --uninstall' in UNINSTALL.read_text(encoding="utf-8")
+for marker in (
+    "non-local release URLs must use HTTPS", "size or SHA-256 mismatch",
+    "item.get(\"overwrite\") is not True", "SDL2_real.dll",
+    "game / \"maps\"", "game / \"mods\"", "yule://",
+    "xdg-mime", "kbuildsycoca6", "Steam shortcut verification failed",
+    "no signed-in userdata accounts", "flatpak", "snap",
+    "Framework installed, but integration failed", "managed_files",
+):
+    assert marker in SOURCE, marker
+assert "eval(" not in SOURCE and "shell=True" not in SOURCE
+assert "install-linux.py" in BUILD
+assert "create_linux_installer_zip.py" in BUILD
 
-assert UNINSTALLER.is_file()
-assert 'install-linux.sh" --uninstall' in UNINSTALLER.read_text(encoding="utf-8")
-for name in ("install-linux.sh", "UNINSTALL-LINUX.sh", "README.md"):
-    assert f"$linuxInstallerSource '{name}'" in RELEASE
-assert "EGGNOGG+_framework_installer_linux.zip" in RELEASE
-assert "EGGNOGG+_framework_installer_windows.zip" in RELEASE
-
+subprocess.run([sys.executable, "-m", "py_compile", str(PYTHON)], check=True)
 bash = shutil.which("bash")
 if bash:
-    for script in (INSTALLER, UNINSTALLER):
-        checked = subprocess.run(
-            [bash, "-n", script.relative_to(ROOT).as_posix()],
-            cwd=ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-        assert checked.returncode == 0, checked.stderr
+    for path in (SHELL, UNINSTALL):
+        result = subprocess.run([bash, "-n", str(path)], capture_output=True,
+                                text=True, check=False, timeout=10)
+        assert result.returncode == 0, result.stderr
 
-print("Linux Wine installer static/syntax checks: OK")
+package = ROOT / "dist/EGGNOGG+_framework_installer_linux.zip"
+assert package.is_file()
+with zipfile.ZipFile(package) as archive:
+    assert archive.testzip() is None
+    assert {"install-linux.sh", "install-linux.py", "UNINSTALL-LINUX.sh",
+            "README.md", "YuleUpdater.exe", "assets/steam_icon.png"} <= set(archive.namelist())
+    assert (archive.getinfo("install-linux.sh").external_attr >> 16) & 0o111
+    packaged = archive.read("install-linux.py").decode("utf-8-sig").replace("\r\n", "\n")
+    assert "Steam shortcut verification failed" in packaged
+    assert "ARTWORK = {" in packaged
+    without_art = lambda value: re.sub(r"(?s)# ==ARTWORK-BEGIN==.*?# ==ARTWORK-END==",
+                                       "# embedded artwork", value).strip()
+    assert without_art(packaged) == without_art(SOURCE), "Linux installer ZIP is stale"
+    assert archive.read("install-linux.sh").decode("utf-8-sig").replace("\r\n", "\n").strip() == SHELL.read_text(encoding="utf-8").strip()
+
+print("Linux Wine installer static/syntax/ZIP checks: OK")

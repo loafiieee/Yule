@@ -6,11 +6,12 @@ source = (ROOT / "lua_manager.c").read_text(encoding="utf-8")
 header = (ROOT / "map_script.h").read_text(encoding="utf-8")
 
 assert '#include "map_script.h"' in source
-assert "#define FULL_STATE_BLOB_VERSION     12u" in source
+assert "#define FULL_STATE_BLOB_VERSION     15u" in source
 assert "MapScriptSnapshot map_script_state;" in source
 assert "FULL_STATE_FIELD_RANGE(map_script_state);" in source
-assert "#define MAP_SCRIPT_API_VERSION            UINT32_C(22)" in header
-assert "#define MAP_SCRIPT_SNAPSHOT_VERSION       6u" in header
+assert "#define MAP_SCRIPT_API_VERSION            UINT32_C(36)" in header
+assert "#define MAP_SCRIPT_SNAPSHOT_VERSION       9u" in header
+assert "uint8_t exit_locks[MAP_SCRIPT_EXIT_LOCK_BYTES];" in header
 assert "int32_t offset_x_q;" in header
 assert "int32_t offset_y_q;" in header
 assert "uint8_t object_kind;" in header

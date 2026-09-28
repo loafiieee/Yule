@@ -3,6 +3,7 @@
 #ifndef PREVIEW_BRIDGE_PORT
 #define PREVIEW_BRIDGE_PORT 31785u
 #endif
+#define PREVIEW_BRIDGE_API 2u
 /* Main-thread lifecycle. Session bytes transfer to caller on take; free them.
  * The socket thread never calls native gameplay or evaluates uploaded scripts. */
 int preview_bridge_begin(const char* token,char* error,size_t capacity);

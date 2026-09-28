@@ -50,9 +50,13 @@ static int failures = 0;
  * packed MapScript bridge. It is not evidence of a portable host-struct wire
  * contract; the production codec parses the resulting subdocument as LE. */
 _Static_assert(sizeof(MapScriptSnapshot) == ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES,
-               "test fixture must match embedded MapScriptSnapshot v6");
-_Static_assert(offsetof(MapScriptSnapshot, state) == 128u,
+               "test fixture must match embedded MapScriptSnapshot v8");
+_Static_assert(offsetof(MapScriptSnapshot, state) == 160u,
                "test fixture map snapshot header changed");
+_Static_assert(offsetof(MapScriptSnapshot, exit_locks) == 64u,
+               "test fixture exit lock offset changed");
+_Static_assert(offsetof(MapScriptSnapshot, lifecycle_generation) == 96u,
+               "test fixture lifecycle offset changed");
 
 static uint32_t read_u32(const uint8_t* p) {
     return (uint32_t)p[0] |
@@ -247,6 +251,10 @@ static RollbackSchemaState* make_valid_state(void) {
     snapshot->script_id = UINT64_C(0x8899aabbccddeeff);
     snapshot->tick = UINT64_C(500);
     snapshot->rng_state = UINT32_C(0x76543210);
+    snapshot->camera.active = 1u;
+    snapshot->camera.x_q = 200 * 256;
+    snapshot->camera.y_q = -80 * 256;
+    snapshot->camera.zoom_q = 128u;
     for (i = 0u; i < MAP_SCRIPT_MAX_LIFECYCLE_SLOTS; ++i) {
         snapshot->lifecycle_generation[i] = state->entities[i].lifecycle;
     }
@@ -362,7 +370,7 @@ static void test_round_trip(const RollbackSchemaState* state,
     err[0] = '\0';
     CHECK(rollback_schema_encoded_size(state, &wire_size, err, sizeof(err)),
           "valid state did not report an encoded size");
-    CHECK(wire_size == 35908u, "encoded size does not match the v2 section layout");
+    CHECK(wire_size == 36028u, "encoded size does not match the v5 section layout");
     wire = (uint8_t*)malloc(wire_size);
     wire_again = (uint8_t*)malloc(wire_size);
     CHECK(wire != NULL && wire_again != NULL, "wire allocation failed");
@@ -538,6 +546,16 @@ static void test_state_validation(const RollbackSchemaState* baseline) {
     expect_state_rejected(bad, "stopped repeating timer accepted");
     RESET_BAD();
     snapshot = (MapScriptSnapshot*)bad->map_script_bytes;
+    snapshot->camera.zoom_q = 0u;
+    refresh_map_checksum(bad);
+    expect_state_rejected(bad, "invalid authored camera zoom accepted");
+    RESET_BAD();
+    snapshot = (MapScriptSnapshot*)bad->map_script_bytes;
+    snapshot->camera.reserved[0] = 1u;
+    refresh_map_checksum(bad);
+    expect_state_rejected(bad, "non-canonical authored camera state accepted");
+    RESET_BAD();
+    snapshot = (MapScriptSnapshot*)bad->map_script_bytes;
     snapshot->timers[31].remaining = 1;
     refresh_map_checksum(bad);
     expect_state_rejected(bad, "undeclared active timer accepted");
@@ -590,6 +608,7 @@ static void test_wire_validation(const uint8_t* baseline, size_t wire_size) {
     size_t section_truncations[14];
     size_t section_truncation_count = 0u;
     size_t i;
+    char err[256];
     CHECK(bad != NULL, "invalid-wire fixture allocation failed");
     if (!bad) return;
     globals_offset = read_u32(baseline + WIRE_GLOBALS_OFFSET_FIELD);
@@ -630,7 +649,7 @@ static void test_wire_validation(const uint8_t* baseline, size_t wire_size) {
     }
 
     RESET_WIRE();
-    bad[4] = 3u;
+    bad[4] = (uint8_t)(ROLLBACK_SCHEMA_VERSION + 1u);
     refresh_wire_checksum(bad, wire_size);
     expect_wire_rejected(bad, wire_size, "unknown rollback schema version was accepted");
 
@@ -791,15 +810,44 @@ static void test_wire_validation(const uint8_t* baseline, size_t wire_size) {
 
     RESET_WIRE();
     map = wire_map_bytes(bad);
-    write_u32(map + 64u + 3u * 4u, read_u32(map + 64u + 3u * 4u) + 1u);
+    write_u32(map + offsetof(MapScriptSnapshot, lifecycle_generation) + 3u * 4u,
+              read_u32(map + offsetof(MapScriptSnapshot, lifecycle_generation) + 3u * 4u) + 1u);
     refresh_embedded_map_checksum(bad);
     refresh_wire_checksum(bad, wire_size);
     expect_wire_rejected(bad, wire_size, "map/entity lifecycle disagreement was accepted");
 
     RESET_WIRE();
     map = wire_map_bytes(bad);
-    write_u32(map + 14464u + 8u,
-              read_u32(map + 14464u + 8u) + 1u);
+    map[offsetof(MapScriptSnapshot, exit_locks) + 31u] = UINT8_C(0x80);
+    refresh_embedded_map_checksum(bad);
+    refresh_wire_checksum(bad, wire_size);
+    err[0] = '\0';
+    CHECK(rollback_schema_validate_wire(bad, wire_size, err, sizeof(err)),
+          "portable rollback rejected a valid exit lock bit");
+
+    RESET_WIRE();
+    map = wire_map_bytes(bad);
+    map[48] = 1u;
+    map[49] = 1u;
+    map[50] = 2u;
+    map[52] = 3u;
+    refresh_embedded_map_checksum(bad);
+    refresh_wire_checksum(bad, wire_size);
+    err[0] = '\0';
+    CHECK(rollback_schema_validate_wire(bad, wire_size, err, sizeof(err)),
+          "portable rollback rejected canonical player observation history");
+
+    RESET_WIRE();
+    map = wire_map_bytes(bad);
+    map[49] = 1u;
+    refresh_embedded_map_checksum(bad);
+    refresh_wire_checksum(bad, wire_size);
+    expect_wire_rejected(bad, wire_size, "present player observation without initialization was accepted");
+
+    RESET_WIRE();
+    map = wire_map_bytes(bad);
+    write_u32(map + offsetof(MapScriptSnapshot, contacts) + 8u,
+              read_u32(map + offsetof(MapScriptSnapshot, contacts) + 8u) + 1u);
     refresh_embedded_map_checksum(bad);
     refresh_wire_checksum(bad, wire_size);
     expect_wire_rejected(bad, wire_size, "stale embedded contact lifecycle was accepted");

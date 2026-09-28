@@ -39,8 +39,8 @@ static void receive_request(SOCKET socket){
     if(!accepted){respond(socket,403,"{\"error\":\"inactive session\"}");return;}
     if(request.method==PREVIEW_HTTP_OPTIONS){respond(socket,200,"{}");return;}
     if(request.method==PREVIEW_HTTP_GET){
-        static const char* names[]={"inactive","waiting","receiving","ready","processing","done","error"};char body[64];
-        snprintf(body,sizeof(body),"{\"state\":\"%s\"}",snapshot>=0&&snapshot<=6?names[snapshot]:"error");respond(socket,200,body);return;
+        static const char* names[]={"inactive","waiting","receiving","ready","processing","done","error"};char body[96];
+        snprintf(body,sizeof(body),"{\"state\":\"%s\",\"api\":%u}",snapshot>=0&&snapshot<=6?names[snapshot]:"error",PREVIEW_BRIDGE_API);respond(socket,200,body);return;
     }
     if(snapshot!=1){respond(socket,409,"{\"error\":\"package already submitted\"}");return;}
     unsigned char* bytes=malloc(request.length);size_t count=used-request.body_offset;int valid=bytes!=NULL;

@@ -1,11 +1,11 @@
--- Map API 19. Pair with entity_launch_pad.json as entities.json in a V2 map.
+-- Map API 30. Pair with entity_launch_pad.json as entities.json in a V2 map.
 -- Position the launch_pad placement beneath a player in generated-world pixels.
 -- This is an explicit sensor response, not solid terrain or player damage.
 entity.on_update("demo:launch_pad", function(handle)
     local regions = entity.regions(handle)
     local players = map.players()
     for _, region in ipairs(regions) do
-        if region.role == "sensor" then
+        if region.name == "trigger" then
             for _, player in ipairs(players) do
                 local radius = player.contact_radius
                 local feet = player.y + radius

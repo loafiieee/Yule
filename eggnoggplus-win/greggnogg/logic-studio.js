@@ -27,7 +27,10 @@
     open(read,writeCallback){
       readDocument=read;writeSource=writeCallback;removed=false;
       if(Blockly.setParentContainer)Blockly.setParentContainer(document.getElementById('script-dialog'));
-      if(GregLogicBlocks.setObjectTypes)GregLogicBlocks.setObjectTypes(((readDocument().entities||{}).types||[]).map(type=>({key:type.key,label:window.GregObjects?window.GregObjects.label(type.key):type.key})));
+      if(GregLogicBlocks.setObjectTypes)GregLogicBlocks.setObjectTypes(((readDocument().entities||{}).types||[]).map(type=>({key:type.key,label:window.GregObjects?window.GregObjects.label(type.key):type.key,regions:(type.regions||[]).map(region=>({name:region.name,role:region.role})),animations:(type.animations||[]).map(animation=>({name:animation.name}))})));
+      if(GregLogicBlocks.setPlacements)GregLogicBlocks.setPlacements(((readDocument().entities||{}).placements||[]).map(placement=>({name:placement.name,label:placement.name})));
+      if(GregLogicBlocks.setTileTypes){const doc=readDocument(),native=(window.GregCore&&GregCore.TILE_METADATA||[]).map(tile=>({symbol:tile.glyph,label:tile.label||tile.name||tile.glyph})),custom=((doc.tileset||{}).tiles||[]).map(tile=>({symbol:tile.symbol,label:tile.name||tile.id||tile.symbol}));GregLogicBlocks.setTileTypes(native.concat(custom));}
+      if(GregLogicBlocks.setRoomConnections){const doc=readDocument(),graph=window.GregCore&&GregCore.validateRoomGraph&&doc.layout&&doc.layout.kind==='room_graph'?GregCore.validateRoomGraph(doc):null,connections=graph&&graph.valid?graph.connections:[];GregLogicBlocks.setRoomConnections(connections.map((connection,index)=>({id:connection.id,index:index+1,label:'Door '+(index+1)+' · '+connection.from+' '+connection.fromSide+' → '+connection.to+' '+connection.toSide})));}
       if(!editor){
         const textarea=document.getElementById('map-lua-editor');
         editor=CodeMirror.fromTextArea(textarea,{mode:'lua',lineNumbers:true,indentUnit:2,tabSize:2,indentWithTabs:false,lineWrapping:false,matchBrackets:true,autoCloseBrackets:true,extraKeys:{'Ctrl-Space':()=>document.getElementById('script-api-search').focus()}});

@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 /*
- * Canonical rollback wire envelope, version 2.
+ * Canonical rollback wire envelope, version 5.
  *
  * The public structs below are a logical, caller-owned model. Their native
  * sizeof/offsets are deliberately NOT part of the format. rollback_schema.c
@@ -24,8 +24,8 @@ extern "C" {
  */
 
 #define ROLLBACK_SCHEMA_MAGIC UINT32_C(0x31534252) /* "RBS1" */
-#define ROLLBACK_SCHEMA_VERSION UINT16_C(2)
-#define ROLLBACK_SCHEMA_LAYOUT_ID UINT32_C(0x52530101)
+#define ROLLBACK_SCHEMA_VERSION UINT16_C(5)
+#define ROLLBACK_SCHEMA_LAYOUT_ID UINT32_C(0x52530103)
 
 #define ROLLBACK_SCHEMA_ENTITY_CAPACITY 16u
 #define ROLLBACK_SCHEMA_ENTITY_PAYLOAD_SIZE 0x156u
@@ -37,13 +37,13 @@ extern "C" {
 #define ROLLBACK_SCHEMA_MAX_TILE_CELLS \
     (ROLLBACK_SCHEMA_MAX_TILE_BYTES / ROLLBACK_SCHEMA_TILE_CELL_BYTES)
 
-/* MapScriptSnapshot v6 is embedded as a canonical little-endian subdocument.
+/* MapScriptSnapshot v9 is embedded as a canonical little-endian subdocument.
  * The current 32-bit x86 Windows producer/test bridge obtains these bytes from
  * its packed, little-endian MapScriptSnapshot layout. That is a transitional
  * implementation detail, not a host-struct serialization contract: a portable
  * native adapter must convert every field to this byte layout explicitly. */
-#define ROLLBACK_SCHEMA_MAP_SCRIPT_VERSION UINT16_C(6)
-#define ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES 29708u
+#define ROLLBACK_SCHEMA_MAP_SCRIPT_VERSION UINT16_C(9)
+#define ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES 29828u
 
 enum RollbackSchemaRole {
     ROLLBACK_SCHEMA_ROLE_NONE = 0,

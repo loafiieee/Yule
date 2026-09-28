@@ -20,7 +20,11 @@ int main(void) {
     }
     for (native = 0; native < 2; ++native) {
         assert(opponent_spawn_gate(2,native,1,1,0,0,0,0,1) == 1);
-        assert(opponent_spawn_gate(2,native,1,1,0,0,0,0,0) == native);
+        /* Never prevents a new room-entry spawn while leaving an existing
+         * fighter alive and able to fight in that room. */
+        assert(opponent_spawn_gate(2,native,1,1,0,0,0,0,0) == 0);
+        assert(opponent_spawn_gate(2,native,1,1,5,5,0,0,0) == 1);
+        assert(opponent_spawn_gate(2,native,1,1,0,0,0,1,0) == 1);
         for (respawn = 0; respawn < 2; ++respawn) {
             assert(opponent_spawn_gate(1,native,1,1,0,0,0,0,respawn) == 0);
             assert(opponent_spawn_gate(1,native,1,1,5,4,4,0,respawn) == 0);
@@ -30,6 +34,6 @@ int main(void) {
             assert(opponent_spawn_gate(1,native,1,1,0,0,0,-1,respawn) == 1);
         }
     }
-    puts("PASS: opponent spawn policy preserves initial/leader respawns and match completion");
+    puts("PASS: opponent spawn policy separates new spawns from existing combat");
     return 0;
 }

@@ -32,12 +32,15 @@ if (-not $IconPath) {
     $IconPath = Join-Path $windowsInstallerSource 'assets\steam_icon.png'
 }
 $windowsTemplate = Join-Path $windowsInstallerSource 'install.ps1'
+$linuxTemplate = Join-Path $linuxInstallerSource 'install-linux.sh'
+$linuxPythonTemplate = Join-Path $linuxInstallerSource 'install-linux.py'
 $requiredInstallerSources = @(
     (Join-Path $windowsInstallerSource 'INSTALL.bat'),
     (Join-Path $windowsInstallerSource 'UNINSTALL.bat'),
     $windowsTemplate,
     (Join-Path $windowsInstallerSource 'README.md'),
     (Join-Path $linuxInstallerSource 'install-linux.sh'),
+    $linuxPythonTemplate,
     (Join-Path $linuxInstallerSource 'UNINSTALL-LINUX.sh'),
     (Join-Path $linuxInstallerSource 'README.md')
 )
@@ -205,6 +208,8 @@ Write-Host "channel:   $latestPath (+ $($fileEntries.Count) files under releases
 # Canonical templates live below dist/installer/{windows,linux}. Build in a
 # unique staging directory so embedding artwork never rewrites those sources.
 $tpl = Get-Content -LiteralPath $windowsTemplate -Raw
+$linuxTpl = Get-Content -LiteralPath $linuxTemplate -Raw
+$linuxPythonTpl = Get-Content -LiteralPath $linuxPythonTemplate -Raw
 $slotFiles = [ordered]@{
     grid    = "$ArtworkAppId.png"
     gridp   = "$ArtworkAppId" + 'p.png'
@@ -213,6 +218,7 @@ $slotFiles = [ordered]@{
     logopos = "$ArtworkAppId.json"
 }
 $artLines = @('$Artwork = @{')
+$linuxArtwork = @{}
 foreach ($k in $slotFiles.Keys) {
     $b64 = ''
     if ($slotFiles[$k]) {
@@ -223,6 +229,7 @@ foreach ($k in $slotFiles.Keys) {
             Write-Warning "artwork slot '$k' missing ($p) - shipping empty"
         }
     }
+    $linuxArtwork[$k] = $b64
     $artLines += "    $k = '$b64';"
 }
 $iconB64 = ''
@@ -237,6 +244,11 @@ $artBlock = $artLines -join "`r`n"
 $pattern = '(?s)# ==ARTWORK-BEGIN==.*?# ==ARTWORK-END=='
 if ($tpl -notmatch $pattern) { throw 'installer template is missing the ARTWORK markers' }
 $tpl = [regex]::Replace($tpl, $pattern, "# ==ARTWORK-BEGIN== (embedded by build_release.ps1)`r`n$artBlock`r`n# ==ARTWORK-END==")
+$linuxArtBlock = 'ARTWORK = {' + (($linuxArtwork.Keys | ForEach-Object {
+    '"' + $_ + '": "' + $linuxArtwork[$_] + '"'
+}) -join ', ') + '}'
+if ($linuxPythonTpl -notmatch $pattern) { throw 'Linux Python installer template is missing the ARTWORK markers' }
+$linuxPythonTpl = [regex]::Replace($linuxPythonTpl, $pattern, "# ==ARTWORK-BEGIN== (embedded by build_release.ps1)`n$linuxArtBlock`n# ==ARTWORK-END==")
 
 $stageRoot = Join-Path $OutDir ('.installer-staging-' + [Guid]::NewGuid().ToString('N'))
 $windowsStage = Join-Path $stageRoot 'windows'
@@ -252,7 +264,8 @@ try {
     Copy-Item (Join-Path $windowsInstallerSource 'README.md') $windowsStage -Force
     Copy-Item $updater (Join-Path $windowsStage 'YuleUpdater.exe') -Force
 
-    Copy-Item (Join-Path $linuxInstallerSource 'install-linux.sh') $linuxStage -Force
+    Set-Content -LiteralPath (Join-Path $linuxStage 'install-linux.sh') -Value $linuxTpl
+    Set-Content -LiteralPath (Join-Path $linuxStage 'install-linux.py') -Value $linuxPythonTpl
     Copy-Item (Join-Path $linuxInstallerSource 'UNINSTALL-LINUX.sh') $linuxStage -Force
     Copy-Item (Join-Path $linuxInstallerSource 'README.md') $linuxStage -Force
     Copy-Item $updater (Join-Path $linuxStage 'YuleUpdater.exe') -Force
@@ -268,7 +281,8 @@ try {
     if (Test-Path -LiteralPath $windowsZip) { Remove-Item -LiteralPath $windowsZip -Force }
     if (Test-Path -LiteralPath $linuxZip) { Remove-Item -LiteralPath $linuxZip -Force }
     Compress-Archive -Path (Join-Path $windowsStage '*') -DestinationPath $windowsZip
-    Compress-Archive -Path (Join-Path $linuxStage '*') -DestinationPath $linuxZip
+    & python (Join-Path $toolsDir 'create_linux_installer_zip.py') $linuxStage $linuxZip
+    if ($LASTEXITCODE -ne 0) { throw "Linux installer ZIP creation failed (exit $LASTEXITCODE)" }
 } finally {
     if (Test-Path -LiteralPath $stageRoot) {
         Remove-Item -LiteralPath $stageRoot -Recurse -Force

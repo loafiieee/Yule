@@ -33,10 +33,18 @@ int main(void) {
       "assert(r[1].world_x==1.5 and r[1].world_y==-2.25) r[1].x=999 assert(entity.regions(orb)[1].x==0) "
       "entity.set(orb,{mirrored=true}) assert(entity.get(orb).mirrored and entity.regions(orb)[1].x==-1) "
       "assert(entity.regions(orb)[1].world_x==0.5) assert(not pcall(entity.set,orb,{mirrored=1})) "
-      "entity.set(orb,{mirrored=false}) assert(not entity.get(orb).mirrored) "
+      "entity.set(orb,{mirrored=false,visible=false}) assert(not entity.get(orb).mirrored and not entity.get(orb).visible) "
+      "entity.set(orb,{visible=true}) assert(entity.get(orb).visible) assert(not pcall(entity.set,orb,{visible=1})) "
+      "entity.set(orb,{scale_x=2.5,scale_y=-0.5}) local scaled=entity.get(orb) assert(scaled.scale_x==2.5 and scaled.scale_y==-0.5) "
+      "assert(not pcall(entity.set,orb,{scale_x=0})) assert(entity.get(orb).scale_x==2.5) "
+      "assert(not pcall(entity.set,orb,{scale_y=257})) assert(entity.get(orb).scale_y==-0.5) "
+      "entity.set(orb,{visual_offset_x=2.5,visual_offset_y=-3.25,visual_rotation=-12.5,visual_tint='#12Ab34fF',draw_layer='behind'}) local presented=entity.get(orb) assert(presented.visual_offset_x==2.5 and presented.visual_offset_y==-3.25 and presented.visual_rotation==-12.5 and presented.visual_tint=='#12ab34ff' and presented.draw_layer=='behind') "
+      "entity.set(orb,{visual_tint='default',draw_layer='authored'}) presented=entity.get(orb) assert(presented.visual_tint=='default' and presented.draw_layer=='authored') assert(not pcall(entity.set,orb,{visual_tint='#nope'})) assert(not pcall(entity.set,orb,{draw_layer='middle'})) "
+      "assert(not pcall(entity.set,orb,{visual_rotation=0/0})) assert(not pcall(entity.set,orb,{visual_rotation=360001})) assert(entity.get(orb).visual_rotation==-12.5) "
       "assert(not pcall(entity.regions)) assert(not pcall(entity.regions,orb,orb)) "
       "entity.set(orb,{vy=-0.5}) assert(entity.get(orb).vx==0.25) "
       "assert(not pcall(entity.set,orb,{x=9,bad=1})) assert(entity.get(orb).x==1.5) "
+      "assert(not pcall(entity.spawn,'demo:orb',{values={damage=3}})) assert(#entity.list()==1) "
       "assert(not pcall(entity.set,orb,{x=0/0})) "
       "assert(not pcall(entity.spawn,'unknown',{})) assert(#entity.list()==1) "
       "local old=entity.spawn('demo:orb',{}) assert(entity.remove(old)) "
@@ -69,7 +77,7 @@ int main(void) {
     assert(entity_world_save(world,before,size));
     assert(!entity_world_update(world,update,L));
     assert(entity_world_save(world,after,size) && !memcmp(before,after,size));
-    assert(run(L,"assert(#entity.list()==1 and entity.get(orb).vx==0.25)"));
+    assert(run(L,"local v=entity.get(orb) assert(#entity.list()==1 and v.vx==0.25 and v.scale_x==2.5 and v.scale_y==-0.5 and v.visual_offset_x==2.5 and v.visual_offset_y==-3.25 and v.visual_rotation==-12.5)"));
     {
         EntityWorld* dense=entity_world_create(92);EntityValue v={0};
         assert(dense && entity_world_define_types(dense,&type,1));v.type_id=1;
@@ -93,7 +101,7 @@ int main(void) {
         }
         b.world=world;entity_world_free(dense);
     }
-    assert(run(L,"entity.set(orb,{animation_tick=12,animation_paused=true}) local v=entity.get(orb) assert(v.animation_tick==12 and v.animation_paused) assert(not pcall(entity.set,orb,{animation_tick=-1})) assert(not pcall(entity.set,orb,{animation_tick=0.5})) assert(not pcall(entity.set,orb,{animation_paused=1})) entity.set(orb,{animation_tick=0,animation_paused=false})"));
+    assert(run(L,"entity.set(orb,{animation_tick=12,animation_speed=0.5,animation_paused=true}) local v=entity.get(orb) assert(v.animation_tick==12 and v.animation_speed==0.5 and v.animation_paused) assert(not pcall(entity.set,orb,{animation_tick=-1})) assert(not pcall(entity.set,orb,{animation_tick=0.5})) assert(not pcall(entity.set,orb,{animation_speed=0})) assert(not pcall(entity.set,orb,{animation_speed=257})) assert(not pcall(entity.set,orb,{animation_paused=1})) entity.set(orb,{animation_tick=0,animation_speed=1,animation_paused=false})"));
     lua_close(L);entity_world_free(world);free(before);free(after);
     puts("entity Lua adapter: named types, exact handles, validation and transactional callbacks passed");
     return 0;

@@ -6,19 +6,23 @@ actual executable CALL bytes, and Greggnogg import/export. Live gameplay remains
 required; the game is never launched by these tests.
 
 1. Open a copy of an existing multi-room V1 map in Greggnogg. Leave the map default
-   Native. Set one middle source room to Never and the final source room to Always.
+   Game default. Set one middle source room to Never and the final source room to Always.
    Export and preview it. Confirm saving/reopening preserves both overrides.
 2. Start a fresh local round. Both fighters must spawn normally. Before gaining a
    leader, verify normal death/respawn. Win a fight and enter the Never room:
-   no forced trailing-opponent respawn should occur. A surviving opponent is not
-   deleted; after dying there it should remain absent while the leader advances.
-3. Enter a subsequent Native room: ordinary trailing-opponent respawn must resume.
+   no trailing-opponent spawn should occur, and there should be no spawn/death
+   flash or kill credit. A surviving opponent is not deleted and can still fight;
+   after dying there it should remain absent while the leader advances.
+3. Enter a subsequent Game default room: ordinary trailing-opponent respawn must resume.
    Enter the Always end room: the opponent must respawn, remain present, and be
    hittable with armed and unarmed attacks. Repeat with the other player leading
    and moving through the mirrored side. Verify goals still finish the round.
 4. Set a score target. Reaching it must still stop respawning and finish normally,
    even in an Always room. Restart, switch back to a vanilla map, and confirm its
-   end rooms retain native behavior. Test explicit Native under a map-wide Never.
+   end rooms retain native behavior. Test explicit Game default under a map-wide Never.
+   With map and outer-room settings both Game default, each symmetrical outer room must
+   suppress the opponent. Test both Greggnogg preview and the exported package,
+   including a symmetrical map whose authored starting room is on one side.
 5. Repeat on two clients with identical exported packages and framework builds,
    including deaths, leader reversals, room revisits, restart, and rollback/correction.
    Confirm no desyncs and both players see the same spawn/combat decisions.

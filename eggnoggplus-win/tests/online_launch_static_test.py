@@ -91,7 +91,9 @@ assert "launch_request_preview_packed_target_valid" in IPC
 assert "packed preview data is corrupt or truncated" in PARSER
 assert "preview files cannot contain NUL bytes" in PARSER
 assert '"_greggnogg_preview"' in CUSTOM_MAPS
-assert "if (map->is_preview) continue;" in CUSTOM_MAPS
+manifest_builder = body(CUSTOM_MAPS, "int custom_maps_build_manifest_json")
+assert "map->is_preview" in manifest_builder
+assert "continue;" in manifest_builder
 assert "parse_v2_tileset" not in body(
     CUSTOM_MAPS, "int custom_maps_install_preview_text"
 )

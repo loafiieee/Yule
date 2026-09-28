@@ -35,6 +35,24 @@ def reserve_port() -> int:
             except OSError:
                 continue
             return port
+    # Hyper-V/WSL can reserve large, different chunks of the dynamic TCP and
+    # UDP ranges. In that setup, asking either protocol for port zero may walk
+    # an entire block excluded from the other protocol and the loop above can
+    # fail despite thousands of usable shared ports. Probe a bounded
+    # non-dynamic range as a deterministic fallback.
+    first = 20000
+    span = 25000
+    start = os.getpid() % span
+    for attempt in range(512):
+        port = first + (start + attempt * 7919) % span
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp:
+                tcp.bind(("127.0.0.1", port))
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                    udp.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        return port
     raise RuntimeError("could not reserve a shared TCP/UDP test port")
 
 

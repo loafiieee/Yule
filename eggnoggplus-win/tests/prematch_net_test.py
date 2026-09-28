@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
+import heapq
 import os
 from pathlib import Path
 import re
@@ -13,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +27,31 @@ MSYS_BIN = Path(r"C:\msys64\usr\bin")
 REQUIRED_RUNTIME_DLLS = ("libgcc_s_dw2-1.dll", "libwinpthread-1.dll")
 GOOD_TOKEN = "00112233445566778899aabbccddeefffedcba98765432100123456789abcdef"
 BAD_TOKEN = "ffeeddccbbaa998877665544332211000123456789abcdef0123456789abcdef"
+
+
+@dataclass(frozen=True)
+class RelayImpairment:
+    seed: int
+    loss_percent: int = 0
+    burst_every: int = 0
+    burst_length: int = 0
+    min_delay_ms: int = 0
+    max_delay_ms: int = 0
+    duplicate_every: int = 0
+    bandwidth_bytes_per_second: int = 0
+
+
+RELAY_MATRIX = {
+    "burst": RelayImpairment(seed=0xC0FFEE11, burst_every=61, burst_length=2),
+    "reorder": RelayImpairment(seed=0xC0FFEE22, min_delay_ms=1, max_delay_ms=12),
+    "duplicate": RelayImpairment(seed=0xC0FFEE33, duplicate_every=43),
+    "bandwidth": RelayImpairment(seed=0xC0FFEE44, bandwidth_bytes_per_second=180000),
+    "mixed": RelayImpairment(seed=0xC0FFEE55, loss_percent=2,
+                              burst_every=79, burst_length=2,
+                              min_delay_ms=1, max_delay_ms=7,
+                              duplicate_every=97,
+                              bandwidth_bytes_per_second=240000),
+}
 
 
 def find_gcc() -> str:
@@ -92,10 +120,11 @@ def reserve_port() -> int:
 class UdpPairRelay:
     """Small symmetric relay used to exercise the production relay topology."""
 
-    def __init__(self, port: int, host_port: int, join_port: int) -> None:
+    def __init__(self, port: int, host_port: int, join_port: int,
+                 impairment: RelayImpairment | None = None) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("127.0.0.1", port))
-        self.sock.settimeout(0.1)
+        self.sock.settimeout(0.01 if impairment else 0.1)
         self.host_port = host_port
         self.join_port = join_port
         self.stop_event = threading.Event()
@@ -104,8 +133,85 @@ class UdpPairRelay:
         self.join_packets = 0
         self.forwarded_packets = 0
         self.packet_types: dict[int, int] = {}
-        self.socket_errors: list[str] = []
+        self.socket_errors: dict[str, int] = {}
+        self.icmp_resets = 0
         self.unknown_sources: dict[int, int] = {}
+        self.impairment = impairment
+        self.random_state = [((impairment.seed ^ 0x9E3779B9) or 1),
+                             ((impairment.seed ^ 0x85EBCA6B) or 1)] if impairment else [1, 1]
+        self.direction_count = [0, 0]
+        self.next_send_at = [0.0, 0.0]
+        self.latest_sent_ordinal = [0, 0]
+        self.pending: list[tuple[float, int, bytes, int, int, int]] = []
+        self.serial = 0
+        self.dropped_packets = 0
+        self.delayed_packets = 0
+        self.duplicate_packets = 0
+        self.reordered_packets = 0
+        self.throttled_packets = 0
+
+    def _random(self, direction: int) -> int:
+        value = self.random_state[direction]
+        value ^= (value << 13) & 0xFFFFFFFF
+        value ^= value >> 17
+        value ^= (value << 5) & 0xFFFFFFFF
+        self.random_state[direction] = value & 0xFFFFFFFF
+        return self.random_state[direction]
+
+    def _forward(self, payload: bytes, destination: int, direction: int,
+                 ordinal: int) -> None:
+        self.sock.sendto(payload, ("127.0.0.1", destination))
+        self.forwarded_packets += 1
+        if ordinal < self.latest_sent_ordinal[direction]:
+            self.reordered_packets += 1
+        self.latest_sent_ordinal[direction] = max(
+            self.latest_sent_ordinal[direction], ordinal
+        )
+
+    def _flush_pending(self) -> None:
+        now = time.monotonic()
+        while self.pending and self.pending[0][0] <= now:
+            _, _, payload, destination, direction, ordinal = heapq.heappop(self.pending)
+            self._forward(payload, destination, direction, ordinal)
+
+    def _schedule(self, payload: bytes, destination: int, direction: int) -> None:
+        profile = self.impairment
+        if profile is None:
+            self._forward(payload, destination, direction, 0)
+            return
+        self.direction_count[direction] += 1
+        ordinal = self.direction_count[direction]
+        in_burst = profile.burst_every > 0 and (
+            ordinal % profile.burst_every < profile.burst_length
+        )
+        if in_burst or (profile.loss_percent > 0 and
+                        self._random(direction) % 100 < profile.loss_percent):
+            self.dropped_packets += 1
+            return
+        delay_ms = profile.min_delay_ms
+        if profile.max_delay_ms > delay_ms:
+            delay_ms += self._random(direction) % (
+                profile.max_delay_ms - delay_ms + 1
+            )
+        if delay_ms:
+            self.delayed_packets += 1
+        now = time.monotonic()
+        due = now + delay_ms / 1000.0
+        if profile.bandwidth_bytes_per_second:
+            if self.next_send_at[direction] > due:
+                self.throttled_packets += 1
+            due = max(due, self.next_send_at[direction])
+            self.next_send_at[direction] = (
+                due + len(payload) / profile.bandwidth_bytes_per_second
+            )
+        self.serial += 1
+        heapq.heappush(self.pending, (due, self.serial, payload, destination,
+                                      direction, ordinal))
+        if profile.duplicate_every and ordinal % profile.duplicate_every == 0:
+            self.serial += 1
+            heapq.heappush(self.pending, (due + 0.001, self.serial, payload,
+                                          destination, direction, ordinal))
+            self.duplicate_packets += 1
 
     def start(self) -> None:
         self.thread.start()
@@ -117,6 +223,7 @@ class UdpPairRelay:
 
     def _run(self) -> None:
         while not self.stop_event.is_set():
+            self._flush_pending()
             try:
                 payload, source = self.sock.recvfrom(2048)
             except TimeoutError:
@@ -127,7 +234,11 @@ class UdpPairRelay:
                 # Windows reports an ICMP "port unreachable" from an early
                 # pre-bind datagram as WSAECONNRESET on a later recvfrom().
                 # A long-lived UDP relay must survive that asynchronous error.
-                self.socket_errors.append(str(exc))
+                if getattr(exc, "winerror", None) == 10054:
+                    self.icmp_resets += 1
+                    continue
+                error = str(exc)
+                self.socket_errors[error] = self.socket_errors.get(error, 0) + 1
                 continue
             if source[0] != "127.0.0.1":
                 continue
@@ -148,8 +259,8 @@ class UdpPairRelay:
                     self.packet_types[packet_type] = (
                         self.packet_types.get(packet_type, 0) + 1
                     )
-                self.sock.sendto(payload, ("127.0.0.1", destination))
-                self.forwarded_packets += 1
+                self._schedule(payload, destination,
+                               0 if source[1] == self.host_port else 1)
             else:
                 self.unknown_sources[source[1]] = (
                     self.unknown_sources.get(source[1], 0) + 1
@@ -159,7 +270,12 @@ class UdpPairRelay:
         return (
             f"host_packets={self.host_packets} join_packets={self.join_packets} "
             f"forwarded={self.forwarded_packets} types={self.packet_types} "
-            f"unknown={self.unknown_sources} socket_errors={self.socket_errors}"
+            f"seed={self.impairment.seed if self.impairment else 0:08X} "
+            f"dropped={self.dropped_packets} delayed={self.delayed_packets} "
+            f"duplicates={self.duplicate_packets} reordered={self.reordered_packets} "
+            f"throttled={self.throttled_packets} pending={len(self.pending)} "
+            f"unknown={self.unknown_sources} icmp_resets={self.icmp_resets} "
+            f"socket_errors={self.socket_errors}"
         )
 
 
@@ -252,6 +368,7 @@ def run_pair(
     tick_failure: bool = False,
     prematch_skew: bool = False,
     via_relay: bool = False,
+    relay_impairment: RelayImpairment | None = None,
 ) -> None:
     chaos_case = gameplay_chaos or gameplay_wrap_chaos
     correction_case = gameplay_correction or gameplay_long_correction
@@ -272,11 +389,12 @@ def run_pair(
     relay: UdpPairRelay | None = None
     peer_port_for_host = join_port
     peer_port_for_join = host_port
-    if via_relay:
+    if via_relay or relay_impairment is not None:
         relay_port = reserve_port()
         while relay_port in (host_port, join_port, restart_port):
             relay_port = reserve_port()
-        relay = UdpPairRelay(relay_port, host_port, join_port)
+        relay = UdpPairRelay(relay_port, host_port, join_port,
+                             impairment=relay_impairment)
         relay.start()
         peer_port_for_host = relay_port
         peer_port_for_join = relay_port
@@ -446,6 +564,30 @@ def run_pair(
         finally:
             for trace_path in trace_paths:
                 trace_path.unlink(missing_ok=True)
+    if relay_impairment is not None and relay is not None:
+        if relay.socket_errors:
+            raise AssertionError("relay encountered unexpected socket errors: " + relay.summary())
+        expected = []
+        if relay_impairment.loss_percent or relay_impairment.burst_every:
+            expected.append((relay.dropped_packets, "packet loss"))
+        if relay_impairment.max_delay_ms:
+            expected.append((relay.delayed_packets, "packet delay"))
+        if relay_impairment.duplicate_every:
+            expected.append((relay.duplicate_packets, "packet duplication"))
+        if relay_impairment.bandwidth_bytes_per_second:
+            expected.append((relay.throttled_packets, "bandwidth pressure"))
+        # The per-direction bandwidth queue serializes packets by design;
+        # jitter can delay them without letting a later packet overtake one.
+        if (relay_impairment.max_delay_ms > relay_impairment.min_delay_ms and
+                not relay_impairment.bandwidth_bytes_per_second):
+            expected.append((relay.reordered_packets, "packet reordering"))
+        if any(count == 0 for count, _ in expected):
+            raise AssertionError(
+                "relay profile did not exercise " +
+                ", ".join(name for count, name in expected if count == 0) +
+                ": " + relay.summary()
+            )
+        print("relay impairment:", relay.summary())
 
     repro_records: list[tuple[int, int, bytes, dict[str, str], str]] = []
     if correction_case and host.returncode == 0 and join.returncode == 0:
@@ -709,8 +851,15 @@ def run_pair(
             or join_meta.get("remote_state_layout_id")
                 != host_meta.get("state_layout_id")
             or host_meta.get("deterministic_config_id") in (None, "00000000")
-            or host_meta.get("deterministic_config_id")
-                != join_meta.get("deterministic_config_id")
+            # The repro records each peer's local input delay. Auto delay can
+            # legitimately differ under an asymmetric link, so their local
+            # config IDs need to be present rather than byte-identical.
+            or join_meta.get("deterministic_config_id") in (None, "00000000")
+            or any(
+                host_meta.get(key) != join_meta.get(key)
+                for key in ("max_frame_advantage", "max_prediction",
+                            "x87_control", "mxcsr")
+            )
             or int(host_meta.get("state_size", "0")) < len(host_state)
             or int(join_meta.get("state_size", "0")) < len(join_state)
             or not valid_chaos_metadata(host_meta)
@@ -741,6 +890,12 @@ def run_pair(
         ):
             raise AssertionError(
                 "paired first-desync repro snapshots were incomplete or mismatched\n"
+                f"frame_match={host_frame == join_frame} "
+                f"state_equal={host_state == join_state} "
+                f"state_lengths={len(host_state)}/{len(join_state)} "
+                f"chaos_valid={valid_chaos_metadata(host_meta)}/"
+                f"{valid_chaos_metadata(join_meta)} "
+                f"remote_known={host_remote_known}/{join_remote_known}\n"
                 f"host={host_name} {host_meta}\njoin={join_name} {join_meta}"
             )
         secret_text = "\n".join(
@@ -824,11 +979,11 @@ def run_pair(
                 "correction peers disagreed on the replay transcript identity\n"
                 f"{host_out}\n{join_out}"
             )
-        if join_injected != join_snapshot or not (
+        if not (join_injected <= join_snapshot <= join_injected + 32) or not (
             join_snapshot < join_resume <= join_snapshot + 512
         ):
             raise AssertionError(
-                f"correction did not use the injected divergence/exact bounded horizon\n{host_out}\n{join_out}"
+                f"correction did not use the injected divergence/bounded horizon\n{host_out}\n{join_out}"
             )
         if gameplay_long_correction and (
             join_injected < 600
@@ -1200,6 +1355,57 @@ def main() -> int:
             )
             print("prematch_net_test: symmetric-relay handshake checks passed")
             return 0
+        relay_profile_args = [arg for arg in sys.argv[1:]
+                              if arg.startswith("--relay-profile=")]
+        relay_seed_args = [arg for arg in sys.argv[1:]
+                           if arg.startswith("--relay-seed=")]
+        relay_wrap = "--relay-wrap" in sys.argv[1:]
+        relay_correction = "--relay-correction" in sys.argv[1:]
+        relay_seed = None
+        if relay_wrap and relay_correction:
+            raise ValueError("choose either --relay-wrap or --relay-correction")
+        if relay_wrap and not relay_profile_args and "--relay-matrix-only" not in sys.argv[1:]:
+            raise ValueError("--relay-wrap requires --relay-profile or --relay-matrix-only")
+        if relay_correction and not relay_profile_args and "--relay-matrix-only" not in sys.argv[1:]:
+            raise ValueError("--relay-correction requires --relay-profile or --relay-matrix-only")
+        if relay_seed_args:
+            if len(relay_seed_args) != 1:
+                raise ValueError("provide at most one --relay-seed value")
+            if not relay_profile_args and "--relay-matrix-only" not in sys.argv[1:]:
+                raise ValueError("--relay-seed requires --relay-profile or --relay-matrix-only")
+            relay_seed = int(relay_seed_args[0].split("=", 1)[1], 0)
+            if relay_seed <= 0 or relay_seed > 0xFFFFFFFF:
+                raise ValueError("relay seed must be 1..0xffffffff")
+        if relay_profile_args:
+            name = relay_profile_args[0].split("=", 1)[1]
+            if len(relay_profile_args) != 1 or name not in RELAY_MATRIX:
+                raise ValueError("unknown relay profile; choose " +
+                                 ", ".join(sorted(RELAY_MATRIX)))
+            profile = RELAY_MATRIX[name]
+            if relay_seed is not None:
+                profile = replace(profile, seed=relay_seed)
+            run_pair("join", expect_recovery=False, child_env=child_env,
+                     gameplay_chaos=not relay_wrap and not relay_correction,
+                     gameplay_wrap_chaos=relay_wrap,
+                     gameplay_correction=relay_correction,
+                     relay_impairment=profile)
+            print(f"prematch_net_test: seeded relay {name} "
+                  f"{'wrap ' if relay_wrap else 'correction ' if relay_correction else ''}"
+                  "profile passed")
+            return 0
+        if "--relay-matrix-only" in sys.argv[1:]:
+            for name, profile in RELAY_MATRIX.items():
+                if relay_seed is not None:
+                    profile = replace(profile, seed=relay_seed)
+                run_pair("join", expect_recovery=False, child_env=child_env,
+                         gameplay_chaos=not relay_wrap and not relay_correction,
+                         gameplay_wrap_chaos=relay_wrap,
+                         gameplay_correction=relay_correction,
+                         relay_impairment=profile)
+            print("prematch_net_test: seeded relay " +
+                  ("wrap " if relay_wrap else
+                   "correction " if relay_correction else "") + "matrix passed")
+            return 0
         if "--skew-only" in sys.argv[1:]:
             run_pair(
                 "join",
@@ -1402,6 +1608,10 @@ def main() -> int:
             child_env=child_env,
             gameplay_wrap_chaos=True,
         )
+        for name, profile in RELAY_MATRIX.items():
+            print(f"seeded relay profile: {name}")
+            run_pair("join", expect_recovery=False, child_env=child_env,
+                     gameplay_chaos=True, relay_impairment=profile)
         run_pair(
             "join",
             expect_recovery=False,

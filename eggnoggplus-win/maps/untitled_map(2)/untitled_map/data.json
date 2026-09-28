@@ -1,0 +1,170 @@
+{
+  "format": "eggnogg-map/v2",
+  "name": "Untitled Map",
+  "author": "loaf",
+  "description": "",
+  "sort_order": 0,
+  "rules": {
+    "mode": "swords",
+    "round_end_rooms": "any",
+    "score_target": null,
+    "armed_respawn_limit": 4,
+    "eggnogg_color": [
+      0,
+      0.857,
+      0.78
+    ]
+  },
+  "layout": {
+    "kind": "room_graph",
+    "room_format": "variable_cells",
+    "start": "center",
+    "nodes": [
+      {
+        "id": "left_1",
+        "room": "outer_1",
+        "x": 0,
+        "y": 0,
+        "mirror_x": false,
+        "appearance": "mirror"
+      },
+      {
+        "id": "center",
+        "room": "center",
+        "x": 33,
+        "y": 0,
+        "mirror_x": false,
+        "appearance": "primary"
+      },
+      {
+        "id": "right_1",
+        "room": "outer_1",
+        "x": 66,
+        "y": 0,
+        "mirror_x": true,
+        "appearance": "primary"
+      }
+    ],
+    "connections": [
+      {
+        "id": "door_left_1_right_center_left",
+        "from": "left_1",
+        "from_side": "right",
+        "from_offset": 0,
+        "to": "center",
+        "to_side": "left",
+        "to_offset": 0,
+        "span": 12,
+        "one_way": false
+      },
+      {
+        "id": "door_center_right_right_1_left",
+        "from": "center",
+        "from_side": "right",
+        "from_offset": 0,
+        "to": "right_1",
+        "to_side": "left",
+        "to_offset": 0,
+        "span": 12,
+        "one_way": false
+      }
+    ]
+  },
+  "defaults": {
+    "room": {
+      "ambient": "none"
+    }
+  },
+  "rooms": {
+    "center": {
+      "ambient": "dust",
+      "appearance": {
+        "primary": {
+          "fg1": [
+            0.178,
+            0.319,
+            0.422
+          ],
+          "fg2": [
+            0.498039,
+            0.529412,
+            0.858824
+          ],
+          "bg1": [
+            0.025,
+            0.031,
+            0.21
+          ],
+          "bg2": [
+            0.012,
+            0.044,
+            0.044
+          ],
+          "water": [
+            0.580392,
+            0.333333,
+            0.819608
+          ],
+          "water_hi": [
+            0.941176,
+            0.843137,
+            0.713725
+          ],
+          "special": [
+            0.603922,
+            0.231373,
+            0.819608
+          ],
+          "special2": [
+            0.980392,
+            0.568627,
+            0.854902
+          ]
+        }
+      },
+      "opponent_spawn": "never",
+      "spawn": {
+        "markers": [
+          {
+            "x": 15,
+            "y": 5,
+            "kind": "deny"
+          }
+        ]
+      }
+    },
+    "outer_1": {
+      "ambient": "flies",
+      "appearance": {
+        "primary": {
+          "fg1": [
+            0.005,
+            0.005,
+            0.005
+          ],
+          "fg2": [
+            0.114,
+            0.114,
+            0.261
+          ],
+          "bg1": [
+            0.031,
+            0.044,
+            0.082
+          ],
+          "bg2": [
+            0.044,
+            0,
+            0.332
+          ]
+        }
+      }
+    }
+  },
+  "id": "untitled_map",
+  "tileset": {
+    "tiles": []
+  },
+  "particles": [],
+  "ambiances": []
+}

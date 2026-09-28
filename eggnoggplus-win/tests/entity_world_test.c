@@ -6,7 +6,7 @@
 typedef struct UpdateFixture { EntityHandle first, second, replacement; int calls, mode; } UpdateFixture;
 static int update_fixture(EntityWorld* w,EntityHandle h,void* user) {
     UpdateFixture* f=user;
-    EntityValue v={1,0,0,2,0,0,0};
+    EntityValue v={.type_id=1,.vx=2};
     f->calls++;
     if(h==f->first) {
         if(f->mode==2) { (void)entity_world_step(w);return 1; }
@@ -19,7 +19,7 @@ static int update_fixture(EntityWorld* w,EntityHandle h,void* user) {
 }
 static void test_update(void) {
     EntityWorld* w=entity_world_create(3);
-    EntityValue v={1,0,0,1,0,0,0},read;
+    EntityValue v={.type_id=1,.vx=1},read;
     UpdateFixture f={0};
     unsigned char *before,*after;size_t size;
     f.first=entity_world_spawn(w,&v);f.second=entity_world_spawn(w,&v);
@@ -39,7 +39,7 @@ static void test_update(void) {
 static void test_regions(void) {
     EntityWorld* a=entity_world_create(4), *b=entity_world_create(4), *different=entity_world_create(4);
     EntityType types[2]={0};
-    EntityValue v={1,0,0,0,0,0,0}; EntityHandle first,second;
+    EntityValue v={.type_id=1}; EntityHandle first,second;
     EntityContact contacts[2], sentinel[2];
     unsigned char *snapshot,*after; size_t size;
     types[0].id=1;types[0].region_count=2;
@@ -76,21 +76,27 @@ static void test_regions(void) {
     free(snapshot);free(after);entity_world_free(a);entity_world_free(b);entity_world_free(different);
 }
 static void test_animation(void) {
-    EntityWorld* w=entity_world_create(2);EntityValue v={1,0,0,1,0,0,0},read;
+    EntityWorld* w=entity_world_create(2);EntityValue v={.type_id=1,.vx=1},read;
     EntityHandle first=entity_world_spawn(w,&v);assert(entity_world_step(w));
     EntityHandle second=entity_world_spawn(w,&v);
     assert(entity_world_read(w,first,&read) && read.animation_tick==1);
+    read.visual_rotation=-3200;assert(entity_world_write(w,first,&read));
     assert(entity_world_read(w,second,&read) && read.animation_tick==0);
     read.flags|=ENTITY_FLAG_ANIMATION_PAUSED;assert(entity_world_write(w,second,&read));
+    read.flags|=UINT32_C(0x80000000);assert(!entity_world_write(w,second,&read));read.flags&=~UINT32_C(0x80000000);
     size_t size=entity_world_snapshot_size(w);unsigned char *before=malloc(size),*after=malloc(size);
     assert(entity_world_save(w,before,size));assert(entity_world_step(w));
     assert(entity_world_read(w,second,&read) && read.animation_tick==0 && read.x==1);
-    assert(entity_world_load(w,before,size));assert(entity_world_step(w));assert(entity_world_save(w,after,size));
+    assert(entity_world_load(w,before,size));assert(entity_world_read(w,first,&read)&&read.visual_rotation==-3200);assert(entity_world_step(w));assert(entity_world_save(w,after,size));
     assert(entity_world_load(w,before,size));assert(entity_world_step(w));assert(entity_world_save(w,before,size));assert(!memcmp(before,after,size));
-    assert(entity_world_read(w,first,&read));read.animation_tick=ENTITY_ANIMATION_TICK_MAX;
+    assert(entity_world_read(w,first,&read));read.animation_tick=0;read.animation_rate=128;read.animation_subtick=0;assert(entity_world_write(w,first,&read));
+    assert(entity_world_step(w));assert(entity_world_read(w,first,&read)&&read.animation_tick==0&&read.animation_subtick==128);
+    assert(entity_world_step(w));assert(entity_world_read(w,first,&read)&&read.animation_tick==1&&read.animation_subtick==0);
+    assert(entity_world_read(w,first,&read));read.animation_tick=ENTITY_ANIMATION_TICK_MAX;read.animation_rate=256;
     assert(entity_world_write(w,first,&read));assert(entity_world_save(w,before,size));
     assert(!entity_world_step(w));assert(entity_world_save(w,after,size));assert(!memcmp(before,after,size));
     read.animation_tick++;assert(!entity_world_write(w,first,&read));
+    read.animation_tick=0;read.visual_rotation=INT32_C(92160001);assert(!entity_world_write(w,first,&read));
     before[4]=1;assert(!entity_world_load(w,before,size));
     free(before);free(after);entity_world_free(w);
 }
@@ -99,7 +105,7 @@ int main(void) {
     EntityWorld* a=entity_world_create(4), *b=entity_world_create(4);
     test_regions();
     test_update();
-    EntityValue value={1,256,512,3,-2,0,0}, read={0};
+    EntityValue value={.type_id=1,.x=256,.y=512,.vx=3,.vy=-2}, read={0};
     EntityHandle h, reused, other;
     size_t size=entity_world_snapshot_size(a);
     unsigned char *baseline=malloc(size), *future=malloc(size), *replay=malloc(size), *bad=malloc(size);

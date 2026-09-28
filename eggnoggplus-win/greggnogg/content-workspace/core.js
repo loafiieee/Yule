@@ -37,23 +37,29 @@
     if (!types.length) fail('types', 'Add at least one entity type.');
     types.forEach((t, i) => {
       const p = 'types[' + i + ']';
-      if (!object(t, p, ['key', 'regions', 'visual'])) return;
+      if (!object(t, p, ['key', 'regions', 'visual', 'animations'])) return;
       name(t.key, p + '.key', true);
       if (keys.has(t.key)) fail(p + '.key', 'Duplicate type key.');
       keys.add(t.key);
-      const ids = new Set();
+      const ids = new Set(), regionNames = new Set();
       array(t.regions, p + '.regions', 16).forEach((r, j) => {
         const q = p + '.regions[' + j + ']';
-        if (!object(r, q, ['id', 'role', 'layer', 'mask', 'x', 'y', 'width', 'height'])) return;
+        if (!object(r, q, ['id', 'name', 'role', 'layer', 'mask', 'x', 'y', 'width', 'height'])) return;
         number(r.id, q + '.id', 1, 4294967295, true);
         if (ids.has(r.id)) fail(q + '.id', 'Duplicate region ID.');
         ids.add(r.id);
+        if (r.name !== undefined) {
+          if (typeof r.name !== 'string' || r.name.length < 1 || r.name.length > 32 || !/^[a-z0-9_.-]+$/.test(r.name))
+            fail(q + '.name', 'Use 1 to 32 lowercase letters, numbers, _, - or .');
+          else if (regionNames.has(r.name)) fail(q + '.name', 'Duplicate detection-area name.');
+          else regionNames.add(r.name);
+        }
         if (!roles.includes(r.role)) fail(q + '.role', 'Choose body, sensor, hitbox or hurtbox.');
         ['layer', 'mask'].forEach(k => number(r[k], q + '.' + k, 0, 4294967295, true));
         ['x', 'y'].forEach(k => number(r[k], q + '.' + k, -bound, bound, false, true));
         ['width', 'height'].forEach(k => number(r[k], q + '.' + k, 1 / 256, bound, false));
       });
-      if (t.visual !== undefined && object(t.visual, p + '.visual', ['sheet', 'sprite', 'frames', 'frame_ticks', 'offset_x', 'offset_y', 'scale_x', 'scale_y', 'tint', 'layer'])) {
+      if (t.visual !== undefined && object(t.visual, p + '.visual', ['sheet', 'sprite', 'frames', 'frame_ticks', 'mode', 'offset_x', 'offset_y', 'scale_x', 'scale_y', 'rotation', 'tint', 'layer'])) {
         const v = t.visual, q = p + '.visual';
         if (!builtins.includes(v.sheet)) {
           if (typeof v.sheet !== 'string' || v.sheet.length > 127 || v.sheet.startsWith('.') || !/^[A-Za-z0-9_.-]+\.png$/.test(v.sheet)) fail(q + '.sheet', 'Choose a built-in sheet or direct .png filename.');
@@ -62,31 +68,59 @@
         number(v.sprite, q + '.sprite', 0, 2147483647, true);
         number(v.frames, q + '.frames', 1, 65536, true, true);
         number(v.frame_ticks, q + '.frame_ticks', 1, 1000000, true, true);
+        if(v.mode!==undefined&&!['loop','once','ping_pong'].includes(v.mode))fail(q+'.mode','Choose loop, once, or ping_pong.');
         if (v.sprite + (v.frames === undefined ? 1 : v.frames) - 1 > 2147483647) fail(q, 'Animation exceeds the sprite index range.');
         ['offset_x', 'offset_y'].forEach(k => number(v[k], q + '.' + k, -bound, bound, false, true));
         ['scale_x', 'scale_y'].forEach(k => {
           number(v[k], q + '.' + k, -256, 256, false, true);
           if (v[k] !== undefined && Math.floor(Math.abs(v[k]) * 256 + 0.5) === 0) fail(q + '.' + k, 'Scale must not round to zero.');
         });
+        number(t.visual.rotation,p+'.visual.rotation',-360000,360000,false,true);
         number(v.layer, q + '.layer', 0, 1, true, true);
         if (v.tint !== undefined && (typeof v.tint !== 'string' || !/^#[0-9a-f]{8}$/i.test(v.tint))) fail(q + '.tint', 'Use #RRGGBBAA.');
       }
+      const animationNames=new Set();
+      array(t.animations===undefined?[]:t.animations,p+'.animations',32).forEach((animation,j)=>{
+        const q=p+'.animations['+j+']';if(!object(animation,q,['name','sprite','frames','frame_ticks','mode']))return;
+        if(typeof animation.name!=='string'||animation.name.length<1||animation.name.length>32||!/^[a-z0-9_.-]+$/.test(animation.name))
+          fail(q+'.name','Use 1 to 32 lowercase letters, numbers, _, - or .');
+        if(animation.name==='default')fail(q+'.name','The name default is reserved for the main animation.');
+        if(animationNames.has(animation.name))fail(q+'.name','Duplicate animation name.');animationNames.add(animation.name);
+        number(animation.sprite,q+'.sprite',0,2147483647,true);
+        number(animation.frames,q+'.frames',1,65536,true,true);number(animation.frame_ticks,q+'.frame_ticks',1,1000000,true,true);
+        if(animation.mode!==undefined&&!['loop','once','ping_pong'].includes(animation.mode))fail(q+'.mode','Choose loop, once, or ping_pong.');
+        if(animation.sprite+(animation.frames===undefined?1:animation.frames)-1>2147483647)fail(q,'Animation exceeds the sprite index range.');
+      });
+      if(t.animations!==undefined&&!t.visual)fail(p+'.animations','Named animations require an object picture.');
     });
     const names = new Set();
     array(doc.placements, 'placements', 4096).forEach((v, i) => {
       const p = 'placements[' + i + ']';
-      if (!object(v, p, ['name', 'type', 'x', 'y', 'vx', 'vy', 'room', 'side'])) return;
+      if (!object(v, p, ['name', 'type', 'x', 'y', 'vx', 'vy', 'scale_x', 'scale_y', 'visual_offset_x', 'visual_offset_y', 'visual_rotation', 'visual_tint', 'draw_layer', 'animation', 'visible', 'room', 'instance', 'side'])) return;
       name(v.name, p + '.name', false); name(v.type, p + '.type', true);
       if(v.room!==undefined) {
         if(doc.schema!==2) fail(p+'.room','Room placement requires schema 2.');
         if(typeof v.room!=='string' || !v.room.length || v.room.length>96 || v.room.includes('\0')) fail(p+'.room','Expected a source room name.');
         warnings.push({path:p+'.room',message:'Room placements need an attached map to validate expansion.'});
       }
+      if(v.instance!==undefined) {
+        if(doc.schema!==2) fail(p+'.instance','Placed-room targeting requires schema 2.');
+        if(typeof v.instance!=='string' || !v.instance.length || v.instance.length>96 || v.instance.includes('\0')) fail(p+'.instance','Expected a placed room name.');
+        warnings.push({path:p+'.instance',message:'Placed-room targets need an attached map to validate.'});
+      }
+      if(v.instance!==undefined && v.side!==undefined) fail(p+'.side','A placed-room target does not use source/mirrored side expansion.');
       if(v.side!==undefined && (doc.schema!==2 || v.room===undefined || !['source','mirrored','both'].includes(v.side))) fail(p+'.side','Use source, mirrored or both on a schema 2 room placement.');
       if (names.has(v.name)) fail(p + '.name', 'Duplicate placement name.');
       names.add(v.name);
       if (!keys.has(v.type)) fail(p + '.type', 'This type does not exist.');
+      if (v.visible !== undefined && typeof v.visible !== 'boolean') fail(p + '.visible', 'Expected true or false.');
       ['x', 'y', 'vx', 'vy'].forEach(k => number(v[k], p + '.' + k, -bound, bound, false, true));
+      ['visual_offset_x','visual_offset_y'].forEach(k=>number(v[k],p+'.'+k,-bound,bound,false,true));
+      number(v.visual_rotation,p+'.visual_rotation',-360000,360000,false,true);
+      ['scale_x','scale_y'].forEach(k=>{number(v[k],p+'.'+k,-256,256,false,true);if(v[k]!==undefined&&Math.floor(Math.abs(v[k])*256+0.5)===0)fail(p+'.'+k,'Scale must not round to zero.');});
+      if(v.visual_tint!==undefined&&(typeof v.visual_tint!=='string'||!/^#[0-9a-f]{8}$/i.test(v.visual_tint)))fail(p+'.visual_tint','Use #RRGGBBAA.');
+      if(v.draw_layer!==undefined&&!['behind','front'].includes(v.draw_layer))fail(p+'.draw_layer','Choose behind or front.');
+      if(v.animation!==undefined){const type=types.find(type=>type.key===v.type),names=new Set(['default',...((type&&type.animations)||[]).map(animation=>animation.name)]);if(typeof v.animation!=='string'||!names.has(v.animation))fail(p+'.animation','Choose an animation from this object design.');}
     });
     if (Array.isArray(doc.placements) && doc.placements.length > doc.capacity) fail('capacity', 'Capacity is smaller than the placement count.');
     return {errors, warnings};
@@ -108,7 +142,7 @@
     return text;
   }
   function create() {
-    return {schema:1, capacity:128, types:[{key:'demo:orb', regions:[{id:1, role:'body', layer:1, mask:1, x:-4, y:-4, width:8, height:8}], visual:{sheet:'builtin:tiles', sprite:4}}], placements:[{name:'first_orb', type:'demo:orb', x:48, y:64, vx:0.5}]};
+    return {schema:1, capacity:128, types:[{key:'demo:orb', regions:[{id:1, name:'body', role:'body', layer:1, mask:1, x:-4, y:-4, width:8, height:8}], visual:{sheet:'builtin:tiles', sprite:4}}], placements:[{name:'first_orb', type:'demo:orb', x:48, y:64, vx:0.5}]};
   }
   function renameType(doc, index, key) {
     const next = clone(doc), old = next.types[index].key;
@@ -127,25 +161,25 @@
     const sheets = Object.create(null);
     function geometry(value, fallback) {
       const out = {};
-      for (const [key,max] of [['cell_w',512],['cell_h',512],['padding',64]]) {
+      for (const [key,max] of [['cell_w',512],['cell_h',512],['padding',64],['source_x',8191],['source_y',8191],['source_w',8192],['source_h',8192]]) {
         const n = value[key] === undefined ? fallback[key] : value[key];
-        if (!Number.isInteger(n) || n < (key === 'padding' ? 0 : 1) || n > max) throw Error('Invalid tileset ' + key + '.');
+        if (!Number.isInteger(n) || n < (key==='cell_w'||key==='cell_h'?1:0) || n > max) throw Error('Invalid tileset ' + key + '.');
         out[key] = n;
       }
       return out;
     }
-    const defaults = geometry(t,{cell_w:16,cell_h:16,padding:0});
+    const defaults = geometry(t,{cell_w:16,cell_h:16,padding:0,source_x:0,source_y:0,source_w:0,source_h:0});
     function add(sheet,g) {
       if (typeof sheet !== 'string' || !sheet) throw Error('Missing sprite_sheet.');
       if (sheet.startsWith('builtin:')) return;
       if (sheet.length > 127 || sheet.startsWith('.') || !/^[A-Za-z0-9_.-]+\.png$/.test(sheet)) throw Error('Expected a direct PNG filename.');
       if (!sheets[sheet]) sheets[sheet] = g;
-      else if (['cell_w','cell_h','padding'].some(k => sheets[sheet][k] !== g[k])) sheets[sheet].ambiguous = true;
+      else if (['cell_w','cell_h','padding','source_x','source_y','source_w','source_h'].some(k => sheets[sheet][k] !== g[k])) sheets[sheet].ambiguous = true;
     }
     if (t.sprite_sheet !== undefined) add(t.sprite_sheet,defaults);
     if(t.sheets!==undefined) {
       if(!Array.isArray(t.sheets)||t.sheets.length>16)throw Error('Expected at most 16 picture sheets.');
-      t.sheets.forEach(entry=>{if(!entry||typeof entry!=='object'||Array.isArray(entry))throw Error('Invalid picture sheet.');add(entry.sprite_sheet,geometry(entry,{cell_w:16,cell_h:16,padding:0}));});
+      t.sheets.forEach(entry=>{if(!entry||typeof entry!=='object'||Array.isArray(entry))throw Error('Invalid picture sheet.');add(entry.sprite_sheet,geometry(entry,{cell_w:16,cell_h:16,padding:0,source_x:0,source_y:0,source_w:0,source_h:0}));});
     }
     if (t.tiles !== undefined && !Array.isArray(t.tiles)) throw Error('tileset.tiles must be an array.');
     (t.tiles || []).forEach(tile => {
@@ -161,22 +195,68 @@
       if (index >= 256 || r.x+8 > image.width || r.y+8 > image.height) throw Error('Sprite is outside the glyph sheet.');
       return r;
     }
-    const g = builtins.includes(sheet) ? {cell_w:16,cell_h:16,padding:0} : sheets && sheets[sheet];
+    const g = builtins.includes(sheet) ? {cell_w:16,cell_h:16,padding:0,source_x:0,source_y:0,source_w:0,source_h:0} : sheets && sheets[sheet];
     if (!g) throw Error('Import data.json to resolve the grid for ' + sheet + '.');
     if (g.ambiguous) throw Error(sheet + ' has multiple grid declarations; entities need one unambiguous sheet.');
-    const {cell_w:w,cell_h:h,padding:p} = g;
-    const columns=(image.width+p)/(w+p), rows=(image.height+p)/(h+p);
-    if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 1 || rows < 1) throw Error('PNG dimensions do not match the declared grid.');
+    const {cell_w:w,cell_h:h,padding:p}=g,x=g.source_x||0,y=g.source_y||0;
+    const regionW=g.source_w||image.width-x,regionH=g.source_h||image.height-y;
+    if(x>=image.width||y>=image.height||regionW>image.width-x||regionH>image.height-y)throw Error('PNG source rectangle is outside the image.');
+    const columns=(regionW+p)/(w+p), rows=(regionH+p)/(h+p);
+    if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 1 || rows < 1) throw Error('PNG source rectangle dimensions do not match the declared grid.');
     if (columns*rows > 8192 || index >= columns*rows) throw Error('Sprite is outside the declared grid or sheet limit.');
-    return {x:(index%columns)*(w+p),y:Math.floor(index/columns)*(h+p),w,h};
+    return {x:x+(index%columns)*(w+p),y:y+Math.floor(index/columns)*(h+p),w,h};
   }
   function expandPlacements(doc,rooms) {
     const result=[],names=new Set(), q=v=>{v=v===undefined?0:v;return (v<0?-Math.floor(-v*256+0.5):Math.floor(v*256+0.5))/256;};
+    const mapDocument=rooms&&!Array.isArray(rooms)?(rooms.document||rooms):null;
+    const roomList=mapDocument?(mapDocument.rooms||[]):(rooms||[]);
+    const specs=roomList.map(room=>{
+      if(typeof room==='string')return {id:room,width:33,height:12};
+      const grid=room&&Array.isArray(room.grid)?room.grid:[];
+      const first=grid.length?(Array.isArray(grid[0])?grid[0]:String(grid[0]||'')):[];
+      return {id:room&&room.id,width:first.length||33,height:grid.length||12};
+    });
+    const ids=specs.map(room=>room.id);
+    const graph=mapDocument&&mapDocument.layout&&mapDocument.layout.kind==='room_graph'?mapDocument.layout:null;
+    const graphNodes=graph&&Array.isArray(graph.nodes)?graph.nodes:[];
+    const graphBounds=graphNodes.reduce((bounds,node)=>{
+      const index=ids.indexOf(node&&node.room),spec=index>=0?specs[index]:null;
+      if(!spec||!Number.isInteger(node.x)||!Number.isInteger(node.y))return bounds;
+      bounds.minX=Math.min(bounds.minX,node.x);bounds.minY=Math.min(bounds.minY,node.y);
+      return bounds;
+    },{minX:Infinity,minY:Infinity});
+    if(graph&&(!graphNodes.length||!Number.isFinite(graphBounds.minX)||!Number.isFinite(graphBounds.minY)))throw Error('Invalid or empty room_graph layout.');
+    const roomStart=(index,mirrored)=>{
+      let start=0;
+      if(!mirrored){for(let i=index+1;i<specs.length;i++)start+=specs[i].width;}
+      else{for(let i=1;i<specs.length;i++)start+=specs[i].width;start+=specs[0].width;for(let i=1;i<index;i++)start+=specs[i].width;}
+      return start*16;
+    };
     for(const p of doc.placements) {
-      const index=p.room===undefined?-1:rooms?rooms.indexOf(p.room):-1;
+      const index=p.room===undefined?-1:ids.indexOf(p.room);
       if(p.room!==undefined && index<0) throw Error('Unknown room or no attached map: '+p.room);
       const x=q(p.x),y=q(p.y),side=p.side||'both';
-      if(index>=0 && (x<0||x>528||y<0||y>192)) throw Error('Room coordinates must be within 528 by 192 pixels.');
+      if(graph) {
+        if(p.room!==undefined&&!p.instance)throw Error('Room-graph placements must name a placed room instance.');
+        if(p.instance!==undefined) {
+          const node=graphNodes.find(entry=>entry&&entry.id===p.instance);
+          if(!node)throw Error('Unknown placed room instance: '+p.instance);
+          const sourceIndex=ids.indexOf(node.room),spec=sourceIndex>=0?specs[sourceIndex]:null;
+          if(!spec)throw Error('Placed room '+p.instance+' references an unknown room design.');
+          if(p.room!==undefined&&p.room!==node.room)throw Error('Placement room does not match placed room instance '+p.instance+'.');
+          if(p.side!==undefined)throw Error('Placed-room targets do not use source/mirrored side expansion.');
+          const roomWidth=spec.width*16,roomHeight=spec.height*16,mirrored=node.mirrorX===true||node.mirror_x===true;
+          if(x<0||x>roomWidth||y<0||y>roomHeight)throw Error('Room coordinates must be within '+roomWidth+' by '+roomHeight+' pixels.');
+          const name=p.name;
+          if(name.length>96||names.has(name))throw Error('Duplicate or too-long expanded placement name: '+name);
+          names.add(name);
+          result.push({...p,name,authoredName:p.name,mirrored,x:(node.x-graphBounds.minX)*16+(mirrored?roomWidth-x:x),y:(node.y-graphBounds.minY)*16+y,vx:q(p.vx)*(mirrored?-1:1),vy:q(p.vy)});
+          if(result.length>doc.capacity)throw Error('Expanded placements exceed capacity.');
+          continue;
+        }
+      }
+      const roomWidth=index>=0?specs[index].width*16:528,roomHeight=index>=0?specs[index].height*16:192;
+      if(index>=0 && (x<0||x>roomWidth||y<0||y>roomHeight)) throw Error('Room coordinates must be within '+roomWidth+' by '+roomHeight+' pixels.');
       if(index===0 && side==='mirrored') throw Error('The center room has no mirrored copy.');
       for(const mirrored of [false,true]) {
         if(index<0 && mirrored) continue;
@@ -184,7 +264,7 @@
         const name=p.name+(mirrored?'.mirror':'');
         if(name.length>96 || names.has(name)) throw Error('Duplicate or too-long expanded placement name: '+name);
         names.add(name);
-        result.push({...p,name,authoredName:p.name,mirrored,x:index<0?x:(rooms.length-1+(mirrored?index:-index))*528+(mirrored?528-x:x),y,vx:q(p.vx)*(mirrored?-1:1),vy:q(p.vy)});
+        result.push({...p,name,authoredName:p.name,mirrored,x:index<0?x:roomStart(index,mirrored)+(mirrored?roomWidth-x:x),y,vx:q(p.vx)*(mirrored?-1:1),vy:q(p.vy)});
         if(result.length>doc.capacity) throw Error('Expanded placements exceed capacity.');
       }
     }
@@ -223,7 +303,11 @@
     // Unchanged Lua retains original bytes, including non-UTF8 comments.
     const script=direct['map.lua']?new TextDecoder().decode(direct['map.lua']):'';
     const doc=direct['entities.json']?parse(enc.decode(direct['entities.json'])):create();
-    const result={files:retained,folder:Greg.normalizeFolderId(parsed.document.id),script,doc,atlasText,sheets,rooms:parsed.document.layout.order.slice(),document:parsed.document};
+    /* room_graph intentionally has no serialized layout.order. Object design
+     * works with source-room designs, so derive the list from parsed rooms for
+     * both layout kinds instead of assuming the legacy mirrored layout. */
+    const sourceRooms=Array.isArray(parsed.document.rooms)?parsed.document.rooms.map(room=>room.id):[];
+    const result={files:retained,folder:Greg.normalizeFolderId(parsed.document.id),script,doc,atlasText,sheets,rooms:sourceRooms,document:parsed.document};
     validateMapEntities(result,doc);
     return result;
   }
@@ -232,7 +316,7 @@
     let script='';
     if(kind==='custom') delete type.visual;
     if(kind==='pad') {
-      type.regions=[{id:1,role:'sensor',layer:1,mask:1,x:-16,y:-3,width:32,height:6}];
+      type.regions=[{id:1,name:'trigger',role:'sensor',layer:1,mask:1,x:-16,y:-3,width:32,height:6}];
       Object.assign(type.visual,{scale_x:2,scale_y:0.375,tint:'#80C0FFFF'});
       script='-- Greggnogg object begin '+key+'\nentity.on_update('+JSON.stringify(key)+', function(handle)\n'+
         '    local launch_speed = 4\n    local players = map.players()\n'+
@@ -256,12 +340,13 @@
     const signature=[137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82];
     if(signature.some((n,i)=>bytes[i]!==n))throw Error('Choose a PNG image.');
     const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),w=v.getUint32(16),h=v.getUint32(20);
-    if(!w||!h||w>512||h>512)throw Error('Use a picture at most 512 by 512 pixels. Sprite sheets can be configured in advanced settings.');
+    if(!w||!h||w>8192||h>8192)throw Error('Use a picture at most 8192 by 8192 pixels.');
     let base=String(name).replace(/\.png$/i,'').toLowerCase().replace(/[^a-z0-9_-]+/g,'_').slice(0,100)||'picture',filename=base+'.png',i=2;
     const used=new Set(Object.keys(map.files).map(n=>n.toLowerCase()));while(used.has(filename))filename=base+'_'+i+++'.png';
     const data=JSON.parse(new TextDecoder().decode(map.files['data.json']));data.tileset=data.tileset||{tiles:[]};data.tileset.sheets=data.tileset.sheets||[];
     if(data.tileset.sheets.length>=16)throw Error('This map already has 16 picture sheets. Add pictures to an existing sheet in advanced settings.');
-    data.tileset.sheets.push({sprite_sheet:filename,cell_w:w,cell_h:h,padding:0});
+    const cellW=Math.min(w,512),cellH=Math.min(h,512);
+    data.tileset.sheets.push({sprite_sheet:filename,cell_w:cellW,cell_h:cellH,padding:0,source_x:0,source_y:0,source_w:cellW,source_h:cellH});
     const files=Object.assign(Object.create(null),map.files);files[filename]=bytes.slice();files['data.json']=new TextEncoder().encode(JSON.stringify(data,null,2)+'\n');
     return {map:openMap(files),filename};
   }
@@ -274,7 +359,7 @@
   }
   function validateMapEntities(map,doc) {
     serialize(doc);
-    expandPlacements(doc,map.rooms);
+    expandPlacements(doc,map.document || map.rooms);
     doc.types.forEach(t=>{
       if (!t.visual || builtins.includes(t.visual.sheet)) return;
       const v=t.visual, bytes=map.files[v.sheet];

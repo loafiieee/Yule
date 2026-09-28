@@ -20,12 +20,12 @@ PLAYER_SIZE = 0x15C
 THING_SIZE = 0x15C
 
 for contract in (
-    "sizeof(FullStateBlobHeader) == 0x25790u",
+    "sizeof(FullStateBlobHeader) == 0x25808u",
     "offsetof(FullStateBlobHeader, map_script_state) == 252u",
-    "offsetof(FullStateBlobHeader, transient_game_state) == 29960u",
-    "offsetof(FullStateBlobHeader, thing_info_state) == 31112u",
-    "offsetof(FullStateBlobHeader, room_info_state) == 31304u",
-    "offsetof(FullStateBlobHeader, particle_state) == 48780u",
+    "offsetof(FullStateBlobHeader, transient_game_state) == 30080u",
+    "offsetof(FullStateBlobHeader, thing_info_state) == 31232u",
+    "offsetof(FullStateBlobHeader, room_info_state) == 31424u",
+    "offsetof(FullStateBlobHeader, particle_state) == 48900u",
 ):
     assert contract in LUA_MANAGER
 
@@ -50,6 +50,29 @@ def egg0_state(*, thing_count: int = 3, tilemap_w: int = 4, tilemap_h: int = 2) 
     struct.pack_into("<i", state, 200, tilemap_w)
     struct.pack_into("<i", state, 204, tilemap_h)
     struct.pack_into("<I", state, 224, tilemap_bytes)
+    return bytes(state)
+
+
+def egg0_v14_state(*, thing_count: int = 3, tilemap_w: int = 4, tilemap_h: int = 2) -> bytes:
+    old = egg0_state(
+        thing_count=thing_count,
+        tilemap_w=tilemap_w,
+        tilemap_h=tilemap_h,
+    )
+    old_payload = old[EGG0_HEADER_SIZE:]
+    header_size = EGG0_HEADER_SIZE + 364 + 4
+    state = bytearray(header_size + len(old_payload))
+    state[:252] = old[:252]
+    state[header_size:] = old_payload
+    struct.pack_into("<I", state, 4, 14)
+    return bytes(state)
+
+
+def egg0_v15_state() -> bytes:
+    old = egg0_v14_state()
+    old_header_size = EGG0_HEADER_SIZE + 368
+    state = bytearray(old[:old_header_size] + bytes(16) + old[old_header_size:])
+    struct.pack_into("<I", state, 4, 15)
     return bytes(state)
 
 
@@ -163,6 +186,33 @@ with tempfile.TemporaryDirectory(prefix="eggnoggplus_trace_diff_") as temp_name:
     assert current_schema["version"] == 12
     assert current_schema["changed_components"] == ["managed_content"]
 
+    # Current v12/YMC3 adds a checksummed 512-entry object-value section and
+    # accepts the current generation-6 entity world record layout.
+    world2 = bytearray(32 + 8*80 + 520)
+    world2[:4] = b"YEW1"
+    struct.pack_into("<I", world2, 4, 6)
+    struct.pack_into("<I", world2, 8, 8)
+    struct.pack_into("<I", world2, 24, 1)
+    object_state = bytearray(32 + 512*120)
+    object_state[:4] = b"YMVS"
+    struct.pack_into("<H", object_state, 4, 1)
+    struct.pack_into("<H", object_state, 6, 32)
+    struct.pack_into("<I", object_state, 8, len(object_state))
+    extension13 = bytearray(b"YMC3" + bytes(range(32)))
+    extension13 += struct.pack("<II", len(object_state), 1) + bytes(4)
+    extension13 += version12[252:252+29708]
+    extension13 += b"YEP1" + b"a"*64 + bytes(4) + world2 + object_state
+    current13 = bytearray(current)
+    struct.pack_into("<I", current13, 4, 12)
+    current13 += extension13
+    changed13 = bytearray(current13)
+    changed13[-1] = 1
+    left.write_bytes(trace_record(29, 200, bytes(current13)))
+    right.write_bytes(trace_record(29, 201, bytes(changed13)))
+    ymc3_schema = json.loads(run_tool("--json", left, right).stdout)["schema"]
+    assert ymc3_schema["version"] == 12
+    assert ymc3_schema["changed_components"] == ["managed_content"]
+
     # Recognized production EGG0/v9 blobs receive secret-safe component hashes
     # and exact schema locations in addition to the generic byte offset.
     canonical = egg0_state()
@@ -237,6 +287,38 @@ with tempfile.TemporaryDirectory(prefix="eggnoggplus_trace_diff_") as temp_name:
         == "state[3].number_value"
     )
     assert map_schema["first_difference"]["field_byte"] == 2
+
+    # v14 inserts a rollback-owned 256-bit exit-lock set before lifecycle and
+    # moves all later map-script fields without changing native payload sizes.
+    current14 = egg0_v14_state()
+    changed14 = bytearray(current14)
+    changed14[252 + 64 + 31] = 0x80
+    left.write_bytes(trace_record(31, 202, current14))
+    right.write_bytes(trace_record(31, 203, bytes(changed14)))
+    lock_diff = run_tool("--json", left, right)
+    assert lock_diff.returncode == 1, lock_diff
+    lock_schema = json.loads(lock_diff.stdout)["schema"]
+    assert lock_schema["version"] == 14
+    assert lock_schema["changed_components"] == ["map_script"]
+    assert lock_schema["first_difference"]["field"] == "exit_locks"
+    assert lock_schema["first_difference"]["lock_byte"] == 31
+    assert lock_schema["first_difference"]["first_connection"] == 249
+
+    changed14 = bytearray(current14)
+    changed14[252 + 160 + 3 * 112 + 10] = 0x22
+    right.write_bytes(trace_record(31, 203, bytes(changed14)))
+    state14_schema = json.loads(run_tool("--json", left, right).stdout)["schema"]
+    assert state14_schema["first_difference"]["field"] == "state[3].number_value"
+    assert state14_schema["first_difference"]["field_byte"] == 2
+
+    current15 = egg0_v15_state()
+    changed15 = bytearray(current15)
+    changed15[252 + 29812 + 12] = 0x80
+    left.write_bytes(trace_record(32, 204, current15))
+    right.write_bytes(trace_record(32, 205, bytes(changed15)))
+    camera_schema = json.loads(run_tool("--json", left, right).stdout)["schema"]
+    assert camera_schema["version"] == 15
+    assert camera_schema["first_difference"]["field"] == "camera.zoom_q"
 
     left.write_bytes(trace_record(9, 100, left_state))
     right.write_bytes(trace_record(9, 101, left_state))

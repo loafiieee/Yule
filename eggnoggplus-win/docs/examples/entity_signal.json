@@ -1,0 +1,64 @@
+{
+  "schema": 2,
+  "capacity": 16,
+  "types": [
+    {
+      "key": "demo:switch",
+      "regions": [
+        {
+          "id": 1,
+          "name": "trigger",
+          "role": "sensor",
+          "layer": 2,
+          "mask": 4,
+          "x": -8,
+          "y": -8,
+          "width": 16,
+          "height": 16
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 4,
+        "tint": "#80E080FF"
+      }
+    },
+    {
+      "key": "demo:door",
+      "regions": [
+        {
+          "id": 1,
+          "name": "receiver",
+          "role": "body",
+          "layer": 4,
+          "mask": 2,
+          "x": -8,
+          "y": -8,
+          "width": 16,
+          "height": 16
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 0,
+        "tint": "#80A0FFFF"
+      }
+    }
+  ],
+  "placements": [
+    {
+      "name": "switch",
+      "type": "demo:switch",
+      "room": "center",
+      "x": 80,
+      "y": 80
+    },
+    {
+      "name": "door",
+      "type": "demo:door",
+      "room": "center",
+      "x": 80,
+      "y": 80
+    }
+  ]
+}

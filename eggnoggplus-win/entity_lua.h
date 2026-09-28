@@ -9,9 +9,11 @@ typedef struct EntityLuaBinding {
     EntityWorld* world;
     EntityResolveTypeFn resolve_type;
     void* user;
+    void (*initialize_values)(lua_State*,EntityHandle,int); /* Spawn properties table; may raise. */
     void (*lifecycle)(lua_State*,int,EntityHandle,const EntityValue*); /* 1 spawn, 2 remove; may raise. */
     EntityHandle (*find_placement)(void*,const char*);
     const char* (*type_key)(void*,uint32_t);
+    const char* (*region_name)(void*,uint32_t,uint32_t);
     uint32_t* work_budget; /* Optional shared host instruction budget. */
 } EntityLuaBinding;
 /* Pushes an API table; host makes it read-only in its locked environment. */
@@ -19,5 +21,8 @@ void entity_lua_push_api(lua_State* L,EntityLuaBinding* binding);
 
 /* Exact opaque handle representation shared by managed lifecycle callbacks. */
 void entity_lua_push_handle(lua_State* L,EntityHandle handle);
+/* Validates and decodes the exact opaque 16-hex-digit representation.  Hosts
+ * use the same decoder when extending the read-only entity API. */
+EntityHandle entity_lua_check_handle(lua_State* L,int index);
 
 void entity_lua_push_value(lua_State* L,const EntityValue* value);

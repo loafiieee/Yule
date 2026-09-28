@@ -31,6 +31,15 @@ void hooks_console_on_pre_swap(void);
 void hooks_online_on_pre_swap(void);
 /* Final framework renderer: queues the real native cursor after all overlays. */
 void hooks_online_cursor_on_pre_swap(void);
+/* Presentation-only camera override, applied inside game_render and restored
+ * before native gameplay or rollback can observe it. */
+#define HOOKS_RENDER_HIDE_PLAYERS 1u
+#define HOOKS_RENDER_HIDE_HEAD_INDICATORS 2u
+#define HOOKS_RENDER_HIDE_GO_ARROW 4u
+#define HOOKS_RENDER_HIDE_PAUSE_BUTTON 8u
+int hooks_render_camera_set(const char* owner, float x, float y, float zoom,
+                            unsigned hidden_flags);
+void hooks_render_camera_clear(const char* owner);
 void hooks_update_on_pre_swap(void);
 int hooks_update_mousebutton(int x, int y, int button, int down);
 
@@ -86,9 +95,11 @@ void hooks_sync_mad_ticks_to_game_clock(void);
 #ifdef EGGNOGGPLUS_SERIALIZER_TESTING
 void hooks_test_bind_mad_ticks(volatile uint32_t* ticks);
 struct MapScriptObjectView;
+struct MapScriptPlayerObservation;
 int hooks_test_solid_box(const unsigned char* cells,int columns,int rows,const unsigned char* table,double x,double y,double width,double height);
 int hooks_test_commit_players(uintptr_t* slots,uint32_t mask,uint32_t defeat_mask,const struct MapScriptObjectView* players,void (__cdecl *defeat)(int));
 int hooks_test_apply_player_velocities(uintptr_t* slots,uint32_t mask,const struct MapScriptObjectView* players);
+int hooks_test_observe_player_edge(uintptr_t* slots,uint32_t slot,uint8_t post_tick_commands,struct MapScriptPlayerObservation* out);
 #endif
 
 // AI match flag: armed by the main-menu mode button, read by Lua bot mods,

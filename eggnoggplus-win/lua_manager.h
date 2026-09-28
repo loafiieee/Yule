@@ -176,6 +176,9 @@ int lua_manager_reload_assets(
 
 // Called by the atlas_upload hook while load_gfx still has a live packing atlas.
 void lua_manager_before_atlas_upload(int atlas_ptr);
+// Flushes queued map-owned sprites from their isolated atlas page. Called
+// immediately after each native slot-0 sprite-batch flush.
+void lua_manager_draw_custom_atlas(void);
 
 // Console Lua execution helpers.
 int lua_manager_console_eval(const char* code, char* out, int out_sz);
@@ -197,6 +200,10 @@ int lua_manager_console_execute_command(const char* name, const char* args,
 int lua_manager_audio_generated_active(void);
 void lua_manager_audio_mix_generated(int16_t* samples, int frame_count,
                                      int output_rate);
+/* Framework-wide 0..100 volume scalars. Per-mod and per-play volume remains
+ * the source volume and is multiplied by these values at the output edge. */
+void lua_manager_set_master_audio_volumes(int sfx_percent,
+                                          int music_percent);
 
 // Native gameplay-state serialization API used by rollback/network code.
 #define LUA_ROLLBACK_SUMMARY_THING_SLOTS 16
@@ -300,6 +307,8 @@ int lua_manager_game_set_native_ticks(uint32_t ticks);
  * running game image. Release builds do not expose or compile this function. */
 int lua_manager_test_bind_native_state(void* base, size_t size,
                                        char* err, size_t err_cap);
+int lua_manager_test_scale_master_mix_volume(int base_volume,
+                                              int percent);
 #endif
 
 #ifdef __cplusplus

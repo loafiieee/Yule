@@ -65,21 +65,23 @@ The manifest is limited to 32 files, 128 MiB per file, and 256 MiB total.
 
 ## Publishing a release
 
-Use this order for every release. Because the former `1.1` channel was briefly public,
-that version is retired and must not be reused; use `1.2` for the next release:
+Use this order for every release. Choose a new numeric version greater than the
+public channel's version; never reuse an advertised version. The retired `1.1`
+channel must not be reused either. In the commands below, replace `<version>`
+with the chosen value:
 
-1. Change `FRAMEWORK_VERSION` in `update_ext.h` to `"1.2"`.
+1. Change `FRAMEWORK_VERSION` in `update_ext.h` to the chosen version.
 2. Close Eggnogg+ and `YuleUpdater.exe`.
 3. Run `bash compile.sh`.
 4. Build the release:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version 1.2 -Notes "Short release notes"
+   powershell -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version <version> -Notes "Short release notes"
    ```
 
-5. Upload the complete `dist/releases/1.2/` directory to a temporary directory
+5. Upload the complete `dist/releases/<version>/` directory to a temporary directory
    on the server. Verify that each uploaded file's size and SHA-256 matches
-   `dist/releases/latest.json`, then rename the temporary directory to `1.2`.
+   `dist/releases/latest.json`, then rename the temporary directory to `<version>`.
 6. Upload `dist/releases/latest.json` to `latest.json.new`, validate its JSON,
    and atomically rename it to `latest.json` **last**.
 7. Fetch the public `latest.json` and every public payload URL once to confirm

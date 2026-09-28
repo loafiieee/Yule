@@ -74,7 +74,7 @@ Deleting an asset is blocked while definitions or native-layout defaults referen
 
 Display names can change freely. Map IDs and local tile IDs are stable compatibility names. Renaming either offers a staged reference report and updates only structurally owned references; unresolved code requires editing before export. Symbol reassignment updates every placement atomically and rejects duplicates. Overriding a vanilla symbol shows that all matching authored cells receive the binding, not just a selected placement.
 
-Export displays the exact output file list and whether the content differs from the last export. Current online compatibility depends on manifest/map bytes plus retained script and asset content; even canonical whitespace changes can change the map key. Do not call the current 32-bit compatibility key a cryptographic integrity guarantee. Runtime asset digests are computed automatically; authors should not have to paste hashes for normal creation.
+Export displays the exact output file list and whether the content differs from the last export. Current online compatibility depends on manifest/map bytes plus retained script and asset content; even canonical whitespace changes can change the map key. The advertised key uses the first 128 bits of a domain-separated SHA-256 digest, while the full YMC3 identity is checked during state transfer. Runtime asset digests are computed automatically; authors should not have to paste hashes for normal creation.
 
 ## Validation and recovery
 

@@ -4,10 +4,18 @@
 #include <stdint.h>
 
 #include "map_script.h"
+#include "map_ambiance.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define CUSTOM_MAP_MAX_FINAL_ROOMS 64
+#define CUSTOM_MAP_MAX_CONNECTIONS 256
+/* The supported executable reserves exactly 0x4444 bytes for 17 room-info
+ * entries (17 * 0x404). The schema keeps a larger tooling ceiling, but a map
+ * admitted to gameplay must stay within this native limit. */
+#define CUSTOM_MAP_ENGINE_MAX_FINAL_ROOMS 17
 
 #ifdef CUSTOM_MAPS_TESTING
 /* Fixture-only pinning without native fixed-address mapgen writes. */
@@ -49,6 +57,19 @@ typedef struct CustomMapContentView {
     int selector;
     int format_version;
     int source_room_count;
+    int variable_rooms;
+    int room_graph;
+    int room_width[9];
+    int room_height[9];
+    int final_room_count;
+    int graph_start_room;
+    int connection_count;
+    int layout_width;
+    int layout_height;
+    int final_source_room[CUSTOM_MAP_MAX_FINAL_ROOMS];
+    int final_x[CUSTOM_MAP_MAX_FINAL_ROOMS];
+    int final_y[CUSTOM_MAP_MAX_FINAL_ROOMS];
+    int final_mirror_x[CUSTOM_MAP_MAX_FINAL_ROOMS];
     int content_tile_count;
     /* Empty/zero when tileset.sprite_sheet is not declared. External defaults
      * use their qualified map sheet key and expose the validated grid count. */
@@ -76,6 +97,12 @@ int custom_maps_pinned_content_view(int selector,
  * map is pinned. This never polls or rebuilds the registry. */
 int custom_maps_pinned_script_id(int selector, uint64_t* out_script_id);
 
+/* Copies the online identity from the exact map generation pinned by
+ * mapgen_init. Vanilla selectors are formatted as "vanilla:<index>" without
+ * consulting the mutable registry. Returns 1 on success and -1 when a custom
+ * selector has no matching pin. This never polls or rebuilds the registry. */
+int custom_maps_pinned_online_key(int selector, char* out_key, size_t out_key_size);
+
 /* Returns 1 for a symbolic content cell, 0 for an ordinary native cell, and
  * -1 for invalid coordinates or a stale/invalid view. Source room indices use
  * layout.order (center outward); coordinates are 0-based. This function does
@@ -87,6 +114,103 @@ int custom_maps_content_view_cell(const CustomMapContentView* view,
                                   char* out_key,
                                   size_t out_key_size,
                                   char* out_native_glyph);
+
+/* Resolves a live world-space pixel coordinate against the exact pinned map
+ * generation and returns its one-byte authored source glyph. This deliberately
+ * preserves custom V2 symbols instead of their native collision fallback.
+ * Mirrored outer rooms are mapped back to their authored source cell. Returns
+ * 1 for a cell, 0 outside the map, and -1 for invalid arguments or unavailable
+ * pinned content. */
+int custom_maps_pinned_tile_at_world(int selector,
+                                     double world_x,
+                                     double world_y,
+                                     char* out_reference,
+                                     size_t out_reference_size);
+
+/* Rebuilds the live native tilemap for a pinned variable_cells map after the
+ * stock builder has initialized tile definitions and room metadata. Returns
+ * 1 when a variable layout was rebuilt, 0 for fixed/vanilla maps, and -1 on
+ * allocation or native-state failure. */
+int custom_maps_rebuild_variable_map(int selector);
+
+/* Resolves variable room bounds in live world pixels. Returns 1 for a pinned
+ * variable layout, 0 for fixed/vanilla layouts, and -1 when x is outside it. */
+int custom_maps_variable_room_bounds(int selector, double world_x,
+                                     int* out_final_room,
+                                     int* out_start_px,
+                                     int* out_width_px,
+                                     int* out_height_px);
+/* Resolves an authored final room using both world axes. The graph is
+ * normalized so its minimum authored X/Y becomes world pixel 0/0. */
+int custom_maps_variable_room_at(int selector, double world_x, double world_y,
+                                 int* out_final_room,
+                                 int* out_start_x_px,
+                                 int* out_start_y_px,
+                                 int* out_width_px,
+                                 int* out_height_px);
+int custom_maps_variable_room_bounds_for_index(int selector, int final_room,
+                                               int* out_start_px,
+                                               int* out_width_px,
+                                               int* out_height_px);
+int custom_maps_variable_room_bounds_2d_for_index(int selector, int final_room,
+                                                  int* out_start_x_px,
+                                                  int* out_start_y_px,
+                                                  int* out_width_px,
+                                                  int* out_height_px);
+int custom_maps_variable_room_count(int selector);
+int custom_maps_start_room(int selector);
+int custom_maps_uses_room_graph(int selector);
+
+/* Resolves the authored source definition and independent appearance bank for
+ * one placed room in the exact map generation pinned by mapgen_init. Returns
+ * 1 for an active room_graph instance, 0 for a non-graph map, and -1 for an
+ * invalid selector, room, or stale pin. Geometry mirroring is deliberately a
+ * separate property and does not affect out_appearance_mirror. */
+int custom_maps_pinned_room_definition(int selector, int final_room,
+                                        int* out_source_room,
+                                        int* out_appearance_mirror);
+
+/* Reports an explicit ambient override owned by one placed graph node. The
+ * value is the native 0..9 ambient used by its source room definition; custom
+ * particle ambiance is resolved separately by custom_maps_pinned_ambiance. */
+int custom_maps_pinned_room_ambient_override(int selector, int final_room,
+                                             int* out_ambient);
+
+/* Resolves a traversable graph opening at one cell along a room edge. Sides
+ * are left=0, right=1, top=2, bottom=3. The destination offset is translated
+ * through the authored opening. Returns 1 for an exit, 0 for a closed edge
+ * cell, and -1 for invalid/ambiguous input. */
+int custom_maps_room_exit(int selector, int current_room, int side,
+                          int edge_offset, int* out_room, int* out_side,
+                          int* out_offset, int* out_connection);
+
+/* Resolves an explicit graph edge crossed by a player position. The supplied
+ * old position must be inside current_room; the new position may lie just
+ * beyond one edge. Returns 1 and the destination room for a traversable
+ * opening, 0 when no graph edge was crossed, and -1 for invalid/ambiguous
+ * input. Mirrored layouts return 0 because their native horizontal behavior
+ * remains authoritative. */
+int custom_maps_resolve_room_transition(int selector, int current_room,
+                                        double old_x, double old_y,
+                                        double new_x, double new_y,
+                                        int* out_room,
+                                        int* out_connection);
+
+/* Returns the immutable traversal policy for one explicit graph connection.
+ * players: 0 both, 1 player 1, 2 player 2, 3 current GO player.
+ * focus: 0 only GO changes the focused room, 1 whichever player crosses. */
+int custom_maps_room_connection_policy(int selector, int connection,
+                                       int* out_players, int* out_focus);
+
+/* Applies room respawn markers after the native floor search. Allowed markers
+ * form a per-player whitelist; deny markers remove matching native floor
+ * candidates. Coordinates are the player's live world position. */
+int custom_maps_adjust_spawn_position(int selector, int final_room,
+                                      int player_index,
+                                      float* inout_x, float* inout_y);
+int custom_maps_player_start_position(int selector, int player_index,
+                                      float near_x, float* out_x, float* out_y,
+                                      int* out_facing);
 
 /* Convenience one-cell query. It opens a fresh view and maps all errors to 0.
  * Bulk renderer/map-generation code should use the view API above. */
@@ -105,6 +229,10 @@ typedef struct CustomMapContentSheetInfo {
     int cell_w;
     int cell_h;
     int padding;
+    int source_x;
+    int source_y;
+    int source_w;
+    int source_h;
     int sprite_count;
     unsigned int atlas_flags;
 } CustomMapContentSheetInfo;
@@ -120,19 +248,49 @@ int custom_maps_content_sheet_for_key(const char* sheet_key,
                                       size_t out_sha256_size);
 
 /* Immutable pinned package policy for a generated room; no filesystem access.
- * 0 native/default, 1 always respawn, 2 never respawn. Mirrored rooms share
- * their source-room policy. Invalid/vanilla selectors return native behavior. */
+ * A placed room override wins over its source room and map default. Values are
+ * 0 native/default, 1 always respawn, 2 never respawn. Invalid/vanilla
+ * selectors return native behavior. */
 int custom_maps_opponent_spawn_policy(int selector, int final_room);
 
+/* Returns the immutable custom ambiance selected for a generated room. The
+ * catalog remains valid for the current pinned map generation. Returns 1 when
+ * selected, 0 for native-only ambience, and -1 for invalid/unpinned input. */
+int custom_maps_pinned_ambiance(int selector, int final_room,
+                                const MapAmbianceCatalog** out_catalog,
+                                uint16_t* out_ambiance_index,
+                                int* out_source_room,
+                                int* out_mirror_room);
+
+/* Resolves the native-layout sheet for one generated room from its placed-room
+ * override, source-room override, defaults.room, then the legacy map-wide
+ * tileset.native_layout setting. Returns 1 with a validated 128+ sprite sheet,
+ * 0 for vanilla native tile presentation, and -1 for invalid or unpinned input. */
+int custom_maps_pinned_native_tileset(int selector, int final_room,
+                                      char* out_sheet_key,
+                                      size_t out_sheet_key_size,
+                                      int* out_sprite_count);
+
 typedef struct CustomMapValidationSummary {
-    int final_opponent_spawn[17]; /* generated mirrored room order */
+    int final_opponent_spawn[CUSTOM_MAP_MAX_FINAL_ROOMS];
     int opponent_spawn[9]; /* resolved source-room policies */
     int has_eggnogg_color;
     float eggnogg_color[3];
     int format_version;
     int source_room_count;
+    int final_room_count;
+    int room_graph;
+    int graph_start_room;
+    int connection_count;
+    int layout_bounds_x;
+    int layout_bounds_y;
+    int layout_width;
+    int layout_height;
     int content_tile_count;
     int content_cell_count;
+    int particle_definition_count;
+    int ambiance_definition_count;
+    int ambiance_lane_count;
     char default_sheet_key[128];
     int default_sheet_sprite_count;
     int native_layout;

@@ -271,9 +271,9 @@ from `misc[0]`, while `K` creates an entity rendered from `tiles[0x6d]`.
 
 ## V2 boundary
 
-V2 retains the V1 room dimensions, center-out geometry, and manifest fields,
-then adds strict custom tile definitions, direct PNG sheets, and optional direct
-`map.lua`. Custom-symbol resolution happens before native footprint, spawn, and
+V2 retains the center-out geometry and V1 manifest fields, then adds optional
+per-room `variable_cells` dimensions, strict custom tile definitions, direct PNG
+sheets, and optional direct `map.lua`. Custom-symbol resolution happens before native footprint, spawn, and
 topology checks, so a printable symbol can alias a safe one-cell native behavior
 without inheriting the original source glyph's expansion.
 

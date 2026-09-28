@@ -26,24 +26,70 @@ test('object logic round trips without repeated generated callbacks or losing ma
  assert.equal(O.exportFiles(restored,{})['map.lua'],files['map.lua']);loaded.mapLua+='-- manual edit';
  assert.throws(()=>O.importLogic(loaded,files['objects.greggnogg.json']),/does not match/);
 });
-test('rename preserves placements and callbacks; placed designs cannot be deleted',()=>{
- const {document:doc,key}=project();doc.objectScripts={[key]:{update:'-- update'}};O.paint(doc,key,doc.layout.order[0],[{row:0,col:0}],false);
+test('rename preserves placements and callbacks; deleting a design removes every placed copy',()=>{
+ const {document:doc,key}=project();doc.objectScripts={[key]:{update:'-- update'}};O.paint(doc,key,doc.layout.order[0],[{row:0,col:0},{row:0,col:1}],false);
  const renamed=O.rename(doc,key,'custom:renamed');assert.equal(renamed.entities.placements[0].type,'custom:renamed');
- assert.equal(renamed.objectScripts['custom:renamed'].update,'-- update');assert.throws(()=>O.remove(renamed,'custom:renamed'),/Erase/);
+ assert.equal(renamed.objectScripts['custom:renamed'].update,'-- update');const removed=O.remove(renamed,'custom:renamed');
+ assert.equal(renamed.entities.placements.length,2);assert.equal(removed.entities.types.some(type=>type.key==='custom:renamed'),false);assert.equal(removed.entities.placements.length,0);assert.equal(removed.objectScripts['custom:renamed'],undefined);
+ assert.ok(G.parsePackageFiles(G.exportProjectFiles(removed)).valid,'map still exports and imports after cascading deletion');
 });
 test('object designer opens inside Greggnogg and the old entry redirects there',()=>{
  const html=fs.readFileSync(__dirname+'/../index.html','utf8'),old=fs.readFileSync(__dirname+'/index.html','utf8'),ui=fs.readFileSync(__dirname+'/../object-designer.js','utf8');
  assert.match(html,/id="object-designer-button"/);assert.match(html,/object-designer.js/);assert.match(old,/index.html\?objects=1/);
  assert.doesNotMatch(ui,/Start with a map|Use my Greggnogg map|starter-custom|add-placement/);
+ assert.match(ui,/Can interact with vanilla physics-triggered objects/);assert.match(ui,/Health and damage/);assert.match(ui,/This object has health/);assert.match(ui,/Knocked away by mine explosions/);
+});
+test('invisible object copies remain discoverable as editor ghosts',()=>{
+ const html=fs.readFileSync(__dirname+'/../index.html','utf8'),tools=fs.readFileSync(__dirname+'/../object-tools.js','utf8');
+ assert.match(html,/This only hides the picture\. Logic, hitboxes, damage, and physics triggers stay active\./);
+ assert.match(tools,/p\.visible===false\?0\.28:1/);
+ assert.doesNotMatch(tools,/if\(p\.visible===false\)continue/);
+});
+test('repeated notices count in place and distinct notices have a visible limit',()=>{
+ const vm=require('node:vm'),source=fs.readFileSync(__dirname+'/../editor.js','utf8');let nextTimer=0;const canceled=[];
+ function node(){return {children:[],parentNode:null,hidden:false,append(...items){items.forEach(item=>{item.parentNode=this;this.children.push(item);});},appendChild(item){this.append(item);},setAttribute(){},remove(){if(!this.parentNode)return;const siblings=this.parentNode.children,index=siblings.indexOf(this);if(index>=0)siblings.splice(index,1);this.parentNode=null;},get firstElementChild(){return this.children[0]||null;}};}
+ const region=node(),context=vm.createContext({document:{createElement:node},els:{'toast-region':region},window:{setTimeout:()=>++nextTimer,clearTimeout:id=>canceled.push(id)},announce(){}});
+ vm.runInContext(source.slice(source.indexOf('  var activeToasts = Object.create(null);'),source.indexOf('  function openDialog(')),context);
+ context.toast('Cannot switch','Room A conflicts','warning');context.toast('Cannot switch','Room A conflicts','warning');
+ assert.equal(region.children.length,1);assert.equal(region.children[0].children[2].textContent,'×2');assert.ok(canceled.includes(1));
+ for(let i=0;i<4;i++)context.toast('Other '+i,'Different details','warning');
+ assert.equal(region.children.length,4);assert.equal(region.children.some(item=>item.children[1].children[0].textContent==='Cannot switch'),false);
+ context.toast('Cannot switch','Room A conflicts','warning');assert.equal(region.children.length,4);
+ assert.equal(region.children[3].children[2].hidden,true,'a newly displayed notice starts at one');
+});
+test('spawn markers are the final tile-catalog section',()=>{
+ const editor=fs.readFileSync(__dirname+'/../editor.js','utf8');
+ assert.match(editor,/CATEGORY_ORDER = \[[^\]]*"Custom tiles", "Spawn markers"\]/);
 });
 
 test('room duplication copies instances with distinct names and checks expanded capacity atomically',()=>{
  const {document:doc,key}=project(),source=doc.layout.order[0];O.paint(doc,key,source,[{row:2,col:3}],false);
+ Object.assign(doc.entities.placements[0],{animation:'default',scale_x:1.5,scale_y:-1,visual_offset_x:2,visual_offset_y:-3,visual_rotation:45,visual_tint:'#40FF8000',draw_layer:'behind',visible:false});
  const order=[source,'copy'];O.duplicateRoom(doc,source,'copy',order);
  assert.equal(doc.entities.placements.length,2);assert.equal(doc.entities.placements[1].room,'copy');
  assert.notEqual(doc.entities.placements[0].name,doc.entities.placements[1].name);
+ for(const key of ['animation','scale_x','scale_y','visual_offset_x','visual_offset_y','visual_rotation','visual_tint','draw_layer','visible'])assert.equal(doc.entities.placements[1][key],doc.entities.placements[0][key]);
  doc.entities.capacity=3;const before=JSON.stringify(doc);
  assert.throws(()=>O.duplicateRoom(doc,source,'copy2',[...order,'copy2']));assert.equal(JSON.stringify(doc),before);
+});
+
+test('normal editor owns per-copy animation, appearance, movement and draw-order controls',()=>{
+ const html=fs.readFileSync(__dirname+'/../index.html','utf8'),editor=fs.readFileSync(__dirname+'/../editor.js','utf8');
+ for(const id of ['object-inspector','object-placement-picker','object-placement-empty','object-placement-fields','object-placement-animation','object-placement-layer','object-placement-side','object-placement-visible','object-placement-x','object-placement-y','object-placement-vx','object-placement-vy','object-placement-scale-x','object-placement-scale-y','object-placement-offset-x','object-placement-offset-y','object-placement-rotation','object-placement-tint','object-placement-edit-design'])assert.match(html,new RegExp('id="'+id+'"'));
+ assert.doesNotMatch(html,/id="object-tab"[^>]*disabled/);
+ assert.match(editor,/function selectPlacement/);assert.match(editor,/picked&&picked\.type===state\.selectedObject/);assert.match(editor,/state\.pointer\.tool === "select"[\s\S]*?if\(picked\)\{state\.selection=null;selectPlacement\(picked,true\);\}/);assert.match(editor,/object-placement-picker/);assert.match(editor,/function bindPlacementControls/);
+});
+
+test('area transforms move and orient custom object copies with their tiles',()=>{
+ const source=[{name:'orb',type:'custom:orb',x:8,y:24,scale_x:2,visual_rotation:30,_sourceName:'orb'}];
+ const horizontal=O.transformAreaPlacements(source,'flip_x',3,2);
+ assert.equal(horizontal[0].x,40);assert.equal(horizontal[0].y,24);assert.equal(horizontal[0].scale_x,-2);
+ const vertical=O.transformAreaPlacements(source,'flip_y',3,2);
+ assert.equal(vertical[0].x,8);assert.equal(vertical[0].y,8);assert.equal(vertical[0].scale_y,-1);
+ const rotated=O.transformAreaPlacements(source,'rotate_cw',3,2);
+ assert.equal(rotated[0].x,8);assert.equal(rotated[0].y,8);assert.equal(rotated[0].visual_rotation,120);
+ assert.deepEqual(source[0],{name:'orb',type:'custom:orb',x:8,y:24,scale_x:2,visual_rotation:30,_sourceName:'orb'});
+ assert.throws(()=>O.transformAreaPlacements(source,'diagonal',3,2),/Unknown/);
 });
 
 test('normal map package parsing retains generated Lua for editor metadata restoration',()=>{
@@ -101,10 +147,16 @@ test('map tools find and erase unsnapped room-local and legacy world-coordinate 
  for(const placement of doc.entities.placements)assert.equal(O.atCell(doc,placement,room,2,1),true);
  O.paint(doc,key,room,[{row:2,col:1}],true);assert.equal(doc.entities.placements.length,0);
 });
+test('custom objects can be painted across the full authored room size',()=>{
+ const {document:doc,key}=project(),room=doc.rooms[0];G.resizeRoom(room,47,18);doc.layout.roomFormat=G.VARIABLE_ROOM_FORMAT;
+ assert.equal(O.paint(doc,key,room.id,[{row:17,col:46}],false),true);
+ assert.equal(doc.entities.placements[0].x,46*16+8);assert.equal(doc.entities.placements[0].y,17*16+8);
+ assert.equal(O.paint(doc,key,room.id,[{row:17,col:47}],false),false);
+});
 test('actual painting ignores a previously selected blank terrain tile and supports explicit keyboard erasure',()=>{
  const vm=require('node:vm'),source=fs.readFileSync(__dirname+'/../editor.js','utf8'),{document:doc,key}=project();
  const state={document:doc,selectedObject:key,selectedGlyph:' ',tool:'pencil',pointer:null};
- const context=vm.createContext({state,GregObjects:O,ROWS:12,COLS:33,activeRoom:()=>({id:doc.layout.order[0]}),renderAfterMapEdit(){},toast:(...args)=>{throw Error(args.join(' '));}});
+ const context=vm.createContext({state,GregObjects:O,ROWS:12,COLS:33,activeRoom:()=>({id:doc.layout.order[0]}),roomRows:()=>12,roomCols:()=>33,renderAfterMapEdit(){},toast:(...args)=>{throw Error(args.join(' '));}});
  vm.runInContext(source.slice(source.indexOf('  function applyChanges('),source.indexOf('  function renderAfterMapEdit(')),context);
  assert.equal(context.applyChanges([{row:1,col:1,glyph:' '}],true),true);assert.equal(doc.entities.placements.length,1);
  assert.equal(context.applyChanges([{row:1,col:1,glyph:' '}],true,true),true);assert.equal(doc.entities.placements.length,0);
@@ -144,8 +196,59 @@ test('motion controls compile before custom logic and survive export/import',()=
  doc.objectMotion[key].drag=2;assert.throws(()=>O.compileScript(doc),/Motion needs/);
 });
 
+test('vanilla physics interaction is an object checkbox setting, not a logic block',()=>{
+ const {document:doc,key}=project();doc.objectMotion={[key]:{automatic:true,enabled:false,gravity:0.15,drag:0,maxFall:6,nativeTriggers:true}};
+ const source=O.compileScript(doc);assert.match(source,/local native_interaction = entity\.get\(handle\)/);assert.match(source,/map\.trigger_mine_at\(native_interaction\.x, native_interaction\.y\)/);assert.equal(require('../logic-blocks').toolbox.contents.flatMap(category=>category.contents||[]).some(item=>item.type==='greg_trigger_mine'),false);
+ doc.objectMotion[key].nativeTriggers='yes';assert.throws(()=>O.compileScript(doc),/enabled or disabled/);
+});
+
+test('object health controls generate managed health',()=>{
+ const {document:doc,key}=project();doc.objectMotion={[key]:{healthEnabled:true,healthMaximum:5,healthCurrent:4}};
+ const source=O.compileScript(doc);assert.match(source,/entity\.enable_health\(handle, 5, 4\)/);
+ doc.objectMotion[key].healthCurrent=6;assert.throws(()=>O.compileScript(doc),/starting health/);
+ doc.objectMotion[key].healthCurrent=4;doc.objectMotion[key].healthEnabled='yes';assert.throws(()=>O.compileScript(doc),/enabled or disabled/);
+});
+
+test('object health uses verified native damage sources and real damage amounts',()=>{
+ const {document:doc,key}=project();doc.objectMotion={[key]:{healthEnabled:true,healthMaximum:200,healthCurrent:200,nativeKick:false,nativeMine:false}};
+ const source=O.compileScript(doc);assert.match(source,/damage\.source_type == "native:kick" then return false/);assert.match(source,/damage\.source_type == "native:mine" then return false/);assert.match(source,/return true/);
+ assert.match(fs.readFileSync(__dirname+'/../object-designer.js','utf8'),/Punch'.*12.*Kick'.*25.*Held sword'.*100/s);
+ doc.objectMotion[key].nativeKick='no';assert.throws(()=>O.compileScript(doc),/enabled or disabled/);
+});
+test('object mine knockback is independent from managed health',()=>{
+ const {document:doc,key}=project();doc.objectMotion={[key]:{mineKnockback:true}};
+ assert.match(O.compileScript(doc),/entity\.set_mine_knockback\(handle, true\)/);
+ doc.objectMotion[key].mineKnockback='yes';assert.throws(()=>O.compileScript(doc),/Mine knockback must be enabled or disabled/);
+});
+
+test('Bloopa treats an accepted native hit differently from ordinary lethal touch',t=>{
+ const outer=__dirname+'/../../maps/untitled_map/',root=fs.existsSync(outer+'entities.json')?outer:outer+'untitled_map/';
+ if(!fs.existsSync(root+'entities.json')||!fs.existsSync(root+'objects.greggnogg.json')||!fs.existsSync(root+'map.lua'))return t.skip('optional local Bloopa authoring fixture is not installed');
+ const entities=JSON.parse(fs.readFileSync(root+'entities.json','utf8')),metadata=JSON.parse(fs.readFileSync(root+'objects.greggnogg.json','utf8'));
+ const doc={entities,mapLua:metadata.baseLua,objectScripts:metadata.scripts,objectBlocks:metadata.blocks,objectMotion:metadata.motion};
+ const source=O.compileScript(doc);assert.equal(source,fs.readFileSync(root+'map.lua','utf8'));
+ assert.match(source,/selected_player = damage\.source_player[\s\S]*candidate\['input'\]\['attack'\]/);
+ assert.match(source,/if not player\.input\.attack then\s+map\.defeat_player\(player\.player\)/);
+});
+
 test('terrain collision controls generate the native movement fixture',()=>{
- const source=O.compileScript({entities:{types:[{key:'demo:orb'}]},objectMotion:{'demo:orb':{enabled:true,gravity:0.25,drag:0,maxFall:6,collide:true,width:16,height:16}}});
+ const source=O.compileScript({entities:{types:[{key:'demo:orb'}]},objectMotion:{'demo:orb':{enabled:true,gravity:0.25,drag:0,maxFall:6,collide:true,customSolids:true,width:16,height:16}}});
  assert.equal(source,fs.readFileSync(__dirname+'/../../tests/fixtures/object-terrain-motion.lua','utf8'));
  assert.match(source,/map.solid_box/);
+});
+
+test('old terrain-only collision source is preserved until the designer upgrades it',()=>{
+ const doc={entities:{types:[{key:'demo:orb'}]},objectMotion:{'demo:orb':{collide:true}}};
+ const legacy=O.compileScript(doc);assert.doesNotMatch(legacy,/entity.solid_box/);assert.match(legacy,/return map.solid_box\(x/);
+ doc.objectMotion['demo:orb'].customSolids=true;assert.match(O.compileScript(doc),/entity.solid_box/);
+});
+
+test('contact, damage filtering and signal callbacks compile and survive editor metadata import',()=>{
+ const {document:doc,key}=project();doc.objectScripts={[key]:{contact:'-- object hit',player_contact:'-- player hit',damage_filter:'return damage.source_type == "demo:blade"',damage:'-- damage received',signal:'-- signal received'}};
+ const files=O.exportFiles(doc,{});assert.match(files['map.lua'],/entity\.on_contact/);assert.match(files['map.lua'],/function\(handle, contact\)/);assert.match(files['map.lua'],/entity\.on_player_contact/);
+ assert.match(files['map.lua'],/entity\.on_damage_filter/);assert.match(files['map.lua'],/return damage\.source_type == "demo:blade"/);
+ assert.match(files['map.lua'],/entity\.on_damage/);assert.match(files['map.lua'],/function\(handle, damage\)/);
+ assert.match(files['map.lua'],/entity\.on_signal/);assert.match(files['map.lua'],/function\(handle, signal\)/);
+ const loaded=JSON.parse(JSON.stringify(doc));loaded.mapLua=files['map.lua'];delete loaded.objectScripts;
+ const imported=O.importLogic(loaded,files['objects.greggnogg.json']);assert.equal(imported.objectScripts[key].contact,'-- object hit');assert.equal(imported.objectScripts[key].player_contact,'-- player hit');assert.equal(imported.objectScripts[key].damage_filter,'return damage.source_type == "demo:blade"');assert.equal(imported.objectScripts[key].damage,'-- damage received');assert.equal(imported.objectScripts[key].signal,'-- signal received');
 });

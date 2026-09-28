@@ -2,6 +2,44 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_NO_LINEAR
+#define STBI_NO_HDR
+#define STBI_MAX_DIMENSIONS 8192
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#include "third_party/stb_image.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+int rgba_load_image_portable(const char* full_path,
+                             unsigned char** out_pixels,
+                             int* out_width,
+                             int* out_height) {
+    int components = 0;
+    unsigned char* pixels;
+    if (out_pixels) *out_pixels = NULL;
+    if (out_width) *out_width = 0;
+    if (out_height) *out_height = 0;
+    if (!full_path || !full_path[0] || !out_pixels || !out_width ||
+        !out_height) return 0;
+    pixels = stbi_load(full_path, out_width, out_height, &components, 4);
+    if (!pixels || *out_width <= 0 || *out_height <= 0 ||
+        *out_width > 8192 || *out_height > 8192) {
+        stbi_image_free(pixels);
+        *out_width = 0;
+        *out_height = 0;
+        return 0;
+    }
+    *out_pixels = pixels;
+    return 1;
+}
 
 void rgba_downsample_box(const unsigned char* source,
                          int source_width,

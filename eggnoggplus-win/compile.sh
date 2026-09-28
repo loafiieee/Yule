@@ -15,8 +15,8 @@ fi
 mkdir -p build
 
 sources=(
-  dllmain.c stubs.c hooks.c custom_maps.c
-  content_registry.c content_tiles.c content_bridge.c map_script.c
+  dllmain.c stubs.c hooks.c custom_maps.c room_graph.c
+  content_registry.c content_tiles.c content_bridge.c map_script.c map_ambiance.c
   entity_world.c entity_lua.c entity_package.c entity_package_json.c
   cursor_ext.c
   credential_ext.c online_control.c launch_request.c launch_ipc.c

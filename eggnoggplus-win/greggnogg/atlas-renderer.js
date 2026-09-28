@@ -127,6 +127,7 @@
   var builtinKey = "";
   var externalAssets = dictionary();
   var externalSources = dictionary();
+  var externalLoads = dictionary();
   var tintedCache = dictionary();
   var crowdMaskCache = dictionary();
   var surfaceSerial = 1;
@@ -200,12 +201,24 @@
     keys = Object.keys(entries);
     return Promise.all(keys.map(function (key) {
       var source = entries[key];
+      var pending;
+      var promise;
       if (externalAssets[key] && externalSources[key] === source) return externalAssets[key];
-      return loadImage(source, "map-owned " + key).then(function (image) {
-        externalAssets[key] = image;
-        externalSources[key] = source;
+      pending = externalLoads[key];
+      if (pending && pending.source === source) return pending.promise;
+      promise = loadImage(source, "map-owned " + key).then(function (image) {
+        if (externalLoads[key] && externalLoads[key].promise === promise) {
+          externalAssets[key] = image;
+          externalSources[key] = source;
+          delete externalLoads[key];
+        }
         return image;
+      }, function (error) {
+        if (externalLoads[key] && externalLoads[key].promise === promise) delete externalLoads[key];
+        throw error;
       });
+      externalLoads[key] = { source: source, promise: promise };
+      return promise;
     })).then(function () { return undefined; });
   }
 
@@ -413,12 +426,15 @@
     return canvas;
   }
 
-  function frameCoordinates(image, index, cellW, cellH, padding) {
-    var columns = Math.floor((image.width + padding) / (cellW + padding));
+  function frameCoordinates(image, index, cellW, cellH, padding, sourceX, sourceY, sourceW) {
+    sourceX = Math.max(0, Math.floor(finite(sourceX, 0)));
+    sourceY = Math.max(0, Math.floor(finite(sourceY, 0)));
+    sourceW = Math.max(0, Math.floor(finite(sourceW, 0))) || image.width - sourceX;
+    var columns = Math.floor((sourceW + padding) / (cellW + padding));
     if (columns < 1 || index < 0) return null;
     return {
-      x: (index % columns) * (cellW + padding),
-      y: Math.floor(index / columns) * (cellH + padding),
+      x: sourceX + (index % columns) * (cellW + padding),
+      y: sourceY + Math.floor(index / columns) * (cellH + padding),
       w: cellW,
       h: cellH
     };
@@ -452,7 +468,9 @@
     var region;
     settings = settings || {};
     if (!image) return false;
-    region = frameCoordinates(image, index, cellW, cellH, padding);
+    region = frameCoordinates(image, index, cellW, cellH, padding,
+      geometry && geometry.sourceX, geometry && geometry.sourceY,
+      geometry && geometry.sourceW);
     if (!region || region.y + region.h > image.height) return false;
     settings.colour = colour || [1, 1, 1, 1];
     drawRegion(context, image, region, x, y, CELL, CELL, settings);
@@ -700,11 +718,11 @@
     options = options || {};
     /* mapgen reverses the source column before it computes the destination
      * tile's byte arguments. Keep the seed attached to that destination. */
-    if (options.mirrored) localX = COLS - 1 - localX;
+    if (options.mirrored) localX = Math.floor(finite(options.roomCols, COLS)) - 1 - localX;
     if (options.worldXOffset !== undefined && options.worldXOffset !== null) {
       offset = Math.floor(finite(options.worldXOffset, 0));
     } else {
-      offset = Math.floor(finite(options.worldRoomIndex, 0)) * COLS;
+      offset = Math.floor(finite(options.worldRoomIndex, 0)) * Math.floor(finite(options.roomCols, COLS));
     }
     return offset + localX;
   }
@@ -730,24 +748,29 @@
     return signedScale * colouringScale < 0;
   }
 
-  function blankGrid() {
+  function blankGrid(width, height) {
     var result = [];
     var y;
-    for (y = 0; y < ROWS; y += 1) result.push(new Array(COLS).fill(" "));
+    width = Math.max(1, Math.floor(finite(width, COLS)));
+    height = Math.max(1, Math.floor(finite(height, ROWS)));
+    for (y = 0; y < height; y += 1) result.push(new Array(width).fill(" "));
     return result;
   }
 
   function coerceGrid(gridOrRoom) {
     var source = gridOrRoom && gridOrRoom.grid ? gridOrRoom.grid : gridOrRoom;
-    var result = blankGrid();
+    var height = source && typeof source.length === "number" && source.length ? source.length : ROWS;
+    var first = height && source ? (typeof source[0] === "string" ? source[0].split("") : source[0]) : null;
+    var width = first && typeof first.length === "number" && first.length ? first.length : COLS;
+    var result = blankGrid(width, height);
     var row;
     var y;
     var x;
     if (!source || typeof source.length !== "number") return result;
-    for (y = 0; y < Math.min(ROWS, source.length); y += 1) {
+    for (y = 0; y < Math.min(height, source.length); y += 1) {
       row = typeof source[y] === "string" ? source[y].split("") : source[y];
       if (!row || typeof row.length !== "number") continue;
-      for (x = 0; x < Math.min(COLS, row.length); x += 1) {
+      for (x = 0; x < Math.min(width, row.length); x += 1) {
         result[y][x] = typeof row[x] === "string" && row[x].length ? row[x].charAt(0) : " ";
       }
     }
@@ -804,7 +827,9 @@
   }
 
   function setCell(cells, x, y, cell, options) {
-    if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
+    var height = cells.length;
+    var width = height && cells[0] ? cells[0].length : 0;
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
     cell.x = x;
     cell.y = y;
     cell.nativeWorldX = nativeWorldX(x, options);
@@ -1000,11 +1025,13 @@
     var definition;
     var nativeGlyph;
     var cell;
-    for (y = 0; y < ROWS; y += 1) cells.push(new Array(COLS));
+    var height = grid.length;
+    var width = height && grid[0] ? grid[0].length : 0;
+    for (y = 0; y < height; y += 1) cells.push(new Array(width));
 
     /* Native generation is top-to-bottom. That ordering matters for @. */
-    for (y = 0; y < ROWS; y += 1) {
-      for (x = 0; x < COLS; x += 1) {
+    for (y = 0; y < height; y += 1) {
+      for (x = 0; x < width; x += 1) {
         glyph = grid[y][x];
         definition = definitions[glyph];
         nativeGlyph = customNativeGlyph(definition, glyph);
@@ -1021,12 +1048,12 @@
     }
 
     /* A generated wall whose lower edge is exposed uses the ceiling/bottom lip. */
-    for (y = 0; y < ROWS; y += 1) {
-      for (x = 0; x < COLS; x += 1) {
+    for (y = 0; y < height; y += 1) {
+      for (x = 0; x < width; x += 1) {
         cell = cells[y][x];
         /* The same solid-out-of-map rule applies below the last row, so a
          * bottom-edge wall stays a wall instead of gaining a ceiling lip. */
-        if (cell && cell.kind === "auto-wall" && y < ROWS - 1 &&
+        if (cell && cell.kind === "auto-wall" && y < height - 1 &&
             (!cells[y + 1][x] || !cells[y + 1][x].solid)) {
           cell.kind = "ceiling";
           cell.nativeGeneratedBottom = true;
@@ -1088,13 +1115,38 @@
       paletteColour(palette, "fg2"), settings || {});
   }
 
-  function nativeSheetAssets(assets, options) {
+  function nativeSheetSelection(options) {
     var tileset = options.tileset || {};
-    var sheetName = tileset.sprite_sheet;
+    var sheetName = typeof options.nativeTileset === "string" && options.nativeTileset ? options.nativeTileset : null;
+    var declaration = null;
+    if (!sheetName && tileset.native_layout && typeof tileset.sprite_sheet === "string" && !/^builtin:/i.test(tileset.sprite_sheet)) sheetName = tileset.sprite_sheet;
+    if (!sheetName || /^builtin:/i.test(sheetName)) return null;
+    if (tileset.sprite_sheet === sheetName) declaration = tileset;
+    if (!declaration && Array.isArray(tileset.sheets)) {
+      for (var sheetIndex = 0; sheetIndex < tileset.sheets.length; sheetIndex += 1) {
+        if (tileset.sheets[sheetIndex] && tileset.sheets[sheetIndex].sprite_sheet === sheetName) {
+          declaration = tileset.sheets[sheetIndex];
+          break;
+        }
+      }
+    }
+    if (!declaration) return null;
+    return {
+      sprite_sheet: sheetName,
+      cell_w: Math.max(1, Math.floor(finite(declaration.cell_w, 16))),
+      cell_h: Math.max(1, Math.floor(finite(declaration.cell_h, 16))),
+      padding: Math.max(0, Math.floor(finite(declaration.padding, 0))),
+      source_x: Math.max(0, Math.floor(finite(declaration.source_x, 0))),
+      source_y: Math.max(0, Math.floor(finite(declaration.source_y, 0))),
+      source_w: Math.max(0, Math.floor(finite(declaration.source_w, 0)))
+    };
+  }
+
+  function nativeSheetAssets(assets, options) {
+    var selection = nativeSheetSelection(options);
     var image;
-    if (!tileset.native_layout || !sheetName || /^builtin:/i.test(sheetName)) return assets;
-    image = (options.externalImages && options.externalImages[sheetName]) ||
-      (assets.external && assets.external[sheetName]);
+    if (!selection) return assets;
+    image = externalImage(selection.sprite_sheet, assets, options);
     if (!image) return assets;
     return {
       tiles: image,
@@ -1106,12 +1158,25 @@
       external: assets.external,
       geometry: {
         tiles: {
-          cellW: Math.max(1, Math.floor(finite(tileset.cell_w, CELL))),
-          cellH: Math.max(1, Math.floor(finite(tileset.cell_h, CELL))),
-          padding: Math.max(0, Math.floor(finite(tileset.padding, 0)))
+          cellW: selection.cell_w,
+          cellH: selection.cell_h,
+          padding: selection.padding,
+          sourceX: selection.source_x,
+          sourceY: selection.source_y,
+          sourceW: selection.source_w
         }
       }
     };
+  }
+
+  function externalImage(key, assets, options) {
+    var supplied = options && options.externalImages && options.externalImages[key];
+    var loaded = assets && assets.external && assets.external[key];
+    /* The editor's package model stores external PNGs as data-URL strings.
+     * Those strings are load sources, not CanvasImageSource objects. Prefer an
+     * explicitly supplied decoded image, then the image cached by loadAssets. */
+    if (isImage(supplied)) return supplied;
+    return isImage(loaded) ? loaded : null;
   }
 
   function renderSun(context, assets, x, y, palette, time, iconOnly) {
@@ -1323,7 +1388,7 @@
         drawFrame(context, assets, recipe.sheet, recipe.frames[0], x, y, [1, 1, 1, 1], settings);
         return;
       case "sun":
-        transform = nativeSunPosition(COLS * CELL, ROWS * CELL, !!options.glyphPreview, x, y);
+        transform = nativeSunPosition(finite(options.roomWidthPixels, COLS * CELL), finite(options.roomHeightPixels, ROWS * CELL), !!options.glyphPreview, x, y);
         renderSun(context, assets, transform.x, transform.y, palette, time, !!options.glyphPreview);
         return;
       case "still-goal":
@@ -1578,8 +1643,8 @@
 
     if (ambient === 9 && layer === 0) {
       waterCells = [];
-      for (y = 0; y < ROWS; y += 1) {
-        for (x = 0; x < COLS; x += 1) if (grid[y][x] === "w") waterCells.push({ x: x, y: y });
+      for (y = 0; y < grid.length; y += 1) {
+        for (x = 0; x < grid[y].length; x += 1) if (grid[y][x] === "w") waterCells.push({ x: x, y: y });
       }
       /* The game samples one random map coordinate each tick and only emits
        * when it happens to hit native shallow water. It does not animate every
@@ -1600,6 +1665,133 @@
     }
   }
 
+  function rangeValue(range, seed, fallback) {
+    if (!range || typeof range !== "object") return fallback;
+    var minimum = finite(range.min, fallback);
+    var maximum = finite(range.max, fallback);
+    return minimum + (maximum - minimum) * seed;
+  }
+
+  function particleEase(value, mode) {
+    value = clamp(finite(value, 0), 0, 1);
+    if (mode === "ease_in") return value * value;
+    if (mode === "ease_out") return 1 - (1 - value) * (1 - value);
+    if (mode === "ease_in_out") return value < 0.5 ? 2 * value * value : 1 - 2 * (1 - value) * (1 - value);
+    return value;
+  }
+
+  function particleLerp(start, end, progress) {
+    return start + (end - start) * progress;
+  }
+
+  function emitterMotionAge(lifetime, age, mode) {
+    if (!mode || mode === "linear" || lifetime <= 1) return age;
+    return (lifetime - 1) * particleEase(age / (lifetime - 1), mode);
+  }
+
+  function ambianceSheetGeometry(definition, image, options) {
+    var key = definition.sprite_sheet;
+    var tileset = options.tileset || {};
+    var cellW = 16;
+    var cellH = 16;
+    var padding = 0;
+    var sourceX = 0;
+    var sourceY = 0;
+    var sourceW = 0;
+    var matched = null;
+    if (key === "builtin:glyphs") return { cellW: 8, cellH: 8, padding: 1 };
+    if (/^builtin:/i.test(key || "")) return { cellW: 16, cellH: 16, padding: 0 };
+    if (tileset.sprite_sheet === key) matched = tileset;
+    if (!matched && Array.isArray(tileset.sheets)) matched = tileset.sheets.find(function (entry) { return entry && entry.sprite_sheet === key; });
+    if (!matched && Array.isArray(tileset.tiles)) matched = tileset.tiles.find(function (entry) { return entry && (entry.sprite_sheet || tileset.sprite_sheet) === key; });
+    if (matched) {
+      cellW = Math.max(1, Math.floor(finite(matched.cell_w, finite(tileset.cell_w, 16))));
+      cellH = Math.max(1, Math.floor(finite(matched.cell_h, finite(tileset.cell_h, 16))));
+      padding = Math.max(0, Math.floor(finite(matched.padding, finite(tileset.padding, 0))));
+      sourceX = Math.max(0, Math.floor(finite(matched.source_x, finite(tileset.source_x, 0))));
+      sourceY = Math.max(0, Math.floor(finite(matched.source_y, finite(tileset.source_y, 0))));
+      sourceW = Math.max(0, Math.floor(finite(matched.source_w, finite(tileset.source_w, 0))));
+    }
+    if (!image || image.width < cellW || image.height < cellH) return null;
+    return { cellW: cellW, cellH: cellH, padding: padding, sourceX: sourceX, sourceY: sourceY, sourceW: sourceW };
+  }
+
+  function emitterSpawnUnit(shape, u, v) {
+    if (shape === "ellipse") {
+      var radius = Math.sqrt(v), angle = u * Math.PI * 2;
+      return { x: 0.5 + 0.5 * radius * Math.cos(angle),
+        y: 0.5 + 0.5 * radius * Math.sin(angle) };
+    }
+    if (shape === "line") return { x: u, y: u };
+    return { x: u, y: v };
+  }
+
+  function renderCustomAmbianceLayer(context, assets, ambiance, particles, layer, time, width, options) {
+    if (!ambiance || !Array.isArray(ambiance.emitters) || !Array.isArray(particles)) return;
+    var particleById = Object.create(null);
+    particles.forEach(function (particle) { if (particle && typeof particle.id === "string") particleById[particle.id] = particle; });
+    ambiance.emitters.forEach(function (emitter, emitterIndex) {
+      if (!emitter || Math.floor(finite(emitter.particle_layer, 2)) !== layer) return;
+      var particle = particleById[emitter.particle];
+      var visual = particle && particle.visual;
+      if (!particle || !visual) return;
+      var sheet = sheetForDefinition(visual, assets, options);
+      if (!sheet) return;
+      var geometry = ambianceSheetGeometry(visual, sheet.image, options);
+      if (!geometry) return;
+      var count = clamp(Math.floor(finite(emitter.count, 1)), 1, 512);
+      var lifetime = clamp(Math.floor(finite(particle.lifetime_ticks, 120)), 1, 360000);
+      var fadeIn = clamp(Math.floor(finite(particle.fade_in_ticks, 0)), 0, lifetime);
+      var fadeOut = clamp(Math.floor(finite(particle.fade_out_ticks, 0)), 0, lifetime);
+      var frames = clamp(Math.floor(finite(visual.frame_count, 1)), 1, 256);
+      var frameTicks = clamp(Math.floor(finite(visual.frame_ticks, 1)), 1, 3600);
+      var area = emitter.area || {};
+      var labelBase = String(options.mapId || "map") + ":" + String(ambiance.id || "ambiance") + ":" + emitterIndex;
+      for (var lane = 0; lane < count; lane += 1) {
+        var phase = hashCell(lane, emitterIndex, labelBase + ":phase") % lifetime;
+        var absoluteTick = Math.max(0, Math.floor(finite(time, 0))) + phase;
+        var age = absoluteTick % lifetime;
+        var cycle = Math.floor(absoluteTick / lifetime);
+        var seedLabel = labelBase + ":" + lane + ":" + cycle;
+        var random = function (slot) { return unitHash(lane + cycle * 977, emitterIndex + slot * 131, seedLabel + ":" + slot); };
+        var spawn = emitterSpawnUnit(emitter.shape, random(1), random(2));
+        var x = finite(area.x, 0) + finite(area.width, width) * spawn.x;
+        var y = finite(area.y, 0) + finite(area.height, 192) * spawn.y;
+        var velocityX = rangeValue(emitter.velocity_x, random(3), 0);
+        var velocityY = rangeValue(emitter.velocity_y, random(4), 0);
+        var accelerationX = finite(emitter.acceleration_x, 0);
+        var accelerationY = finite(emitter.acceleration_y, 0);
+        var progress = particleEase(lifetime <= 1 ? 1 : age / (lifetime - 1), visual.interpolation || "linear");
+        var motionAge = emitterMotionAge(lifetime, age, emitter.motion_interpolation);
+        var startRotation = finite(visual.start_rotation, 0);
+        var angle = particleLerp(startRotation, finite(visual.end_rotation, startRotation), progress) + rangeValue(emitter.rotation_speed, random(5), 0) * motionAge;
+        x += velocityX * motionAge + accelerationX * motionAge * motionAge * 0.5;
+        y += velocityY * motionAge + accelerationY * motionAge * motionAge * 0.5;
+        if (options.mirrored && emitter.mirror_with_room !== false) { x = width - x; angle = -angle; }
+        var startTint = parseColour(visual.tint, [1, 1, 1, 1]);
+        var endTint = parseColour(visual.end_tint, startTint);
+        var tint = startTint.map(function(channel,index){return particleLerp(channel,endTint[index],progress);});
+        var alpha = tint[3];
+        if (fadeIn && age < fadeIn) alpha *= age / fadeIn;
+        if (fadeOut && lifetime - age <= fadeOut) alpha *= (lifetime - age) / fadeOut;
+        var frame = Math.floor(finite(visual.sprite_index, 0)) + Math.floor(age / frameTicks) % frames;
+        var region = frameCoordinates(sheet.image, frame, geometry.cellW, geometry.cellH, geometry.padding, geometry.sourceX, geometry.sourceY, geometry.sourceW);
+        if (!region || region.x + region.w > sheet.image.width || region.y + region.h > sheet.image.height) continue;
+        context.save();
+        if (emitter.blend === "additive") context.globalCompositeOperation = "lighter";
+        drawRegion(context, sheet.image, region, x - geometry.cellW * 0.5, y - geometry.cellH * 0.5, geometry.cellW, geometry.cellH, {
+          colour: tint,
+          alpha: alpha,
+          angle: angle,
+          scaleX: particleLerp(finite(visual.scale_x, 1), finite(visual.end_scale_x, finite(visual.scale_x, 1)), progress),
+          scaleY: particleLerp(finite(visual.scale_y, 1), finite(visual.end_scale_y, finite(visual.scale_y, 1)), progress),
+          flipX: !!(options.mirrored && emitter.mirror_with_room !== false)
+        });
+        context.restore();
+      }
+    });
+  }
+
   function sheetForDefinition(definition, assets, options) {
     var tileset = options.tileset || {};
     var key = definition.sprite_sheet || tileset.sprite_sheet;
@@ -1609,8 +1801,7 @@
     else if (key === "builtin:sprites") image = assets.sprites;
     else if (key === "builtin:misc") image = assets.misc;
     else if (key === "builtin:glyphs") image = assets.font || assets.glyphs;
-    else image = (options.externalImages && options.externalImages[key]) ||
-      (assets.external && assets.external[key]);
+    else image = externalImage(key, assets, options);
     return image ? { key: key, image: image } : null;
   }
 
@@ -1643,6 +1834,9 @@
     var cellW;
     var cellH;
     var padding;
+    var sourceX;
+    var sourceY;
+    var sourceW;
     var index;
     var region;
     var tint;
@@ -1659,6 +1853,9 @@
       cellW = Math.max(1, Math.floor(inheritedNumber(definition, tileset, "cell_w", CELL)));
       cellH = Math.max(1, Math.floor(inheritedNumber(definition, tileset, "cell_h", CELL)));
       padding = Math.max(0, Math.floor(inheritedNumber(definition, tileset, "padding", 0)));
+      sourceX = Math.max(0, Math.floor(inheritedNumber(definition, tileset, "source_x", 0)));
+      sourceY = Math.max(0, Math.floor(inheritedNumber(definition, tileset, "source_y", 0)));
+      sourceW = Math.max(0, Math.floor(inheritedNumber(definition, tileset, "source_w", 0)));
     }
     index = Math.max(0, Math.floor(finite(definition.sprite_index, 0))) +
       customAnimationFrame(definition, finite(options.time, 0), cell.x, cell.y);
@@ -1670,7 +1867,7 @@
         h: FONT_CELL
       };
     } else {
-      region = frameCoordinates(sheet.image, index, cellW, cellH, padding);
+      region = frameCoordinates(sheet.image, index, cellW, cellH, padding, sourceX, sourceY, sourceW);
     }
     if (!region || region.x + region.w > sheet.image.width || region.y + region.h > sheet.image.height) return false;
 
@@ -1702,8 +1899,17 @@
     if (options.assets && options.assets.tiles && options.assets.sprites && options.assets.misc) {
       return Promise.resolve(options.assets);
     }
-    if (builtinAssets) return Promise.resolve(builtinAssets);
-    return loadAssets(options.assetOptions || {});
+    if (builtinAssets) {
+      return loadExternalEntries(options.externalImages).then(function () {
+        builtinAssets.external = externalAssets;
+        return builtinAssets;
+      });
+    }
+    var loadOptions = options.assetOptions || {};
+    if (options.externalImages && !loadOptions.external && !loadOptions.externalImages) {
+      loadOptions = Object.assign({}, loadOptions, { external: options.externalImages });
+    }
+    return loadAssets(loadOptions);
   }
 
   function renderRoomReady(canvas, gridOrRoom, options, assets) {
@@ -1711,11 +1917,21 @@
     var grid = coerceGrid(gridOrRoom);
     var context = contextOf(canvas);
     var palette = resolveAppearance(room, options);
+    var roomRows = grid.length;
+    var roomCols = roomRows && grid[0] ? grid[0].length : 0;
+    var width = roomCols * CELL;
+    var height = roomRows * CELL;
+    options = Object.assign({}, options, {
+      roomCols: roomCols,
+      roomRows: roomRows,
+      roomWidthPixels: width,
+      roomHeightPixels: height
+    });
     var cells = buildCells(grid, options);
     var drawAssets = nativeSheetAssets(assets, options);
-    var width = COLS * CELL;
-    var height = ROWS * CELL;
-    var ambient = ambientNumber(options.ambient !== undefined ? options.ambient : (room && room.ambient));
+    var ambientValue = options.ambient !== undefined ? options.ambient : (room && room.ambient);
+    var customAmbiance = Array.isArray(options.ambiances) && typeof ambientValue === "string" ? options.ambiances.find(function (entry) { return entry && entry.id === ambientValue; }) : null;
+    var ambient = ambientNumber(customAmbiance ? customAmbiance.native_ambient : ambientValue);
     var time = finite(options.time, 0);
     var gradient;
     var y;
@@ -1725,11 +1941,11 @@
     var customDrawn;
 
     function drawCellLayer(targetLayer) {
-      for (y = 0; y < ROWS; y += 1) {
-        for (x = 0; x < COLS; x += 1) {
+      for (y = 0; y < roomRows; y += 1) {
+        for (x = 0; x < roomCols; x += 1) {
           cell = cells[y][x];
           if (!cell || cell.layer !== targetLayer) continue;
-          drawX = (options.mirrored ? COLS - 1 - x : x) * CELL;
+          drawX = (options.mirrored ? roomCols - 1 - x : x) * CELL;
           customDrawn = false;
           if (!cell.custom || !cell.customReplace) {
             renderNativeCell(context, drawAssets, cell, drawX, y * CELL, palette, options);
@@ -1765,14 +1981,19 @@
      * map, layer-1 particles, actors, foreground map, then layer-0 particles. */
     drawCellLayer(1);
     renderAmbientLayer(context, drawAssets, grid, ambient, 4, palette, time, width, height);
+    renderCustomAmbianceLayer(context, assets, customAmbiance, options.particles, 4, time, width, options);
     renderAmbientLayer(context, drawAssets, grid, ambient, 3, palette, time, width, height);
+    renderCustomAmbianceLayer(context, assets, customAmbiance, options.particles, 3, time, width, options);
     drawCellLayer("particle3");
     renderAmbientLayer(context, drawAssets, grid, ambient, 2, palette, time, width, height);
+    renderCustomAmbianceLayer(context, assets, customAmbiance, options.particles, 2, time, width, options);
     drawCellLayer(0);
     renderAmbientLayer(context, drawAssets, grid, ambient, 1, palette, time, width, height);
+    renderCustomAmbianceLayer(context, assets, customAmbiance, options.particles, 1, time, width, options);
     drawCellLayer("actor");
     drawCellLayer(-1);
     renderAmbientLayer(context, drawAssets, grid, ambient, 0, palette, time, width, height);
+    renderCustomAmbianceLayer(context, assets, customAmbiance, options.particles, 0, time, width, options);
     context.restore();
     return canvas;
   }
@@ -1882,6 +2103,7 @@
     builtinKey = "";
     externalAssets = dictionary();
     externalSources = dictionary();
+    externalLoads = dictionary();
     tintedCache = dictionary();
     crowdMaskCache = dictionary();
   }
@@ -1924,6 +2146,12 @@
     _nativeChandelierGeometry: nativeChandelierGeometry,
     _nativeChandelierGlow: nativeChandelierGlow,
     _nativeSunPosition: nativeSunPosition,
+    _particleEase: particleEase,
+    _emitterMotionAge: emitterMotionAge,
+    _emitterSpawnUnit: emitterSpawnUnit,
+    _nativeSheetSelection: nativeSheetSelection,
+    _nativeSheetAssets: nativeSheetAssets,
+    _externalImage: externalImage,
     _goalColour: goalColour,
     _previewEnemyColour: previewEnemyColour
   };

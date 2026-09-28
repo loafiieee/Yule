@@ -14,9 +14,10 @@
   <tr><td>Vanilla glyph behavior, custom room order/colors/ambience</td><td><code>eggnogg-map/v1</code></td></tr>
   <tr><td>Reskin every normal map tile from one sheet</td><td>V2 with <code>tileset.native_layout=true</code></td></tr>
   <tr><td>New symbolic sprites/collision/animation</td><td>V2 <code>tileset.tiles[]</code></td></tr>
+  <tr><td>Different width or height for each room</td><td>V2 with <code>layout.room_format="variable_cells"</code></td></tr>
   <tr><td>Programmable springs, fans, or bounded contact logic</td><td>V2 plus <code>map.lua</code></td></tr>
 </tbody></table>
-<p>Both versions retain the engine's fixed 33×12 source rooms, at most nine source rooms, and center-out mirroring. Final visible rooms are <code>2 × source rooms − 1</code>.</p></section>
+<p>V1 uses fixed 33×12 source rooms. V2 can keep that format or use independently sized 8–128 by 6–64 cell rooms. Both formats currently allow at most nine source rooms and use center-out mirroring, so final visible rooms are <code>2 × source rooms − 1</code>.</p></section>
 
 <section id="folder"><h2>2. Make the package</h2>
 <pre><code>maps/
@@ -42,7 +43,7 @@
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"</code></pre>
-<p>Every room has exactly 12 quoted rows and every row contains exactly 33 bytes. Spaces inside quotes matter. List source rooms from center outward; the engine mirrors every room after the first. Use only the native glyph set in V1. V2 may bind any printable ASCII byte to a custom tile.</p>
+<p>With <code>vanilla_33x12</code>, every room has exactly 12 quoted rows and every row contains exactly 33 bytes. With V2 <code>variable_cells</code>, each room has 6–64 rows of 8–128 bytes, and every row in that room must have the same width. Different rooms may use different dimensions. Spaces inside quotes matter. List source rooms from center outward; the engine mirrors every room after the first. Use only the native glyph set in V1. V2 may bind any printable ASCII byte to a custom tile.</p>
 <div class="callout warning">Some native glyphs expand into neighboring cells. <code>G</code> is 3×3; <code>L</code>, <code>N</code>, and <code>Y</code> are 2×3; tentacles and waterfalls also have nonlocal behavior. Check the <a href="../reference/map-format.html#glyphs">glyph table</a> before placing them at an edge.</div></section>
 
 <section id="metadata"><h2>4. Add metadata and rules</h2>

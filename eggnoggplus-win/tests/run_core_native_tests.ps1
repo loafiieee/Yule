@@ -81,6 +81,11 @@ try {
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\entity_world_test.c', 'entity_world.c', '-o', 'build\entity_world_test.exe'
     )
+    Invoke-NativeTest 'stateless custom ambiance tests' '.\build\map_ambiance_test.exe' @(
+        '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+        'tests\map_ambiance_test.c', 'map_ambiance.c',
+        '-o', 'build\map_ambiance_test.exe', '-lm'
+    )
     Invoke-NativeTest 'entity Lua adapter tests' '.\build\entity_lua_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\entity_lua_test.c', 'entity_lua.c', 'entity_world.c',
@@ -251,13 +256,13 @@ try {
     )
     }
     Invoke-NativeTest 'native rollback serializer tests' '.\build\state_serializer_test.exe' @(
-        '-m32', '-O2', '-std=gnu11', '-Wall', '-Wextra', '-pedantic',
+        '-m32', '-O2', '-g', '-std=gnu11', '-Wall', '-Wextra', '-pedantic',
         '-ffunction-sections', '-fdata-sections',
         '-DEGGNOGGPLUS_SERIALIZER_TESTING',
         'tests\state_serializer_test.c',
         'dllmain.c', 'stubs.c', 'hooks.c', 'image_util.c', 'text_util.c',
         'console_catalog.c', 'console_parse.c', 'command_history.c',
-        'custom_maps.c',
+        'custom_maps.c', 'room_graph.c', 'map_ambiance.c',
         'content_registry.c', 'content_tiles.c', 'content_bridge.c',
         'map_script.c', 'entity_world.c', 'entity_lua.c', 'entity_package.c', 'entity_package_json.c', 'cursor_ext.c', 'credential_ext.c', 'discord_rpc_ext.c',
         'bytebeat_ext.c', 'bytebeat_chakra.c', 'bytebeat_js.c',
@@ -278,7 +283,7 @@ try {
         '-lcomdlg32', '-lshell32', '-lole32', '-lm'
     )
 
-    & node --test 'greggnogg\object-logic.test.js' 'greggnogg\logic-studio.test.js' 'greggnogg\preview-client.test.js' 'greggnogg\preview-package.test.js' 'greggnogg\logic-blocks.test.js' 'greggnogg\content-workspace\core.test.js' 'greggnogg\content-workspace\workshop.test.js' 'greggnogg\editor-core.test.js' 'greggnogg\atlas-renderer.test.js' 'tests\greggnogg_color_controls_test.js' 'tests\online_maintenance_test.js' 'tests\online_admin_audit_test.js' 'tests\online_server_storage_test.js' 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
+    & node --test 'greggnogg\object-tools.test.js' 'greggnogg\object-logic.test.js' 'greggnogg\logic-studio.test.js' 'greggnogg\preview-client.test.js' 'greggnogg\preview-package.test.js' 'greggnogg\logic-blocks.test.js' 'greggnogg\content-workspace\core.test.js' 'greggnogg\content-workspace\workshop.test.js' 'greggnogg\editor-core.test.js' 'greggnogg\atlas-renderer.test.js' 'tests\greggnogg_color_controls_test.js' 'tests\online_maintenance_test.js' 'tests\online_admin_audit_test.js' 'tests\online_server_storage_test.js' 'tests\online_admin_server_test.js' 'tests\discord_lfg_bot_test.js' 'tests\lfg_redirect_test.js'
     if ($LASTEXITCODE -ne 0) {
         throw "Discord LFG bot/redirect tests failed with exit code $LASTEXITCODE."
     }
@@ -312,6 +317,9 @@ try {
         'tests\simulation_width_static_test.py',
         'tests\player_colour_static_test.py',
         'tests\discord_presence_static_test.py',
+        'tests\audio_volume_static_test.py',
+        'tests\map_ambiance_hooks_static_test.py',
+        'tests\map_ambiance_editor_static_test.py',
         'tests\bytebeat_lua_static_test.py',
         'tests\lua_http_lifecycle_static_test.py',
         'tests\greggnogg_ui_static_test.py',

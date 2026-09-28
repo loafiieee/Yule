@@ -225,6 +225,16 @@ static int expect_call(int result, const char* operation, const char* err) {
 }
 
 int main(void) {
+    CHECK(lua_manager_test_scale_master_mix_volume(128, 100) == 128,
+          "100 percent master volume changed the source volume");
+    CHECK(lua_manager_test_scale_master_mix_volume(128, 50) == 64,
+          "50 percent master volume did not halve mixer output");
+    CHECK(lua_manager_test_scale_master_mix_volume(128, 0) == 0,
+          "zero master volume did not mute mixer output");
+    CHECK(lua_manager_test_scale_master_mix_volume(200, 150) == 128,
+          "master volume did not clamp source and percentage bounds");
+    CHECK(lua_manager_test_scale_master_mix_volume(-4, 50) == 0,
+          "master volume accepted a negative source volume");
     {
         unsigned char cells[4*4*4]={0},properties[256*0x2c]={0};properties[7*0x2c+2]=1;cells[(2*4+1)*4]=7;
         CHECK(hooks_test_solid_box(cells,4,4,properties,24,40,16,16)==1,"native solid-property lookup missed a block");
@@ -888,7 +898,7 @@ int main(void) {
         managed_before=malloc(managed_size);managed_after=malloc(managed_size);
         if(!saved || !restored || !bad || !managed_before || !managed_after) return 1;
         CHECK(ggpo_ext_save_game_state(saved,bytes,&len,&crc,err,sizeof(err)),"native entity save failed");
-        CHECK(len>managed_size && memcmp(saved+len-managed_size,"YMC2",4)==0,"native snapshot lacks entity extension");
+        CHECK(len>managed_size && memcmp(saved+len-managed_size,"YMC3",4)==0,"native snapshot lacks entity extension");
         CHECK(ggpo_ext_validate_rollback_transport_blob(saved,len,&crc,err,sizeof(err)),"native entity transport preflight failed");
         CHECK(map_script_dispatch_tick(err,sizeof(err)),"second managed fixture tick failed");
         *(uint32_t*)NATIVE_AT(ADDR_SCORE_P0)=31337;
@@ -909,12 +919,20 @@ int main(void) {
      * page is read-only. The binding seam changes only the player slot table. */
     {
         uintptr_t slots[2]={(uintptr_t)player0,(uintptr_t)player1};MapScriptObjectView views[2];
+        MapScriptPlayerObservation observation;
         uint8_t saved0[PLAYER_SIZE],saved1[PLAYER_SIZE],expected0[PLAYER_SIZE],expected1[PLAYER_SIZE];
         DWORD velocity_protect=0,velocity_ignored=0;
         player0[0x0b]=0;player1[0x0b]=1;defeat_calls=0;
         player0[0]=player0[1]=player1[0]=player1[1]=1;player0[0x78]=player1[0x78]=0;
+        *(float*)(player0+0x24)=40;*(float*)(player0+0x28)=60;*(float*)(player0+0x2c)=38;*(float*)(player0+0x30)=57;
+        *(float*)(player1+0x24)=80;*(float*)(player1+0x28)=90;*(float*)(player1+0x2c)=79;*(float*)(player1+0x30)=88;
+        player0[0x9f]=MAP_SCRIPT_COMMAND_ATTACK;player0[0xac]=1;player0[0xad]=0;
+        CHECK(hooks_test_observe_player_edge(slots,0,MAP_SCRIPT_COMMAND_JUMP,&observation),"production player observation seam rejected live player");
+        CHECK(observation.previous_command_bits==MAP_SCRIPT_COMMAND_ATTACK && observation.command_bits==MAP_SCRIPT_COMMAND_JUMP,
+              "post-native command copy erased the captured input edge");
+        CHECK(observation.previously_grounded==1 && observation.grounded==0,"player observation lost native grounded history");
         memcpy(saved0,player0,PLAYER_SIZE);memcpy(saved1,player1,PLAYER_SIZE);
-        memset(views,0,sizeof(views));for(uint32_t i=0;i<2;i++){views[i].object_id=i;views[i].object_kind=MAP_SCRIPT_OBJECT_PLAYER;views[i].vx=3.5f+(float)i;views[i].vy=-2.0f-(float)i;}
+        memset(views,0,sizeof(views));for(uint32_t i=0;i<2;i++){views[i].object_id=i;views[i].object_kind=MAP_SCRIPT_OBJECT_PLAYER;views[i].x=*(float*)((i?player1:player0)+0x24);views[i].y=*(float*)((i?player1:player0)+0x28);views[i].vx=3.5f+(float)i;views[i].vy=-2.0f-(float)i;}
         if(VirtualProtect(player1,PLAYER_PAGE_SIZE,PAGE_READONLY,&velocity_protect)) {
             CHECK(!hooks_test_commit_players(slots,1,2,views,fixture_defeat),"read-only defeat target must reject velocity writes too");
             CHECK(defeat_calls==0 && !memcmp(saved0,player0,PLAYER_SIZE),"defeat preflight partially committed");
@@ -932,6 +950,11 @@ int main(void) {
         player1[0x78]=9;CHECK(!hooks_test_commit_players(slots,1,2,views,fixture_defeat),"goal-dive state must reject scripted defeat");player1[0x78]=0;
         CHECK(hooks_test_apply_player_velocities(slots,3,views),"valid velocity batch rejected");
         CHECK(!memcmp(expected0,player0,PLAYER_SIZE) && !memcmp(expected1,player1,PLAYER_SIZE),"velocity commit changed fields other than vx/vy");
+        memcpy(expected0,player0,PLAYER_SIZE);views[0].x=140;views[0].y=45;
+        { float value=138;memcpy(expected0+0x2c,&value,sizeof(value));value=42;memcpy(expected0+0x30,&value,sizeof(value)); }
+        memcpy(expected0+0x24,&views[0].x,sizeof(float));memcpy(expected0+0x28,&views[0].y,sizeof(float));
+        CHECK(hooks_test_apply_player_velocities(slots,1,views),"valid player position batch rejected");
+        CHECK(!memcmp(expected0,player0,PLAYER_SIZE) && !memcmp(expected1,player1,PLAYER_SIZE),"player position commit did not preserve native displacement history");
     }
 
     free(before_region);

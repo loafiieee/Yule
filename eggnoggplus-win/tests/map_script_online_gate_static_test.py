@@ -57,6 +57,18 @@ ordered(
 )
 assert "reload" not in pinned_id
 
+pinned_key = function_body(
+    CUSTOM_MAPS, "int custom_maps_pinned_online_key(int selector"
+)
+ordered(
+    pinned_key,
+    '"vanilla:%d"',
+    "selector != g_engine_pinned_selector",
+    "g_engine_pinned_generation == 0",
+    "g_engine_pinned_map->online_key",
+)
+assert "reload" not in pinned_key
+
 # A declared script is ready only when the exact pinned identity is active and
 # non-faulted. Missing pins and unexpected stale VMs also fail closed.
 validate = function_body(
@@ -65,6 +77,8 @@ validate = function_body(
 ordered(
     validate,
     "custom_maps_pinned_script_id(selector, &expected_script_id)",
+    "custom_maps_pinned_online_key(selector, pinned_map_key",
+    "_stricmp(pinned_map_key, g_online_pending_match.map_key) != 0",
     "if (pinned < 0)",
     "if (expected_script_id == 0)",
     "if (!map_script_is_active() || map_script_is_faulted() ||",
@@ -95,7 +109,7 @@ ordered(
 map_build = function_body(HOOKS, "static void __cdecl hooked_mapgen_build_map(void)")
 bind_failure = map_build[
     map_build.index("if (!content_bridge_bind_selector") :
-    map_build.index("hooks_map_native_tileset_configure(selector)")
+    map_build.index("hooks_map_native_tileset_configure(")
 ]
 assert "custom_maps_deactivate_script();" in bind_failure
 activate = function_body(

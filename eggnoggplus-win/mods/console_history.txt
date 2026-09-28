@@ -1,10 +1,3 @@
-dev off
-help
-dev off
-dev on
-help
-ggpo.local on
-ggpo.local status
 ggpo.local host
 ggpo.net host
 ggpo.local host
@@ -62,3 +55,10 @@ dev on
 ggpo.net rngtrace on
 dev on
 ggpo.net rngtrace on
+state
+state hi
+state main
+state.return
+state.main
+state.last
+state.return

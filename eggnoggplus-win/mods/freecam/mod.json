@@ -1,0 +1,12 @@
+{
+  "id": "freecam",
+  "name": "Free Camera",
+  "version": "1.0.0",
+  "author": "Eggnogg+",
+  "description": "Pan, drag and zoom the game camera independently of room bounds.",
+  "api_version": 1,
+  "api_revision": 15,
+  "api_requires": ["game.render_camera"],
+  "entry": "main.lua",
+  "config": "config.cfg"
+}

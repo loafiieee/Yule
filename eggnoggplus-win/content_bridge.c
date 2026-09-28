@@ -174,6 +174,59 @@ static int custom_map_lookup(void* user,
                                          &native_glyph);
 }
 
+static int content_bridge_bind_variable(void* tilemap_base,
+                                        int tilemap_width,
+                                        int tilemap_height,
+                                        CustomMapLookupContext* context,
+                                        ContentBridgeBindSummary* out_summary,
+                                        char* err,
+                                        size_t err_cap) {
+    ContentBridgeBindSummary summary;
+    int final_rooms;
+    clear_summary(&summary);
+    summary.source_room_count = context->view.source_room_count;
+    final_rooms = context->view.final_room_count;
+    if (!tilemap_base || final_rooms < 1 ||
+        tilemap_width != context->view.layout_width ||
+        tilemap_height != context->view.layout_height) {
+        set_err(err, err_cap, "live tilemap dimensions do not match variable room layout");
+        return 0;
+    }
+    if (!content_tiles_map_begin(tilemap_base, tilemap_width, tilemap_height, err, err_cap)) return 0;
+    summary.metadata_active = 1;
+    for (int final_room = 0; final_room < final_rooms; final_room++) {
+        int source_room = context->view.final_source_room[final_room];
+        int mirrored = context->view.final_mirror_x[final_room];
+        int room_start = context->view.final_x[final_room];
+        int room_top = context->view.final_y[final_room];
+        if (source_room < 0 || source_room >= context->view.source_room_count) {
+            set_err(err, err_cap, "final room references an invalid source room");
+            goto fail;
+        }
+        for (int y = 0; y < context->view.room_height[source_room]; y++) {
+            for (int x = 0; x < context->view.room_width[source_room]; x++) {
+                char key[CONTENT_KEY_MAX];
+                int lookup = custom_map_lookup(context, source_room, x, y, key, sizeof(key));
+                int destination_x;
+                if (lookup < 0) { set_err(err, err_cap, "content map view changed during variable binding"); goto fail; }
+                if (lookup == 0) continue;
+                destination_x = room_start + (mirrored ? context->view.room_width[source_room] - 1 - x : x);
+                summary.source_content_cells++;
+                if (!content_tiles_map_set(destination_x, room_top + y, key, mirrored, err, err_cap)) goto fail;
+                summary.bound_content_cells++;
+            }
+        }
+    }
+    summary.unique_definitions = content_tiles_map_definition_count();
+    if (out_summary) *out_summary = summary;
+    return 1;
+fail:
+    content_tiles_map_end();
+    summary.metadata_active = 0;
+    if (out_summary) *out_summary = summary;
+    return 0;
+}
+
 int content_bridge_bind_selector(void* tilemap_base,
                                  int tilemap_width,
                                  int tilemap_height,
@@ -207,11 +260,15 @@ int content_bridge_bind_selector(void* tilemap_base,
         if (out_summary) *out_summary = summary;
         return 1;
     }
-    result = content_bridge_bind_layout(tilemap_base, tilemap_width,
-                                        tilemap_height,
-                                        context.view.source_room_count,
-                                        custom_map_lookup, &context,
-                                        &summary, err, err_cap);
+    result = context.view.variable_rooms
+        ? content_bridge_bind_variable(tilemap_base, tilemap_width,
+                                       tilemap_height, &context,
+                                       &summary, err, err_cap)
+        : content_bridge_bind_layout(tilemap_base, tilemap_width,
+                                     tilemap_height,
+                                     context.view.source_room_count,
+                                     custom_map_lookup, &context,
+                                     &summary, err, err_cap);
     summary.selector = selector;
     summary.custom_maps_generation = context.view.generation;
     if (result && summary.bound_content_cells == 0) {

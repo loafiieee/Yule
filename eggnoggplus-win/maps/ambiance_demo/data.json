@@ -1,0 +1,116 @@
+{
+  "format": "eggnogg-map/v2",
+  "id": "ambiance_demo",
+  "name": "Particle Ambiance Demo",
+  "author": "Eggnogg+",
+  "description": "Editable demo of particle transitions, layers, and rectangle, ellipse, and line emitter shapes.",
+  "sort_order": 1001,
+  "rules": {
+    "mode": "swords",
+    "score_target": null
+  },
+  "layout": {
+    "kind": "mirrored_source_rooms",
+    "room_format": "vanilla_33x12",
+    "order": ["center"]
+  },
+  "particles": [
+    {
+      "id": "ember",
+      "name": "Falling ember",
+      "visual": {
+        "sprite_sheet": "builtin:misc",
+        "sprite_index": 30,
+        "frame_count": 1,
+        "frame_ticks": 1,
+        "tint": [1.0, 0.48, 0.16, 0.86],
+        "end_tint": [0.55, 0.08, 0.01, 0.0],
+        "scale_x": 0.55,
+        "scale_y": 0.55,
+        "end_scale_x": 0.15,
+        "end_scale_y": 0.15,
+        "start_rotation": -15,
+        "end_rotation": 45,
+        "interpolation": "ease_out"
+      },
+      "lifetime_ticks": 210,
+      "fade_in_ticks": 12,
+      "fade_out_ticks": 32
+    },
+    {
+      "id": "ash",
+      "name": "Cooling ash",
+      "visual": {
+        "sprite_sheet": "builtin:misc",
+        "sprite_index": 31,
+        "frame_count": 1,
+        "frame_ticks": 1,
+        "tint": [0.8, 0.72, 0.64, 0.65],
+        "end_tint": [0.3, 0.28, 0.32, 0.0],
+        "scale_x": 0.35,
+        "scale_y": 0.5,
+        "end_scale_x": 0.05,
+        "end_scale_y": 0.15,
+        "start_rotation": 10,
+        "end_rotation": -80,
+        "interpolation": "ease_in_out"
+      },
+      "lifetime_ticks": 260,
+      "fade_in_ticks": 18,
+      "fade_out_ticks": 60
+    }
+  ],
+  "ambiances": [
+    {
+      "id": "emberfall",
+      "name": "Emberfall",
+      "native_ambient": "dust",
+      "emitters": [
+        {
+          "particle": "ember",
+          "count": 28,
+          "shape": "rectangle",
+          "area": {"x": 0, "y": -16, "width": 528, "height": 208},
+          "velocity_x": {"min": -0.08, "max": 0.08},
+          "velocity_y": {"min": 0.12, "max": 0.34},
+          "acceleration_x": 0,
+          "acceleration_y": 0.0005,
+          "rotation_speed": {"min": -0.8, "max": 0.8},
+          "particle_layer": 1,
+          "blend": "additive",
+          "mirror_with_room": true
+        },
+        {
+          "particle": "ash",
+          "count": 5,
+          "shape": "ellipse",
+          "motion_interpolation": "ease_in_out",
+          "area": {"x": 24, "y": 24, "width": 480, "height": 144},
+          "velocity_x": {"min": -0.03, "max": 0.03},
+          "velocity_y": {"min": -0.08, "max": -0.02},
+          "acceleration_y": -0.0002,
+          "rotation_speed": {"min": -0.3, "max": 0.3},
+          "particle_layer": 3,
+          "blend": "alpha",
+          "mirror_with_room": true
+        },
+        {
+          "particle": "ember",
+          "count": 12,
+          "shape": "line",
+          "area": {"x": 96, "y": 24, "width": 336, "height": 128},
+          "velocity_x": {"min": 0, "max": 0},
+          "velocity_y": {"min": 0, "max": 0},
+          "particle_layer": 2,
+          "blend": "alpha",
+          "mirror_with_room": true
+        }
+      ]
+    }
+  ],
+  "defaults": {
+    "room": {
+      "ambient": "emberfall"
+    }
+  }
+}

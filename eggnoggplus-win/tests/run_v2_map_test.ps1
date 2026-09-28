@@ -26,12 +26,33 @@ try {
         }
     }
 
+    function Invoke-CheckedTest([string]$Path, [string]$FailureLabel) {
+        # Windows PowerShell promotes a native program's stderr to ErrorRecord
+        # objects. Several runtime tests intentionally exercise and print
+        # fail-closed diagnostics, so judge them by their process exit code
+        # while still keeping the combined output visible in CI logs.
+        $command = '"' + $Path + '" 2>&1'
+        & $env:ComSpec /d /s /c $command
+        if ($LASTEXITCODE -ne 0) {
+            throw "$FailureLabel failed with exit code $LASTEXITCODE."
+        }
+    }
+
     if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
         throw '32-bit MinGW GCC was not found. Install MSYS2 MinGW32 or add gcc.exe to PATH.'
     }
     Assert-RequiredRuntimeDlls @('lua51.dll', 'libgcc_s_dw2-1.dll', 'libwinpthread-1.dll')
 
     New-Item -ItemType Directory -Force -Path 'build' | Out-Null
+    Write-Host 'Building bounded two-dimensional room graph validation tests...'
+    & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
+        'tests\room_graph_test.c' 'room_graph.c' `
+        -o 'build\room_graph_test.exe'
+    if ($LASTEXITCODE -ne 0) {
+        throw "Room graph test compilation failed with exit code $LASTEXITCODE."
+    }
+    Invoke-CheckedTest '.\build\room_graph_test.exe' 'Room graph tests'
+
     Write-Host 'Checking native-tick force integration...'
     & python 'tests\content_force_hooks_static_test.py'
     if ($LASTEXITCODE -ne 0) {
@@ -42,6 +63,12 @@ try {
     & python 'tests\map_tileset_hooks_static_test.py'
     if ($LASTEXITCODE -ne 0) {
         throw "Map tileset hook integration test failed with exit code $LASTEXITCODE."
+    }
+
+    Write-Host 'Checking variable-room bounds, movement and spawn integration...'
+    & python 'tests\variable_room_hooks_static_test.py'
+    if ($LASTEXITCODE -ne 0) {
+        throw "Variable-room hook integration test failed with exit code $LASTEXITCODE."
     }
 
     Write-Host 'Checking bounded and padding-safe native atlas packing...'
@@ -87,10 +114,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Content registry test compilation failed with exit code $LASTEXITCODE."
     }
-    & '.\build\content_registry_test.exe'
-    if ($LASTEXITCODE -ne 0) {
-        throw "Content registry tests failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedTest '.\build\content_registry_test.exe' 'Content registry tests'
 
     Write-Host 'Building deterministic content tile interaction tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
@@ -99,23 +123,17 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Content tile test compilation failed with exit code $LASTEXITCODE."
     }
-    & '.\build\content_tiles_test.exe'
-    if ($LASTEXITCODE -ne 0) {
-        throw "Content tile interaction tests failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedTest '.\build\content_tiles_test.exe' 'Content tile interaction tests'
 
     Write-Host 'Building generated-map render bridge tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
         'tests\content_bridge_test.c' 'content_bridge.c' 'content_tiles.c' `
-        'content_registry.c' 'custom_maps.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' 'log.c' `
+        'content_registry.c' 'custom_maps.c' 'room_graph.c' 'map_ambiance.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' 'log.c' `
         -o 'build\content_bridge_test.exe' -lbcrypt '-lluajit-5.1'
     if ($LASTEXITCODE -ne 0) {
         throw "Content bridge test compilation failed with exit code $LASTEXITCODE."
     }
-    & '.\build\content_bridge_test.exe'
-    if ($LASTEXITCODE -ne 0) {
-        throw "Content bridge tests failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedTest '.\build\content_bridge_test.exe' 'Content bridge tests'
 
     Write-Host 'Building isolated deterministic map.lua runtime tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
@@ -124,10 +142,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Map script test compilation failed with exit code $LASTEXITCODE."
     }
-    & '.\build\map_script_test.exe'
-    if ($LASTEXITCODE -ne 0) {
-        throw "Map script tests failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedTest '.\build\map_script_test.exe' 'Map script tests'
 
     Write-Host 'Building checked-in spring demo behavior tests...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
@@ -136,23 +151,17 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Spring demo test compilation failed with exit code $LASTEXITCODE."
     }
-    & '.\build\spring_demo_test.exe'
-    if ($LASTEXITCODE -ne 0) {
-        throw "Spring demo tests failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedTest '.\build\spring_demo_test.exe' 'Spring demo tests'
 
     Write-Host 'Building the V2 package/fixture regression test...'
     & gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic `
-        '-DCUSTOM_MAPS_TESTING' 'tests\custom_maps_v2_test.c' 'custom_maps.c' 'content_registry.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' 'log.c' `
-        -o 'build\custom_maps_v2_test.exe' -lbcrypt '-lluajit-5.1'
+        '-DCUSTOM_MAPS_TESTING' 'tests\custom_maps_v2_test.c' 'custom_maps.c' 'room_graph.c' 'map_ambiance.c' 'content_registry.c' 'map_script.c' 'entity_world.c' 'entity_lua.c' 'entity_package.c' 'entity_package_json.c' 'mod_json.c' 'log.c' `
+        -o 'build\custom_maps_v2_test.exe' '-Wl,--stack,8388608' -lbcrypt '-lluajit-5.1'
     if ($LASTEXITCODE -ne 0) {
         throw "V2 map test compilation failed with exit code $LASTEXITCODE."
     }
 
-    & '.\build\custom_maps_v2_test.exe'
-    if ($LASTEXITCODE -ne 0) {
-        throw "V2 map regression test failed with exit code $LASTEXITCODE."
-    }
+    Invoke-CheckedTest '.\build\custom_maps_v2_test.exe' 'V2 map regression test'
     Write-Host 'PASS: V2 collision presets, forces, sensors, temporary visual offsets, native underlay, mirroring, registry identity, demo package, and parser regressions are valid.' -ForegroundColor Green
     Write-Host 'The visual bridge still needs the short in-game check documented in MAP_FORMAT.md.'
 } finally {

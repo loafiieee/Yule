@@ -15,6 +15,7 @@
   <script defer src="preview-client.js"></script>
   <script defer src="object-logic.js"></script>
   <script defer src="object-designer.js"></script>
+  <script defer src="ambiance-designer.js"></script>
   <link rel="stylesheet" href="vendor/codemirror/lib/codemirror.css">
   <script defer src="vendor/codemirror/lib/codemirror.js"></script>
   <script defer src="vendor/codemirror/mode/lua/lua.js"></script>
@@ -47,6 +48,7 @@
 
     <div class="mode-launcher v2-disabled" aria-label="Greggnogg work mode">
       <button class="mode-button is-active" id="map-mode-button" type="button" aria-pressed="true">Map</button>
+      <button class="mode-button" id="layout-mode-button" type="button" aria-pressed="false" title="See and arrange every placed room">Full map</button>
       <button class="mode-button" id="header-tile-lab-button" type="button">Tile Lab</button>
       <label class="format-toggle compact" for="format-v2-toggle"><input id="format-v2-toggle" type="checkbox"><span>V2</span></label>
     </div>
@@ -75,7 +77,7 @@
       <div class="tool-section">
         <div class="section-label-row">
           <h2>Drawing tools</h2>
-          <span class="shortcut-hint">1–5</span>
+          <span class="shortcut-hint">1–6</span>
         </div>
         <div class="drawing-tools" role="toolbar" aria-label="Drawing tools">
           <button class="tool-button is-active" type="button" data-tool="pencil" aria-pressed="true"><span class="tool-icon" aria-hidden="true">✎</span><span>Pencil</span><kbd>1</kbd></button>
@@ -83,6 +85,7 @@
           <button class="tool-button" type="button" data-tool="fill" aria-pressed="false"><span class="tool-icon" aria-hidden="true">▨</span><span>Fill</span><kbd>3</kbd></button>
           <button class="tool-button" type="button" data-tool="line" aria-pressed="false"><span class="tool-icon" aria-hidden="true">╱</span><span>Line</span><kbd>4</kbd></button>
           <button class="tool-button" type="button" data-tool="rectangle" aria-pressed="false"><span class="tool-icon" aria-hidden="true">□</span><span>Box</span><kbd>5</kbd></button>
+          <button class="tool-button" type="button" data-tool="select" aria-pressed="false"><span class="tool-icon" aria-hidden="true">+</span><span>Select</span><kbd>6</kbd></button>
           <button class="tool-button" type="button" data-tool="eyedropper" aria-pressed="false"><span class="tool-icon" aria-hidden="true">⌾</span><span>Pick</span><kbd>I</kbd></button>
         </div>
       </div>
@@ -97,6 +100,12 @@
           <input id="tile-search" type="search" autocomplete="off" placeholder="Search terrain, hazards…">
           <kbd>/</kbd>
         </label>
+        <div class="field spawn-marker-scope" id="spawn-marker-scope-wrap" hidden>
+          <label for="spawn-marker-scope">Markers apply to</label>
+          <select id="spawn-marker-scope"><option value="design">Room design (all copies)</option><option value="copy">This placed copy</option></select>
+          <span>Choose a spawn marker tile below, then paint over safe floor.</span>
+          <button class="quiet-button" id="spawn-scope-reset" type="button" hidden>Reset this copy's respawn markers to room design</button>
+        </div>
         <div class="tile-catalog" id="tile-catalog" role="listbox" aria-label="Native EGGNOGG+ tile palette"></div>
       </div>
 
@@ -118,6 +127,15 @@
           <button class="icon-button" id="redo-button" type="button" aria-label="Redo" disabled>↷</button>
         </div>
         <div class="toolbar-divider" aria-hidden="true"></div>
+        <div class="selection-controls" role="group" aria-label="Selected area actions">
+          <button class="quiet-button compact" id="selection-copy-button" type="button" disabled>Copy</button>
+          <button class="quiet-button compact" id="selection-cut-button" type="button" disabled>Cut</button>
+          <button class="quiet-button compact" id="selection-paste-button" type="button" disabled>Paste</button>
+          <button class="quiet-button compact" id="selection-flip-x-button" type="button" disabled>Flip H</button>
+          <button class="quiet-button compact" id="selection-flip-y-button" type="button" disabled>Flip V</button>
+          <button class="quiet-button compact" id="selection-rotate-button" type="button" disabled>Rotate</button>
+        </div>
+        <div class="toolbar-divider" aria-hidden="true"></div>
         <label class="toggle-control" for="symmetry-toggle">
           <input id="symmetry-toggle" type="checkbox">
           <span class="toggle-track" aria-hidden="true"><span></span></span>
@@ -133,15 +151,17 @@
 
       <div class="arena-overview" aria-label="Final arena layout">
         <div>
-          <span class="eyebrow">FINAL ARENA</span>
-          <strong id="arena-summary">2 source rooms · 3 final rooms</strong>
+          <span class="eyebrow">CURRENT ROOM</span>
+          <strong id="arena-summary">Center room</strong>
         </div>
-        <div class="arena-track" id="arena-track"></div>
+        <div class="arena-track" id="arena-track" role="group" aria-label="Placed rooms. Select one to edit it."></div>
+        <button class="quiet-button compact full-map-button" id="full-map-button" type="button">Arrange full map</button>
       </div>
 
       <div class="map-scroll" id="map-scroll">
         <div class="map-stage" id="map-stage">
           <div class="map-frame">
+            <div class="room-edge-nav" id="room-edge-nav" aria-label="Neighboring rooms"></div>
             <div class="room-atmosphere" id="room-atmosphere" aria-hidden="true"></div>
             <div class="column-ruler" id="column-ruler" aria-hidden="true"></div>
             <div class="row-ruler" id="row-ruler" aria-hidden="true"></div>
@@ -161,7 +181,7 @@
 
       <div class="room-rail" aria-label="Source room order">
         <div class="room-rail-heading">
-          <span class="eyebrow">SOURCE ROOMS · CENTER → OUTWARD</span>
+          <span class="eyebrow">ROOM DESIGNS</span>
           <div class="room-actions">
             <button class="quiet-button compact" id="duplicate-room-button" type="button">Duplicate</button>
             <button class="quiet-button compact" id="add-room-button" type="button"><span aria-hidden="true">＋</span> Add room</button>
@@ -169,12 +189,96 @@
         </div>
         <div class="room-tabs" id="room-tabs" role="tablist" aria-label="Source rooms"></div>
       </div>
+
+      <section class="room-layout-view" id="room-layout-view" hidden aria-label="Room layout editor">
+        <header class="room-layout-heading">
+          <div>
+            <p class="eyebrow">ROOM LAYOUT</p>
+            <h2>Free room placement</h2>
+          </div>
+          <div class="room-layout-actions">
+            <div class="layout-kind-toggle" role="group" aria-label="Room layout type">
+              <button type="button" data-layout-kind="symmetric" title="Center-out line; every added room gets an automatic flipped partner">Symmetrical</button>
+              <button type="button" data-layout-kind="free" title="Place and move every room freely in two dimensions">Free layout</button>
+            </div>
+            <button class="quiet-button" id="room-layout-add-button" type="button">+ Add room</button>
+            <button class="quiet-button" id="room-layout-edit-button" type="button">Edit selected</button>
+            <button class="quiet-button" id="room-layout-details-button" type="button" aria-pressed="false">Room options</button>
+            <button class="quiet-button" id="convert-room-layout-button" type="button" hidden>Enable room placement</button>
+            <button class="quiet-button" id="room-layout-auto-button" type="button" hidden>Tidy imported map</button>
+            <button class="quiet-button" id="room-layout-fit-button" type="button">Fit map</button>
+            <label class="field compact">Zoom
+              <input id="room-layout-zoom" type="range" min="2" max="16" value="8" step="1">
+            </label>
+          </div>
+        </header>
+        <p class="room-layout-keyboard-help">Room keyboard controls: arrow keys select a nearby room, Shift + arrow moves it one tile, and F2 edits its contents. Symmetrical pairs move vertically.</p>
+        <div class="room-layout-body">
+          <div class="room-layout-scroll" id="room-layout-scroll" tabindex="0" aria-label="Placed rooms canvas">
+            <div class="room-layout-surface" id="room-layout-surface">
+              <svg id="room-layout-connections" aria-hidden="true"></svg>
+              <div id="room-layout-nodes"></div>
+            </div>
+          </div>
+          <aside class="room-layout-inspector" id="room-layout-inspector" hidden>
+            <canvas id="room-layout-minimap" width="256" height="144" tabindex="0" aria-label="Room layout overview. Click to center the canvas."></canvas>
+            <div id="room-layout-diagnostics" class="room-layout-diagnostics" role="status" aria-live="polite"></div>
+            <div id="room-layout-legacy-copy">
+              <h3>Current layout</h3>
+              <p>This map uses the classic mirrored line. Enable room placement to arrange rooms above, below, and beside each other.</p>
+            </div>
+            <div id="room-layout-selection" hidden>
+              <p class="eyebrow">SELECTED ROOM</p>
+              <h3 id="room-layout-node-title">Room</h3>
+              <p id="room-layout-node-detail"></p>
+              <button class="primary-button room-layout-edit-primary" id="room-layout-edit-room" type="button">Edit this room</button>
+              <div class="room-layout-add-card">
+                <h3>Add a room beside this one</h3>
+                <label class="field">Start with<select id="room-layout-source-room"><option value="">New room (independent)</option></select></label>
+                <div class="room-copy-flips">
+                  <label><input id="room-layout-copy-flip-x" type="checkbox"> Flip copy horizontally</label>
+                  <label><input id="room-layout-copy-flip-y" type="checkbox"> Flip copy vertically</label>
+                </div>
+                <div class="room-layout-directions" aria-label="Side for new room">
+                  <button type="button" data-layout-side="top" aria-label="Add above">↑</button>
+                  <button type="button" data-layout-side="left" aria-label="Add left">←</button>
+                  <button type="button" data-layout-side="right" aria-label="Add right">→</button>
+                  <button type="button" data-layout-side="bottom" aria-label="Add below">↓</button>
+                </div>
+                <p class="field-help">A new independent room is the default. Choose a design only when you want to copy its tiles, markers, settings, and custom objects. The new room is placed immediately.</p>
+              </div>
+              <label class="check-row"><input id="room-layout-mirror-x" type="checkbox"><span><strong>Flip room tiles horizontally</strong><small>Changes this placed copy only. The source room stays unchanged.</small></span></label>
+              <label class="field">Room colors<select id="room-layout-appearance"><option value="primary">Primary palette</option><option value="mirror">Mirror palette</option></select><span>Choose either color bank independently from the tile flip.</span></label>
+              <label class="field">Ambience for this copy<select id="room-layout-ambient"><option value="">Use room design</option></select><span>Override ambience only for this placed copy.</span></label>
+              <label class="field">Graphics for this copy<select id="room-layout-native-tileset"><option value="">Use room design</option></select><span>Choose a packaged native tile sheet only for this placed copy.</span></label>
+              <label class="field">Opponent spawn for this copy<select id="room-layout-opponent-spawn"><option value="">Use room design</option><option value="default">Game default</option><option value="always">Always spawn</option><option value="never">Never spawn</option></select><span id="room-layout-opponent-effective">Resolved behavior appears here.</span></label>
+              <details class="room-layout-copy-starts"><summary>Player starts for this copy</summary>
+                <p class="field-help">Used when this copy is the start room. Choose safe floor tiles from the room design; a flipped copy mirrors the chosen tile.</p>
+                <label class="field">Player 1 start tile<select id="room-layout-start-p1"><option value="">Use room design</option></select></label>
+                <label class="field">Player 1 faces<select id="room-layout-facing-p1"><option value="right">Right</option><option value="left">Left</option></select></label>
+                <label class="field">Player 2 start tile<select id="room-layout-start-p2"><option value="">Use room design</option></select></label>
+                <label class="field">Player 2 faces<select id="room-layout-facing-p2"><option value="left">Left</option><option value="right">Right</option></select></label>
+              </details>
+              <button class="quiet-button" id="room-layout-set-start" type="button">Use as player start room</button>
+              <button class="quiet-button danger-button" id="room-layout-remove" type="button">Remove placed copy</button>
+              <p class="field-help">Rooms connect automatically wherever their edges touch. Leave openings in those edges so players can cross between them.</p>
+              <div hidden aria-hidden="true">
+                <select id="room-layout-connect-target"></select>
+                <input id="room-layout-connect-one-way" type="checkbox">
+                <button id="room-layout-connect-button" type="button">Connect</button>
+              </div>
+              <div id="room-layout-connections-list" class="room-layout-connection-list" aria-label="Doorway controls"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
     </section>
 
     <aside class="tool-panel inspector-panel" id="inspector-panel" aria-label="Map and room settings">
       <div class="inspector-tabs" role="tablist" aria-label="Inspector">
         <button type="button" role="tab" aria-selected="true" aria-controls="map-inspector" id="map-tab" data-inspector-tab="map">Map</button>
         <button type="button" role="tab" aria-selected="false" aria-controls="room-inspector" id="room-tab" data-inspector-tab="room">Room</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="object-inspector" id="object-tab" data-inspector-tab="object">Object</button>
         <button type="button" role="tab" aria-selected="false" aria-controls="validation-inspector" id="validation-tab" data-inspector-tab="validation">Checks <span class="tab-count" id="validation-count">0</span></button>
         <button class="panel-close" type="button" data-close-panel="inspector" aria-label="Close settings panel">×</button>
       </div>
@@ -218,7 +322,8 @@
             <label class="field">Armed respawn limit <span>0 or more</span><input id="respawn-limit" type="number" min="0" step="1" value="4"></label>
           </div>
 
-          <label class="field">Default opponent spawn<select id="default-opponent-spawn"><option value="default">Native</option><option value="always">Always</option><option value="never">Never</option></select><span>Controls trailing-opponent respawns. Native keeps the original room rules.</span></label>
+          <label class="field">Default opponent spawn<select id="default-opponent-spawn"><option value="default">Game default</option><option value="always">Always</option><option value="never">Never</option></select><span>Controls new trailing-opponent spawns. Game default keeps outermost symmetrical rooms opponent-free.</span></label>
+          <div class="field-with-action"><label class="field">Default room graphics<select id="default-native-tileset"><option value="">Built-in game graphics</option></select><span>Reskins native tiles in every room. Rooms can choose another packaged sheet.</span></label><label class="quiet-button" for="native-tileset-input">Add PNG</label><button class="quiet-button" id="remove-native-tileset-button" type="button">Remove selected PNG</button><input id="native-tileset-input" type="file" accept="image/png" hidden></div>
 
           <fieldset class="field-group">
             <legend>Eggnogg color</legend>
@@ -243,8 +348,15 @@
 
           <div class="form-stack">
             <label class="field">Room ID <span>Used in both files</span><input id="room-id" type="text" maxlength="63" spellcheck="false" autocomplete="off"></label>
-            <label class="field">Opponent spawn<select id="room-opponent-spawn"><option value="inherit">Inherit map default</option><option value="default">Native</option><option value="always">Always</option><option value="never">Never</option></select><span>Applies to this source room and its mirrored copy.</span></label>
-            <label class="field">Ambient effect
+            <div class="room-size-fields">
+              <label class="field">Width <input id="room-width" type="number" min="8" max="128" step="1" value="33"></label>
+              <label class="field">Height <input id="room-height" type="number" min="6" max="64" step="1" value="12"></label>
+              <button class="quiet-button" id="resize-room-button" type="button">Resize room</button>
+            </div>
+            <p class="field-help">Rooms resize from the bottom-left, keeping floors and spawn markings aligned. Each source room and its mirror may have a different size.</p>
+            <label class="field">Opponent spawn<select id="room-opponent-spawn"><option value="inherit">Use map default</option><option value="default">Game default</option><option value="always">Always</option><option value="never">Never</option></select><span id="room-opponent-effective">Resolved behavior appears here.</span></label>
+            <label class="field">Room graphics<select id="room-native-tileset"><option value="">Use map default</option></select><span>Choose a packaged native-layout sheet for this room and its mirrored copy.</span></label>
+            <div class="field-with-action"><label class="field">Ambient effect
               <select id="room-ambient">
                 <option value="none">None</option>
                 <option value="bugs">Bugs</option>
@@ -257,7 +369,7 @@
                 <option value="bubbles">Bubbles</option>
                 <option value="boil">Boil / fumes</option>
               </select>
-            </label>
+            </label><button class="quiet-button" id="edit-ambiances-button" type="button">Edit room effects</button></div>
           </div>
 
           <div class="section-label-row appearance-heading">
@@ -292,6 +404,55 @@
           </div>
         </section>
 
+        <section class="inspector-view" id="object-inspector" role="tabpanel" aria-labelledby="object-tab" hidden>
+          <label class="field object-placement-picker">Object copy in this room
+            <select id="object-placement-picker"><option value="">Choose an object…</option></select>
+          </label>
+          <div class="inspector-empty" id="object-placement-empty">
+            <h2>No object selected</h2>
+            <p>Choose Select, then click a custom object on the map. Dragging still selects a rectangular area.</p>
+          </div>
+          <div id="object-placement-fields" hidden>
+          <div class="inspector-heading">
+            <p class="eyebrow">SELECTED MAP OBJECT</p>
+            <h2 id="object-placement-title">Custom object</h2>
+            <p>Edit this copy. The object designer controls the shared art, hitboxes, and logic.</p>
+          </div>
+          <div class="form-stack">
+            <label class="field">Instance name <span>Used by Lua lookups</span><input id="object-placement-name" type="text" maxlength="88" spellcheck="false"></label>
+            <label class="field">Animation <select id="object-placement-animation"></select></label>
+            <label class="field">Draw order <select id="object-placement-layer"><option value="">Use object design</option><option value="behind">Behind players</option><option value="front">In front of players</option></select></label>
+            <label class="field">Arena side <select id="object-placement-side"><option value="both">Both sides</option><option value="source">Authored side only</option><option value="mirrored">Mirrored side only</option></select></label>
+            <label class="check-row"><input id="object-placement-visible" type="checkbox" checked><span><strong>Visible when created</strong><small>This only hides the picture. Logic, hitboxes, damage, and physics triggers stay active.</small></span></label>
+          </div>
+          <fieldset class="field-group">
+            <legend>Position and starting movement</legend>
+            <div class="two-column-fields">
+              <label class="field">X <span>Pixels</span><input id="object-placement-x" type="number" step="0.00390625"></label>
+              <label class="field">Y <span>Pixels</span><input id="object-placement-y" type="number" step="0.00390625"></label>
+              <label class="field">Velocity X <input id="object-placement-vx" type="number" min="-8388608" max="8388607.996" step="0.00390625"></label>
+              <label class="field">Velocity Y <input id="object-placement-vy" type="number" min="-8388608" max="8388607.996" step="0.00390625"></label>
+            </div>
+          </fieldset>
+          <fieldset class="field-group">
+            <legend>Appearance for this copy</legend>
+            <div class="two-column-fields">
+              <label class="field">Scale X <span>Blank = 1</span><input id="object-placement-scale-x" type="number" min="-256" max="256" step="0.00390625" placeholder="1"></label>
+              <label class="field">Scale Y <span>Blank = 1</span><input id="object-placement-scale-y" type="number" min="-256" max="256" step="0.00390625" placeholder="1"></label>
+              <label class="field">Visual offset X <span>Pixels</span><input id="object-placement-offset-x" type="number" min="-8388608" max="8388607.996" step="0.00390625" placeholder="0"></label>
+              <label class="field">Visual offset Y <span>Pixels</span><input id="object-placement-offset-y" type="number" min="-8388608" max="8388607.996" step="0.00390625" placeholder="0"></label>
+              <label class="field">Rotation <span>Degrees</span><input id="object-placement-rotation" type="number" min="-360000" max="360000" step="0.00390625" placeholder="0"></label>
+            </div>
+            <label class="field">Tint <span>#RRGGBBAA; blank = design tint</span><input id="object-placement-tint" type="text" maxlength="9" pattern="#[0-9A-Fa-f]{8}" spellcheck="false" placeholder="#FFFFFFFF"></label>
+          </fieldset>
+          <div class="room-order-actions">
+            <button class="quiet-button" id="object-placement-edit-design" type="button">Edit object design</button>
+            <button class="quiet-button" id="object-placement-reset" type="button">Reset appearance</button>
+            <button class="danger-button" id="object-placement-delete" type="button">Delete this copy</button>
+          </div>
+          </div>
+        </section>
+
         <section class="inspector-view" id="validation-inspector" role="tabpanel" aria-labelledby="validation-tab" hidden>
           <div class="inspector-heading">
             <p class="eyebrow">LIVE PACKAGE CHECK</p>
@@ -311,7 +472,7 @@
 
   <nav class="mobile-dock" aria-label="Editor panels">
     <button type="button" data-open-panel="palette"><span aria-hidden="true">▦</span>Tiles</button>
-    <button type="button" id="mobile-rooms-button"><span aria-hidden="true">▤</span>Rooms</button>
+    <button type="button" id="mobile-rooms-button"><span aria-hidden="true">▤</span>Full map</button>
     <button type="button" data-open-panel="inspector"><span aria-hidden="true">☷</span>Settings</button>
     <button type="button" id="mobile-preview-button" title="Preview the current map in EGGNOGG+"><span aria-hidden="true">▶</span>Preview</button>
     <button type="button" id="mobile-export-button"><span aria-hidden="true">⇩</span>Export</button>
@@ -438,6 +599,11 @@
             <label class="field">Padding <input id="v2-padding" type="number" min="0" max="64" value="0"></label>
             <label class="field">Cell width <input id="v2-cell-w" type="number" min="1" max="512" value="16"></label>
             <label class="field">Cell height <input id="v2-cell-h" type="number" min="1" max="512" value="16"></label>
+            <label class="field">Source X <input id="v2-source-x" type="number" min="0" max="8191" value="0"></label>
+            <label class="field">Source Y <input id="v2-source-y" type="number" min="0" max="8191" value="0"></label>
+            <label class="field">Region width <input id="v2-source-w" type="number" min="0" max="8192" value="0" placeholder="To image edge"></label>
+            <label class="field">Region height <input id="v2-source-h" type="number" min="0" max="8192" value="0" placeholder="To image edge"></label>
+            <p class="field-help wide">Crop any rectangle from a larger PNG. Set region width or height to 0 to use the rest of the image.</p>
           </div></details>
           <details class="tile-field-group" data-tile-field-group="animation"><summary>Animation</summary><div class="tile-field-grid">
             <label class="field">Frames <input id="v2-frame-count" type="number" min="1" max="256" value="1"></label>

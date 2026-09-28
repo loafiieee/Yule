@@ -1,0 +1,4 @@
+=== TEST 2: start "" /D "<mod>" /B "<python>" "<bridge>"  ===
+=== T2: start "" /D "<mod>" /B "<python>" "<bridge>"  ===
+[B] start "" /B PY BR 
+[D] start "t" /B PY BR 

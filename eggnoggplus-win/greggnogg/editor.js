@@ -34,7 +34,15 @@
     { name: "Dusk", colors: { fg1: "#a35f78", fg2: "#eab0a2", bg1: "#1c1025", bg2: "#41213b", water: "#34517e", water_hi: "#b8c9ed", special: "#d46a55", special2: "#f2d384" } },
     { name: "Cavern", colors: { fg1: "#726759", fg2: "#c4aa7d", bg1: "#100f12", bg2: "#292329", water: "#264f58", water_hi: "#9fc8bd", special: "#784a62", special2: "#d69b69" } }
   ];
-  var CATEGORY_ORDER = ["Solid terrain", "Hazards & water", "Goals & items", "Animated scenery", "Background art", "Empty & utility", "Custom tiles"];
+  var CATEGORY_ORDER = ["Solid terrain", "Hazards & water", "Goals & items", "Animated scenery", "Background art", "Empty & utility", "Custom tiles", "Spawn markers"];
+  var SPAWN_OVERLAYS = [
+    { overlayKey: "player1_start", label: "Player 1 start", icon: "P1", description: "Where player 1 enters this room. Click the same cell again to flip facing." },
+    { overlayKey: "player2_start", label: "Player 2 start", icon: "P2", description: "Where player 2 enters this room. Click the same cell again to flip facing." },
+    { overlayKey: "deny", label: "No respawn", icon: "NO", description: "The native respawn search cannot choose this cell." },
+    { overlayKey: "allow", label: "Respawn: either player", icon: "R", description: "Allows either player to respawn here. Adding an allowed marker turns on whitelist mode." },
+    { overlayKey: "allow_p1", label: "Respawn: player 1", icon: "R1", description: "Allows only player 1 to respawn here. Player 1 uses whitelist mode in this room." },
+    { overlayKey: "allow_p2", label: "Respawn: player 2", icon: "R2", description: "Allows only player 2 to respawn here. Player 2 uses whitelist mode in this room." }
+  ];
   var SCRIPT_COMPLETIONS = [
     { label: "map.on_enter", snippet: "map.on_enter(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run when an object enters a tile sensor." },
     { label: "map.on_contact", snippet: "map.on_contact(\"tile_id\", function(object, tile)\n  \nend)", detail: "Run while an object contacts a tile." },
@@ -58,13 +66,14 @@
     "project-title", "save-label", "new-map-button", "import-button", "preview-button", "export-button", "help-button",
     "palette-panel", "tile-count", "tile-search", "tile-catalog", "selected-tile-preview", "selected-tile-name",
     "selected-tile-description", "selected-tile-glyph", "undo-button", "redo-button", "symmetry-toggle",
-    "grid-toggle-button", "zoom-out-button", "zoom-label", "zoom-in-button", "arena-summary",
-    "arena-track", "map-scroll", "map-stage", "room-atmosphere", "column-ruler", "row-ruler", "map-grid",
+    "selection-copy-button", "selection-cut-button", "selection-paste-button", "selection-flip-x-button", "selection-flip-y-button", "selection-rotate-button",
+    "grid-toggle-button", "zoom-out-button", "zoom-label", "zoom-in-button", "arena-summary", "full-map-button",
+    "arena-track", "map-scroll", "map-stage", "room-edge-nav", "room-atmosphere", "column-ruler", "row-ruler", "map-grid",
     "room-render-canvas", "coordinate-label", "tool-status", "validation-summary", "duplicate-room-button",
     "add-room-button", "room-tabs", "inspector-panel", "map-tab", "room-tab", "validation-tab", "validation-count",
     "map-inspector", "room-inspector", "validation-inspector", "map-name", "map-author", "map-id", "map-description",
-    "description-count", "sort-order", "eggnogg-color-enabled", "eggnogg-color", "score-target", "respawn-limit", "default-opponent-spawn", "room-opponent-spawn", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
-    "room-id", "room-ambient", "reset-colors-button", "preview-mirror-colors-button", "palette-presets", "palette-name", "save-palette-button", "random-palette-button", "saved-palettes", "primary-color-fields",
+    "description-count", "sort-order", "eggnogg-color-enabled", "eggnogg-color", "score-target", "respawn-limit", "default-opponent-spawn", "room-opponent-spawn", "room-opponent-effective", "room-layout-opponent-effective", "default-native-tileset", "room-native-tileset", "native-tileset-input", "remove-native-tileset-button", "format-badge", "format-title", "format-copy", "format-v2-toggle", "map-mode-button", "layout-mode-button", "header-tile-lab-button", "header-script-button", "v2-tile-summary", "room-inspector-title", "room-position-copy",
+    "room-id", "room-width", "room-height", "resize-room-button", "room-ambient", "edit-ambiances-button", "reset-colors-button", "preview-mirror-colors-button", "palette-presets", "palette-name", "save-palette-button", "random-palette-button", "saved-palettes", "primary-color-fields",
     "custom-mirror-colors", "mirror-color-fields", "move-room-in-button", "move-room-out-button", "delete-room-button",
     "spawn-meter-fill", "spawn-budget-label", "spawn-budget-detail", "validation-heading", "validation-list",
     "fact-source-rooms", "fact-final-rooms", "mobile-rooms-button", "mobile-preview-button", "mobile-export-button", "new-map-dialog", "new-map-author",
@@ -73,14 +82,20 @@
     "export-ready-title", "export-ready-summary", "download-json-button", "download-map-button", "copy-map-button",
     "download-package-button", "help-dialog", "toast-region", "live-region",
     "tile-lab-dialog", "close-tile-lab-button", "tile-lab-done-button", "new-v2-tile-button", "duplicate-v2-tile-button", "move-v2-tile-up", "move-v2-tile-down", "delete-v2-tile-button", "v2-tile-list", "v2-asset-list", "tile-pixel-canvas", "pixel-frame-timeline", "tile-paint-color", "tile-paint-color-button", "tile-paint-color-swatch", "tile-paint-color-label", "tile-paint-color-popover", "tile-paint-color-plane", "tile-paint-color-hue", "pixel-undo-button", "pixel-redo-button", "pixel-flip-x", "pixel-flip-y", "pixel-rotate", "pixel-onion-skin", "tile-seed-art-button", "tile-clear-button", "tile-png-input", "tile-asset-status", "tile-lab-status", "tile-frame-prev", "tile-frame-next", "tile-frame-add", "tile-frame-duplicate", "tile-frame-delete", "tile-frame-move-left", "tile-frame-move-right", "tile-frame-label", "tile-animation-canvas", "tile-animation-tick", "tile-animation-playing", "tile-animation-readout", "tile-hitbox-canvas", "tile-hitbox-details",
-    "v2-tile-id", "v2-tile-symbol", "v2-tile-name", "v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-frame-count", "v2-frame-ticks", "v2-animation", "v2-collision", "v2-native-glyph", "v2-layer", "v2-native-visual", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle", "v2-tint", "v2-tint-button", "v2-tint-swatch", "v2-tint-label", "v2-tint-popover", "v2-tint-plane", "v2-tint-hue", "v2-tint-alpha", "v2-force-x", "v2-force-y", "v2-force-mode", "v2-max-speed-x", "v2-max-speed-y", "v2-mirror-with-room", "v2-random-phase",
-    "script-dialog", "close-script-button", "script-done-button", "script-template-button", "script-format-button", "map-lua-editor", "script-autocomplete", "script-reference-list", "script-byte-count", "remove-script-button", "script-builder-tile", "script-builder-event", "script-builder-objects", "script-builder-action", "script-builder-insert", "script-api-search", "script-sensor-left", "script-sensor-top", "script-sensor-right", "script-sensor-bottom", "script-sensor-object-box", "script-sensor-scope"
+    "v2-tile-id", "v2-tile-symbol", "v2-tile-name", "v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-source-x", "v2-source-y", "v2-source-w", "v2-source-h", "v2-frame-count", "v2-frame-ticks", "v2-animation", "v2-collision", "v2-native-glyph", "v2-layer", "v2-native-visual", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle", "v2-tint", "v2-tint-button", "v2-tint-swatch", "v2-tint-label", "v2-tint-popover", "v2-tint-plane", "v2-tint-hue", "v2-tint-alpha", "v2-force-x", "v2-force-y", "v2-force-mode", "v2-max-speed-x", "v2-max-speed-y", "v2-mirror-with-room", "v2-random-phase",
+    "script-dialog", "close-script-button", "script-done-button", "script-template-button", "script-format-button", "map-lua-editor", "script-autocomplete", "script-reference-list", "script-byte-count", "remove-script-button", "script-builder-tile", "script-builder-event", "script-builder-objects", "script-builder-action", "script-builder-insert", "script-api-search", "script-sensor-left", "script-sensor-top", "script-sensor-right", "script-sensor-bottom", "script-sensor-object-box", "script-sensor-scope",
+    "object-tab", "object-inspector", "object-placement-picker", "object-placement-empty", "object-placement-fields", "object-placement-title", "object-placement-name", "object-placement-animation", "object-placement-layer", "object-placement-side", "object-placement-visible", "object-placement-x", "object-placement-y", "object-placement-vx", "object-placement-vy", "object-placement-scale-x", "object-placement-scale-y", "object-placement-offset-x", "object-placement-offset-y", "object-placement-rotation", "object-placement-tint", "object-placement-edit-design", "object-placement-reset", "object-placement-delete",
+    "room-layout-view", "room-layout-scroll", "room-layout-surface", "room-layout-connections", "room-layout-nodes", "room-layout-inspector", "room-layout-legacy-copy", "room-layout-selection", "convert-room-layout-button", "room-layout-add-button", "room-layout-edit-button", "room-layout-details-button", "room-layout-auto-button", "room-layout-fit-button", "room-layout-zoom", "room-layout-minimap", "room-layout-diagnostics", "room-layout-node-title", "room-layout-node-detail", "room-layout-mirror-x", "room-layout-appearance", "room-layout-ambient", "room-layout-native-tileset", "room-layout-opponent-spawn", "room-layout-start-p1", "room-layout-start-p2", "room-layout-facing-p1", "room-layout-facing-p2", "room-layout-edit-room", "room-layout-set-start", "room-layout-remove", "room-layout-source-room", "room-layout-copy-flip-x", "room-layout-copy-flip-y", "room-layout-connect-target", "room-layout-connect-one-way", "room-layout-connect-button", "room-layout-connections-list", "spawn-marker-scope", "spawn-marker-scope-wrap", "spawn-scope-reset"
   ].forEach(function (id) { els[id] = $(id); });
 
   var state = {
     document: null,
     roomIndex: 0,
     selectedGlyph: "@",
+    selectedObject: null,
+    selectedOverlay: null,
+    selectedPlacementName: null,
+    layoutConversionError: null,
     tool: "pencil",
     symmetry: false,
     previewMirrored: false,
@@ -94,6 +109,8 @@
     dirtySinceExport: false,
     savedTimer: null,
     pointer: null,
+    selection: null,
+    selectionClipboard: null,
     atlasReady: false,
     roomRenderRequest: 0,
     importRequest: 0,
@@ -115,6 +132,17 @@
     hitboxRenderRequest: 0,
     hitboxLastTime: 0,
     scriptSnapshot: null,
+    workMode: "map",
+    selectedGraphNode: null,
+    spawnMarkerScope: "design",
+    selectedGraphConnection: null,
+    layoutCellScale: 8,
+    layoutDrag: null,
+    layoutIgnoreClick: false,
+    layoutPreviewRequest: 0,
+    layoutAuthoringMode: null,
+    secondaryPreviewLastTime: 0,
+    layoutInspectorOpen: false,
     colorPickers: {},
     savedPalettes: []
   };
@@ -178,6 +206,32 @@
     if (!room || !Array.isArray(room.grid)) return null;
     if (typeof room.grid[row] === "string") room.grid[row] = room.grid[row].split("");
     return room.grid[row];
+  }
+
+  function roomCols(room) {
+    room = room || activeRoom();
+    return room && Array.isArray(room.grid) && room.grid.length ? rowArray(room, 0).length : COLS;
+  }
+
+  function roomRows(room) {
+    room = room || activeRoom();
+    return room && Array.isArray(room.grid) ? room.grid.length : ROWS;
+  }
+
+  function sourceRoomWorldOffset(roomIndex) {
+    var list = rooms();
+    var offset = 0;
+    for (var index = roomIndex + 1; index < list.length; index += 1) offset += roomCols(list[index]) * 16;
+    return offset;
+  }
+
+  function finalRoomWorldOffset(roomIndex, mirrored) {
+    var list = rooms();
+    if (!mirrored) return sourceRoomWorldOffset(roomIndex) / 16;
+    var cells = roomCols(list[0]);
+    for (var index = 1; index < list.length; index += 1) cells += roomCols(list[index]);
+    for (var inner = 1; inner < roomIndex; inner += 1) cells += roomCols(list[inner]);
+    return cells;
   }
 
   function utf8Length(value) {
@@ -255,8 +309,9 @@
     delete doc.rules.eggnogg_color;
     if (doc.rules.armedRespawnLimit === undefined) doc.rules.armedRespawnLimit = doc.rules.armed_respawn_limit === undefined ? 4 : doc.rules.armed_respawn_limit;
     if (!doc.layout || typeof doc.layout !== "object" || Array.isArray(doc.layout)) doc.layout = { kind: "mirrored_source_rooms", roomFormat: "vanilla_33x12", order: [] };
-    doc.layout.kind = "mirrored_source_rooms";
-    doc.layout.roomFormat = doc.layout.roomFormat || doc.layout.room_format || "vanilla_33x12";
+    var graphLayout = doc.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph");
+    doc.layout.kind = graphLayout ? (Core.ROOM_GRAPH_KIND || "room_graph") : "mirrored_source_rooms";
+    doc.layout.roomFormat = graphLayout ? (Core.VARIABLE_ROOM_FORMAT || "variable_cells") : (doc.layout.roomFormat || doc.layout.room_format || "vanilla_33x12");
     if (!Array.isArray(doc.rooms)) {
       doc.rooms = Object.keys(doc.rooms || {}).map(function (id) {
         var room = doc.rooms[id] || {};
@@ -268,16 +323,53 @@
     if (!doc.rooms.length) doc.rooms.push(newRoom("center", true));
     doc.rooms.forEach(function (room, index) {
       room.id = room.id || (index ? "outer_" + index : "center");
-      if (!Array.isArray(room.grid) || room.grid.length !== ROWS) room.grid = blankGrid();
+      var variable = doc.layout.roomFormat === (Core.VARIABLE_ROOM_FORMAT || "variable_cells");
+      if (!Array.isArray(room.grid) || !room.grid.length) room.grid = blankGrid();
+      var desiredRows = variable ? Math.max(Core.MIN_ROOM_ROWS || 6, Math.min(Core.MAX_ROOM_ROWS || 64, room.grid.length)) : ROWS;
+      var firstWidth = room.grid.length ? (Array.isArray(room.grid[0]) ? room.grid[0].length : String(room.grid[0] || "").length) : COLS;
+      var desiredCols = variable ? Math.max(Core.MIN_ROOM_COLS || 8, Math.min(Core.MAX_ROOM_COLS || 128, firstWidth || COLS)) : COLS;
+      room.grid = room.grid.slice(0, desiredRows);
+      while (room.grid.length < desiredRows) room.grid.unshift(new Array(desiredCols).fill(" "));
       room.grid = room.grid.map(function (row) {
-        var chars = Array.isArray(row) ? row.slice(0, COLS) : String(row || "").split("").slice(0, COLS);
-        while (chars.length < COLS) chars.push(" ");
+        var chars = Array.isArray(row) ? row.slice(0, desiredCols) : String(row || "").split("").slice(0, desiredCols);
+        while (chars.length < desiredCols) chars.push(" ");
         return chars;
       });
       if (room.ambient === undefined) room.ambient = "none";
       if (room.appearance !== undefined && (!room.appearance || typeof room.appearance !== "object" || Array.isArray(room.appearance))) delete room.appearance;
+      if (room.spawn && room.spawn.respawn && Array.isArray(room.spawn.respawn.cells)) {
+        room.spawn.markers = Array.isArray(room.spawn.markers) ? room.spawn.markers : [];
+        if (room.spawn.respawn.mode === "painted") room.spawn.respawn.cells.forEach(function (point) {
+          if (Array.isArray(point) && point.length === 2 && !room.spawn.markers.some(function (marker) { return marker.x === point[0] && marker.y === point[1]; })) {
+            room.spawn.markers.push({ x: point[0], y: point[1], kind: "allow" });
+          }
+        });
+        delete room.spawn.respawn;
+      }
     });
+    /* order remains an in-memory source-room list for shared editor features;
+     * room_graph serialization emits only nodes/connections. */
     doc.layout.order = doc.rooms.map(function (room) { return room.id; });
+    if (graphLayout) {
+      doc.layout.nodes = Array.isArray(doc.layout.nodes) ? doc.layout.nodes.map(function (node) {
+        if (!node || typeof node !== "object") return node;
+        if (node.mirrorX === undefined) node.mirrorX = node.mirror_x === true;
+        if (!node.appearance) node.appearance = "primary";
+        return node;
+      }) : [];
+      doc.layout.connections = Array.isArray(doc.layout.connections) ? doc.layout.connections.map(function (connection) {
+        if (!connection || typeof connection !== "object") return connection;
+        if (connection.fromSide === undefined) connection.fromSide = connection.from_side;
+        if (connection.fromOffset === undefined) connection.fromOffset = connection.from_offset;
+        if (connection.toSide === undefined) connection.toSide = connection.to_side;
+        if (connection.toOffset === undefined) connection.toOffset = connection.to_offset;
+        if (connection.oneWay === undefined) connection.oneWay = connection.one_way === true;
+        if (connection.players === undefined) connection.players = "both";
+        if (connection.focus === undefined) connection.focus = "go";
+        return connection;
+      }) : [];
+      if (Core.ensureRoomGraphConnectionIds) doc.layout.connections = Core.ensureRoomGraphConnectionIds(doc).layout.connections;
+    }
     return doc;
   }
 
@@ -325,7 +417,33 @@
     window.setTimeout(function () { els["live-region"].textContent = message; }, 20);
   }
 
+  var activeToasts = Object.create(null);
+  var MAX_VISIBLE_TOASTS = 4;
+
+  function dismissToast(node) {
+    if (!node) return;
+    var key = node._toastKey;
+    var entry = key && activeToasts[key];
+    if (entry && entry.node === node) {
+      window.clearTimeout(entry.timer);
+      delete activeToasts[key];
+    }
+    node.remove();
+  }
+
   function toast(title, detail, level) {
+    var key = JSON.stringify([String(title || ""), String(detail || ""), String(level || "")]);
+    var existing = activeToasts[key];
+    if (existing && existing.node.parentNode) {
+      existing.count += 1;
+      existing.badge.hidden = false;
+      existing.badge.textContent = "×" + existing.count;
+      window.clearTimeout(existing.timer);
+      existing.timer = window.setTimeout(function () { dismissToast(existing.node); }, 4200);
+      announce(title + (detail ? ". " + detail : "") + ". Repeated " + existing.count + " times.");
+      return;
+    }
+    while (els["toast-region"].children.length >= MAX_VISIBLE_TOASTS) dismissToast(els["toast-region"].firstElementChild);
     var node = document.createElement("div");
     node.className = "toast" + (level ? " is-" + level : "");
     var icon = document.createElement("span");
@@ -337,9 +455,13 @@
     strong.textContent = title;
     small.textContent = detail || "";
     copy.append(strong, small);
-    node.append(icon, copy);
+    var badge = document.createElement("span");
+    badge.className = "toast-count";
+    badge.hidden = true;
+    node.append(icon, copy, badge);
+    node._toastKey = key;
     els["toast-region"].appendChild(node);
-    window.setTimeout(function () { node.remove(); }, 4200);
+    activeToasts[key] = { node: node, badge: badge, count: 1, timer: window.setTimeout(function () { dismissToast(node); }, 4200) };
     announce(title + (detail ? ". " + detail : ""));
   }
 
@@ -370,7 +492,8 @@
   }
 
   function historySnapshot(label) {
-    return { document: clone(state.document), roomIndex: state.roomIndex, idWasEdited: state.idWasEdited, label: label || "Edit" };
+    return { document: clone(state.document), roomIndex: state.roomIndex, idWasEdited: state.idWasEdited,
+      layoutAuthoringMode: state.layoutAuthoringMode, label: label || "Edit" };
   }
 
   function pushHistory(snapshot, label) {
@@ -385,6 +508,7 @@
   function commit(label, mutate) {
     var before = historySnapshot(label);
     mutate();
+    state.layoutConversionError = null;
     if (JSON.stringify(before.document) !== JSON.stringify(state.document) || before.roomIndex !== state.roomIndex) pushHistory(before, label);
     renderAll();
   }
@@ -394,8 +518,11 @@
     var entry = state.undo.pop();
     state.redo.push(historySnapshot(entry.label));
     state.document = ensureDocumentShape(entry.document);
+    state.layoutConversionError = null;
     state.roomIndex = Math.min(entry.roomIndex, rooms().length - 1);
+    state.selection = null;
     state.idWasEdited = entry.idWasEdited === undefined ? true : !!entry.idWasEdited;
+    state.layoutAuthoringMode = entry.layoutAuthoringMode || null;
     markChanged();
     renderAll();
     announce("Undid " + entry.label);
@@ -406,8 +533,11 @@
     var entry = state.redo.pop();
     state.undo.push(historySnapshot(entry.label));
     state.document = ensureDocumentShape(entry.document);
+    state.layoutConversionError = null;
     state.roomIndex = Math.min(entry.roomIndex, rooms().length - 1);
+    state.selection = null;
     state.idWasEdited = entry.idWasEdited === undefined ? true : !!entry.idWasEdited;
+    state.layoutAuthoringMode = entry.layoutAuthoringMode || null;
     markChanged();
     renderAll();
     announce("Redid " + entry.label);
@@ -438,6 +568,7 @@
 
   function categoryFor(meta) {
     var category = String(meta.category || "").toLowerCase();
+    if (meta.overlayKey || category === "spawn-overlay") return "Spawn markers";
     if (category === "custom") return "Custom tiles";
     if (category === "solid-terrain") return "Solid terrain";
     if (category === "hazard" || category === "water-effect" || category === "water") return "Hazards & water";
@@ -461,7 +592,9 @@
   }
 
   function selectGlyph(glyph) {
+    state.selectedOverlay = null;
     state.selectedObject = null;
+    state.selectedPlacementName = null;
     document.querySelectorAll("[data-object-key]").forEach(function(button){button.setAttribute("aria-selected","false");});
     state.selectedGlyph = glyph;
     var meta = tileMeta(glyph);
@@ -473,6 +606,8 @@
       button.setAttribute("aria-selected", button.dataset.glyph === glyph ? "true" : "false");
     });
     renderGlyphPreview(els["selected-tile-preview"], glyph, 48);
+    renderObjectInspector();
+    renderGrid();
     updateToolStatus();
     announce("Selected " + labelForGlyph(glyph));
   }
@@ -489,12 +624,15 @@
   }
 
   function renderGlyphPreview(host, glyph, size) {
-    host.textContent = "";
-    var canvas = document.createElement("canvas");
-    canvas.width = size || 40;
-    canvas.height = size || 40;
-    canvas.setAttribute("aria-hidden", "true");
-    host.appendChild(canvas);
+    var canvas = host.querySelector("canvas");
+    if (!canvas) {
+      host.textContent = "";
+      canvas = document.createElement("canvas");
+      canvas.setAttribute("aria-hidden", "true");
+      host.appendChild(canvas);
+    }
+    if (canvas.width !== (size || 40)) canvas.width = size || 40;
+    if (canvas.height !== (size || 40)) canvas.height = size || 40;
     function fallback() {
       var ctx = canvas.getContext("2d");
       ctx.imageSmoothingEnabled = false;
@@ -512,6 +650,11 @@
           size: size || 40,
           appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank),
           tileset: state.document && state.document.tileset,
+          nativeTileset: Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(state.document, activeRoom()) : null,
+          particles: state.document && state.document.particles,
+          ambiances: state.document && state.document.ambiances,
+          mapId: state.document && state.document.id,
+          externalImages: assetSources(),
           time: previewTicks()
         })).catch(fallback);
         return;
@@ -520,20 +663,98 @@
     fallback();
   }
 
-  function selectObject(key) {
-    state.selectedObject=key;setTool("pencil");
-    els["selected-tile-name"].textContent=GregObjects.label(key);els["selected-tile-description"].textContent="Custom object";els["selected-tile-glyph"].textContent="OBJ";
-    renderObjectPreview(els["selected-tile-preview"],key,48);
-    renderPalette();
+  function selectedPlacement() {
+    return GregObjects.catalog(state.document).placements.find(function (placement) { return placement.name === state.selectedPlacementName; }) || null;
   }
-  function renderObjectPreview(host,key,size) {
+
+  function selectObject(key, placementName, preserveTool) {
+    state.selectedOverlay=null;state.selectedObject=key;state.selectedPlacementName=placementName||null;if(!preserveTool)setTool("pencil");
+    els["selected-tile-name"].textContent=GregObjects.label(key);els["selected-tile-description"].textContent="Custom object";els["selected-tile-glyph"].textContent="OBJ";
+    renderObjectPreview(els["selected-tile-preview"],key,48,selectedPlacement());
+    renderPalette();renderObjectInspector();renderGrid();
+  }
+  function spawnOverlayMeta(key) {
+    return SPAWN_OVERLAYS.find(function (item) { return item.overlayKey === key; });
+  }
+  function renderSpawnOverlayPreview(host, meta) {
+    host.textContent = "";
+    var icon = document.createElement("span");
+    icon.className = "spawn-overlay-icon spawn-overlay-" + meta.overlayKey;
+    icon.textContent = meta.icon;
+    host.appendChild(icon);
+  }
+  function selectSpawnOverlay(key) {
+    var meta = spawnOverlayMeta(key);
+    if (!meta) return;
+    state.selectedOverlay = key;
+    state.selectedObject = null;
+    state.selectedPlacementName = null;
+    els["selected-tile-name"].textContent = meta.label;
+    els["selected-tile-description"].textContent = meta.description + " Spawn markers sit above terrain and are hidden while normal tiles are selected.";
+    els["selected-tile-glyph"].textContent = meta.icon;
+    renderSpawnOverlayPreview(els["selected-tile-preview"], meta);
+    setTool("overlay");
+    renderPalette();
+    renderObjectInspector();
+    renderGrid();
+    announce("Selected " + meta.label);
+  }
+  function selectPlacement(placement, preserveTool) {
+    if(!placement)return;selectObject(placement.type,placement.name,preserveTool);switchInspector("object");
+    announce("Selected "+GregObjects.label(placement.type)+" placement");
+  }
+  function placementValue(value,fallback) { return value===undefined?fallback:value; }
+  function renderObjectInspector() {
+    var placement=selectedPlacement(),tab=els["object-tab"],picker=els["object-placement-picker"],room=activeRoom(),order=state.document.layout.order,roomIndex=order.indexOf(room.id),graphMode=state.document.layout.kind===(Core.ROOM_GRAPH_KIND||"room_graph");
+    if(!tab)return;
+    var roomPlacements=GregObjects.catalog(state.document).placements.filter(function(entry){
+      if(graphMode&&entry.instance!==state.selectedGraphNode)return false;
+      if(entry.room!==undefined)return entry.room===room.id;
+      var localX=entry.x-sourceRoomWorldOffset(roomIndex);
+      return localX>=0&&localX<roomCols(room)*16&&entry.y>=0&&entry.y<roomRows(room)*16;
+    });
+    picker.textContent="";var prompt=document.createElement("option");prompt.value="";prompt.textContent=roomPlacements.length?"Choose an object…":"No custom objects in this room";picker.appendChild(prompt);
+    roomPlacements.forEach(function(entry){var option=document.createElement("option");option.value=entry.name;option.textContent=entry.name+" — "+GregObjects.label(entry.type);picker.appendChild(option);});
+    picker.value=placement&&roomPlacements.indexOf(placement)>=0?placement.name:"";
+    els["object-placement-empty"].hidden=!!placement;
+    els["object-placement-fields"].hidden=!placement;
+    if(!placement){
+      return;
+    }
+    var type=GregObjects.catalog(state.document).types.find(function(entry){return entry.key===placement.type;});
+    els["object-placement-title"].textContent=GregObjects.label(placement.type);
+    els["object-placement-name"].value=placement.name;
+    var animation=els["object-placement-animation"],current=placement.animation||"default";animation.textContent="";
+    [{name:"default"}].concat(type&&type.animations||[]).forEach(function(clip){var option=document.createElement("option");option.value=clip.name;option.textContent=clip.name==="default"?"Default animation":clip.name.replace(/_/g," ");animation.appendChild(option);});animation.value=current;
+    els["object-placement-layer"].value=placement.draw_layer||"";
+    els["object-placement-side"].value=placement.side||"both";
+    var center=placement.room===state.document.layout.order[0];els["object-placement-side"].disabled=graphMode||center;els["object-placement-side"].title=graphMode?"This object targets the selected placed room copy.":center?"The center room has only one copy.":"";
+    els["object-placement-visible"].checked=placement.visible!==false;
+    els["object-placement-x"].value=placementValue(placement.x,0);els["object-placement-y"].value=placementValue(placement.y,0);
+    els["object-placement-vx"].value=placementValue(placement.vx,0);els["object-placement-vy"].value=placementValue(placement.vy,0);
+    els["object-placement-scale-x"].value=placementValue(placement.scale_x,"");els["object-placement-scale-y"].value=placementValue(placement.scale_y,"");
+    els["object-placement-offset-x"].value=placementValue(placement.visual_offset_x,"");els["object-placement-offset-y"].value=placementValue(placement.visual_offset_y,"");
+    els["object-placement-rotation"].value=placementValue(placement.visual_rotation,"");
+    els["object-placement-tint"].value=placement.visual_tint||"";
+  }
+  function renderObjectPreview(host,key,size,placement) {
     var canvas=host.querySelector("canvas");if(!canvas){canvas=document.createElement("canvas");host.appendChild(canvas);}canvas.width=size;canvas.height=size;
     var type=GregObjects.catalog(state.document).types.find(function(t){return t.key===key;});if(!type)return;
     var ctx=canvas.getContext("2d");ctx.imageSmoothingEnabled=false;
-    GregObjects.drawPicture(ctx,state.document,type,size/2,size/2,previewTicks(),false,size/24).catch(function(){});
+    ctx.clearRect(0,0,size,size);GregObjects.drawPicture(ctx,state.document,type,size/2,size/2,previewTicks(),false,size/24,placement&&placement.animation||"default",placement).catch(function(){});
   }
   function renderPalette() {
     var query = els["tile-search"].value.trim().toLowerCase();
+    var showSpawnScope = !!state.selectedOverlay &&
+      state.document && state.document.layout &&
+      state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph") &&
+      !!activePlacedRoomRecord(activeRoom());
+    els["spawn-marker-scope-wrap"].hidden = !showSpawnScope;
+    els["spawn-marker-scope"].value = state.spawnMarkerScope;
+    var scopeNode = showSpawnScope && activePlacedRoomRecord(activeRoom());
+    els["spawn-scope-reset"].hidden = !scopeNode || state.spawnMarkerScope !== "copy" ||
+      !scopeNode.overrides || !scopeNode.overrides.spawn ||
+      !Object.prototype.hasOwnProperty.call(scopeNode.overrides.spawn, "markers");
     var tiles = (Core.TILE_METADATA || Core.TILES || []).filter(function (item, index, list) {
       return item && typeof item.glyph === "string" && list.findIndex(function (other) { return other.glyph === item.glyph; }) === index;
     });
@@ -542,6 +763,7 @@
         if (tile && typeof tile.symbol === "string" && tile.symbol.length === 1) tiles.push(tileMeta(tile.symbol));
       });
     }
+    SPAWN_OVERLAYS.forEach(function (overlay) { tiles.push(Object.assign({ category: "spawn-overlay" }, overlay)); });
     GregObjects.catalog(state.document).types.forEach(function(type){tiles.push({objectKey:type.key,label:GregObjects.label(type.key),category:"custom",description:"Custom object"});});
     if (!tiles.length && Core.GLYPHS) tiles = Core.GLYPHS.map(tileMeta);
     tiles = tiles.filter(function (item) {
@@ -557,6 +779,25 @@
       heading.textContent = group;
       els["tile-catalog"].appendChild(heading);
       grouped.forEach(function (meta) {
+        if (meta.overlayKey) {
+          var overlayButton = document.createElement("button");
+          overlayButton.type = "button";
+          overlayButton.className = "tile-button spawn-overlay-button";
+          overlayButton.dataset.overlayKey = meta.overlayKey;
+          overlayButton.setAttribute("role", "option");
+          overlayButton.setAttribute("aria-label", meta.label + ". " + meta.description);
+          overlayButton.setAttribute("aria-selected", String(state.selectedOverlay === meta.overlayKey));
+          overlayButton.title = meta.label + "\n" + meta.description;
+          var overlayPreview = document.createElement("span");
+          overlayPreview.className = "tile-atlas-preview";
+          renderSpawnOverlayPreview(overlayPreview, meta);
+          var overlayCode = document.createElement("code");
+          overlayCode.textContent = meta.icon;
+          overlayButton.append(overlayPreview, overlayCode);
+          overlayButton.onclick = function () { selectSpawnOverlay(meta.overlayKey); };
+          els["tile-catalog"].appendChild(overlayButton);
+          return;
+        }
         if(meta.objectKey){
           var objectButton=document.createElement("button");objectButton.type="button";objectButton.className="tile-button";objectButton.dataset.objectKey=meta.objectKey;objectButton.setAttribute("role","option");objectButton.setAttribute("aria-label",meta.label);objectButton.setAttribute("aria-selected",String(state.selectedObject===meta.objectKey));objectButton.title=meta.label;
           var objectPreview=document.createElement("span");objectPreview.className="tile-atlas-preview";var objectLabel=document.createElement("span");objectLabel.textContent=meta.label;objectButton.append(objectPreview,objectLabel);objectButton.onclick=function(){selectObject(meta.objectKey);};els["tile-catalog"].appendChild(objectButton);renderObjectPreview(objectPreview,meta.objectKey,40);return;
@@ -568,7 +809,7 @@
         button.setAttribute("role", "option");
         button.setAttribute("aria-label", labelForGlyph(meta.glyph) + ". " + (meta.description || "") +
           (meta.physics ? " " + meta.physics + "." : ""));
-        button.setAttribute("aria-selected", !state.selectedObject && meta.glyph === state.selectedGlyph ? "true" : "false");
+        button.setAttribute("aria-selected", !state.selectedObject && !state.selectedOverlay && meta.glyph === state.selectedGlyph ? "true" : "false");
         button.title = (meta.label || "Native tile") + " (" + (meta.glyph === " " ? "space" : meta.glyph) + ")\n" +
           (meta.physics ? meta.physics + "\n" : "") + (meta.description || "");
         var preview = document.createElement("span");
@@ -591,30 +832,44 @@
     state.paletteAppearanceKey = key;
     els["tile-catalog"].querySelectorAll(".tile-button").forEach(function (button) {
       var host = button.querySelector(".tile-atlas-preview");
-      if (host) {if(button.dataset.objectKey)renderObjectPreview(host,button.dataset.objectKey,40);else renderGlyphPreview(host, button.dataset.glyph, 40);}
+      if (host) {if(button.dataset.overlayKey)renderSpawnOverlayPreview(host,spawnOverlayMeta(button.dataset.overlayKey));else if(button.dataset.objectKey)renderObjectPreview(host,button.dataset.objectKey,40);else renderGlyphPreview(host, button.dataset.glyph, 40);}
     });
-    if(state.selectedObject)renderObjectPreview(els["selected-tile-preview"],state.selectedObject,48);else renderGlyphPreview(els["selected-tile-preview"], state.selectedGlyph, 48);
+    if(state.selectedOverlay)renderSpawnOverlayPreview(els["selected-tile-preview"],spawnOverlayMeta(state.selectedOverlay));else if(state.selectedObject)renderObjectPreview(els["selected-tile-preview"],state.selectedObject,48,selectedPlacement());else renderGlyphPreview(els["selected-tile-preview"], state.selectedGlyph, 48);
   }
 
   function createGridControls() {
+    var cols = roomCols();
+    var rows = roomRows();
+    if (Number(els["map-grid"].dataset.cols) === cols && Number(els["map-grid"].dataset.rows) === rows && els["map-grid"].querySelector(".map-row")) return;
+    els["map-grid"].dataset.cols = String(cols);
+    els["map-grid"].dataset.rows = String(rows);
+    els["map-grid"].setAttribute("aria-colcount", String(cols));
+    els["map-grid"].setAttribute("aria-rowcount", String(rows));
+    els["map-grid"].setAttribute("aria-label", "Room grid, " + rows + " rows by " + cols + " columns");
+    els["map-grid"].style.setProperty("--room-cols", cols);
+    els["map-grid"].style.setProperty("--room-rows", rows);
+    els["map-grid"].parentElement.style.setProperty("--room-cols", cols);
+    els["map-grid"].parentElement.style.setProperty("--room-rows", rows);
+    els["room-render-canvas"].width = cols * 16;
+    els["room-render-canvas"].height = rows * 16;
     els["column-ruler"].textContent = "";
     els["row-ruler"].textContent = "";
-    for (var col = 0; col < COLS; col += 1) {
+    for (var col = 0; col < cols; col += 1) {
       var colLabel = document.createElement("span");
       colLabel.textContent = String(col + 1);
       els["column-ruler"].appendChild(colLabel);
     }
-    for (var row = 0; row < ROWS; row += 1) {
+    for (var row = 0; row < rows; row += 1) {
       var rowLabel = document.createElement("span");
       rowLabel.textContent = String(row + 1);
       els["row-ruler"].appendChild(rowLabel);
     }
     els["map-grid"].querySelectorAll(".map-row").forEach(function (node) { node.remove(); });
-    for (var r = 0; r < ROWS; r += 1) {
+    for (var r = 0; r < rows; r += 1) {
       var rowNode = document.createElement("div");
       rowNode.className = "map-row";
       rowNode.setAttribute("role", "row");
-      for (var c = 0; c < COLS; c += 1) {
+      for (var c = 0; c < cols; c += 1) {
         var cell = document.createElement("button");
         cell.type = "button";
         cell.className = "map-cell";
@@ -638,8 +893,8 @@
   }
 
   function setFocusCell(row, col, focus) {
-    row = Math.max(0, Math.min(ROWS - 1, row));
-    col = Math.max(0, Math.min(COLS - 1, col));
+    row = Math.max(0, Math.min(roomRows() - 1, row));
+    col = Math.max(0, Math.min(roomCols() - 1, col));
     var old = cellAt(state.focusCell.row, state.focusCell.col);
     var next = cellAt(row, col);
     if (old) old.tabIndex = -1;
@@ -706,6 +961,249 @@
     if (speak !== false) announce("Previewing the " + next + " room color bank");
   }
 
+  function activePlacedRoomNode() {
+    var graph;
+    if (!state.document || !state.document.layout || state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) return null;
+    graph = Core.validateRoomGraph(state.document);
+    return graph.nodes.find(function (node) { return node.id === state.selectedGraphNode; }) || null;
+  }
+
+  function activePlacedRoomRecord(room) {
+    var layout = state.document && state.document.layout;
+    if (!layout || layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph") ||
+        !Array.isArray(layout.nodes)) return null;
+    return layout.nodes.find(function (node) {
+      return node && node.id === state.selectedGraphNode && node.room === room.id;
+    }) || null;
+  }
+
+  function visibleSpawnOverlay(room) {
+    var source = room.spawn || {};
+    var node = state.spawnMarkerScope === "copy" && activePlacedRoomRecord(room);
+    var copy = node && node.overrides && node.overrides.spawn;
+    if (!copy || typeof copy !== "object" || Array.isArray(copy)) return source;
+    return {
+      players: Object.assign({}, source.players || {}, copy.players || {}),
+      markers: Object.prototype.hasOwnProperty.call(copy, "markers") ? copy.markers : source.markers
+    };
+  }
+
+  function roomLayoutAuthoringMode() {
+    if (!state.document || !state.document.layout ||
+        state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) return "symmetric";
+    if (state.layoutAuthoringMode) return state.layoutAuthoringMode;
+    var nodes = state.document.layout.nodes || [];
+    var byId = Object.create(null);
+    nodes.forEach(function (node) { if (node && node.id) byId[node.id] = node; });
+    if (nodes.length === Math.max(1, rooms().length * 2 - 1) && byId.center &&
+        state.document.layout.start === "center" && byId.center.room === rooms()[0].id) {
+      var paired = rooms().slice(1).every(function (room, index) {
+        var left = byId["left_" + (index + 1)];
+        var right = byId["right_" + (index + 1)];
+        return left && right && left.room === room.id && right.room === room.id &&
+          left.mirrorX !== true && right.mirrorX === true && left.y === right.y;
+      });
+      if (paired) return "symmetric";
+    }
+    return "free";
+  }
+
+  function opponentSpawnHelp(roomId, nodeId) {
+    var resolved = Core.resolveOpponentSpawn(state.document, roomId, nodeId);
+    if (!resolved) return "Choose a room to see its spawn behavior.";
+    if (resolved.reason === "symmetrical_outer")
+      return "Effective: no new opponent spawns in this outermost symmetrical room. An existing fighter stays alive.";
+    if (resolved.policy === "never")
+      return "Effective: no new opponent spawns here. An existing fighter stays alive.";
+    if (resolved.policy === "always")
+      return "Effective: the trailing opponent can spawn here, including in a goal room.";
+    return "Effective: normal game spawn rules apply here.";
+  }
+
+  function runRoomFocusTransition(direction) {
+    if (!direction) return;
+    var frame = els["map-grid"].closest(".map-frame");
+    var transitionClass = "room-focus-enter-from-" + direction;
+    frame.classList.remove("room-focus-enter-from-left", "room-focus-enter-from-right", "room-focus-enter-from-top", "room-focus-enter-from-bottom");
+    void frame.offsetWidth;
+    frame.classList.add(transitionClass);
+    window.setTimeout(function () { frame.classList.remove(transitionClass); }, 540);
+  }
+
+  function legacyPlacedRooms() {
+    var list = rooms();
+    var entries = list.slice(1).reverse().map(function (room, index) {
+      return { room: room, mirrorX: false, appearance: "mirror", sourceIndex: list.length - 1 - index, bank: "mirror", side: "left" };
+    }).concat(list.length ? [{ room: list[0], mirrorX: false, appearance: "primary", sourceIndex: 0, bank: "primary", side: "center" }] : [])
+      .concat(list.slice(1).map(function (room, index) {
+        return { room: room, mirrorX: true, appearance: "primary", sourceIndex: index + 1, bank: "primary", side: "right" };
+      }));
+    var cursor = 0;
+    return entries.map(function (entry, index) {
+      var node = {
+        id: "symmetric_" + entry.side + "_" + entry.sourceIndex,
+        room: entry.room.id,
+        sourceIndex: entry.sourceIndex,
+        mirrorX: entry.mirrorX,
+        appearance: entry.appearance,
+        bank: entry.bank,
+        x: cursor,
+        y: 0,
+        width: roomCols(entry.room),
+        height: roomRows(entry.room),
+        sequenceIndex: index
+      };
+      cursor += node.width;
+      return node;
+    });
+  }
+
+  function focusPlacedRoom(nodeId, direction) {
+    var graph;
+    var node;
+    var index;
+    if (!state.document || !state.document.layout || state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) return false;
+    graph = Core.validateRoomGraph(state.document);
+    node = graph.valid && graph.nodes.find(function (entry) { return entry.id === nodeId; });
+    index = node ? rooms().findIndex(function (room) { return room.id === node.room; }) : -1;
+    if (!node || index < 0) return false;
+    if (state.roomIndex !== index || state.selectedGraphNode !== node.id) state.selection = null;
+    state.selectedGraphNode = node.id;
+    state.selectedGraphConnection = null;
+    state.roomIndex = index;
+    state.previewMirrored = node.mirrorX === true;
+    state.appearancePreviewBank = node.appearance === "mirror" ? "mirror" : "primary";
+    state.workMode = "map";
+    renderAll();
+    runRoomFocusTransition(direction);
+    announce("Editing placed room " + node.id + " from the " + node.room + " design");
+    return true;
+  }
+
+  function renderRoomEdges() {
+    var host = els["room-edge-nav"];
+    var graph;
+    var current;
+    var byId = Object.create(null);
+    var request = state.layoutPreviewRequest;
+    host.textContent = "";
+    if (!state.document.layout || state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) {
+      var sequence = legacyPlacedRooms();
+      var currentIndex = sequence.findIndex(function (node) {
+        return node.sourceIndex === state.roomIndex && node.mirrorX === state.previewMirrored;
+      });
+      [currentIndex - 1, currentIndex + 1].forEach(function (neighborIndex) {
+        var other = sequence[neighborIndex];
+        var side = neighborIndex < currentIndex ? "left" : "right";
+        var source = other && rooms()[other.sourceIndex];
+        if (!other || !source) return;
+        var button = document.createElement("button");
+        var canvas = document.createElement("canvas");
+        var label = document.createElement("span");
+        button.type = "button";
+        button.className = "room-edge-room is-" + side;
+        button.style.setProperty("--edge-position", "50%");
+        button.style.setProperty("--edge-width-cells", String(other.width));
+        button.style.setProperty("--edge-height-cells", String(other.height));
+        button.style.setProperty("--edge-shift-cells", "0");
+        button.title = "Go to " + other.room;
+        button.setAttribute("aria-label", "Edit neighboring room " + other.room + " to the " + side);
+        canvas.setAttribute("aria-hidden", "true");
+        canvas.dataset.legacyIndex = String(other.sequenceIndex);
+        label.textContent = other.room;
+        button.append(canvas, label);
+        button.addEventListener("click", function () {
+          state.selection = null;
+          state.roomIndex = other.sourceIndex;
+          state.previewMirrored = other.mirrorX;
+          state.appearancePreviewBank = other.bank;
+          state.workMode = "map";
+          renderAll();
+          runRoomFocusTransition(side);
+          announce("Editing " + other.room + (other.mirrorX ? " flipped copy" : ""));
+        });
+        host.appendChild(button);
+        renderRoomLayoutPreview(canvas, other, source, request);
+      });
+      return;
+    }
+    graph = Core.validateRoomGraph(state.document);
+    (graph.nodes || []).forEach(function (node) { byId[node.id] = node; });
+    current = byId[state.selectedGraphNode];
+    if (!current) return;
+    (graph.connections || []).forEach(function (connection) {
+      var outgoing = connection.from === current.id;
+      var incoming = connection.to === current.id;
+      var side;
+      var offset;
+      var other;
+      var source;
+      var button;
+      var canvas;
+      var label;
+      var axisLength;
+      var currentOffset;
+      var otherOffset;
+      if (!outgoing && !incoming) return;
+      side = outgoing ? connection.fromSide : connection.toSide;
+      currentOffset = outgoing ? connection.fromOffset : connection.toOffset;
+      otherOffset = outgoing ? connection.toOffset : connection.fromOffset;
+      offset = currentOffset;
+      other = byId[outgoing ? connection.to : connection.from];
+      source = other && rooms().find(function (room) { return room.id === other.room; });
+      if (!other || !source) return;
+      axisLength = side === "left" || side === "right" ? current.height : current.width;
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = "room-edge-room is-" + side;
+      button.style.setProperty("--edge-position", (((offset || 0) + connection.span / 2) / Math.max(1, axisLength) * 100) + "%");
+      button.style.setProperty("--edge-width-cells", String(other.width));
+      button.style.setProperty("--edge-height-cells", String(other.height));
+      button.style.setProperty("--edge-shift-cells", String((currentOffset || 0) - (otherOffset || 0)));
+      button.title = "Go to " + other.id;
+      button.setAttribute("aria-label", "Edit neighboring room " + other.id + " to the " + side);
+      canvas = document.createElement("canvas");
+      canvas.setAttribute("aria-hidden", "true");
+      canvas.dataset.nodeId = other.id;
+      label = document.createElement("span");
+      label.textContent = other.id;
+      button.append(canvas, label);
+      button.addEventListener("click", function () { focusPlacedRoom(other.id, side); });
+      host.appendChild(button);
+      renderRoomLayoutPreview(canvas, other, source, request);
+    });
+  }
+
+  function refreshAnimatedPalettePreviews() {
+    var customTiles = state.document && state.document.tileset && state.document.tileset.tiles || [];
+    els["tile-catalog"].querySelectorAll(".tile-button").forEach(function (button) {
+      var host = button.querySelector(".tile-atlas-preview");
+      var glyph = button.dataset.glyph;
+      var meta;
+      var custom;
+      if (!host || button.dataset.overlayKey) return;
+      if (button.dataset.objectKey) {
+        renderObjectPreview(host, button.dataset.objectKey, 40);
+        return;
+      }
+      meta = glyph && tileMeta(glyph);
+      custom = customTiles.find(function (tile) { return tile.symbol === glyph; });
+      if ((custom && Number(custom.frame_count || 1) > 1) ||
+          (meta && ["animated-scenery", "water", "hazard"].indexOf(meta.category) >= 0)) {
+        renderGlyphPreview(host, glyph, 40);
+      }
+    });
+    if (state.selectedObject) renderObjectPreview(els["selected-tile-preview"], state.selectedObject, 48, selectedPlacement());
+    else if (!state.selectedOverlay) {
+      var selectedMeta = tileMeta(state.selectedGlyph);
+      var selectedCustom = customTiles.find(function (tile) { return tile.symbol === state.selectedGlyph; });
+      if ((selectedCustom && Number(selectedCustom.frame_count || 1) > 1) ||
+          (selectedMeta && ["animated-scenery", "water", "hazard"].indexOf(selectedMeta.category) >= 0)) {
+        renderGlyphPreview(els["selected-tile-preview"], state.selectedGlyph, 48);
+      }
+    }
+  }
+
   function renderRoomCanvas() {
     var room = activeRoom();
     if (!room) return;
@@ -713,6 +1211,8 @@
     var centreRoomIndex = sourceRooms.length - 1;
     /* The editor always paints the authored source room. */
     var worldRoomIndex = state.previewMirrored ? centreRoomIndex + state.roomIndex : centreRoomIndex - state.roomIndex;
+    var placedNode = activePlacedRoomNode();
+    var placedOverrides = placedNode && placedNode.overrides || {};
     var canvas = els["room-render-canvas"];
     var appearance = resolvedAppearance(room, state.appearancePreviewBank);
     var request = ++state.roomRenderRequest;
@@ -732,18 +1232,25 @@
         Promise.resolve(Atlas.renderRoom(frame, room, {
           grid: room.grid,
           appearance: appearance,
-          ambient: room.ambient,
+          ambient: Object.prototype.hasOwnProperty.call(placedOverrides, "ambient") ? placedOverrides.ambient : room.ambient,
           eggnoggColor: state.document.rules.eggnoggColor,
           tileset: state.document && state.document.tileset,
+          nativeTileset: Object.prototype.hasOwnProperty.call(placedOverrides, "native_tileset") ? placedOverrides.native_tileset :
+            (Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(state.document, room) : null),
+          particles: state.document && state.document.particles,
+          ambiances: state.document && state.document.ambiances,
+          mapId: state.document && state.document.id,
+          externalImages: assetSources(),
           mirrored: state.previewMirrored,
           /* Native terrain variation is seeded from the destination room and
            * column, not from the glyph. Source rooms are stored centre-out;
            * their authored copies run left from centre, while their mirrored
            * runtime copies run the same distance to the right. */
-          worldRoomIndex: Math.max(0, worldRoomIndex),
+          worldRoomIndex: placedNode ? (state.document.layout.nodes || []).findIndex(function (node) { return node.id === placedNode.id; }) : Math.max(0, worldRoomIndex),
+          worldXOffset: placedNode ? placedNode.x : finalRoomWorldOffset(state.roomIndex, state.previewMirrored),
           time: previewTicks()
         }))
-          .then(function () {return GregObjects.drawRoom(frame,frameDoc,room.id,frameTick,frameMirrored);})
+          .then(function () {return GregObjects.drawRoom(frame,frameDoc,room.id,frameTick,frameMirrored,state.selectedGraphNode);})
           .then(function(){if(request!==state.roomRenderRequest)return;var context=canvas.getContext("2d");context.clearRect(0,0,canvas.width,canvas.height);context.drawImage(frame,0,0);document.body.classList.add("atlas-ready");})
           .catch(function (error) {
             if (request === state.roomRenderRequest) {
@@ -779,6 +1286,23 @@
       cell.classList.toggle("is-empty", glyph === " " || glyph === ".");
       cell.classList.toggle("is-approximate", APPROXIMATE_GLYPHS.indexOf(glyph) >= 0);
       cell.classList.toggle("has-error", !!errorCells[row + ":" + col]);
+      var spawn = visibleSpawnOverlay(room);
+      var showSpawnOverlays = !!state.selectedOverlay;
+      var playerAtCell = showSpawnOverlays && spawn.players && Object.keys(spawn.players).filter(function (key) {
+        var point = spawn.players[key]; return point && point.x === col && point.y === row;
+      })[0];
+      if (playerAtCell) {
+        cell.dataset.playerSpawn = playerAtCell;
+        cell.dataset.spawnFacing = spawn.players[playerAtCell].facing || (playerAtCell === "1" ? "right" : "left");
+      } else {
+        delete cell.dataset.playerSpawn;
+        delete cell.dataset.spawnFacing;
+      }
+      var marker = showSpawnOverlays && Array.isArray(spawn.markers) && spawn.markers.find(function (entry) { return entry && entry.x === col && entry.y === row; });
+      if (marker) cell.dataset.respawnMarker = marker.kind; else delete cell.dataset.respawnMarker;
+      var selected = !!state.selection && row >= state.selection.top && row <= state.selection.bottom && col >= state.selection.left && col <= state.selection.right;
+      cell.classList.toggle("is-selected", selected);
+      cell.setAttribute("aria-selected", selected ? "true" : "false");
       cell.setAttribute("aria-label", "Row " + (row + 1) + " column " + (col + 1) + ", " + labelForGlyph(glyph));
       cell.title = "Row " + (row + 1) + ", column " + (col + 1) + ": " + labelForGlyph(glyph);
       var token = cell.querySelector(".cell-glyph");
@@ -786,12 +1310,20 @@
     });
     var appearance = resolvedAppearance(room, state.appearancePreviewBank);
     COLOR_KEYS.forEach(function (key) { els["map-grid"].parentElement.style.setProperty("--room-" + key, appearance[key]); });
-    els["room-atmosphere"].dataset.ambient = String(room.ambient || "none");
+    var placedNode = activePlacedRoomNode();
+    els["room-atmosphere"].dataset.ambient = String(placedNode && placedNode.overrides && Object.prototype.hasOwnProperty.call(placedNode.overrides, "ambient") ? placedNode.overrides.ambient : (room.ambient || "none"));
     renderRoomCanvas();
     updateCoordinates(state.focusCell.row, state.focusCell.col);
   }
 
   function updateToolStatus() {
+    if(state.tool==="overlay"){
+      var overlay=spawnOverlayMeta(state.selectedOverlay);
+      var target = state.spawnMarkerScope === "copy" && activePlacedRoomRecord(activeRoom()) ? "this placed copy" : "room design";
+      els["tool-status"].textContent=(overlay?overlay.label:"Spawn marker")+" · " + target + " · draw over terrain, right-click to erase";
+      return;
+    }
+    if(state.tool==="select"){els["tool-status"].textContent=state.selection?"Select · "+(state.selection.right-state.selection.left+1)+" × "+(state.selection.bottom-state.selection.top+1)+" tiles":"Select · drag an area";return;}
     if(state.selectedObject){els["tool-status"].textContent=state.tool+" ? "+GregObjects.label(state.selectedObject);return;}
     var meta = tileMeta(state.selectedGlyph);
     var toolName = state.tool.charAt(0).toUpperCase() + state.tool.slice(1);
@@ -810,7 +1342,7 @@
   }
 
   function footprintValid(glyph, row, col, notifyUser) {
-    if ((glyph === "G" || glyph === "L" || glyph === "N" || glyph === "Y") && (row < 3 || col === 0 || col === COLS - 1)) {
+    if ((glyph === "G" || glyph === "L" || glyph === "N" || glyph === "Y") && (row < 3 || col === 0 || col === roomCols() - 1)) {
       if (notifyUser !== false) toast("Placement blocked", glyph + " needs three rows of headroom and side clearance.", "error");
       return false;
     }
@@ -850,7 +1382,7 @@
 
   function mirroredChanges(row, col, glyph) {
     var list = [{ row: row, col: col, glyph: glyph }];
-    if (state.symmetry && col !== COLS - 1 - col) list.push({ row: row, col: COLS - 1 - col, glyph: glyph });
+    if (state.symmetry && col !== roomCols() - 1 - col) list.push({ row: row, col: roomCols() - 1 - col, glyph: glyph });
     return list;
   }
 
@@ -860,16 +1392,16 @@
     var unique = Object.create(null);
     changes = changes.filter(function (change) {
       var key = change.row + ":" + change.col;
-      if (unique[key] || change.row < 0 || change.row >= ROWS || change.col < 0 || change.col >= COLS) return false;
+      if (unique[key] || change.row < 0 || change.row >= roomRows(room) || change.col < 0 || change.col >= roomCols(room)) return false;
       unique[key] = true;
       return true;
     });
-    if(state.selectedObject){try{var objectChanged=GregObjects.paint(state.document,state.selectedObject,room.id,changes,(eraseObject===undefined?!!(state.pointer?state.pointer.erase:state.tool==="eraser"):eraseObject));if(objectChanged&&!silent)renderAfterMapEdit();return objectChanged;}catch(error){toast("Object placement failed",error.message,"error");return false;}}
+    if(state.selectedObject){try{var objectChanged=GregObjects.paint(state.document,state.selectedObject,room.id,changes,(eraseObject===undefined?!!(state.pointer?state.pointer.erase:state.tool==="eraser"):eraseObject),state.selectedGraphNode);if(objectChanged&&!silent)renderAfterMapEdit();return objectChanged;}catch(error){toast("Object placement failed",error.message,"error");return false;}}
     var invalid = changes.find(function (change) { return !footprintValid(change.glyph, change.row, change.col, false); });
     if (invalid) { footprintValid(invalid.glyph, invalid.row, invalid.col, true); return false; }
     if (!changes.length || !prospectiveSpawnerValid(room, changes)) return false;
     var changed = false;
-    var eraseObjects=changes.filter(function(c){return c.glyph===" ";});if(eraseObjects.length&&GregObjects.catalog(state.document).types.length)changed=GregObjects.paint(state.document,null,room.id,eraseObjects,true);
+    var eraseObjects=changes.filter(function(c){return c.glyph===" ";});if(eraseObjects.length&&GregObjects.catalog(state.document).types.length)changed=GregObjects.paint(state.document,null,room.id,eraseObjects,true,state.selectedGraphNode);
     changes.forEach(function (change) {
       var row = rowArray(room, change.row);
       if (row[change.col] !== change.glyph) {
@@ -901,14 +1433,14 @@
       var row = point[0];
       var col = point[1];
       var key = row + ":" + col;
-      if (seen[key] || row < 0 || row >= ROWS || col < 0 || col >= COLS) continue;
+      if (seen[key] || row < 0 || row >= roomRows(room) || col < 0 || col >= roomCols(room)) continue;
       seen[key] = true;
       if (rowArray(room, row)[col] !== target) continue;
       changes.push({ row: row, col: col, glyph: glyph });
       queue.push([row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]);
     }
     if (state.symmetry) {
-      changes.slice().forEach(function (change) { changes.push({ row: change.row, col: COLS - 1 - change.col, glyph: glyph }); });
+      changes.slice().forEach(function (change) { changes.push({ row: change.row, col: roomCols(room) - 1 - change.col, glyph: glyph }); });
     }
     return changes;
   }
@@ -951,8 +1483,126 @@
   function withSymmetry(changes) {
     if (!state.symmetry) return changes;
     var output = changes.slice();
-    changes.forEach(function (change) { output.push({ row: change.row, col: COLS - 1 - change.col, glyph: change.glyph }); });
+    changes.forEach(function (change) { output.push({ row: change.row, col: roomCols() - 1 - change.col, glyph: change.glyph }); });
     return output;
+  }
+
+  function selectionBounds(start, end) {
+    return { top: Math.min(start.row, end.row), left: Math.min(start.col, end.col), bottom: Math.max(start.row, end.row), right: Math.max(start.col, end.col) };
+  }
+
+  function updateSelectionControls() {
+    var selected = !!state.selection;
+    ["selection-copy-button", "selection-cut-button", "selection-flip-x-button", "selection-flip-y-button", "selection-rotate-button"].forEach(function (id) { els[id].disabled = !selected; });
+    els["selection-paste-button"].disabled = !state.selectionClipboard;
+  }
+
+  function setSelection(start, end) {
+    state.selection = selectionBounds(start, end);
+    els["map-grid"].querySelectorAll(".map-cell").forEach(function (cell) {
+      var row = Number(cell.dataset.row), col = Number(cell.dataset.col);
+      var selected = row >= state.selection.top && row <= state.selection.bottom && col >= state.selection.left && col <= state.selection.right;
+      cell.classList.toggle("is-selected", selected); cell.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+    updateSelectionControls();
+    updateToolStatus();
+  }
+
+  function selectionRows() {
+    var room = activeRoom(), area = state.selection, output = [];
+    if (!room || !area) return null;
+    for (var row = area.top; row <= area.bottom; row += 1) output.push(rowArray(room, row).slice(area.left, area.right + 1));
+    return output;
+  }
+
+  function selectionObjects(area) {
+    var room = activeRoom(), order = state.document.layout.order, roomIndex = order.indexOf(room.id), offset = sourceRoomWorldOffset(roomIndex);
+    return GregObjects.catalog(state.document).placements.reduce(function (output, placement) {
+      var localX, row, col, copy;
+      if (state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph") && placement.instance !== state.selectedGraphNode) return output;
+      if (placement.room !== undefined && placement.room !== room.id) return output;
+      localX = placement.room === undefined ? placement.x - offset : placement.x;
+      row = Math.floor(placement.y / 16); col = Math.floor(localX / 16);
+      if (row < area.top || row > area.bottom || col < area.left || col > area.right) return output;
+      copy = clone(placement); copy._sourceName = placement.name;
+      copy.x = localX - area.left * 16; copy.y = placement.y - area.top * 16;
+      delete copy.room;
+      output.push(copy); return output;
+    }, []);
+  }
+
+  function transformedSelectionObjects(objects, operation, width, height) {
+    return GregObjects.transformAreaPlacements(objects, operation, width, height);
+  }
+
+  function uniquePlacementName(base, placements) {
+    var stem = String(base || "object_copy").replace(/\.mirror$/, "").slice(0, 76), candidate = stem + "_copy", number = 2;
+    while (placements.some(function (placement) { return placement.name === candidate || placement.name === candidate + ".mirror"; })) candidate = stem.slice(0, 72) + "_copy_" + number++;
+    return candidate;
+  }
+
+  function writeTileArea(rows, top, left, label, clearCurrent, objectEdit) {
+    var room = activeRoom(), base, next, changes = [], invalid, nextEntities = null;
+    if (!room || !rows || !rows.length) return false;
+    base = room.grid.map(function (line) { return line.slice(); });
+    if (clearCurrent && state.selection) {
+      for (var clearRow = state.selection.top; clearRow <= state.selection.bottom; clearRow += 1) for (var clearCol = state.selection.left; clearCol <= state.selection.right; clearCol += 1) base[clearRow][clearCol] = " ";
+    }
+    try { next = Core.pasteTileArea(base, rows, top, left); }
+    catch (error) { toast("Area does not fit", error.message, "error"); return false; }
+    for (var row = 0; row < roomRows(room); row += 1) for (var col = 0; col < roomCols(room); col += 1) if (room.grid[row][col] !== next[row][col]) changes.push({ row: row, col: col, glyph: next[row][col] });
+    invalid = changes.find(function (change) { return change.glyph !== " " && !footprintValid(change.glyph, change.row, change.col, false); });
+    if (invalid) { footprintValid(invalid.glyph, invalid.row, invalid.col, true); return false; }
+    if (!prospectiveSpawnerValid(room, changes)) return false;
+    if (objectEdit) {
+      var entities = clone(GregObjects.catalog(state.document));
+      var placements = entities.placements.filter(function (placement) { return objectEdit.removeNames.indexOf(placement.name) < 0; });
+      objectEdit.add.forEach(function (source) {
+        var placement = clone(source), originalName = placement._sourceName;
+        delete placement._sourceName;
+        placement.room = room.id; placement.x = left * 16 + placement.x; placement.y = top * 16 + placement.y;
+        if (state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) { placement.instance = state.selectedGraphNode; delete placement.side; }
+        placement.name = objectEdit.preserveNames ? originalName : uniquePlacementName(originalName, placements);
+        placements.push(placement);
+      });
+      entities.placements = placements;
+      try { EntityAuthor.serialize(entities); EntityAuthor.expandPlacements(entities, state.document); }
+      catch (error) { toast("Cannot edit area objects", error.message, "error"); return false; }
+      nextEntities = entities;
+    }
+    commit(label, function () {
+      room.grid = next;
+      if (nextEntities) state.document.entities = nextEntities;
+    });
+    state.selection = { top: top, left: left, bottom: top + rows.length - 1, right: left + rows[0].length - 1 };
+    renderGrid(); updateSelectionControls();
+    return true;
+  }
+
+  function copySelection(cut) {
+    var rows = selectionRows(), area = state.selection, objects;
+    if (!rows || !area) return;
+    objects = selectionObjects(area);
+    state.selectionClipboard = { tiles: rows.map(function (line) { return line.slice(); }), objects: objects, width: rows[0].length, height: rows.length };
+    updateSelectionControls();
+    if (cut) writeTileArea(rows.map(function (line) { return line.map(function () { return " "; }); }), area.top, area.left, "Cut area", false, { removeNames: objects.map(function (object) { return object._sourceName; }), add: [], preserveNames: false });
+    toast(cut ? "Area cut" : "Area copied", rows[0].length + " × " + rows.length + " tiles and " + objects.length + " object" + (objects.length === 1 ? "" : "s") + " are ready to paste.");
+  }
+
+  function pasteSelection() {
+    var top = state.selection ? state.selection.top : state.focusCell.row;
+    var left = state.selection ? state.selection.left : state.focusCell.col;
+    if (state.selectionClipboard) writeTileArea(state.selectionClipboard.tiles, top, left, "Paste area", false, { removeNames: [], add: state.selectionClipboard.objects, preserveNames: false });
+  }
+
+  function transformSelection(operation, label) {
+    var rows = selectionRows(), area = state.selection, transformed, objects, transformedObjects;
+    if (!rows || !area) return;
+    try { transformed = Core.transformTileArea(rows, operation); }
+    catch (error) { toast("Cannot transform area", error.message, "error"); return; }
+    objects = selectionObjects(area);
+    transformedObjects = transformedSelectionObjects(objects, operation, rows[0].length, rows.length);
+    writeTileArea(transformed, area.top, area.left, label, true, { removeNames: objects.map(function (object) { return object._sourceName; }), add: transformedObjects, preserveNames: true });
   }
 
   function showShapePreview(changes) {
@@ -972,13 +1622,13 @@
     var firstRow = largeArt ? row - 3 : row - up;
     var lastRow = largeArt ? row - 1 : row;
     for (var r = firstRow; r <= lastRow; r += 1) for (var c = col - left; c <= col + right; c += 1) {
-      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) output.push({ row: r, col: c, glyph: glyph });
+      if (r >= 0 && r < roomRows() && c >= 0 && c < roomCols()) output.push({ row: r, col: c, glyph: glyph });
     }
     return output;
   }
 
   function hoverFootprint(cell) {
-    if (state.pointer || state.tool === "line" || state.tool === "rectangle" || state.tool === "fill" || state.tool === "eyedropper") return;
+    if (state.pointer || state.tool === "overlay" || state.tool === "line" || state.tool === "rectangle" || state.tool === "fill" || state.tool === "eyedropper" || state.tool === "select") return;
     var glyph = state.tool === "eraser" ? " " : state.selectedGlyph;
     showShapePreview(footprintCells(Number(cell.dataset.row), Number(cell.dataset.col), glyph));
   }
@@ -987,18 +1637,82 @@
     els["map-grid"].querySelectorAll(".is-shape-preview").forEach(function (cell) { cell.classList.remove("is-shape-preview"); });
   }
 
+  function applySpawnMark(row, col, erase) {
+    var room = activeRoom();
+    var changed = false;
+    if (!room || !state.selectedOverlay || row < 1) return false;
+    if (!erase && !Core.isSafeSpawnFloor(room, col, row,
+                                         state.document.tileset)) {
+      toast("Choose a safe floor tile",
+        "Spawn markers must sit on an @ floor tile with open, non-hazardous space above it.",
+        "error");
+      return false;
+    }
+    var placed = state.spawnMarkerScope === "copy" && activePlacedRoomRecord(room);
+    var spawn = placed ? (placed.overrides && placed.overrides.spawn || {}) : (room.spawn || {});
+    var overlay = state.selectedOverlay;
+    if (overlay === "player1_start" || overlay === "player2_start") {
+      var player = overlay === "player1_start" ? "1" : "2";
+      var players = spawn.players && typeof spawn.players === "object" ? spawn.players : {};
+      if (erase) {
+        if (players[player]) { delete players[player]; changed = true; }
+      } else {
+        var previous = players[player] || (placed && room.spawn && room.spawn.players && room.spawn.players[player]);
+        var sameCell = previous && previous.x === col && previous.y === row;
+        var facing = sameCell ? (previous.facing === "left" ? "right" : "left") : (player === "1" ? "right" : "left");
+        changed = !previous || previous.x !== col || previous.y !== row || previous.facing !== facing;
+        if (changed) players[player] = { x: col, y: row, facing: facing };
+      }
+      if (changed) {
+        if (Object.keys(players).length) spawn.players = players;
+        else delete spawn.players;
+      }
+    } else {
+      var inherited = placed && !Object.prototype.hasOwnProperty.call(spawn, "markers");
+      var markers = inherited ? (room.spawn && room.spawn.markers || []) : (spawn.markers || []);
+      if (!Array.isArray(markers)) markers = [];
+      var index = markers.findIndex(function (entry) { return entry && entry.x === col && entry.y === row; });
+      if (erase && index >= 0) changed = true;
+      else if (!erase && (index < 0 || markers[index].kind !== overlay)) changed = true;
+      if (changed) {
+        spawn.markers = inherited ? clone(markers) : markers;
+        if (erase) spawn.markers.splice(index, 1);
+        else if (index < 0) spawn.markers.push({ x: col, y: row, kind: overlay });
+        else spawn.markers[index].kind = overlay;
+      }
+    }
+    if (changed) {
+      if (placed) {
+        placed.overrides = placed.overrides || {};
+        if (Object.keys(spawn).length) placed.overrides.spawn = spawn;
+        else delete placed.overrides.spawn;
+        if (!Object.keys(placed.overrides).length) delete placed.overrides;
+      } else room.spawn = spawn;
+      validate(); renderGrid(); markChanged();
+    }
+    return changed;
+  }
+
   function beginDraw(cell, event) {
     if (state.pointer || event.isPrimary === false) return;
     var row = Number(cell.dataset.row), col = Number(cell.dataset.col);
     setFocusCell(row, col, false);
     var erase = event.button === 2 || state.tool === "eraser";
     var glyph = erase ? " " : state.selectedGlyph;
+    var picked=GregObjects.catalog(state.document).placements.find(function(p){return GregObjects.atCell(state.document,p,activeRoom().id,row,col);});
+    if (state.tool === "overlay" && state.selectedOverlay) {
+      if (row < 1) { toast("Choose a floor tile", "Spawn markers go on the floor cell beneath the player, so the top row cannot be used.", "error"); return; }
+      state.pointer = { id: event.pointerId, start: { row: row, col: col }, last: { row: row, col: col }, erase: event.button === 2, tool: state.tool, overlay: state.selectedOverlay, snapshot: historySnapshot("Edit spawn markers"), changed: false };
+      state.pointer.changed = applySpawnMark(row, col, state.pointer.erase);
+      if (state.selectedOverlay === "player1_start" || state.selectedOverlay === "player2_start") finishDraw();
+      return;
+    }
     if (state.tool === "eyedropper" && !erase) {
-      var picked=GregObjects.catalog(state.document).placements.find(function(p){return GregObjects.atCell(state.document,p,activeRoom().id,row,col);});
-      if(picked)selectObject(picked.type);else selectGlyph(rowArray(activeRoom(), row)[col]);
+      if(picked)selectPlacement(picked);else selectGlyph(rowArray(activeRoom(), row)[col]);
       setTool("pencil");
       return;
     }
+    if(!erase&&state.tool==="pencil"&&picked&&picked.type===state.selectedObject){selectPlacement(picked);return;}
     state.pointer = {
       id: event.pointerId,
       start: { row: row, col: col },
@@ -1010,7 +1724,9 @@
       changed: false,
       constrain: event.shiftKey
     };
-    if (state.tool === "fill") {
+    if (state.tool === "select") {
+      setSelection(state.pointer.start, state.pointer.last);
+    } else if (state.tool === "fill") {
       state.pointer.changed = applyChanges(floodFill(row, col, glyph), false);
       finishDraw();
     } else if (state.tool === "line" || state.tool === "rectangle") {
@@ -1027,7 +1743,9 @@
     state.pointer.last = { row: row, col: col };
     state.pointer.constrain = event.shiftKey;
     updateCoordinates(row, col);
-    if (state.pointer.tool === "line") showShapePreview(lineCells(state.pointer.start, state.pointer.last, state.pointer.glyph, event.shiftKey));
+    if (state.pointer.tool === "select") setSelection(state.pointer.start, state.pointer.last);
+    else if (state.pointer.tool === "overlay") state.pointer.changed = applySpawnMark(row, col, state.pointer.erase) || state.pointer.changed;
+    else if (state.pointer.tool === "line") showShapePreview(lineCells(state.pointer.start, state.pointer.last, state.pointer.glyph, event.shiftKey));
     else if (state.pointer.tool === "rectangle") showShapePreview(rectangleCells(state.pointer.start, state.pointer.last, state.pointer.glyph));
     else if (state.pointer.tool === "pencil" || state.pointer.tool === "eraser") {
       state.pointer.changed = applyChanges(withSymmetry(lineCells(previous, state.pointer.last, state.pointer.glyph, false)), false) || state.pointer.changed;
@@ -1036,10 +1754,19 @@
 
   function finishDraw(event) {
     if (!state.pointer || (event && event.pointerId !== undefined && event.pointerId !== state.pointer.id)) return;
-    if (state.pointer.tool === "line") state.pointer.changed = applyChanges(withSymmetry(lineCells(state.pointer.start, state.pointer.last, state.pointer.glyph, state.pointer.constrain)), false) || state.pointer.changed;
+    if (state.pointer.tool === "select") {
+      var isClick=state.pointer.start.row===state.pointer.last.row&&state.pointer.start.col===state.pointer.last.col;
+      var picked=isClick&&GregObjects.catalog(state.document).placements.slice().reverse().find(function(p){return GregObjects.atCell(state.document,p,activeRoom().id,state.pointer.start.row,state.pointer.start.col);});
+      if(picked){state.selection=null;selectPlacement(picked,true);}
+      else {
+        setSelection(state.pointer.start, state.pointer.last);
+        announce("Selected " + (state.selection.right - state.selection.left + 1) + " by " + (state.selection.bottom - state.selection.top + 1) + " tile area");
+      }
+    } else if (state.pointer.tool === "line") state.pointer.changed = applyChanges(withSymmetry(lineCells(state.pointer.start, state.pointer.last, state.pointer.glyph, state.pointer.constrain)), false) || state.pointer.changed;
     else if (state.pointer.tool === "rectangle") state.pointer.changed = applyChanges(withSymmetry(rectangleCells(state.pointer.start, state.pointer.last, state.pointer.glyph)), false) || state.pointer.changed;
     clearShapePreview();
     if (state.pointer.changed) pushHistory(state.pointer.snapshot, state.pointer.snapshot.label);
+    if (state.pointer.changed && state.pointer.tool === "overlay") renderPalette();
     state.pointer = null;
   }
 
@@ -1066,6 +1793,8 @@
         if (event.key === "ArrowLeft") col -= 1;
         if (event.key === "ArrowRight") col += 1;
         setFocusCell(row, col, true);
+      } else if (state.tool === "select" && (event.key === " " || event.key === "Enter")) {
+        event.preventDefault(); setSelection({row:row,col:col},{row:row,col:col});
       } else if (event.key === " " || event.key === "Enter" || event.key === "Backspace" || event.key === "Delete") {
         event.preventDefault();
         var glyph = event.key === "Backspace" || event.key === "Delete" ? " " : state.selectedGlyph;
@@ -1173,7 +1902,10 @@
   function jumpToIssue(item) {
     if (item.roomId) {
       var index = rooms().findIndex(function (room) { return room.id === item.roomId; });
-      if (index >= 0) state.roomIndex = index;
+      if (index >= 0 && index !== state.roomIndex) {
+        state.roomIndex = index;
+        state.selection = null;
+      }
     }
     renderAll();
     if (Number.isInteger(item.row) && Number.isInteger(item.col)) {
@@ -1243,11 +1975,14 @@
     for (var sr = 0; sr < 4; sr += 1) {
       for (var sc = 0; sc < 11; sc += 1) {
         var sample = document.createElement("i");
-        var fromRow = Math.min(ROWS - 1, sr * 3 + 1);
-        var fromCol = Math.min(COLS - 1, sc * 3 + 1);
+        var rows = roomRows(room), cols = roomCols(room);
+        var fromRow = Math.min(rows - 1, Math.floor((sr + .5) * rows / 4));
+        var fromCol = Math.min(cols - 1, Math.floor((sc + .5) * cols / 11));
         var occupied = false;
-        for (var rr = Math.max(0, fromRow - 1); rr <= Math.min(ROWS - 1, fromRow + 1); rr += 1) {
-          for (var cc = Math.max(0, fromCol - 1); cc <= Math.min(COLS - 1, fromCol + 1); cc += 1) {
+        var rowRadius = Math.max(0, Math.floor(rows / 8));
+        var colRadius = Math.max(0, Math.floor(cols / 22));
+        for (var rr = Math.max(0, fromRow - rowRadius); rr <= Math.min(rows - 1, fromRow + rowRadius); rr += 1) {
+          for (var cc = Math.max(0, fromCol - colRadius); cc <= Math.min(cols - 1, fromCol + colRadius); cc += 1) {
             if (room.grid[rr][cc] !== " " && room.grid[rr][cc] !== ".") occupied = true;
           }
         }
@@ -1278,8 +2013,15 @@
       copy.append(strong, small);
       button.append(number, thumbnail(room), copy);
       button.addEventListener("click", function () {
+        if (state.roomIndex !== index) state.selection = null;
         state.roomIndex = index;
         state.previewMirrored = false;
+        if(state.document.layout.kind===(Core.ROOM_GRAPH_KIND||"room_graph")){
+          var current=(state.document.layout.nodes||[]).find(function(node){return node.id===state.selectedGraphNode;});
+          if(!current||current.room!==room.id){var first=(state.document.layout.nodes||[]).find(function(node){return node.room===room.id;});state.selectedGraphNode=first&&first.id||null;}
+          current=(state.document.layout.nodes||[]).find(function(node){return node.id===state.selectedGraphNode;});
+          if(current){state.previewMirrored=current.mirrorX===true;state.appearancePreviewBank=current.appearance==="mirror"?"mirror":"primary";}
+        }
         renderAll();
         announce("Editing source room " + room.id);
       });
@@ -1291,27 +2033,594 @@
 
   function renderArena() {
     var list = rooms();
-    var finalRooms = list.slice(1).reverse().map(function (room, index) { return { room: room, mirrored: false, bank: "mirror", sourceIndex: list.length - 1 - index }; })
-      .concat(list.length ? [{ room: list[0], mirrored: false, bank: "primary", sourceIndex: 0 }] : [])
-      .concat(list.slice(1).map(function (room, index) { return { room: room, mirrored: true, bank: "primary", sourceIndex: index + 1 }; }));
-    els["arena-track"].textContent = "";
-    finalRooms.forEach(function (entry) {
+    var track = els["arena-track"];
+    var freeLayout = state.document.layout && state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph");
+    var authoringMode = roomLayoutAuthoringMode();
+    track.textContent = "";
+    document.querySelectorAll("[data-layout-kind]").forEach(function (button) {
+      var active = button.dataset.layoutKind === authoringMode;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    els["full-map-button"].hidden = false;
+    els["layout-mode-button"].hidden = false;
+    function addMiniRoom(entry, bounds, active, start, onSelect) {
+      var button = document.createElement("button");
+      var label = document.createElement("span");
+      var pad = 3;
+      button.type = "button";
+      button.className = "arena-segment" + (start ? " is-center" : "") + (active ? " is-active" : "");
+      button.style.left = (pad + (entry.x - bounds.x) / Math.max(1, bounds.width) * (100 - pad * 2)) + "%";
+      button.style.top = (pad + (entry.y - bounds.y) / Math.max(1, bounds.height) * (100 - pad * 2)) + "%";
+      button.style.width = Math.max(2, entry.width / Math.max(1, bounds.width) * (100 - pad * 2)) + "%";
+      button.style.height = Math.max(8, entry.height / Math.max(1, bounds.height) * (100 - pad * 2)) + "%";
+      button.title = "Edit " + entry.label;
+      button.setAttribute("aria-label", "Edit placed room " + entry.label);
+      label.textContent = entry.label;
+      button.appendChild(label);
+      button.addEventListener("click", onSelect);
+      track.appendChild(button);
+    }
+    if (state.document.layout && state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) {
+      var graph = Core.validateRoomGraph(state.document);
+      (graph.nodes || []).forEach(function (node) {
+        addMiniRoom({ x: node.x, y: node.y, width: node.width, height: node.height, label: node.id }, graph.bounds,
+          node.id === state.selectedGraphNode, node.id === state.document.layout.start,
+          function () { focusPlacedRoom(node.id); });
+      });
+      var activeNode = (graph.nodes || []).find(function (node) { return node.id === state.selectedGraphNode; });
+      els["arena-summary"].textContent = activeNode ? activeNode.id + " · " + activeNode.room : (graph.nodes.length + " placed rooms");
+      return;
+    }
+    var legacyEntries = legacyPlacedRooms();
+    var legacyBounds = { x: 0, y: 0,
+      width: Math.max(1, legacyEntries.reduce(function (right, entry) { return Math.max(right, entry.x + entry.width); }, 0)),
+      height: legacyEntries.reduce(function (height, entry) { return Math.max(height, entry.height); }, 1) };
+    legacyEntries.forEach(function (entry) {
+      addMiniRoom({ x: entry.x, y: entry.y, width: entry.width, height: entry.height, label: entry.room }, legacyBounds,
+        entry.sourceIndex === state.roomIndex && entry.mirrorX === state.previewMirrored,
+        entry.sourceIndex === 0, function () {
+          if (state.roomIndex !== entry.sourceIndex) state.selection = null;
+          state.roomIndex = entry.sourceIndex;
+          state.previewMirrored = entry.mirrorX;
+          state.appearancePreviewBank = entry.bank;
+          state.workMode = "map";
+          renderAll();
+        });
+    });
+    var activeEntry = legacyEntries.find(function (entry) { return entry.sourceIndex === state.roomIndex && entry.mirrorX === state.previewMirrored; });
+    els["arena-summary"].textContent = activeEntry ? activeEntry.room + (activeEntry.mirrorX ? " ? flipped copy" : "") : "Choose a room";
+  }
+
+  function setWorkMode(mode) {
+    state.workMode = mode === "layout" ? "layout" : "map";
+    document.body.classList.toggle("room-layout-mode", state.workMode === "layout");
+    els["room-layout-view"].hidden = state.workMode !== "layout";
+    els["map-mode-button"].classList.toggle("is-active", state.workMode === "map");
+    els["map-mode-button"].setAttribute("aria-pressed", state.workMode === "map" ? "true" : "false");
+    els["layout-mode-button"].classList.toggle("is-active", state.workMode === "layout");
+    els["layout-mode-button"].setAttribute("aria-pressed", state.workMode === "layout" ? "true" : "false");
+  }
+
+  function renderRoomLayoutPreview(canvas, node, source, request) {
+    var appearance = resolvedAppearance(source, node.appearance);
+    var overrides = node.overrides || {};
+    var ambient = Object.prototype.hasOwnProperty.call(overrides, "ambient") ? overrides.ambient : source.ambient;
+    var nativeTileset = Object.prototype.hasOwnProperty.call(overrides, "native_tileset") ? overrides.native_tileset :
+      (Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(state.document, source) : null);
+    var tick = previewTicks();
+    var context;
+    canvas.width = node.width * 16;
+    canvas.height = node.height * 16;
+    if (!Atlas || !Atlas.renderRoom) {
+      context = canvas.getContext("2d");
+      context.fillStyle = appearance.bg1;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    Promise.resolve(Atlas.renderRoom(canvas, source, {
+      grid: source.grid,
+      appearance: appearance,
+      ambient: ambient,
+      eggnoggColor: state.document.rules.eggnoggColor,
+      tileset: state.document.tileset,
+      nativeTileset: nativeTileset,
+      particles: state.document.particles,
+      ambiances: state.document.ambiances,
+      mapId: state.document.id,
+      externalImages: assetSources(),
+      mirrored: node.mirrorX,
+      worldRoomIndex: (state.document.layout.nodes || []).findIndex(function (entry) { return entry.id === node.id; }),
+      worldXOffset: node.x,
+      time: tick
+    })).then(function () {
+      if (request !== state.layoutPreviewRequest || !canvas.isConnected) return;
+      return GregObjects.drawRoom(canvas, state.document, source.id, tick, node.mirrorX, node.id);
+    }).catch(function (error) {
+      if (request === state.layoutPreviewRequest) console.warn("Greggnogg full-map room preview failed.", error);
+    });
+  }
+
+  function refreshAnimatedRoomPreviews() {
+    var graph;
+    var byId = Object.create(null);
+    var request = state.layoutPreviewRequest;
+    var selector = state.workMode === "layout" ? "#room-layout-nodes .room-layout-node canvas" : "#room-edge-nav canvas";
+    if (!state.document.layout || state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) {
+      var legacy = legacyPlacedRooms();
+      document.querySelectorAll("#room-edge-nav canvas[data-legacy-index]").forEach(function (canvas) {
+        var node = legacy[Number(canvas.dataset.legacyIndex)];
+        var source = node && rooms()[node.sourceIndex];
+        if (node && source) renderRoomLayoutPreview(canvas, node, source, request);
+      });
+      return;
+    }
+    graph = Core.validateRoomGraph(state.document);
+    (graph.nodes || []).forEach(function (node) { byId[node.id] = node; });
+    document.querySelectorAll(selector).forEach(function (canvas) {
+      var button = canvas.closest(".room-layout-node");
+      var nodeId = canvas.dataset.nodeId || (button && button.dataset.nodeId);
+      var node = byId[nodeId];
+      var source = node && rooms().find(function (room) { return room.id === node.room; });
+      var rect = canvas.getBoundingClientRect();
+      if (!node || !source || rect.right < 0 || rect.bottom < 0 || rect.left > window.innerWidth || rect.top > window.innerHeight) return;
+      renderRoomLayoutPreview(canvas, node, source, request);
+    });
+  }
+
+  function renderRoomLayout() {
+    var layout = state.document.layout || {};
+    var isGraph = layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph");
+    var graph = isGraph ? Core.validateRoomGraph(state.document) : null;
+    var nodes = graph && graph.nodes || [];
+    var scale = state.layoutCellScale;
+    var padding = 6;
+    var bounds = graph && graph.bounds || { x: 0, y: 0, width: 70, height: 30 };
+    var byId = Object.create(null);
+    var invalidNodes = Object.create(null);
+    var invalidConnections = Object.create(null);
+    var surface = els["room-layout-surface"];
+    var svg = els["room-layout-connections"];
+    var host = els["room-layout-nodes"];
+    var focusedNode = document.activeElement && host.contains(document.activeElement) ?
+      document.activeElement.closest(".room-layout-node") : null;
+    var focusedNodeId = focusedNode ? focusedNode.dataset.nodeId : null;
+    var selected;
+    var previewRequest = ++state.layoutPreviewRequest;
+    var symmetricAuthoring = roomLayoutAuthoringMode() === "symmetric";
+    var layoutHeading = els["room-layout-view"].querySelector(".room-layout-heading h2");
+    if (layoutHeading) layoutHeading.textContent = symmetricAuthoring ? "Symmetrical room placement" : "Free room placement";
+    els["convert-room-layout-button"].hidden = true;
+    els["room-layout-auto-button"].disabled = !isGraph;
+    els["room-layout-fit-button"].disabled = !isGraph;
+    els["room-layout-add-button"].disabled = !isGraph || rooms().length >= MAX_ROOMS;
+    els["room-layout-edit-button"].disabled = !isGraph || !state.selectedGraphNode;
+    els["room-layout-details-button"].disabled = !isGraph || !state.selectedGraphNode;
+    els["room-layout-details-button"].setAttribute("aria-pressed", state.layoutInspectorOpen ? "true" : "false");
+    els["room-layout-inspector"].hidden = !isGraph || !state.layoutInspectorOpen;
+    els["room-layout-minimap"].hidden = true;
+    els["room-layout-diagnostics"].hidden = !isGraph;
+    els["room-layout-legacy-copy"].hidden = isGraph;
+    els["room-layout-selection"].hidden = !isGraph;
+    els["room-layout-zoom"].value = String(scale);
+    host.textContent = "";
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    var marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+    var arrow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    marker.setAttribute("id", "room-layout-arrow"); marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "8"); marker.setAttribute("refY", "5"); marker.setAttribute("markerWidth", "7"); marker.setAttribute("markerHeight", "7"); marker.setAttribute("orient", "auto-start-reverse");
+    arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z"); marker.appendChild(arrow); defs.appendChild(marker); svg.appendChild(defs);
+    surface.style.width = Math.max(720, (bounds.width + padding * 2) * scale) + "px";
+    surface.style.height = Math.max(440, (bounds.height + padding * 2) * scale) + "px";
+    svg.setAttribute("viewBox", "0 0 " + parseFloat(surface.style.width) + " " + parseFloat(surface.style.height));
+    if (!isGraph) return;
+    (graph.errors || []).forEach(function (issue) {
+      var nodeMatch = issue.path && issue.path.match(/^layout\.nodes\.(\d+)/);
+      var connectionMatch = issue.path && issue.path.match(/^layout\.connections\.(\d+)/);
+      if (nodeMatch && nodes[Number(nodeMatch[1])]) invalidNodes[nodes[Number(nodeMatch[1])].id] = true;
+      if (connectionMatch) invalidConnections[Number(connectionMatch[1])] = true;
+      if (issue.roomId) nodes.forEach(function (node) { if (node.room === issue.roomId) invalidNodes[node.id] = true; });
+    });
+    var diagnostics = els["room-layout-diagnostics"];
+    var conversionError = state.layoutConversionError;
+    diagnostics.classList.toggle("has-errors", !graph.valid || !!conversionError);
+    diagnostics.hidden = graph.valid && !conversionError;
+    diagnostics.textContent = "";
+    var diagnosticSummary = document.createElement("strong");
+    diagnosticSummary.textContent = conversionError ? "Why this layout cannot switch to Symmetrical" : graph.valid ?
+      nodes.length + " rooms. Touching edges connect automatically." :
+      graph.errors.length + " layout " + (graph.errors.length === 1 ? "problem" : "problems");
+    diagnostics.appendChild(diagnosticSummary);
+    if (conversionError) {
+      var conversionList = document.createElement("ul");
+      conversionError.split("\n").slice(1).forEach(function (message) {
+        var item = document.createElement("li");
+        item.textContent = message.replace(/^•\s*/, "");
+        conversionList.appendChild(item);
+      });
+      diagnostics.appendChild(conversionList);
+    } else if (!graph.valid) {
+      var diagnosticList = document.createElement("ul");
+      graph.errors.slice(0, 5).forEach(function (issue) {
+        var item = document.createElement("li"); item.textContent = issue.message; diagnosticList.appendChild(item);
+      });
+      if (graph.errors.length > 5) {
+        var more = document.createElement("li"); more.textContent = "+ " + (graph.errors.length - 5) + " more in Checks"; diagnosticList.appendChild(more);
+      }
+      diagnostics.appendChild(diagnosticList);
+    }
+    if (!nodes.some(function (node) { return node.id === state.selectedGraphNode; })) state.selectedGraphNode = layout.start || (nodes[0] && nodes[0].id);
+    nodes.forEach(function (node) { byId[node.id] = node; if (node.id === state.selectedGraphNode) selected = node; });
+    (graph.connections || []).forEach(function (connection, connectionIndex) {
+      var from = byId[connection.from], to = byId[connection.to];
+      if (!from || !to) return;
+      var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.classList.add("room-layout-route");
+      line.setAttribute("x1", (from.x - bounds.x + padding + from.width / 2) * scale);
+      line.setAttribute("y1", (from.y - bounds.y + padding + from.height / 2) * scale);
+      line.setAttribute("x2", (to.x - bounds.x + padding + to.width / 2) * scale);
+      line.setAttribute("y2", (to.y - bounds.y + padding + to.height / 2) * scale);
+      line.classList.toggle("is-one-way", connection.oneWay === true);
+      line.classList.toggle("is-invalid", !!invalidConnections[connectionIndex]);
+      if (connection.oneWay === true) line.setAttribute("marker-end", "url(#room-layout-arrow)");
+      svg.appendChild(line);
+      var doorway = Core.roomGraphDoorwayGeometry && Core.roomGraphDoorwayGeometry(state.document, connectionIndex);
+      if (doorway) {
+        var group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        var opening = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        var hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        var badge = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        var number = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        var x1 = (doorway.x1 - bounds.x + padding) * scale;
+        var y1 = (doorway.y1 - bounds.y + padding) * scale;
+        var x2 = (doorway.x2 - bounds.x + padding) * scale;
+        var y2 = (doorway.y2 - bounds.y + padding) * scale;
+        var centerX = (doorway.centerX - bounds.x + padding) * scale;
+        var centerY = (doorway.centerY - bounds.y + padding) * scale;
+        group.classList.add("room-layout-doorway");
+        if (state.selectedGraphConnection === connectionIndex) group.classList.add("is-selected");
+        group.setAttribute("role", "button");
+        group.setAttribute("tabindex", "0");
+        group.setAttribute("aria-label", "Door " + (connectionIndex + 1) + " from " + connection.from + " to " + connection.to);
+        [opening, hit].forEach(function (segment) {
+          segment.setAttribute("x1", x1); segment.setAttribute("y1", y1);
+          segment.setAttribute("x2", x2); segment.setAttribute("y2", y2);
+        });
+        opening.classList.add("room-layout-doorway-opening");
+        hit.classList.add("room-layout-doorway-hit");
+        badge.setAttribute("cx", centerX); badge.setAttribute("cy", centerY); badge.setAttribute("r", 9);
+        number.setAttribute("x", centerX); number.setAttribute("y", centerY + 3.5);
+        number.setAttribute("text-anchor", "middle");
+        number.textContent = String(connectionIndex + 1);
+        function selectDoorway(event) {
+          if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          state.selectedGraphNode = connection.from;
+          state.selectedGraphConnection = connectionIndex;
+          state.layoutInspectorOpen = true;
+          renderRoomLayout();
+          var row = els["room-layout-connections-list"].querySelector('[data-connection-index="' + connectionIndex + '"]');
+          if (row) { row.scrollIntoView({ block: "nearest" }); row.querySelector("input,button").focus(); }
+        }
+        group.addEventListener("click", selectDoorway);
+        group.addEventListener("keydown", selectDoorway);
+        group.append(opening, hit, badge, number);
+        svg.appendChild(group);
+      }
+    });
+    nodes.forEach(function (node) {
+      var source = rooms().find(function (room) { return room.id === node.room; });
       var button = document.createElement("button");
       button.type = "button";
-      button.className = "arena-segment" + (entry.sourceIndex === 0 ? " is-center" : "") + (entry.mirrored ? " is-mirrored" : "") + (entry.sourceIndex === state.roomIndex && entry.mirrored === state.previewMirrored ? " is-active" : "");
-      button.title = entry.room.id + " · " + entry.bank + " appearance bank";
-      var label = document.createElement("span");
-      label.textContent = entry.room.id;
-      button.appendChild(label);
-      button.addEventListener("click", function () {
-        state.roomIndex = entry.sourceIndex;
-        state.previewMirrored = entry.mirrored;
-        state.appearancePreviewBank = entry.bank;
-        renderAll();
+      button.className = "room-layout-node" + (node.id === state.selectedGraphNode ? " is-selected" : "") + (node.id === layout.start ? " is-start" : "");
+      button.dataset.nodeId = node.id;
+      button.title = "Select " + node.id + " and show its room options";
+      button.setAttribute("aria-label", "Room " + node.id + ", " + node.width + " by " + node.height +
+        " cells at " + node.x + ", " + node.y + (node.id === layout.start ? ", player start" : ""));
+      button.classList.toggle("is-invalid", !!invalidNodes[node.id]);
+      button.style.left = (node.x - bounds.x + padding) * scale + "px";
+      button.style.top = (node.y - bounds.y + padding) * scale + "px";
+      button.style.width = (node.width * scale) + "px";
+      button.style.height = (node.height * scale) + "px";
+      var canvas = document.createElement("canvas");
+      canvas.setAttribute("aria-hidden", "true");
+      var copy = document.createElement("span");
+      copy.className = "room-layout-node-copy";
+      var strong = document.createElement("strong");
+      var small = document.createElement("small");
+      strong.textContent = node.id;
+      small.textContent = node.room + " · " + node.width + "×" + node.height +
+        (node.mirrorX ? " · flipped" : "") + (node.appearance === "mirror" ? " · mirror colors" : "");
+      copy.append(strong, small);
+      button.append(canvas, copy);
+      if (source) renderRoomLayoutPreview(canvas, node, source, previewRequest);
+      button.addEventListener("pointerdown", function (event) {
+        if (event.button !== 0) return;
+        button.setPointerCapture(event.pointerId);
+        state.layoutDrag = { id: node.id, startX: event.clientX, startY: event.clientY, nodeX: node.x, nodeY: node.y, button: button, moved: false };
       });
-      els["arena-track"].appendChild(button);
+      button.addEventListener("pointermove", function (event) {
+        var drag = state.layoutDrag;
+        if (!drag || drag.id !== node.id || !button.hasPointerCapture(event.pointerId)) return;
+        var cellX = symmetricAuthoring ? 0 : Math.round((event.clientX - drag.startX) / scale);
+        var cellY = Math.round((event.clientY - drag.startY) / scale);
+        drag.moved = drag.moved || cellX !== 0 || cellY !== 0;
+        button.style.transform = "translate(" + (cellX * scale) + "px," + (cellY * scale) + "px)";
+      });
+      button.addEventListener("pointerup", function (event) {
+        var drag = state.layoutDrag;
+        if (!drag || drag.id !== node.id) return;
+        var cellX = symmetricAuthoring ? 0 : Math.round((event.clientX - drag.startX) / scale);
+        var cellY = Math.round((event.clientY - drag.startY) / scale);
+        state.layoutDrag = null;
+        button.style.transform = "";
+        if (!drag.moved) return;
+        state.layoutIgnoreClick = true;
+        try {
+          var next = symmetricAuthoring ? moveSymmetricRoomPair(state.document, node.id, drag.nodeY + cellY) :
+            Core.moveRoomGraphNode(state.document, node.id, drag.nodeX + cellX, drag.nodeY + cellY);
+          commit("Move placed room", function () { state.document = ensureDocumentShape(next); });
+        } catch (error) {
+          toast("Room could not move there", error.message, "error");
+          renderRoomLayout();
+        }
+      });
+      button.addEventListener("pointercancel", function () { state.layoutDrag = null; button.style.transform = ""; });
+      button.addEventListener("click", function () {
+        if (state.layoutIgnoreClick) { state.layoutIgnoreClick = false; return; }
+        state.selectedGraphNode = node.id;
+        state.selectedGraphConnection = null;
+        state.layoutInspectorOpen = true;
+        renderRoomLayout();
+        focusPlacedRoomButton(host, node.id);
+      });
+      button.addEventListener("keydown", function (event) {
+        var arrow = event.key;
+        var dx = arrow === "ArrowRight" ? 1 : arrow === "ArrowLeft" ? -1 : 0;
+        var dy = arrow === "ArrowDown" ? 1 : arrow === "ArrowUp" ? -1 : 0;
+        var next;
+        if (arrow === "F2") {
+          event.preventDefault();
+          focusPlacedRoom(node.id);
+          return;
+        }
+        if ((!dx && !dy) || event.ctrlKey || event.altKey || event.metaKey) return;
+        event.preventDefault();
+        if (event.shiftKey) {
+          if (symmetricAuthoring && dx) {
+            announce("Symmetrical rooms move vertically. Use Free layout for horizontal placement.");
+            return;
+          }
+          try {
+            next = symmetricAuthoring ?
+              moveSymmetricRoomPair(state.document, node.id, node.y + dy) :
+              Core.moveRoomGraphNode(state.document, node.id, node.x + dx, node.y + dy);
+            commit("Move placed room", function () { state.document = ensureDocumentShape(next); });
+            focusPlacedRoomButton(els["room-layout-nodes"], node.id);
+            announce("Moved " + node.id + " to " + (node.x + dx) + ", " + (node.y + dy));
+          } catch (error) {
+            toast("Room could not move there", error.message, "error");
+          }
+          return;
+        }
+        next = Core.nearestRoomGraphNode(nodes, node, arrow);
+        if (!next) return;
+        state.selectedGraphNode = next.id;
+        state.selectedGraphConnection = null;
+        state.layoutInspectorOpen = true;
+        renderRoomLayout();
+        focusPlacedRoomButton(host, next.id);
+        announce("Selected " + next.id);
+      });
+      button.addEventListener("dblclick", function () { focusPlacedRoom(node.id); });
+      host.appendChild(button);
     });
-    els["arena-summary"].textContent = list.length + " source " + (list.length === 1 ? "room" : "rooms") + " · " + Math.max(1, list.length * 2 - 1) + " final " + (list.length === 1 ? "room" : "rooms");
+    if (selected && !symmetricAuthoring && rooms().length < MAX_ROOMS) {
+      ["top", "right", "bottom", "left"].forEach(function (side) {
+        var add = document.createElement("button");
+        var centerX = (selected.x - bounds.x + padding + selected.width / 2) * scale;
+        var centerY = (selected.y - bounds.y + padding + selected.height / 2) * scale;
+        add.type = "button";
+        add.className = "room-layout-inline-add is-" + side;
+        add.textContent = "+";
+        add.title = "Add a new room " + (side === "top" ? "above" : side === "bottom" ? "below" : "to the " + side);
+        add.setAttribute("aria-label", add.title);
+        add.style.left = (side === "left" ? (selected.x - bounds.x + padding) * scale : side === "right" ? (selected.x - bounds.x + padding + selected.width) * scale : centerX) + "px";
+        add.style.top = (side === "top" ? (selected.y - bounds.y + padding) * scale : side === "bottom" ? (selected.y - bounds.y + padding + selected.height) * scale : centerY) + "px";
+        add.addEventListener("click", function (event) { event.stopPropagation(); addRoomFromLayout(side, false); });
+        host.appendChild(add);
+      });
+    }
+    els["room-layout-source-room"].textContent = "";
+    var blankRoomOption = document.createElement("option");
+    blankRoomOption.value = "";
+    blankRoomOption.textContent = "New room (independent)";
+    els["room-layout-source-room"].appendChild(blankRoomOption);
+    rooms().forEach(function (room) {
+      var option = document.createElement("option");
+      option.value = room.id;
+      option.textContent = "Copy " + room.id + " · " + roomCols(room) + "×" + roomRows(room);
+      els["room-layout-source-room"].appendChild(option);
+    });
+    els["room-layout-copy-flip-x"].disabled = !els["room-layout-source-room"].value;
+    els["room-layout-copy-flip-y"].disabled = !els["room-layout-source-room"].value;
+    if (selected) {
+      els["room-layout-node-title"].textContent = selected.id;
+      els["room-layout-node-detail"].textContent = selected.room + " design · position " + selected.x + ", " + selected.y + " · " + selected.width + "×" + selected.height + " cells";
+      els["room-layout-mirror-x"].checked = selected.mirrorX === true;
+      els["room-layout-appearance"].value = selected.appearance === "mirror" ? "mirror" : "primary";
+      var overrides = selected.overrides || {};
+      var ambientSelect = els["room-layout-ambient"];
+      ambientSelect.textContent = "";
+      var inheritAmbient = document.createElement("option");
+      inheritAmbient.value = "";
+      inheritAmbient.textContent = "Use room design";
+      ambientSelect.appendChild(inheritAmbient);
+      (Core.AMBIENTS || ["none", "bugs", "clouds", "art", "flies", "drips", "dust", "bats", "bubbles", "boil"]).forEach(function (ambient) {
+        var option = document.createElement("option");
+        option.value = ambient;
+        option.textContent = ambient === "none" ? "None" : ambient.charAt(0).toUpperCase() + ambient.slice(1);
+        ambientSelect.appendChild(option);
+      });
+      (Array.isArray(state.document.ambiances) ? state.document.ambiances : []).forEach(function (ambiance) {
+        var option = document.createElement("option");
+        option.value = ambiance.id;
+        option.textContent = "Custom - " + (ambiance.name || ambiance.id);
+        ambientSelect.appendChild(option);
+      });
+      setControlValue(ambientSelect, Number.isInteger(overrides.ambient) ? (Core.AMBIENTS || [])[overrides.ambient] : overrides.ambient || "", true);
+      setControlValue(els["room-layout-opponent-spawn"], overrides.opponent_spawn || "", true);
+      els["room-layout-opponent-effective"].textContent = opponentSpawnHelp(selected.room, selected.id);
+      renderPlacedRoomStarts(selected);
+      renderNativeTilesetControls();
+      els["room-layout-set-start"].disabled = symmetricAuthoring || selected.id === layout.start;
+      els["room-layout-remove"].disabled = nodes.length <= 1;
+      var connectionOptions = Core.roomGraphConnectionOptions ? Core.roomGraphConnectionOptions(state.document, selected.id) : [];
+      els["room-layout-connect-target"].textContent = "";
+      var connectionPrompt = document.createElement("option");
+      connectionPrompt.value = "";
+      connectionPrompt.textContent = connectionOptions.length ? "Choose a touching room…" : "No unconnected touching rooms";
+      els["room-layout-connect-target"].appendChild(connectionPrompt);
+      connectionOptions.forEach(function (option, optionIndex) {
+        var item = document.createElement("option");
+        item.value = String(optionIndex);
+        item.textContent = option.to + " · " + option.fromSide + " edge · " + option.span + " cells";
+        els["room-layout-connect-target"].appendChild(item);
+      });
+      els["room-layout-connect-button"].disabled = !connectionOptions.length;
+      els["room-layout-connect-target"]._connectionOptions = connectionOptions;
+      els["room-layout-connections-list"].textContent = "";
+      (graph.connections || []).forEach(function (connection, connectionIndex) {
+        if (connection.from !== selected.id && connection.to !== selected.id) return;
+        var row = document.createElement("div");
+        var label = document.createElement("span");
+        var fields = document.createElement("div");
+        var remove = document.createElement("button");
+        var apply = document.createElement("button");
+        var outgoing = connection.from === selected.id;
+        var other = outgoing ? connection.to : connection.from;
+        row.className = "room-layout-connection-row";
+        row.dataset.connectionIndex = String(connectionIndex);
+        row.classList.toggle("is-selected", state.selectedGraphConnection === connectionIndex);
+        label.textContent = "Door " + (connectionIndex + 1) + " · " + connection.from + " " + connection.fromSide + " → " + connection.to + " " + connection.toSide;
+        fields.className = "room-layout-doorway-fields";
+        [["From", "fromOffset", connection.fromOffset], ["To", "toOffset", connection.toOffset], ["Width", "span", connection.span]].forEach(function (field) {
+          var fieldLabel = document.createElement("label");
+          var input = document.createElement("input");
+          fieldLabel.textContent = field[0]; input.type = "number"; input.min = field[1] === "span" ? "1" : "0"; input.step = "1"; input.value = String(field[2]); input.dataset.connectionField = field[1];
+          fieldLabel.appendChild(input); fields.appendChild(fieldLabel);
+        });
+        [["Can cross", "players", connection.players || "both", [
+          ["both", "Either player"], ["player1", "Player 1"], ["player2", "Player 2"], ["go", "GO player"]
+        ]], ["Room focus", "focus", connection.focus || "go", [
+          ["go", "GO player"], ["crossing", "Crossing player"]
+        ]]].forEach(function (field) {
+          var fieldLabel = document.createElement("label");
+          var select = document.createElement("select");
+          fieldLabel.textContent = field[0];
+          select.dataset.connectionPolicy = field[1];
+          field[3].forEach(function (choice) {
+            var option = document.createElement("option");
+            option.value = choice[0]; option.textContent = choice[1]; select.appendChild(option);
+          });
+          select.value = field[2]; fieldLabel.appendChild(select); fields.appendChild(fieldLabel);
+        });
+        var oneWayLabel = document.createElement("label");
+        var oneWay = document.createElement("input");
+        oneWay.type = "checkbox"; oneWay.checked = connection.oneWay === true;
+        oneWayLabel.className = "room-layout-doorway-one-way"; oneWayLabel.append(oneWay, document.createTextNode("One way")); fields.appendChild(oneWayLabel);
+        apply.type = "button"; apply.className = "quiet-button"; apply.textContent = "Save opening";
+        apply.addEventListener("click", function () {
+          var values = {};
+          fields.querySelectorAll("[data-connection-field]").forEach(function (input) { values[input.dataset.connectionField] = Number(input.value); });
+          fields.querySelectorAll("[data-connection-policy]").forEach(function (select) { values[select.dataset.connectionPolicy] = select.value; });
+          values.oneWay = oneWay.checked;
+          try {
+            var next = Core.updateRoomGraphConnection(state.document, connectionIndex, values);
+            commit("Edit doorway opening", function () { state.document = ensureDocumentShape(next); });
+          } catch (error) { toast("Doorway did not change", error.message, "error"); }
+        });
+        remove.type = "button"; remove.className = "quiet-button"; remove.textContent = "Remove";
+        remove.addEventListener("click", function () {
+          try {
+            var next = Core.disconnectRoomGraphConnection(state.document, connectionIndex);
+            commit("Remove doorway connection", function () { state.document = ensureDocumentShape(next); });
+          } catch (error) { toast("Doorway could not be removed", error.message, "error"); }
+        });
+        var actions = document.createElement("div"); actions.className = "room-layout-doorway-actions"; actions.append(apply, remove);
+        row.append(label, fields, actions); els["room-layout-connections-list"].appendChild(row);
+      });
+    }
+    renderRoomLayoutMinimap(graph, nodes, bounds, scale);
+    if (focusedNodeId && focusedNodeId === state.selectedGraphNode)
+      focusPlacedRoomButton(host, focusedNodeId);
+  }
+
+  function renderRoomLayoutMinimap(graph, nodes, bounds, editorScale) {
+    var canvas = els["room-layout-minimap"];
+    var context = canvas && canvas.getContext("2d");
+    var margin = 8;
+    var padding = 6;
+    var worldWidth = Math.max(1, bounds.width + padding * 2);
+    var worldHeight = Math.max(1, bounds.height + padding * 2);
+    var scale = Math.min((canvas.width - margin * 2) / worldWidth,
+      (canvas.height - margin * 2) / worldHeight);
+    var originX = (canvas.width - worldWidth * scale) * 0.5;
+    var originY = (canvas.height - worldHeight * scale) * 0.5;
+    var byId = Object.create(null);
+    var scroll = els["room-layout-scroll"];
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#100b0d";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    nodes.forEach(function (node) { byId[node.id] = node; });
+    context.strokeStyle = "#b85f3d";
+    context.lineWidth = 2;
+    (graph.connections || []).forEach(function (connection) {
+      var from = byId[connection.from];
+      var to = byId[connection.to];
+      if (!from || !to) return;
+      context.beginPath();
+      context.moveTo(originX + (from.x - bounds.x + padding + from.width * 0.5) * scale,
+        originY + (from.y - bounds.y + padding + from.height * 0.5) * scale);
+      context.lineTo(originX + (to.x - bounds.x + padding + to.width * 0.5) * scale,
+        originY + (to.y - bounds.y + padding + to.height * 0.5) * scale);
+      context.stroke();
+    });
+    nodes.forEach(function (node) {
+      context.fillStyle = node.id === state.selectedGraphNode ? "#ffc46b" :
+        node.id === graph.start ? "#6bd5b2" : "#49343a";
+      context.fillRect(originX + (node.x - bounds.x + padding) * scale,
+        originY + (node.y - bounds.y + padding) * scale,
+        Math.max(2, node.width * scale), Math.max(2, node.height * scale));
+    });
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1;
+    context.strokeRect(originX + scroll.scrollLeft / editorScale * scale,
+      originY + scroll.scrollTop / editorScale * scale,
+      Math.min(worldWidth, scroll.clientWidth / editorScale) * scale,
+      Math.min(worldHeight, scroll.clientHeight / editorScale) * scale);
+    canvas._roomLayoutModel = { bounds: bounds, padding: padding, scale: scale,
+      originX: originX, originY: originY, editorScale: editorScale };
+  }
+
+  function centerRoomLayoutAt(clientX, clientY) {
+    var canvas = els["room-layout-minimap"];
+    var model = canvas && canvas._roomLayoutModel;
+    var scroll = els["room-layout-scroll"];
+    var rect;
+    var canvasX;
+    var canvasY;
+    if (!model || !scroll) return;
+    rect = canvas.getBoundingClientRect();
+    canvasX = (clientX - rect.left) * canvas.width / Math.max(1, rect.width);
+    canvasY = (clientY - rect.top) * canvas.height / Math.max(1, rect.height);
+    scroll.scrollLeft = Math.max(0, (canvasX - model.originX) / model.scale * model.editorScale - scroll.clientWidth * 0.5);
+    scroll.scrollTop = Math.max(0, (canvasY - model.originY) / model.scale * model.editorScale - scroll.clientHeight * 0.5);
+    renderRoomLayoutMinimap(Core.validateRoomGraph(state.document), Core.validateRoomGraph(state.document).nodes,
+      model.bounds, model.editorScale);
   }
 
   function renderSpawner() {
@@ -1324,9 +2633,49 @@
     els["spawn-meter-fill"].style.background = counts.K && counts.total > 13 ? "var(--danger)" : counts.total > 10 ? "var(--warning)" : "var(--good)";
   }
 
-  function setControlValue(control, value) {
-    if (!control || document.activeElement === control) return;
+  function setControlValue(control, value, force) {
+    if (!control || (!force && document.activeElement === control)) return;
     control.value = value === null || value === undefined ? "" : String(value);
+  }
+
+  function renderNativeTilesetControls() {
+    var doc = state.document;
+    var isV2 = doc && doc.format === "eggnogg-map/v2";
+    var defaults = doc && doc.defaults && (doc.defaults.room || doc.defaults) || {};
+    var choices = Core.nativeTilesetChoices ? Core.nativeTilesetChoices(doc) : [];
+    var legacy = doc && doc.tileset && doc.tileset.native_layout === true && typeof doc.tileset.sprite_sheet === "string" && !/^builtin:/i.test(doc.tileset.sprite_sheet) ? doc.tileset.sprite_sheet : null;
+    function rebuild(select, firstLabel, selected) {
+      if (!select) return;
+      select.textContent = "";
+      var first = document.createElement("option");
+      first.value = ""; first.textContent = firstLabel; select.appendChild(first);
+      choices.forEach(function (choice) {
+        var option = document.createElement("option");
+        option.value = choice.sprite_sheet;
+        option.textContent = choice.sprite_sheet + " · " + choice.cell_w + "×" + choice.cell_h + " cells" + (choice.legacy_default ? " · main sheet" : "");
+        select.appendChild(option);
+      });
+      /* Keep an invalid imported value visible so validation can explain it
+       * and choosing inheritance can repair it in one action. */
+      if (selected && !choices.some(function (choice) { return choice.sprite_sheet === selected; })) {
+        var missing = document.createElement("option");
+        missing.value = selected; missing.textContent = selected + " · missing declaration"; select.appendChild(missing);
+      }
+      setControlValue(select, selected || "", true);
+      select.disabled = !isV2;
+    }
+    rebuild(els["default-native-tileset"], legacy ? "Use main sheet · " + legacy : "Built-in game graphics", defaults.native_tileset);
+    var inherited = Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(doc, null) : null;
+    rebuild(els["room-native-tileset"], inherited ? "Use map default · " + inherited : "Use map default · built-in", activeRoom() && activeRoom().native_tileset);
+    var graphNode = doc && doc.layout && Array.isArray(doc.layout.nodes) ? doc.layout.nodes.find(function (node) { return node && node.id === state.selectedGraphNode; }) : null;
+    var graphOverrides = graphNode && graphNode.overrides || {};
+    rebuild(els["room-layout-native-tileset"], "Use room design", graphOverrides.native_tileset);
+    if (els["native-tileset-input"]) els["native-tileset-input"].disabled = false;
+    if (els["remove-native-tileset-button"]) {
+      var selectedSheet = els["default-native-tileset"] && els["default-native-tileset"].value;
+      els["remove-native-tileset-button"].disabled = !selectedSheet || !doc.assets || !Object.prototype.hasOwnProperty.call(doc.assets, selectedSheet);
+      els["remove-native-tileset-button"].title = selectedSheet ? "Remove " + selectedSheet + " from this map" : "Select imported room graphics first";
+    }
   }
 
   function renderMapFields() {
@@ -1354,6 +2703,7 @@
     setControlValue(els["respawn-limit"], doc.rules.armedRespawnLimit);
     var roomDefaults = doc.defaults && (doc.defaults.room || doc.defaults);
     setControlValue(els["default-opponent-spawn"], roomDefaults && roomDefaults.opponent_spawn || "default");
+    renderNativeTilesetControls();
     els["format-badge"].textContent = isV2 ? "V2" : "V1";
     els["format-title"].textContent = isV2 ? "Custom-content package" : "Native map package";
     els["format-copy"].textContent = isV2 ?
@@ -1384,6 +2734,11 @@
 
   function disableV2() {
     var tiles = state.document.tileset && state.document.tileset.tiles || [];
+    if (state.document.layout && state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) {
+      els["format-v2-toggle"].checked = true;
+      toast("Room placement uses V2", "Switch back to the classic mirrored layout before changing this project to V1.", "warning");
+      return;
+    }
     if (tiles.length || Object.keys(state.document.assets || {}).length || state.document.mapLuaPresent) {
       els["format-v2-toggle"].checked = true;
       toast("V2 content is in use", "Delete custom tiles and map.lua before switching this project back to V1.", "warning");
@@ -1450,7 +2805,7 @@
     v2Tiles().splice(state.tileLabIndex, 1);
     if (state.selectedGlyph === tile.symbol) state.selectedGlyph = "@";
     if (state.document._tileArt) delete state.document._tileArt[tile.id];
-    if (assetName && state.document.assets && !v2Tiles().some(function (entry) { return entry.sprite_sheet === assetName; })) delete state.document.assets[assetName];
+    if (assetName && state.document.assets && !v2Tiles().some(function (entry) { return entry.sprite_sheet === assetName; }) && !(Core.nativeTilesetChoices && Core.nativeTilesetChoices(state.document).some(function (entry) { return entry.sprite_sheet === assetName; }))) delete state.document.assets[assetName];
     state.tileLabIndex = Math.min(state.tileLabIndex, v2Tiles().length - 1);
     renderTileLab(); renderPalette(); markChanged();
   }
@@ -1470,6 +2825,138 @@
     var tile = list.splice(state.tileLabIndex, 1)[0]; list.splice(target, 0, tile); state.tileLabIndex = target; renderTileLab(); markChanged();
   }
 
+  function removePackagedAsset(name) {
+    if (!name || !state.document.assets || !Object.prototype.hasOwnProperty.call(state.document.assets, name)) return false;
+    var tileset = state.document.tileset || {};
+    var changed = 0;
+    var wasDefault = tileset.sprite_sheet === name;
+    v2Tiles().forEach(function (tile) {
+      if (tile.sprite_sheet === name || (tile.sprite_sheet === undefined && wasDefault)) {
+        tile.sprite_sheet = "builtin:tiles";
+        tile.sprite_index = Math.max(0, Math.min(127, Number(tile.sprite_index) || 0));
+        tile.frame_count = Math.max(1, Math.min(Number(tile.frame_count) || 1, 128 - tile.sprite_index));
+        delete tile.asset_sha256; delete tile.cell_w; delete tile.cell_h; delete tile.padding;
+        delete tile.source_x; delete tile.source_y; delete tile.source_w; delete tile.source_h;
+        changed += 1;
+      }
+    });
+    (state.document.particles || []).forEach(function (particle) {
+      var visual = particle && particle.visual;
+      if (!visual || visual.sprite_sheet !== name) return;
+      visual.sprite_sheet = "builtin:misc";
+      visual.sprite_index = Math.max(0, Math.min(63, Number(visual.sprite_index) || 0));
+      visual.frame_count = Math.max(1, Math.min(Number(visual.frame_count) || 1, 64 - visual.sprite_index));
+      changed += 1;
+    });
+    ((state.document.entities && state.document.entities.types) || []).forEach(function (type) {
+      if (type.visual && type.visual.sheet === name) { type.visual.sheet = "builtin:misc"; type.visual.sprite = Math.max(0, Math.min(63, Number(type.visual.sprite) || 0)); changed += 1; }
+    });
+    var defaults = state.document.defaults && (state.document.defaults.room || state.document.defaults) || {};
+    if (defaults.native_tileset === name) { delete defaults.native_tileset; changed += 1; }
+    rooms().forEach(function (room) { if (room.native_tileset === name) { delete room.native_tileset; changed += 1; } });
+    if (state.document.layout && Array.isArray(state.document.layout.nodes)) state.document.layout.nodes.forEach(function (node) {
+      if (node.overrides && node.overrides.native_tileset === name) { delete node.overrides.native_tileset; changed += 1; }
+    });
+    if (wasDefault) {
+      delete tileset.sprite_sheet; delete tileset.asset_sha256; delete tileset.cell_w; delete tileset.cell_h; delete tileset.padding;
+      delete tileset.source_x; delete tileset.source_y; delete tileset.source_w; delete tileset.source_h;
+      if (tileset.native_layout === true) tileset.native_layout = false;
+      changed += 1;
+    }
+    if (Array.isArray(tileset.sheets)) tileset.sheets = tileset.sheets.filter(function (sheet) { return !sheet || sheet.sprite_sheet !== name; });
+    if (state.document._tileArt) Object.keys(state.document._tileArt).forEach(function (id) {
+      if (state.document._tileArt[id] && state.document._tileArt[id].assetName === name) delete state.document._tileArt[id].assetName;
+    });
+    delete state.document.assets[name];
+    renderAssetList(); refreshSheetOptions(); renderNativeTilesetControls(); renderTileLab(); renderPalette(); markChanged();
+    toast("PNG removed", changed ? "References using " + name + " were reset to built-in graphics." : name + " was removed from the package.");
+    return true;
+  }
+
+  function focusPlacedRoomButton(host, nodeId) {
+    var button = Array.from(host.querySelectorAll(".room-layout-node")).find(function (entry) {
+      return entry.dataset.nodeId === nodeId;
+    });
+    if (!button) return;
+    button.focus({ preventScroll: true });
+    button.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  function renderPlacedRoomStarts(node) {
+    var source = rooms().find(function (room) { return room.id === node.room; });
+    var dimensions = source && Core.roomDimensions(source);
+    var authoredSpawn = node.overrides && node.overrides.spawn;
+    var players = authoredSpawn && typeof authoredSpawn.players === "object" &&
+      !Array.isArray(authoredSpawn.players) ? authoredSpawn.players : {};
+    ["1", "2"].forEach(function (slot) {
+      var select = els["room-layout-start-p" + slot];
+      var facing = els["room-layout-facing-p" + slot];
+      var point = players[slot] && Number.isInteger(players[slot].x) &&
+        Number.isInteger(players[slot].y) ? players[slot] : null;
+      var chosen = point ? point.x + "," + point.y : "";
+      select.textContent = "";
+      var inherit = document.createElement("option");
+      inherit.value = "";
+      inherit.textContent = "Use room design";
+      select.appendChild(inherit);
+      if (source && dimensions) {
+        for (var y = 1; y < dimensions.height; y++) {
+          for (var x = 1; x < dimensions.width - 1; x++) {
+            if (!Core.isSafeSpawnFloor(source, x, y, state.document.tileset)) continue;
+            var option = document.createElement("option");
+            option.value = x + "," + y;
+            option.textContent = "Tile " + x + ", " + y;
+            select.appendChild(option);
+          }
+        }
+      }
+      if (chosen && !Array.from(select.options).some(function (option) { return option.value === chosen; })) {
+        var invalid = document.createElement("option");
+        invalid.value = chosen;
+        invalid.textContent = "Invalid tile " + chosen;
+        select.appendChild(invalid);
+      }
+      select.value = chosen;
+      facing.value = point && point.facing || (slot === "1" ? "right" : "left");
+      facing.disabled = !chosen;
+    });
+  }
+
+  function savePlacedRoomStart(slot) {
+    var node = (state.document.layout && state.document.layout.nodes || []).find(function (entry) {
+      return entry && entry.id === state.selectedGraphNode;
+    });
+    if (!node) return;
+    var value = els["room-layout-start-p" + slot].value;
+    var authoredSpawn = node.overrides && node.overrides.spawn;
+    var spawn = authoredSpawn && typeof authoredSpawn === "object" &&
+      !Array.isArray(authoredSpawn) ? clone(authoredSpawn) : {};
+    var parts = value ? value.split(",").map(Number) : null;
+    if (!spawn.players || typeof spawn.players !== "object" || Array.isArray(spawn.players)) spawn.players = {};
+    if (parts) spawn.players[slot] = {
+      x: parts[0], y: parts[1], facing: els["room-layout-facing-p" + slot].value
+    };
+    else delete spawn.players[slot];
+    if (!Object.keys(spawn.players).length) delete spawn.players;
+    try {
+      var next = Core.setRoomGraphNodeOverrides(state.document, node.id, {
+        spawn: Object.keys(spawn).length ? spawn : undefined
+      });
+      commit("Change placed-room player start", function () { state.document = ensureDocumentShape(next); });
+    } catch (error) {
+      toast("Player start did not change", error.message, "error");
+      renderRoomLayout();
+    }
+  }
+
+  function validationBlockDetail(validation) {
+    var errors = validation.errors || [];
+    return errors.slice(0, 3).map(function (item) {
+      var location = locationCopy(item);
+      return (location ? location + ": " : "") + item.message;
+    }).join("\n") + (errors.length > 3 ? "\n…and " + (errors.length - 3) + " more in Checks." : "");
+  }
+
   function renderAssetList() {
     var host = els["v2-asset-list"]; host.textContent = "";
     var names = Object.keys(state.document.assets || {}).sort();
@@ -1478,8 +2965,7 @@
       var row = document.createElement("div"); var label = document.createElement("span"); label.textContent = name;
       var remove = document.createElement("button"); remove.type = "button"; remove.className = "text-button"; remove.textContent = "Remove";
       remove.addEventListener("click", function () {
-        if (v2Tiles().some(function (tile) { return tile.sprite_sheet === name; })) { toast("PNG is still in use", "Choose another sheet for every tile before removing " + name + ".", "warning"); return; }
-        delete state.document.assets[name]; renderAssetList(); refreshSheetOptions(); markChanged();
+        removePackagedAsset(name);
       });
       row.append(label, remove); host.appendChild(row);
     });
@@ -1555,8 +3041,8 @@
     if (Array.isArray(art)) art = { frames: [art] };
     if (art && Array.isArray(art.frames) && art.frames.length) {
       var context = canvas.getContext("2d"); context.imageSmoothingEnabled = false; context.clearRect(0, 0, 192, 192); drawPreviewChecker(context, 192);
-      if (!drawPixelArtPreview(context, art, frame, 192, tile) && Atlas && Atlas.renderGlyph) Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: tick });
-    } else if (Atlas && Atlas.renderGlyph) Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: tick });
+      if (!drawPixelArtPreview(context, art, frame, 192, tile) && Atlas && Atlas.renderGlyph) Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, nativeTileset: Core.resolveRoomNativeTileset && Core.resolveRoomNativeTileset(state.document, activeRoom()), appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: tick });
+    } else if (Atlas && Atlas.renderGlyph) Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, nativeTileset: Core.resolveRoomNativeTileset && Core.resolveRoomNativeTileset(state.document, activeRoom()), appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: tick });
   }
 
   function tileArtRecord() {
@@ -1640,7 +3126,7 @@
     var finish = function () { if (request === state.hitboxRenderRequest && selectedV2Tile() === tile) drawHitboxOverlay(context, tile, collision); };
     if (drawPixelArtPreview(context, art, frame, 192, tile)) finish();
     else if (Atlas && Atlas.renderGlyph) {
-      Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: previewTicks() }).then(finish, finish);
+      Atlas.renderGlyph(canvas, tile.symbol, { size: 192, tileset: state.document.tileset, nativeTileset: Core.resolveRoomNativeTileset && Core.resolveRoomNativeTileset(state.document, activeRoom()), appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: previewTicks() }).then(finish, finish);
     } else finish();
     var labels = { solid: "Solid cell", pass_through: "No hitbox", hazard: "Lethal cell", native: "Native collision" };
     var fallback = collision === "native" ? (tile.native_glyph || tile.symbol || "?") : collision === "solid" ? "@" : collision === "hazard" ? "X" : "x";
@@ -1696,6 +3182,8 @@
     setTileControl("v2-tile-id", tile.id); setTileControl("v2-tile-symbol", tile.symbol); setTileControl("v2-tile-name", tile.name);
     setTileControl("v2-sprite-index", tile.sprite_index === undefined ? 0 : tile.sprite_index);
     setTileControl("v2-cell-w", tile.cell_w === undefined ? 16 : tile.cell_w); setTileControl("v2-cell-h", tile.cell_h === undefined ? 16 : tile.cell_h); setTileControl("v2-padding", tile.padding || 0);
+    setTileControl("v2-source-x", tile.source_x || 0); setTileControl("v2-source-y", tile.source_y || 0);
+    setTileControl("v2-source-w", tile.source_w || 0); setTileControl("v2-source-h", tile.source_h || 0);
     setTileControl("v2-frame-count", tile.frame_count === undefined ? 1 : tile.frame_count);
     setTileControl("v2-frame-ticks", tile.frame_ticks === undefined ? 1 : tile.frame_ticks);
     setTileControl("v2-animation", tile.animation || "loop"); setTileControl("v2-collision", tile.collision || "native");
@@ -1810,7 +3298,7 @@
   function seedArtFromCurrentSprite() {
     var tile = selectedV2Tile(); var art = tileArtRecord(); if (!tile || !art || !Atlas || !Atlas.renderGlyph) return;
     var preview = document.createElement("canvas"); var before = art.frames[state.tileArtFrame].slice();
-    Atlas.renderGlyph(preview, tile.symbol, { size: 16, tileset: state.document.tileset, appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: Number(els["tile-animation-tick"].value) || 0 }).then(function () {
+    Atlas.renderGlyph(preview, tile.symbol, { size: 16, tileset: state.document.tileset, nativeTileset: Core.resolveRoomNativeTileset && Core.resolveRoomNativeTileset(state.document, activeRoom()), appearance: resolvedAppearance(activeRoom(), state.appearancePreviewBank), time: Number(els["tile-animation-tick"].value) || 0 }).then(function () {
       var data = preview.getContext("2d").getImageData(0, 0, 16, 16).data; var pixels = []; var visible = 0;
       for (var index = 0; index < 256; index += 1) { var offset = index * 4; if (!data[offset + 3]) pixels.push(null); else { visible += 1; pixels.push("rgba(" + data[offset] + "," + data[offset + 1] + "," + data[offset + 2] + "," + (data[offset + 3] / 255) + ")"); } }
       if (!visible) { toast("Nothing to copy", "The current sprite rendered as a transparent frame.", "warning"); return; }
@@ -1858,23 +3346,55 @@
       var tile = selectedV2Tile(); if (!tile) return;
       var name = uniqueAssetName(file.name);
       state.document.assets = state.document.assets || {}; state.document.assets[name] = reader.result;
-      tile.sprite_sheet = name; tile.sprite_index = 0; tile.cell_w = 16; tile.cell_h = 16; tile.padding = 0;
+      tile.sprite_sheet = name; tile.sprite_index = 0; tile.padding = 0;
       var image = new Image();
       image.onload = function () {
-        var columns = Math.max(1, Math.floor(image.naturalWidth / 16)); var rows = Math.max(1, Math.floor(image.naturalHeight / 16)); var count = Math.min(256, columns * rows);
-        var source = document.createElement("canvas"); source.width = image.naturalWidth; source.height = image.naturalHeight; var context = source.getContext("2d"); context.drawImage(image, 0, 0);
-        var frames = [];
-        for (var frameIndex = 0; frameIndex < count; frameIndex += 1) {
-          var data = context.getImageData((frameIndex % columns) * 16, Math.floor(frameIndex / columns) * 16, 16, 16).data; var pixels = [];
-          for (var pixel = 0; pixel < 256; pixel += 1) { var offset = pixel * 4; pixels.push(data[offset + 3] ? "rgba(" + data[offset] + "," + data[offset + 1] + "," + data[offset + 2] + "," + (data[offset + 3] / 255) + ")" : null); }
-          frames.push(pixels);
-        }
-        state.document._tileArt = state.document._tileArt || {}; state.document._tileArt[tile.id] = { frames: frames, assetName: name, dirty: false }; state.tileArtFrame = 0; tile.frame_count = frames.length;
+        var width = image.naturalWidth || image.width; var height = image.naturalHeight || image.height;
+        if (width > 8192 || height > 8192) { delete state.document.assets[name]; toast("PNG dimensions are too large", "Use an image no larger than 8192×8192.", "error"); return; }
+        tile.cell_w = Math.min(width, 512); tile.cell_h = Math.min(height, 512);
+        tile.source_x = 0; tile.source_y = 0; tile.source_w = tile.cell_w; tile.source_h = tile.cell_h;
+        tile.frame_count = 1;
+        if (state.document._tileArt) delete state.document._tileArt[tile.id];
         refreshExternalAssets().then(renderTileLab); markChanged();
       };
       image.onerror = function () { refreshExternalAssets().then(renderTileLab); markChanged(); };
       image.src = reader.result;
     };
+    reader.readAsDataURL(file);
+  }
+
+  function importNativeTilesetPng(file) {
+    if (!file) return;
+    if (Core.nativeTilesetChoices && Core.nativeTilesetChoices(state.document).length >= 16) { toast("Sheet limit reached", "A map can declare at most 16 external sheet configurations.", "warning"); return; }
+    if (file.size > 64 * 1024 * 1024) { toast("PNG too large", "Yule limits each external sheet to 64 MiB.", "error"); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var image = new Image();
+      image.onload = function () {
+        var width = image.naturalWidth || image.width;
+        var height = image.naturalHeight || image.height;
+        var cells = width / 16 * (height / 16);
+        if (width > 4096 || height > 4096 || width < 16 || height < 16 || width % 16 || height % 16 || cells < 128) {
+          toast("PNG cannot reskin native tiles", "Use a whole 16×16 grid with at least 128 cells and dimensions no larger than 4096×4096.", "error");
+          return;
+        }
+        var name = uniqueAssetName(file.name || "room_tiles.png");
+        commit("Add room graphics", function () {
+          if (state.document.format !== "eggnogg-map/v2") state.document = Core.upgradeToV2(state.document);
+          state.document.assets = state.document.assets || {};
+          state.document.assets[name] = reader.result;
+          state.document.tileset = state.document.tileset || { tiles: [] };
+          state.document.tileset.sheets = Array.isArray(state.document.tileset.sheets) ? state.document.tileset.sheets : [];
+          state.document.tileset.sheets.push({ sprite_sheet: name, cell_w: 16, cell_h: 16, padding: 0 });
+          var defaults = state.document.defaults.room || state.document.defaults;
+          defaults.native_tileset = name;
+        });
+        refreshExternalAssets().then(function () { renderAll(); });
+      };
+      image.onerror = function () { toast("PNG could not be read", "Choose a valid PNG sprite sheet.", "error"); };
+      image.src = reader.result;
+    };
+    reader.onerror = function () { toast("PNG could not be read", "The browser could not open that file.", "error"); };
     reader.readAsDataURL(file);
   }
 
@@ -2010,11 +3530,36 @@
     var room = activeRoom();
     if (!room) return;
     els["room-inspector-title"].textContent = room.id;
-    els["room-position-copy"].textContent = state.roomIndex === 0 ? "Center room" : "Distance " + state.roomIndex + " from center";
+    var layout = state.document.layout || {};
+    var roomNode = layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph") ?
+      (layout.nodes || []).find(function (node) { return node.id === state.selectedGraphNode && node.room === room.id; }) : null;
+    els["room-position-copy"].textContent = layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph") ?
+      (roomNode ? "Placed at " + roomNode.x + ", " + roomNode.y : "Reusable room design") :
+      (state.roomIndex === 0 ? "Center room" : "Distance " + state.roomIndex + " from center");
     setControlValue(els["room-id"], room.id);
+    setControlValue(els["room-width"], roomCols(room));
+    setControlValue(els["room-height"], roomRows(room));
     setControlValue(els["room-opponent-spawn"], room.opponent_spawn === undefined ? "inherit" : room.opponent_spawn);
+    var selectedSpawnNode = roomNode;
+    els["room-opponent-effective"].textContent =
+      state.document.layout && state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph") && !selectedSpawnNode ?
+        "Select a placed copy to see its effective spawn behavior." :
+        opponentSpawnHelp(room.id, selectedSpawnNode && selectedSpawnNode.id);
+    renderNativeTilesetControls();
+    var ambientSelect = els["room-ambient"];
+    Array.prototype.slice.call(ambientSelect.querySelectorAll("option[data-custom-ambiance]")).forEach(function (option) { option.remove(); });
+    (Array.isArray(state.document.ambiances) ? state.document.ambiances : []).forEach(function (ambiance) {
+      var option = document.createElement("option");
+      option.value = ambiance.id;
+      option.textContent = "Custom · " + (ambiance.name || ambiance.id);
+      option.dataset.customAmbiance = "true";
+      ambientSelect.appendChild(option);
+    });
     var ambientValue = Number.isInteger(room.ambient) ? (Core.AMBIENTS || ["none", "bugs", "clouds", "art", "flies", "drips", "dust", "bats", "bubbles", "boil"])[room.ambient] : room.ambient;
-    setControlValue(els["room-ambient"], ambientValue === "fumes" ? "boil" : ambientValue);
+    /* Custom options are rebuilt above. A focused select temporarily falls back to
+     * its first option when the selected custom option is removed, so this one
+     * control must be restored even while its change event still owns focus. */
+    setControlValue(ambientSelect, ambientValue === "fumes" ? "boil" : ambientValue, true);
     els["custom-mirror-colors"].checked = !!(room.appearance && room.appearance.mirror);
     els["mirror-color-fields"].hidden = !els["custom-mirror-colors"].checked;
     updateAppearancePreviewControl();
@@ -2223,21 +3768,35 @@
   }
 
   function renderAll() {
-    if(state.selectedObject&&!GregObjects.catalog(state.document).types.some(function(t){return t.key===state.selectedObject;}))state.selectedObject=null;
+    if(state.selectedObject&&!GregObjects.catalog(state.document).types.some(function(t){return t.key===state.selectedObject;})){
+      state.selectedObject=null;
+      state.selectedPlacementName=null;
+      var selectedTile=tileMeta(state.selectedGlyph);
+      els["selected-tile-name"].textContent=selectedTile.label||"Native tile";
+      els["selected-tile-description"].textContent=selectedTile.description||"Native map glyph.";
+      els["selected-tile-glyph"].textContent=state.selectedGlyph===" "?"SP":state.selectedGlyph;
+    }
+    if(state.selectedPlacementName&&!selectedPlacement())state.selectedPlacementName=null;
+    createGridControls();
     renderPalette();
     validate();
     renderMapFields();
     renderRoomFields();
     renderRoomTabs();
     renderArena();
+    renderRoomLayout();
     renderGrid();
+    renderRoomEdges();
+    renderObjectInspector();
     refreshPalettePreviews();
     updateHistoryButtons();
+    updateSelectionControls();
     updateToolStatus();
+    setWorkMode(state.workMode);
   }
 
   function switchInspector(name) {
-    ["map", "room", "validation"].forEach(function (key) {
+    ["map", "room", "object", "validation"].forEach(function (key) {
       var tab = els[key + "-tab"];
       var panel = els[key + "-inspector"];
       var active = key === name;
@@ -2292,13 +3851,470 @@
     return candidate;
   }
 
+  function transformCopiedRoom(room, flipX, flipY) {
+    var dimensions = Core.roomDimensions(room);
+    room.grid = (room.grid || []).map(function (row) {
+      return Array.isArray(row) ? row.slice() : String(row || "").split("");
+    });
+    if (flipX) room.grid = Core.transformTileArea(room.grid, "flip_x");
+    if (flipY) room.grid = Core.transformTileArea(room.grid, "flip_y");
+    function transformPoint(point) {
+      if (!point || !Number.isInteger(point.x) || !Number.isInteger(point.y)) return;
+      if (flipX) {
+        point.x = dimensions.width - 1 - point.x;
+        if (point.facing === "left") point.facing = "right";
+        else if (point.facing === "right") point.facing = "left";
+      }
+      if (flipY) point.y = dimensions.height - 1 - point.y;
+    }
+    if (room.spawn && room.spawn.players) Object.keys(room.spawn.players).forEach(function (key) {
+      transformPoint(room.spawn.players[key]);
+    });
+    if (room.spawn && Array.isArray(room.spawn.markers)) room.spawn.markers.forEach(transformPoint);
+    return dimensions;
+  }
+
+  function uniqueCopiedPlacementName(placements, sourceName) {
+    var stem = String(sourceName || "object").replace(/\.mirror$/, "").slice(0, 70) + "_copy";
+    var candidate = stem;
+    var number = 2;
+    while (placements.some(function (placement) {
+      return placement.name === candidate || placement.name === candidate + ".mirror";
+    })) {
+      candidate = (stem.slice(0, 82) + "_" + number).slice(0, 88);
+      number += 1;
+    }
+    return candidate;
+  }
+
+  /* Creating a source design and placing it are one operation in graph maps.
+   * This prevents the confusing intermediate state where a newly-created room
+   * exists in the sidebar but is absent from the full-map canvas. */
+  function createAndPlaceRoom(options) {
+    var sourceDocument = state.document;
+    var copyFrom = options && options.copyFrom;
+    var sourceRoom = copyFrom && rooms().find(function (room) { return room.id === copyFrom; });
+    var roomId = nextRoomId(sourceRoom ? sourceRoom.id + "_copy" : "room_" + (rooms().length + 1));
+    var next = clone(sourceDocument);
+    var room = sourceRoom ? clone(sourceRoom) : newRoom(roomId, true);
+    var dimensions;
+    var sides = options && options.side ? [options.side] : ["right", "bottom", "left", "top"];
+    var anchors;
+    var added = null;
+    var failure = null;
+    var sourceInstance;
+    var sourcePlacements;
+    var copiedPlacements;
+    if (!next.layout || next.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) throw new Error("Enable room placement before arranging rooms.");
+    if (next.rooms.length >= MAX_ROOMS) throw new Error("This map already has the maximum number of room designs.");
+    if ((next.layout.nodes || []).length >= (Core.MAX_ROOM_GRAPH_NODES || 17)) throw new Error("This map already has the maximum number of placed rooms.");
+    room.id = roomId;
+    dimensions = transformCopiedRoom(room, !!(sourceRoom && options.flipX), !!(sourceRoom && options.flipY));
+    next.rooms.push(room);
+    next.layout.order = next.rooms.map(function (entry) { return entry.id; });
+    anchors = [options.from].concat(options.side ? [] : (next.layout.nodes || []).map(function (node) { return node.id; }).filter(function (id) { return id !== options.from; }));
+    anchors.some(function (anchor) {
+      return sides.some(function (side) {
+        try {
+          var candidate = Core.addConnectedRoomGraphNode(next, {
+            from: anchor,
+            fromSide: side,
+            room: roomId,
+            id: roomId
+          });
+          candidate = Core.rebuildAutomaticRoomGraphConnections(candidate);
+          next = candidate;
+          added = next.layout.nodes[next.layout.nodes.length - 1];
+          return true;
+        } catch (error) {
+          failure = error;
+          return false;
+        }
+      });
+    });
+    if (!added) throw failure || new Error("No open edge was available beside this room.");
+
+    if (sourceRoom && next.entities && Array.isArray(next.entities.placements)) {
+      sourceInstance = (sourceDocument.layout.nodes || []).find(function (node) {
+        return node.id === state.selectedGraphNode && node.room === sourceRoom.id;
+      }) || (sourceDocument.layout.nodes || []).find(function (node) { return node.room === sourceRoom.id; });
+      sourcePlacements = (sourceDocument.entities && sourceDocument.entities.placements || []).filter(function (placement) {
+        return !!sourceInstance && placement.room === sourceRoom.id && placement.instance === sourceInstance.id;
+      }).map(clone);
+      copiedPlacements = sourcePlacements;
+      if (options.flipX) copiedPlacements = GregObjects.transformAreaPlacements(copiedPlacements, "flip_x", dimensions.width, dimensions.height);
+      if (options.flipY) copiedPlacements = GregObjects.transformAreaPlacements(copiedPlacements, "flip_y", dimensions.width, dimensions.height);
+      copiedPlacements.forEach(function (placement) {
+        placement.name = uniqueCopiedPlacementName(next.entities.placements, placement.name);
+        placement.room = roomId;
+        placement.instance = added.id;
+        delete placement.side;
+        next.entities.placements.push(placement);
+      });
+    }
+    return { document: next, roomId: roomId, nodeId: added.id };
+  }
+
+  function createSymmetricRoomPair(options) {
+    var next = clone(state.document);
+    var copyFrom = options && options.copyFrom;
+    var sourceRoom = copyFrom && rooms().find(function (room) { return room.id === copyFrom; });
+    var roomId = nextRoomId(sourceRoom ? sourceRoom.id + "_copy" : "outer_" + next.rooms.length);
+    var room = sourceRoom ? clone(sourceRoom) : newRoom(roomId, true);
+    var dimensions;
+    var graph;
+    var minX;
+    var maxX;
+    var outerLeft;
+    var outerRight;
+    var pairIndex = next.rooms.length;
+    var leftId = "left_" + pairIndex;
+    var rightId = "right_" + pairIndex;
+    var leftNode;
+    var rightNode;
+    if (!next.layout || next.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) throw new Error("Open the full map before arranging symmetrical room pairs.");
+    if (next.rooms.length >= MAX_ROOMS) throw new Error("This map already has the maximum number of room designs.");
+    if ((next.layout.nodes || []).length + 2 > (Core.MAX_ROOM_GRAPH_NODES || 17)) throw new Error("This map already has the maximum number of placed rooms.");
+    room.id = roomId;
+    dimensions = transformCopiedRoom(room, !!(sourceRoom && options.flipX), !!(sourceRoom && options.flipY));
+    next.rooms.push(room);
+    next.layout.order = next.rooms.map(function (entry) { return entry.id; });
+    graph = Core.validateRoomGraph(next);
+    minX = graph.nodes.reduce(function (value, node) { return Math.min(value, node.x); }, 0);
+    maxX = graph.nodes.reduce(function (value, node) { return Math.max(value, node.x + node.width); }, 0);
+    outerLeft = graph.nodes.slice().sort(function (a, b) { return a.x - b.x; })[0];
+    outerRight = graph.nodes.slice().sort(function (a, b) { return (b.x + b.width) - (a.x + a.width); })[0];
+    leftNode = { id: leftId, room: roomId, x: minX - dimensions.width,
+      y: outerLeft ? outerLeft.y : 0, mirrorX: false, appearance: "mirror" };
+    rightNode = { id: rightId, room: roomId, x: maxX,
+      y: outerRight ? outerRight.y : leftNode.y, mirrorX: true, appearance: "primary" };
+    next.layout.nodes.push(leftNode, rightNode);
+    next = Core.rebuildAutomaticRoomGraphConnections(next);
+    graph = Core.validateRoomGraph(next);
+    if (!graph.valid) throw new Error(graph.errors[0].message);
+
+    if (sourceRoom && next.entities && Array.isArray(next.entities.placements)) {
+      var sourceNodes = (state.document.layout.nodes || []).filter(function (node) { return node.room === sourceRoom.id; });
+      [leftNode, rightNode].forEach(function (targetNode) {
+        var sourceNode = sourceNodes.find(function (node) { return !!node.mirrorX === !!targetNode.mirrorX; }) || sourceNodes[0];
+        if (!sourceNode) return;
+        (state.document.entities && state.document.entities.placements || []).filter(function (placement) {
+          return placement.room === sourceRoom.id && placement.instance === sourceNode.id;
+        }).forEach(function (placement) {
+          var copy = clone(placement);
+          if (options.flipX) copy = GregObjects.transformAreaPlacements([copy], "flip_x", dimensions.width, dimensions.height)[0];
+          if (options.flipY) copy = GregObjects.transformAreaPlacements([copy], "flip_y", dimensions.width, dimensions.height)[0];
+          copy.name = uniqueCopiedPlacementName(next.entities.placements, copy.name);
+          copy.room = roomId;
+          copy.instance = targetNode.id;
+          delete copy.side;
+          next.entities.placements.push(copy);
+        });
+      });
+    }
+    return { document: next, roomId: roomId, nodeId: rightId };
+  }
+
+  function moveSymmetricRoomPair(value, nodeId, y) {
+    var next = clone(value);
+    var selected = (next.layout.nodes || []).find(function (node) { return node.id === nodeId; });
+    var delta;
+    var graph;
+    if (!selected) throw new Error("Choose a placed room to move.");
+    delta = y - selected.y;
+    (next.layout.nodes || []).forEach(function (node) {
+      if (node.room !== selected.room) return;
+      node.y += delta;
+    });
+    next = Core.rebuildAutomaticRoomGraphConnections(next);
+    graph = Core.validateRoomGraph(next);
+    if (!graph.valid) throw new Error("That offset disconnects or overlaps the symmetrical map. " + graph.errors[0].message);
+    return next;
+  }
+
+  function openRoomArrangement() {
+    if (state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) {
+      try {
+        commit("Open room arrangement", function () {
+          state.document = ensureDocumentShape(Core.convertMirroredToRoomGraph(state.document));
+          state.layoutAuthoringMode = "symmetric";
+          state.selectedGraphNode = state.document.layout.start;
+          state.layoutInspectorOpen = false;
+          state.workMode = "layout";
+        });
+      } catch (error) { toast("Could not open room arrangement", error.message, "error"); }
+      return;
+    }
+    if (!state.layoutAuthoringMode) state.layoutAuthoringMode = roomLayoutAuthoringMode();
+    state.workMode = "layout";
+    renderAll();
+  }
+
+  function addRoomFromLayout(side, useCopyControls) {
+    var added;
+    try {
+      added = roomLayoutAuthoringMode() === "symmetric" ? createSymmetricRoomPair({
+        copyFrom: useCopyControls && els["room-layout-source-room"].value || null,
+        flipX: useCopyControls && els["room-layout-copy-flip-x"].checked,
+        flipY: useCopyControls && els["room-layout-copy-flip-y"].checked
+      }) : createAndPlaceRoom({
+        from: state.selectedGraphNode || state.document.layout.start,
+        side: side || null,
+        copyFrom: useCopyControls && els["room-layout-source-room"].value || null,
+        flipX: useCopyControls && els["room-layout-copy-flip-x"].checked,
+        flipY: useCopyControls && els["room-layout-copy-flip-y"].checked
+      });
+      commit(useCopyControls && els["room-layout-source-room"].value ? "Copy and place room" : "Create and place room", function () {
+        state.document = ensureDocumentShape(added.document);
+        state.selectedGraphNode = added.nodeId;
+        state.roomIndex = rooms().findIndex(function (room) { return room.id === added.roomId; });
+        state.selection = null;
+      });
+      toast("Room added", "The new room is placed and selected. Choose Edit selected to paint it.");
+      return true;
+    } catch (error) {
+      toast("Room could not be added", error.message, "error");
+      return false;
+    }
+  }
+
+  function editSelectedPlacement(label, mutate) {
+    var placement=selectedPlacement();if(!placement)return;
+    commit(label,function(){mutate(placement);state.selectedPlacementName=placement.name;});
+  }
+
+  function bindPlacementControls() {
+    function bindSelect(id,field,defaultValue,label){els[id].addEventListener("change",function(){var value=this.value;editSelectedPlacement(label,function(p){if(value===defaultValue)delete p[field];else p[field]=value;});});}
+    function bindNumber(id,field,label,compactValue,nonzero){els[id].addEventListener("change",function(){if(!this.checkValidity()){toast("Invalid object setting",this.validationMessage,"error");renderObjectInspector();return;}var text=this.value.trim(),value=Number(text);if(text&&(!Number.isFinite(value)||(nonzero&&Math.floor(Math.abs(value)*256+0.5)===0))){toast("Invalid object setting",nonzero?"Scale must not round to zero.":"Enter a finite number.","error");renderObjectInspector();return;}editSelectedPlacement(label,function(p){if(!text||(compactValue!==undefined&&value===compactValue))delete p[field];else p[field]=value;});});}
+    els["object-placement-picker"].addEventListener("change",function(){var name=this.value,placement=GregObjects.catalog(state.document).placements.find(function(p){return p.name===name;});if(placement)selectPlacement(placement,true);});
+    els["object-placement-name"].addEventListener("change",function(){var next=this.value.trim();if(!/^[a-z0-9_.-]{1,88}$/.test(next)||GregObjects.catalog(state.document).placements.some(function(p){return p.name===next&&p.name!==state.selectedPlacementName;})){toast("Invalid instance name","Use a unique lowercase name with letters, numbers, dots, underscores, or hyphens. Both-side names may use at most 88 characters.","error");renderObjectInspector();return;}editSelectedPlacement("Rename object copy",function(p){p.name=next;});});
+    bindSelect("object-placement-animation","animation","default","Change object animation");
+    bindSelect("object-placement-layer","draw_layer","","Change object draw order");
+    bindSelect("object-placement-side","side","__required__","Change object arena side");
+    els["object-placement-visible"].addEventListener("change",function(){var visible=this.checked;editSelectedPlacement("Change object visibility",function(p){if(visible)delete p.visible;else p.visible=false;});});
+    bindNumber("object-placement-x","x","Move object copy");bindNumber("object-placement-y","y","Move object copy");
+    bindNumber("object-placement-vx","vx","Change object starting velocity",0);bindNumber("object-placement-vy","vy","Change object starting velocity",0);
+    bindNumber("object-placement-scale-x","scale_x","Scale object copy",1,true);bindNumber("object-placement-scale-y","scale_y","Scale object copy",1,true);
+    bindNumber("object-placement-offset-x","visual_offset_x","Offset object picture",0);bindNumber("object-placement-offset-y","visual_offset_y","Offset object picture",0);
+    bindNumber("object-placement-rotation","visual_rotation","Rotate object copy",0);
+    els["object-placement-tint"].addEventListener("change",function(){var tint=this.value.trim().toUpperCase();if(tint&&!/^#[0-9A-F]{8}$/.test(tint)){toast("Invalid object tint","Use #RRGGBBAA, including the alpha channel, or leave it blank.","error");renderObjectInspector();return;}editSelectedPlacement("Tint object copy",function(p){if(tint) p.visual_tint=tint;else delete p.visual_tint;});});
+    els["object-placement-edit-design"].addEventListener("click",function(){var placement=selectedPlacement();if(placement)window.openGregObjectDesigner(state.document,function(next){commit("Edit objects",function(){state.document=ensureDocumentShape(next);});renderPalette();},placement.type);});
+    els["object-placement-reset"].addEventListener("click",function(){editSelectedPlacement("Reset object appearance",function(p){["animation","draw_layer","scale_x","scale_y","visual_offset_x","visual_offset_y","visual_rotation","visual_tint"].forEach(function(key){delete p[key];});});});
+    els["object-placement-delete"].addEventListener("click",function(){var placement=selectedPlacement();if(!placement)return;commit("Delete object copy",function(){state.document.entities.placements=state.document.entities.placements.filter(function(p){return p!==placement;});state.selectedPlacementName=null;});});
+  }
+
   function bindControls() {
+    bindPlacementControls();
+    els["map-mode-button"].addEventListener("click", function () { state.workMode = "map"; renderAll(); });
+    els["layout-mode-button"].addEventListener("click", openRoomArrangement);
+    els["full-map-button"].addEventListener("click", openRoomArrangement);
+    document.querySelectorAll("[data-layout-kind]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var graphMode = state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph");
+        if (button.dataset.layoutKind === "free") {
+          if (!graphMode) { openRoomArrangement(); graphMode = state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph"); }
+          if (!graphMode) return;
+          state.layoutAuthoringMode = "free";
+          renderAll();
+          toast("Free layout enabled", "Rooms can move independently in any direction.");
+          return;
+        }
+        if (!graphMode) { openRoomArrangement(); return; }
+        if (roomLayoutAuthoringMode() === "symmetric") return;
+        try {
+          commit("Use symmetrical room layout", function () {
+            var mirrored = Core.convertRoomGraphToMirrored(state.document);
+            state.document = ensureDocumentShape(Core.convertMirroredToRoomGraph(mirrored));
+            state.layoutAuthoringMode = "symmetric";
+            state.selectedGraphNode = state.document.layout.start;
+            state.layoutInspectorOpen = false;
+          });
+          toast("Symmetrical layout enabled", "Rooms now extend from the center in paired copies. Drag a pair vertically to offset both sides together.");
+        } catch (error) {
+          state.layoutConversionError = error.message;
+          state.layoutInspectorOpen = true;
+          renderRoomLayout();
+          toast("Could not switch to Symmetrical", error.message, "warning");
+        }
+      });
+    });
+    els["convert-room-layout-button"].addEventListener("click", function () {
+      try {
+        commit("Enable room placement", function () {
+          state.document = ensureDocumentShape(Core.convertMirroredToRoomGraph(state.document));
+          state.selectedGraphNode = state.document.layout.start;
+          state.workMode = "layout";
+        });
+        toast("Room placement enabled", "The existing arena kept its shape. Select a room and add connected rooms from any side.");
+      } catch (error) {
+        toast("Could not enable room placement", error.message, "error");
+      }
+    });
+    els["room-layout-zoom"].addEventListener("input", function () {
+      state.layoutCellScale = Number(this.value) || 8;
+      renderRoomLayout();
+    });
+    els["room-layout-fit-button"].addEventListener("click", function () {
+      var graph = Core.validateRoomGraph(state.document);
+      var scroll = els["room-layout-scroll"];
+      if (!graph.valid) return;
+      state.layoutCellScale = Math.max(2, Math.min(16, Math.floor(Math.min(
+        Math.max(1, scroll.clientWidth - 24) / Math.max(1, graph.bounds.width + 12),
+        Math.max(1, scroll.clientHeight - 24) / Math.max(1, graph.bounds.height + 12)
+      ))));
+      renderRoomLayout();
+      scroll.scrollLeft = Math.max(0, (scroll.scrollWidth - scroll.clientWidth) * 0.5);
+      scroll.scrollTop = Math.max(0, (scroll.scrollHeight - scroll.clientHeight) * 0.5);
+      renderRoomLayout();
+    });
+    els["room-layout-auto-button"].addEventListener("click", function () {
+      try {
+        var next = Core.autoArrangeRoomGraph(state.document);
+        commit("Repair room arrangement", function () { state.document = ensureDocumentShape(next); });
+        toast("Room arrangement repaired", "Placed rooms now match their doorway edges and offsets.");
+      } catch (error) {
+        toast("Arrangement could not be repaired", error.message, "error");
+      }
+    });
+    els["room-layout-minimap"].addEventListener("click", function (event) { centerRoomLayoutAt(event.clientX, event.clientY); });
+    els["room-layout-minimap"].addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      var rect = this.getBoundingClientRect();
+      centerRoomLayoutAt(rect.left + rect.width * 0.5, rect.top + rect.height * 0.5);
+    });
+    els["room-layout-scroll"].addEventListener("scroll", function () {
+      if (state.workMode !== "layout" || state.document.layout.kind !== (Core.ROOM_GRAPH_KIND || "room_graph")) return;
+      var graph = Core.validateRoomGraph(state.document);
+      if (graph.valid) renderRoomLayoutMinimap(graph, graph.nodes, graph.bounds, state.layoutCellScale);
+    }, { passive: true });
+    els["room-layout-edit-room"].addEventListener("click", function () {
+      focusPlacedRoom(state.selectedGraphNode);
+    });
+    els["room-layout-edit-button"].addEventListener("click", function () { focusPlacedRoom(state.selectedGraphNode); });
+    els["room-layout-add-button"].addEventListener("click", function () { addRoomFromLayout(null, false); });
+    els["room-layout-details-button"].addEventListener("click", function () {
+      state.layoutInspectorOpen = !state.layoutInspectorOpen;
+      renderRoomLayout();
+    });
+    els["room-layout-mirror-x"].addEventListener("change", function () {
+      if (!state.selectedGraphNode) return;
+      var checked = this.checked;
+      try {
+        var next = Core.setRoomGraphNodePresentation(state.document, state.selectedGraphNode, { mirrorX: checked });
+        commit("Flip placed room", function () { state.document = ensureDocumentShape(next); });
+      } catch (error) { toast("Room could not be flipped", error.message, "error"); renderRoomLayout(); }
+    });
+    els["room-layout-appearance"].addEventListener("change", function () {
+      if (!state.selectedGraphNode) return;
+      var appearance = this.value;
+      try {
+        var next = Core.setRoomGraphNodePresentation(state.document, state.selectedGraphNode, { appearance: appearance });
+        commit("Change placed room colors", function () { state.document = ensureDocumentShape(next); });
+      } catch (error) { toast("Room colors did not change", error.message, "error"); renderRoomLayout(); }
+    });
+    [["room-layout-ambient", "ambient", "Change placed-room ambience"],
+     ["room-layout-native-tileset", "native_tileset", "Change placed-room graphics"],
+     ["room-layout-opponent-spawn", "opponent_spawn", "Change placed-room respawn policy"]].forEach(function (binding) {
+      els[binding[0]].addEventListener("change", function () {
+        if (!state.selectedGraphNode) return;
+        var values = {};
+        values[binding[1]] = this.value || undefined;
+        try {
+          var next = Core.setRoomGraphNodeOverrides(state.document, state.selectedGraphNode, values);
+          commit(binding[2], function () { state.document = ensureDocumentShape(next); });
+        } catch (error) {
+          toast("Placed-room override did not change", error.message, "error");
+          renderRoomLayout();
+        }
+      });
+    });
+    ["1", "2"].forEach(function (slot) {
+      els["room-layout-start-p" + slot].addEventListener("change", function () { savePlacedRoomStart(slot); });
+      els["room-layout-facing-p" + slot].addEventListener("change", function () { savePlacedRoomStart(slot); });
+    });
+    els["room-layout-set-start"].addEventListener("click", function () {
+      if (!state.selectedGraphNode) return;
+      commit("Change start room", function () { state.document.layout.start = state.selectedGraphNode; });
+    });
+    els["room-layout-remove"].addEventListener("click", function () {
+      if (!state.selectedGraphNode) return;
+      try {
+        var next = Core.removeRoomGraphNode(state.document, state.selectedGraphNode);
+        commit("Remove placed room", function () {
+          state.document = ensureDocumentShape(next);
+          /* Removing one placed copy is intentionally allowed to break a
+           * mirrored pair. Continue in free placement so the remaining rooms
+           * and diagnostics reflect exactly what the author chose. */
+          state.layoutAuthoringMode = "free";
+          state.selectedGraphNode = state.document.layout.start;
+        });
+      } catch (error) {
+        toast("Room could not be removed", error.message, "error");
+      }
+    });
+    els["room-layout-connect-button"].addEventListener("click", function () {
+      var list = els["room-layout-connect-target"]._connectionOptions || [];
+      var option = list[Number(els["room-layout-connect-target"].value)];
+      if (!option) { toast("Choose a touching room", "Select the placed room you want this doorway to connect.", "warning"); return; }
+      try {
+        option.oneWay = els["room-layout-connect-one-way"].checked;
+        var next = Core.connectRoomGraphNodes(state.document, option);
+        commit("Connect touching rooms", function () { state.document = ensureDocumentShape(next); });
+        els["room-layout-connect-one-way"].checked = false;
+      } catch (error) {
+        toast("Rooms could not connect", error.message, "error");
+      }
+    });
+    document.querySelectorAll("[data-layout-side]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        if (!state.selectedGraphNode) return;
+        addRoomFromLayout(button.dataset.layoutSide, true);
+      });
+    });
+    els["room-layout-source-room"].addEventListener("change", function () {
+      var copying = !!this.value;
+      els["room-layout-copy-flip-x"].disabled = !copying;
+      els["room-layout-copy-flip-y"].disabled = !copying;
+      if (!copying) {
+        els["room-layout-copy-flip-x"].checked = false;
+        els["room-layout-copy-flip-y"].checked = false;
+      }
+    });
     document.querySelectorAll("[data-tool]").forEach(function (button) {
-      button.addEventListener("click", function () { setTool(button.dataset.tool); });
+      button.addEventListener("click", function () {
+        state.selectedOverlay = null;
+        setTool(button.dataset.tool);
+        renderPalette();
+        renderGrid();
+      });
     });
     els["tile-search"].addEventListener("input", renderPalette);
+    els["spawn-marker-scope"].addEventListener("change", function () {
+      state.spawnMarkerScope = this.value === "copy" ? "copy" : "design";
+      renderPalette();
+      renderGrid();
+      updateToolStatus();
+      announce("Spawn markers apply to " + (state.spawnMarkerScope === "copy" ? "this placed copy" : "the room design"));
+    });
+    els["spawn-scope-reset"].addEventListener("click", function () {
+      var node = activePlacedRoomRecord(activeRoom());
+      if (!node || !node.overrides || !node.overrides.spawn ||
+          !Object.prototype.hasOwnProperty.call(node.overrides.spawn, "markers")) return;
+      commit("Reset placed-copy respawn markers", function () {
+        delete node.overrides.spawn.markers;
+        if (!Object.keys(node.overrides.spawn).length) delete node.overrides.spawn;
+        if (!Object.keys(node.overrides).length) delete node.overrides;
+      });
+    });
     els["undo-button"].addEventListener("click", undo);
     els["redo-button"].addEventListener("click", redo);
+    els["selection-copy-button"].addEventListener("click", function () { copySelection(false); });
+    els["selection-cut-button"].addEventListener("click", function () { copySelection(true); });
+    els["selection-paste-button"].addEventListener("click", pasteSelection);
+    els["selection-flip-x-button"].addEventListener("click", function () { transformSelection("flip_x", "Flip area horizontally"); });
+    els["selection-flip-y-button"].addEventListener("click", function () { transformSelection("flip_y", "Flip area vertically"); });
+    els["selection-rotate-button"].addEventListener("click", function () { transformSelection("rotate_cw", "Rotate area"); });
     els["format-v2-toggle"].addEventListener("change", function () { if (this.checked) enableV2TileLab(); else disableV2(); });
     els["header-tile-lab-button"].addEventListener("click", openTileLab);
     els["header-script-button"].addEventListener("click", openScriptingMode);
@@ -2354,7 +4370,7 @@
 
     [
       ["v2-tile-name", "name", "text"], ["v2-sprite-sheet", "sprite_sheet", "text"],
-      ["v2-sprite-index", "sprite_index", "number"], ["v2-cell-w", "cell_w", "number"], ["v2-cell-h", "cell_h", "number"], ["v2-padding", "padding", "number"], ["v2-frame-count", "frame_count", "number"], ["v2-frame-ticks", "frame_ticks", "number"],
+      ["v2-sprite-index", "sprite_index", "number"], ["v2-cell-w", "cell_w", "number"], ["v2-cell-h", "cell_h", "number"], ["v2-padding", "padding", "number"], ["v2-source-x", "source_x", "number"], ["v2-source-y", "source_y", "number"], ["v2-source-w", "source_w", "number"], ["v2-source-h", "source_h", "number"], ["v2-frame-count", "frame_count", "number"], ["v2-frame-ticks", "frame_ticks", "number"],
       ["v2-animation", "animation", "text"], ["v2-collision", "collision", "text"], ["v2-native-glyph", "native_glyph", "optionalText"],
       ["v2-layer", "layer", "number"], ["v2-native-visual", "native_visual", "text"], ["v2-offset-x", "offset_x", "number"], ["v2-offset-y", "offset_y", "number"],
       ["v2-scale-x", "scale_x", "number"], ["v2-scale-y", "scale_y", "number"], ["v2-angle", "angle_degrees", "number"],
@@ -2366,8 +4382,8 @@
         if (binding[2] === "number" || binding[2] === "optionalNumber") value = value === "" ? "" : Number(value);
         updateSelectedTileField(binding[1], value, binding[2].indexOf("optional") === 0);
         if (binding[0] === "v2-sprite-sheet") renderTileLab();
-        if (["v2-collision", "v2-native-glyph", "v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-layer", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle", "v2-force-x", "v2-force-y", "v2-force-mode", "v2-max-speed-x", "v2-max-speed-y"].indexOf(binding[0]) >= 0) renderHitboxPreview();
-        if (["v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-frame-count", "v2-frame-ticks", "v2-animation", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle"].indexOf(binding[0]) >= 0) renderTileAnimation();
+        if (["v2-collision", "v2-native-glyph", "v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-source-x", "v2-source-y", "v2-source-w", "v2-source-h", "v2-layer", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle", "v2-force-x", "v2-force-y", "v2-force-mode", "v2-max-speed-x", "v2-max-speed-y"].indexOf(binding[0]) >= 0) renderHitboxPreview();
+        if (["v2-sprite-sheet", "v2-sprite-index", "v2-cell-w", "v2-cell-h", "v2-padding", "v2-source-x", "v2-source-y", "v2-source-w", "v2-source-h", "v2-frame-count", "v2-frame-ticks", "v2-animation", "v2-offset-x", "v2-offset-y", "v2-scale-x", "v2-scale-y", "v2-angle"].indexOf(binding[0]) >= 0) renderTileAnimation();
       });
     });
     els["v2-tile-id"].addEventListener("change", function () {
@@ -2424,7 +4440,10 @@
       renderGrid();
     });
     els["zoom-in-button"].addEventListener("click", function () { setZoom(state.zoom + 0.25, false); });
-    els["zoom-out-button"].addEventListener("click", function () { setZoom(state.zoom - 0.25, false); });
+    els["zoom-out-button"].addEventListener("click", function () {
+      if (state.zoom <= 0.5) { state.workMode = "layout"; renderAll(); return; }
+      setZoom(state.zoom - 0.25, false);
+    });
     els["zoom-label"].addEventListener("click", fitZoom);
     els["validation-summary"].addEventListener("click", function () { switchInspector("validation"); });
     els["map-grid"].addEventListener("pointermove", function (event) {
@@ -2467,7 +4486,15 @@
       input.addEventListener("change", function () { if (input.checked) commit("Change combat mode", function () { state.document.rules.mode = input.value; }); });
     });
     document.querySelectorAll('input[name="round-end"]').forEach(function (input) {
-      input.addEventListener("change", function () { if (input.checked) commit("Change round ending", function () { state.document.rules.roundEndRooms = input.value; }); });
+      input.addEventListener("change", function () {
+        if (!input.checked) return;
+        if (input.value === "inner_only" && state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) {
+          toast("Placed rooms need goals", "A branched layout has no outermost winning room, so Goal required must stay enabled.", "warning");
+          renderMapFields();
+          return;
+        }
+        commit("Change round ending", function () { state.document.rules.roundEndRooms = input.value; });
+      });
     });
 
     bindTextField(els["room-id"], "Rename room", function () { return activeRoom().id; }, function (value) {
@@ -2475,9 +4502,30 @@
       var old = room.id;
       room.id = value;
       GregObjects.catalog(state.document).placements.forEach(function(p){if(p.room===old)p.room=value;});
+      if (state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) {
+        (state.document.layout.nodes || []).forEach(function (node) { if (node.room === old) node.room = value; });
+      }
       state.document.layout.order = rooms().map(function (entry) { return entry === room ? value : entry.id; });
       if (old !== value) renderArena();
     }, { renderRooms: true });
+    els["resize-room-button"].addEventListener("click", function () {
+      var width = Number(els["room-width"].value);
+      var height = Number(els["room-height"].value);
+      if (!Number.isInteger(width) || !Number.isInteger(height)) { toast("Invalid room size", "Width and height must be whole tile counts.", "error"); return; }
+      try {
+        var graphResize = state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph");
+        var resized = graphResize && Core.resizeRoomGraphRoom ? Core.resizeRoomGraphRoom(state.document, activeRoom().id, width, height) : null;
+        commit("Resize room", function () {
+          if (resized) state.document = ensureDocumentShape(resized);
+          else {
+            state.document.layout.roomFormat = Core.VARIABLE_ROOM_FORMAT || "variable_cells";
+            Core.resizeRoom(activeRoom(), width, height);
+          }
+          state.selection = null;
+          state.focusCell = { row: Math.min(state.focusCell.row, height - 1), col: Math.min(state.focusCell.col, width - 1) };
+        });
+      } catch (error) { toast("Room was not resized", error.message, "error"); }
+    });
     els["default-opponent-spawn"].addEventListener("change", function () {
       var value = this.value;
       commit("Change default opponent spawn", function () {
@@ -2486,6 +4534,24 @@
         defaults.opponent_spawn = value;
       });
     });
+    els["default-native-tileset"].addEventListener("change", function () {
+      var value = this.value;
+      commit("Change default room graphics", function () {
+        if (!state.document.defaults) state.document.defaults = {};
+        var defaults = state.document.defaults.room || state.document.defaults;
+        if (value) defaults.native_tileset = value;
+        else delete defaults.native_tileset;
+      });
+    });
+    els["native-tileset-input"].addEventListener("change", function () {
+      importNativeTilesetPng(this.files && this.files[0]);
+      this.value = "";
+    });
+    els["remove-native-tileset-button"].addEventListener("click", function () {
+      var name = els["default-native-tileset"].value;
+      if (!name) { toast("Select a PNG first", "Choose the imported sheet in Default room graphics, then remove it.", "warning"); return; }
+      removePackagedAsset(name);
+    });
     els["room-opponent-spawn"].addEventListener("change", function () {
       var value = this.value;
       commit("Change room opponent spawn", function () {
@@ -2493,7 +4559,22 @@
         else activeRoom().opponent_spawn = value;
       });
     });
+    els["room-native-tileset"].addEventListener("change", function () {
+      var value = this.value;
+      commit("Change room graphics", function () {
+        if (value) activeRoom().native_tileset = value;
+        else delete activeRoom().native_tileset;
+      });
+    });
     els["room-ambient"].addEventListener("change", function () { var value = this.value; commit("Change ambience", function () { activeRoom().ambient = value; }); });
+    els["edit-ambiances-button"].addEventListener("click", function () {
+      if (state.document.format !== "eggnogg-map/v2") {
+        commit("Enable custom ambiance", function () { state.document = Core.upgradeToV2(state.document); });
+      }
+      window.openGregAmbianceDesigner(state.document, function (next) {
+        commit("Edit room ambiance", function () { state.document = ensureDocumentShape(next); });
+      }, typeof activeRoom().ambient === "string" ? activeRoom().ambient : null, activeRoom().id);
+    });
     els["custom-mirror-colors"].addEventListener("change", function () {
       var checked = this.checked;
       commit(checked ? "Unlink mirrored palette" : "Link mirrored palette", function () {
@@ -2553,15 +4634,50 @@
     });
     els["add-room-button"].addEventListener("click", function () {
       if (rooms().length >= MAX_ROOMS) return;
+      if (state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) {
+        try {
+          var from = state.selectedGraphNode || state.document.layout.start;
+          var added = roomLayoutAuthoringMode() === "symmetric" ? createSymmetricRoomPair({}) : createAndPlaceRoom({ from: from });
+          commit("Create and place room", function () {
+            state.document = ensureDocumentShape(added.document);
+            state.selectedGraphNode = added.nodeId;
+            state.roomIndex = rooms().findIndex(function (room) { return room.id === added.roomId; });
+            state.selection = null;
+            state.workMode = "map";
+          });
+          announce("Created and placed " + added.roomId);
+        } catch (error) {
+          toast("Room could not be added", error.message, "error");
+        }
+        return;
+      }
       commit("Add room", function () {
         var id = nextRoomId("outer_" + rooms().length);
         rooms().push(newRoom(id, true));
         state.roomIndex = rooms().length - 1;
+        state.selection = null;
         state.document.layout.order = rooms().map(function (room) { return room.id; });
       });
     });
     els["duplicate-room-button"].addEventListener("click", function () {
       if (rooms().length >= MAX_ROOMS) return;
+      if (state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph")) {
+        try {
+          var graphCopy = roomLayoutAuthoringMode() === "symmetric" ? createSymmetricRoomPair({ copyFrom: activeRoom().id }) :
+            createAndPlaceRoom({ from: state.selectedGraphNode || state.document.layout.start, copyFrom: activeRoom().id });
+          commit("Copy and place room", function () {
+            state.document = ensureDocumentShape(graphCopy.document);
+            state.selectedGraphNode = graphCopy.nodeId;
+            state.roomIndex = rooms().findIndex(function (room) { return room.id === graphCopy.roomId; });
+            state.selection = null;
+            state.workMode = "map";
+          });
+          announce("Copied and placed " + graphCopy.roomId);
+        } catch (error) {
+          toast("Room could not be copied", error.message, "error");
+        }
+        return;
+      }
       commit("Duplicate room", function () {
         var copy = clone(activeRoom());
         copy.id = nextRoomId(copy.id + "_copy");
@@ -2569,18 +4685,25 @@
         try{GregObjects.duplicateRoom(state.document,activeRoom().id,copy.id,nextOrder);}catch(error){toast("Cannot duplicate room",error.message,"error");return;}
         rooms().splice(state.roomIndex + 1, 0, copy);
         state.roomIndex += 1;
+        state.selection = null;
         state.document.layout.order = rooms().map(function (room) { return room.id; });
       });
     });
     els["delete-room-button"].addEventListener("click", function () {
       if (rooms().length <= 1) return;
       var room = activeRoom();
+      if (state.document.layout.kind === (Core.ROOM_GRAPH_KIND || "room_graph") &&
+          (state.document.layout.nodes || []).some(function (node) { return node.room === room.id; })) {
+        toast("Room design is placed", "Remove its placed copies from Rooms before deleting this design.", "warning");
+        return;
+      }
       var nonempty = room.grid.some(function (row) { return row.some(function (glyph) { return glyph !== " " && glyph !== "."; }); });
       if (nonempty && !window.confirm('Delete non-empty room "' + room.id + '"? You can undo this action.')) return;
       commit("Delete room", function () {
         if(state.document.entities)state.document.entities.placements=state.document.entities.placements.filter(function(p){return p.room!==room.id;});
         rooms().splice(state.roomIndex, 1);
         state.roomIndex = Math.min(state.roomIndex, rooms().length - 1);
+        state.selection = null;
         state.document.layout.order = rooms().map(function (entry) { return entry.id; });
       });
       toast("Room deleted", "Undo is available.", "warning");
@@ -2596,7 +4719,7 @@
     document.querySelectorAll("[data-close-panel]").forEach(function (button) {
       button.addEventListener("click", function () { document.body.classList.remove(button.dataset.closePanel + "-open"); });
     });
-    els["mobile-rooms-button"].addEventListener("click", function () { document.querySelector(".room-rail").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+    els["mobile-rooms-button"].addEventListener("click", openRoomArrangement);
     els["mobile-preview-button"].addEventListener("click", launchPreview);
     els["mobile-preview-button"].addEventListener("contextmenu", function (event) {
       event.preventDefault();
@@ -2609,7 +4732,7 @@
       event.preventDefault();
       var before = historySnapshot("Create new map");
       state.document = makeNewDocument(els["new-map-author"].value.trim());
-      state.roomIndex = 0; state.idWasEdited = false;
+      state.roomIndex = 0; state.selection = null; state.idWasEdited = false;
       pushHistory(before, "Create new map");
       renderAll(); closeDialog(els["new-map-dialog"]);
       toast("New map created", "Two empty rooms are ready.");
@@ -2676,9 +4799,12 @@
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y" && !typing) { event.preventDefault(); redo(); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && !typing && state.selection) { event.preventDefault(); copySelection(false); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x" && !typing && state.selection) { event.preventDefault(); copySelection(true); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !typing && state.selectionClipboard) { event.preventDefault(); pasteSelection(); return; }
     if (typing) return;
     if (event.key === "/") { event.preventDefault(); els["tile-search"].focus(); return; }
-    var tools = { "1": "pencil", "2": "eraser", "3": "fill", "4": "line", "5": "rectangle", i: "eyedropper", I: "eyedropper" };
+    var tools = { "1": "pencil", "2": "eraser", "3": "fill", "4": "line", "5": "rectangle", "6": "select", i: "eyedropper", I: "eyedropper" };
     if (tools[event.key]) { event.preventDefault(); setTool(tools[event.key]); }
   }
 
@@ -2694,7 +4820,7 @@
     var rect = els["map-scroll"].getBoundingClientRect();
     var availableWidth = Math.max(280, rect.width - 76);
     var availableHeight = Math.max(160, rect.height - 76);
-    var ratio = Math.min(availableWidth / (COLS * 24), availableHeight / (ROWS * 24));
+    var ratio = Math.min(availableWidth / (roomCols() * 24), availableHeight / (roomRows() * 24));
     setZoom(Math.max(window.innerWidth <= 650 ? 1 : 0.5, Math.min(2, Math.floor(ratio * 4) / 4)), true);
   }
 
@@ -2981,7 +5107,7 @@
       }
       var entityEntries=entries.filter(function(entry){return dirname(entry.name).toLowerCase()===packageDir&&basename(entry.name)==="entities.json";});
       if(entityEntries.length>1)throw new Error("Duplicate object definitions.");
-      if(entityEntries.length){documentValue.entities=EntityAuthor.parse(decodeText(entityEntries[0],1048576));EntityAuthor.expandPlacements(documentValue.entities,documentValue.layout.order);}
+      if(entityEntries.length){documentValue.entities=EntityAuthor.parse(decodeText(entityEntries[0],1048576));EntityAuthor.expandPlacements(documentValue.entities,documentValue);}
       var logicEntries=entries.filter(function(entry){return dirname(entry.name).toLowerCase()===packageDir&&basename(entry.name)==="objects.greggnogg.json";});
       if(logicEntries.length>1)throw new Error("Duplicate object editor metadata.");
       if(logicEntries.length)documentValue=GregObjects.importLogic(documentValue,decodeText(logicEntries[0],1048576));
@@ -3000,6 +5126,7 @@
     var before = historySnapshot("Import map");
     state.document = ensureDocumentShape(state.pendingImport);
     state.roomIndex = 0;
+    state.selection = null;
     state.idWasEdited = true;
     pushHistory(before, "Import map");
     resetImportResult(); closeDialog(els["import-dialog"]); renderAll();
@@ -3011,7 +5138,7 @@
     var validation = validate();
     if (validation.errors.length) {
       jumpToIssue(validation.errors[0]);
-      toast("Export blocked", validation.errors[0].message, "error");
+      toast("Export blocked", validationBlockDetail(validation), "error");
       return null;
     }
     try {
@@ -3036,7 +5163,7 @@
     validation = validate();
     if (validation.errors.length) {
       jumpToIssue(validation.errors[0]);
-      toast("Preview blocked", validation.errors[0].message, "error");
+      toast("Preview blocked", validationBlockDetail(validation), "error");
       return null;
     }
     try {
@@ -3195,6 +5322,7 @@
       state.atlasReady = true;
       renderPalette();
       renderRoomCanvas();
+      renderRoomLayout();
       if (els["tile-lab-dialog"].open && els["tile-animation-playing"].checked) renderTileAnimation();
       toast("Game atlases loaded", "Previews use the original PNGs shipped in data/.");
     } catch (error) {
@@ -3218,6 +5346,11 @@
         return;
       }
       renderRoomCanvas();
+      if (performance.now() - state.secondaryPreviewLastTime >= 125) {
+        state.secondaryPreviewLastTime = performance.now();
+        refreshAnimatedPalettePreviews();
+        refreshAnimatedRoomPreviews();
+      }
     }
     window.requestAnimationFrame(frame);
   }

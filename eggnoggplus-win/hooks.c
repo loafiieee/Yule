@@ -19,6 +19,47 @@
 #include "preview_stage.h"
 #include "content_tiles.h"
 
+/* IsBadReadPtr/IsBadWritePtr are deprecated probing APIs and can themselves
+ * fault when an injected process hook instruments their guard-page accesses.
+ * Walk every covered virtual-memory region instead, so validation remains a
+ * pure query and read-only pages are never touched by a write probe. */
+static int hooks_ptr_accessible(const void* pointer, SIZE_T length, int writable) {
+    uintptr_t cursor;
+    uintptr_t end;
+    if (!pointer || length == 0) return 0;
+    cursor = (uintptr_t)pointer;
+    if (cursor > UINTPTR_MAX - (uintptr_t)length) return 0;
+    end = cursor + (uintptr_t)length;
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION region;
+        uintptr_t region_end;
+        DWORD protection;
+        if (VirtualQuery((const void*)cursor, &region, sizeof(region)) != sizeof(region) ||
+            region.State != MEM_COMMIT ||
+            (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) return 0;
+        protection = region.Protect & 0xffu;
+        if (writable) {
+            if (protection != PAGE_READWRITE && protection != PAGE_WRITECOPY &&
+                protection != PAGE_EXECUTE_READWRITE &&
+                protection != PAGE_EXECUTE_WRITECOPY) return 0;
+        } else if (protection != PAGE_READONLY && protection != PAGE_READWRITE &&
+                   protection != PAGE_WRITECOPY && protection != PAGE_EXECUTE_READ &&
+                   protection != PAGE_EXECUTE_READWRITE &&
+                   protection != PAGE_EXECUTE_WRITECOPY) return 0;
+        if ((uintptr_t)region.BaseAddress >
+            UINTPTR_MAX - (uintptr_t)region.RegionSize) return 0;
+        region_end = (uintptr_t)region.BaseAddress + (uintptr_t)region.RegionSize;
+        if (region_end <= cursor) return 0;
+        cursor = region_end < end ? region_end : end;
+    }
+    return 1;
+}
+
+#define IsBadReadPtr(pointer, length) \
+    (!hooks_ptr_accessible((pointer), (length), 0))
+#define IsBadWritePtr(pointer, length) \
+    (!hooks_ptr_accessible((pointer), (length), 1))
+
 #include <GL/gl.h>
 #ifdef __has_include
 #  if __has_include(<GL/glext.h>)
@@ -132,12 +173,15 @@ extern void SDL_free(void* mem);
 #define ADDR_MAD_INIT_AUDIO_STREAM    0x404240u
 #define ADDR_MAIN_UPDATE_WITH_BUTTONS 0x4340E0u
 #define ADDR_GAME_UPDATE              0x42C590u
+#define ADDR_GAME_INIT                0x4218A0u
 #define ADDR_MAIN_TALLY_TUNES         0x430640u
 #define ADDR_GAME_PICK_RANDOM_TUNE    0x4306C0u
 #define ADDR_MAD_TICKS                0x45F160u
+#define ADDR_MINE_ANIM_LAST_TICK      0x541EFCu
 #define ADDR_DEBUG                    0x541E04u
 #define ADDR_DEBUG_SLOWMO             0x547BA4u
 #define ADDR_MAIN_DRAW              0x4331A0u
+#define ADDR_BUTTONS_DRAW            0x415430u
 #define ADDR_MENU_COMMON_RENDER       0x4334E0u
 #define ADDR_MAIN_BUTTONS_START       0x432FD0u
 #define ADDR_GAME_RESET               0x42F750u
@@ -206,10 +250,34 @@ extern void SDL_free(void* mem);
 #define ADDR_WRAPPER_DESKTOP_W         0x4EDB74u
 #define ADDR_MAPGEN_INIT              0x437D30u
 #define ADDR_MAPGEN_BUILD_MAP         0x437DB0u
+#define ADDR_MAPGEN_ROOM_INFO         0x437F00u
+#define ADDR_ROOMDEF_COUNT            0x54A360u
+#define ADDR_THING_ROOMNUM            0x41EDC0u
+#define ADDR_GAME_UPDATE_CAMERA       0x4222A0u
+#define ADDR_SKELETON_STATUE          0x420B30u
+#define ADDR_GAME_RENDER              0x422AD0u
+#define ADDR_FIND_GOOD_SPOT           0x421010u
+#define ADDR_PLAYER_UPDATE_MOVEMENT   0x423A80u
+#define ADDR_SWORD_UPDATE_MOVEMENT    0x42B830u
+#define ADDR_HAZARD_UPDATE_MOVEMENT   0x42C080u
+#define ADDR_GAME_ROOM_COUNT          0x42F730u
+#define ADDR_MAP_PIXELS_H             0x434970u
+#define ADDR_MAP_H                    0x55A3A0u
+#define ADDR_ROOM_W                   0x55A3A4u
+#define ADDR_MAP_W                    0x55A3A8u
+#define ADDR_MAP_TILE                 0x434A50u
+#define ADDR_MAP_DRAW                 0x434BD0u
+#define ADDR_RESET_ROOM               0x41E990u
+#define ADDR_ROOM_PIXEL_W             0x55AB34u
 #define ADDR_TILE_ACTION_EX           0x440250u
 #define ADDR_HIGH_WATER_ACTION        0x43C730u
 #define ADDR_SPAWN_THING_ACTION       0x43CA20u
 #define ADDR_SWORD_NEW                0x421C30u
+#define ADDR_TRIGGER_MINE_POS         0x41E900u
+#define ADDR_MINE_ANIM                0x4250C0u
+#define ADDR_PLAYER_CHECK_OPPONENT_HIT 0x425930u
+#define ADDR_PLAYER_ANIM_PUNCH        0x41E4A0u
+#define ADDR_MAP_COORD_TILE           0x434B30u
 #define ADDR_GAME_WATER_HI_COLOUR     0x420100u
 #define ADDR_GAME_WATER_COLOUR        0x4201D0u
 #define ADDR_GAME_PLAYER_COLOUR_INDEX 0x41FE40u
@@ -272,6 +340,8 @@ extern void SDL_free(void* mem);
 #define ADDR_SYNTH_EFFECT_WHISTLING   0x41BBD0u
 #define ADDR_SOUND_SWORD_CHING        0x425D70u
 #define ADDR_SYNTH_EFFECTS_INIT       0x408780u
+#define ADDR_SYN_UPDATE               0x405E40u
+#define ADDR_PARTICLES_DRAW_EX        0x418740u
 #define ADDR_SYN_ENABLE_RANGE         0x406F40u
 #define ADDR_SYNTH_ENGINE             0x5540E0u
 
@@ -290,8 +360,16 @@ extern void SDL_free(void* mem);
 #define PLAYER_OFS_Y                  0x28u
 #define PLAYER_OFS_VX                 0x34u
 #define PLAYER_OFS_VY                 0x38u
+#define PLAYER_OFS_RESPAWN_UNGROUNDED 0x10u
 #define PLAYER_OFS_STATE_ID           0x78u
 #define PLAYER_OFS_ROOM               0x9Bu
+#define PLAYER_OFS_FACING             0x98u
+#define PLAYER_OFS_HAS_SWORD          0x11u
+#define PLAYER_OFS_PREV_CMD_BITS      0x9Eu
+#define PLAYER_OFS_CMD_BITS           0x9Fu
+#define PLAYER_OFS_PREV_COLLISION     0xACu
+#define PLAYER_OFS_COLLISION_FLAGS    0xADu
+#define PLAYER_COLLIDE_GROUNDED       0x01u
 #define PLAYER_STATE_DEAD_BODY        0x08u
 
 #define THING_SIZE                    0x15Cu
@@ -436,6 +514,7 @@ typedef enum RowKind {
     ROW_INFO,
     ROW_FW_TOGGLE,   // framework-level toggle (cfg_index = FW_SETTING_*)
     ROW_FW_ACTION,   // framework-level action (cfg_index = FW_ACTION_*)
+    ROW_FW_VALUE,    // framework-level bounded integer (cfg_index = FW_VALUE_*)
 } RowKind;
 
 // Framework-level settings shown at the top of the mods menu (cfg_index of a ROW_FW_TOGGLE row).
@@ -443,6 +522,8 @@ typedef enum RowKind {
 #define FW_SETTING_AUTO_UPDATE 1
 #define FW_SETTING_DISCORD_PRESENCE 2
 #define FW_ACTION_UPDATE       0
+#define FW_VALUE_MUSIC_VOLUME  0
+#define FW_VALUE_SFX_VOLUME    1
 
 typedef enum CaptureKind {
     CAPTURE_NONE = 0,
@@ -694,6 +775,7 @@ typedef void* (__cdecl *fn_state_switch_t)(void*);
 typedef int   (__cdecl *fn_main_update_with_buttons_t)(int);
 typedef void  (__cdecl *fn_game_update_t)(int);
 typedef void  (__cdecl *fn_void_void_t)(void);
+typedef void* (__cdecl *fn_mapgen_room_info_t)(int);
 typedef void  (__cdecl *fn_mad_init_audio_stream_t)(int, int);
 typedef void  (__cdecl *fn_main_cursors_reset_t)(float, float);
 typedef void  (__cdecl *fn_main_cursor_spin_t)(int);
@@ -725,6 +807,8 @@ typedef int (__cdecl *fn_tile_action_t)(void*, int, int, int, int);
 typedef void (__cdecl *fn_colour_query_t)(float*);
 typedef int (__cdecl *fn_synth_callback_t)(void*);
 typedef void (__cdecl *fn_synth_effects_init_t)(int, int);
+typedef void (__cdecl *fn_syn_update_t)(void*, int16_t*, int);
+typedef void (__cdecl *fn_particles_draw_ex_t)(int, float, float, int);
 typedef void* (__cdecl *fn_sound_sword_ching_t)(float, float);
 typedef void (__cdecl *fn_syn_enable_range_t)(int, uint32_t, uint32_t, int);
 typedef int   (__cdecl *fn_game_player_colour_index_t)(uint32_t, int);
@@ -734,6 +818,10 @@ typedef int   (__cdecl *fn_game_inc_player_colour_ex_t)(uint32_t, int, int);
 typedef void  (__cdecl *fn_angle_colour_t)(float*, float, float, float);
 typedef void* (__cdecl *fn_thing_new_t)(int);
 typedef void* (__cdecl *fn_sword_new_t)(void);
+typedef void (__cdecl *fn_trigger_mine_pos_t)(float, float);
+typedef void (__cdecl *fn_mine_anim_t)(void*);
+typedef int (__cdecl *fn_player_check_opponent_hit_t)(int,float,float,int,float,int);
+typedef uint8_t* (__cdecl *fn_map_coord_tile_t)(float, float);
 typedef void (__cdecl *fn_glitch_audio_callback_t)(int16_t*, int, int);
 
 static fn_state_current_t            p_state_current = (fn_state_current_t)(uintptr_t)ADDR_STATE_CURRENT;
@@ -741,7 +829,10 @@ static fn_state_current_t            p_state_last = (fn_state_current_t)(uintptr
 static fn_state_switch_t             p_state_switch = (fn_state_switch_t)(uintptr_t)ADDR_STATE_SWITCH;
 static fn_main_update_with_buttons_t p_main_update_with_buttons = (fn_main_update_with_buttons_t)(uintptr_t)ADDR_MAIN_UPDATE_WITH_BUTTONS;
 static fn_game_update_t              p_game_update = (fn_game_update_t)(uintptr_t)ADDR_GAME_UPDATE;
+static fn_void_void_t                p_game_init = (fn_void_void_t)(uintptr_t)ADDR_GAME_INIT;
 static fn_mad_init_audio_stream_t    p_mad_init_audio_stream_trampoline = NULL;
+static fn_syn_update_t               p_syn_update_trampoline = NULL;
+static fn_particles_draw_ex_t        p_particles_draw_ex_trampoline = NULL;
 static fn_void_void_t                p_main_tally_tunes = (fn_void_void_t)(uintptr_t)ADDR_MAIN_TALLY_TUNES;
 static fn_void_void_t                p_game_pick_random_tune = (fn_void_void_t)(uintptr_t)ADDR_GAME_PICK_RANDOM_TUNE;
 static fn_void_void_t                p_main_draw = (fn_void_void_t)(uintptr_t)ADDR_MAIN_DRAW;
@@ -800,19 +891,55 @@ extern void* p_SDL_SetWindowFullscreen;
 extern volatile LONG g_proxy_sdl_display_override;
 static fn_void_void_t                p_mapgen_init = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_INIT;
 static fn_void_void_t                p_mapgen_build_map = (fn_void_void_t)(uintptr_t)ADDR_MAPGEN_BUILD_MAP;
+static fn_mapgen_room_info_t         p_mapgen_room_info =
+    (fn_mapgen_room_info_t)(uintptr_t)ADDR_MAPGEN_ROOM_INFO;
+typedef int (__cdecl *fn_thing_roomnum_t)(float);
+typedef void (__cdecl *fn_game_update_camera_t)(float, float, float, float);
+typedef void (__cdecl *fn_map_draw_t)(float, float);
+typedef void (__attribute__((regparm(1))) *fn_skeleton_statue_t)(void*);
+typedef int (__attribute__((regparm(2))) *fn_find_good_spot_t)(void*, int);
+typedef void (__attribute__((regparm(1))) *fn_player_update_movement_t)(void*);
+typedef void (__cdecl *fn_thing_update_movement_t)(void*);
+typedef void (__attribute__((regparm(1))) *fn_thing_free_t)(void*);
+typedef int (__cdecl *fn_int_void_t)(void);
+typedef void* (__cdecl *fn_map_tile_raw_t)(int, int);
+typedef void (__attribute__((regparm(1))) *fn_reset_room_t)(int);
+static fn_thing_roomnum_t            p_thing_roomnum_trampoline = NULL;
+static fn_game_update_camera_t       p_game_update_camera_trampoline = NULL;
+static fn_skeleton_statue_t          p_skeleton_statue_trampoline = NULL;
+static fn_void_void_t                p_game_render_trampoline = NULL;
+static fn_void_void_t                p_buttons_draw_trampoline = NULL;
+static fn_map_draw_t                 p_map_draw_trampoline = NULL;
+static fn_find_good_spot_t           p_find_good_spot_trampoline = NULL;
+static fn_player_update_movement_t   p_player_update_movement_trampoline = NULL;
+static fn_thing_update_movement_t    p_sword_update_movement_trampoline = NULL;
+static fn_thing_update_movement_t    p_hazard_update_movement_trampoline = NULL;
+static fn_thing_free_t               p_thing_free =
+    (fn_thing_free_t)(uintptr_t)0x41ED50u;
+static fn_int_void_t                 p_game_room_count_trampoline = NULL;
+static fn_int_void_t                 p_map_pixels_h_trampoline = NULL;
+static fn_map_tile_raw_t             p_map_tile_raw_trampoline = NULL;
+static fn_reset_room_t               p_reset_room_trampoline = NULL;
 static fn_tile_action_t              p_tile_action_ex = (fn_tile_action_t)(uintptr_t)ADDR_TILE_ACTION_EX;
 static fn_thing_new_t                p_thing_new_trampoline = NULL;
 static fn_sword_new_t                p_sword_new = (fn_sword_new_t)(uintptr_t)ADDR_SWORD_NEW;
+static fn_trigger_mine_pos_t         p_trigger_mine_pos = (fn_trigger_mine_pos_t)(uintptr_t)ADDR_TRIGGER_MINE_POS;
+static fn_mine_anim_t                p_mine_anim_trampoline = NULL;
+static fn_player_check_opponent_hit_t p_player_check_opponent_hit_trampoline = NULL;
+static fn_map_coord_tile_t           p_map_coord_tile = (fn_map_coord_tile_t)(uintptr_t)ADDR_MAP_COORD_TILE;
 static fn_void_void_t                p_options_enter_trampoline = NULL;
 static fn_void_void_t                p_options_enter_paused_trampoline = NULL;
 static fn_void_void_t                p_mapgen_init_trampoline = NULL;
 static fn_void_void_t                p_mapgen_build_map_trampoline = NULL;
+static fn_mapgen_room_info_t         p_mapgen_room_info_trampoline = NULL;
 static fn_tile_action_t              p_tile_action_ex_trampoline = NULL;
 static fn_state_switch_t             p_state_switch_trampoline = NULL;
 static fn_main_update_with_buttons_t p_main_update_with_buttons_trampoline = NULL;
 static fn_game_update_t              p_game_update_trampoline = NULL;
+static fn_void_void_t                p_game_init_trampoline = NULL;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds = (fn_main_player_poll_cmds_t)(uintptr_t)ADDR_MAIN_PLAYER_POLL_CMDS;
 static fn_main_player_poll_cmds_t    p_main_player_poll_cmds_trampoline = NULL;
+static fn_main_sprite_batches_draw_t p_main_sprite_batches_draw_trampoline = NULL;
 static fn_tile_action_t              p_high_water_action_trampoline = NULL;
 static fn_tile_action_t              p_spawn_thing_action_trampoline = NULL;
 static fn_atlas_upload_t             p_atlas_upload_trampoline = NULL;
@@ -847,6 +974,10 @@ static volatile int* g_tilemap_width = (volatile int*)(uintptr_t)ADDR_TILEMAP_W;
 static volatile int* g_tilemap_height = (volatile int*)(uintptr_t)ADDR_TILEMAP_H;
 static volatile int* g_tile_width = (volatile int*)(uintptr_t)ADDR_TILE_W;
 static volatile int* g_tile_height = (volatile int*)(uintptr_t)ADDR_TILE_H;
+static volatile int* g_room_pixel_width = (volatile int*)(uintptr_t)ADDR_ROOM_PIXEL_W;
+static volatile int* g_native_map_h = (volatile int*)(uintptr_t)ADDR_MAP_H;
+static volatile int* g_native_room_w = (volatile int*)(uintptr_t)ADDR_ROOM_W;
+static volatile int* g_native_map_w = (volatile int*)(uintptr_t)ADDR_MAP_W;
 static volatile int* g_debug = (volatile int*)(uintptr_t)ADDR_DEBUG;
 static volatile int* g_debug_slowmo = (volatile int*)(uintptr_t)ADDR_DEBUG_SLOWMO;
 static volatile int* g_game_started = (volatile int*)(uintptr_t)ADDR_GAME_STARTED;
@@ -880,28 +1011,59 @@ void* g_draw_player_body_trampoline = NULL;
 void* g_sprite_batch_plot_trampoline = NULL;
 void* g_turtle_trans_trampoline = NULL;
 static volatile int g_player_body_hidden[2] = {0, 0};
+static int g_render_hide_players_drawing = 0;
+static int g_render_hide_heads_drawing = 0;
 static volatile float g_player_sword_idle_offset[2][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}};
+/* game_update copies the current command byte over its native previous-command
+ * byte before map callbacks run. Preserve the pre-tick value at the single
+ * live/replay tick boundary so map.lua can observe real input edges. */
+static uint8_t g_map_script_previous_commands[2] = {0, 0};
+static uintptr_t g_map_script_previous_command_players[2] = {0, 0};
+static uint8_t g_map_script_previous_commands_valid = 0;
 
 static Detour g_options_enter_detour;
 static Detour g_options_enter_paused_detour;
 static Detour g_mad_init_audio_stream_detour;
+static Detour g_syn_update_detour;
+static Detour g_particles_draw_ex_detour;
 static volatile LONG g_framework_audio_config_rate =
     FRAMEWORK_AUDIO_OUTPUT_RATE;
 static volatile LONG g_framework_audio_active_rate = 0;
+static volatile LONG g_framework_music_volume = 100;
+static volatile LONG g_framework_sfx_volume = 100;
 static Detour g_state_switch_detour;
 static Detour g_main_update_with_buttons_detour;
 static Detour g_game_update_detour;
+static Detour g_game_init_detour;
 static Detour g_thing_new_detour;
+static Detour g_player_check_opponent_hit_detour;
+static Detour g_mine_anim_detour;
 static Detour g_main_player_poll_cmds_detour;
 static Detour g_rgba_load_detour;
 static Detour g_mapgen_init_detour;
 static Detour g_mapgen_build_map_detour;
+static Detour g_mapgen_room_info_detour;
+static Detour g_thing_roomnum_detour;
+static Detour g_game_update_camera_detour;
+static Detour g_skeleton_statue_detour;
+static Detour g_game_render_detour;
+static Detour g_buttons_draw_detour;
+static Detour g_map_draw_detour;
+static Detour g_find_good_spot_detour;
+static Detour g_player_update_movement_detour;
+static Detour g_sword_update_movement_detour;
+static Detour g_hazard_update_movement_detour;
+static Detour g_game_room_count_detour;
+static Detour g_map_pixels_h_detour;
+static Detour g_map_tile_raw_detour;
+static Detour g_reset_room_detour;
 static Detour g_tile_action_ex_detour;
 static Detour g_high_water_action_detour;
 static Detour g_spawn_thing_action_detour;
 static Detour g_eggnogg_colour_detour;
 static void (__cdecl *p_eggnogg_colour_trampoline)(float* rgb);
 static Detour g_atlas_upload_detour;
+static Detour g_main_sprite_batches_draw_detour;
 static Detour g_game_player_colour_index_detour;
 static Detour g_game_set_player_colour_index_detour;
 static Detour g_game_player_colour_detour;
@@ -921,12 +1083,14 @@ static Detour g_synth_effect_whistling_detour;
 static Detour g_sound_sword_ching_detour;
 static volatile LONG g_content_bridge_enabled = 0;
 static volatile LONG g_thing_lifecycle_tracking_enabled = 0;
-/* A V2 map may provide one complete native-layout tile sheet.  The qualified
- * key is copied at map-build time; atlas ids/pointers are intentionally
- * resolved at draw time because the framework can rebuild the atlas. */
+/* A V2 map may select one complete native-layout sheet per source room. The
+ * qualified key is refreshed at room boundaries; atlas ids/pointers remain
+ * draw-time lookups because the framework can rebuild the atlas. */
 static char g_map_native_tileset_sheet[CONTENT_SHEET_KEY_MAX] = {0};
 static int g_map_native_tileset_sprite_count = 0;
 static int g_map_native_tileset_enabled = 0;
+static int g_map_native_tileset_selector = -1;
+static int g_map_native_tileset_room = -1;
 
 static MenuRow g_rows[MAX_MENU_ROWS];
 static int g_row_count = 0;
@@ -1102,6 +1266,8 @@ static int is_mods_state_active(void);
 static int is_console_state_active(void);
 static uint32_t hooks_apply_effective_overrides(uint32_t player_index, uint32_t cmd, int consume_poll_override);
 static void hooks_finish_game_tick(void);
+static void framework_audio_update_callback_ownership(void);
+static int framework_audio_set_volume(int music,int percent);
 static void online_sent_challenge_add(const char* username, int id, int expires_in);
 static void online_sent_challenge_remove(const char* username, int id);
 static void online_sent_challenge_prune(void);
@@ -1567,6 +1733,8 @@ static int g_online_result_toast_rendered_this_swap = 0;
 static int g_online_challenge_toast_rendered_this_swap = 0;
 static OnlineViewportSnapshot g_online_viewport;
 static volatile int* g_hook_map_selector = (volatile int*)(uintptr_t)ADDR_MAP_SELECTOR;
+static volatile int* g_native_roomdef_count =
+    (volatile int*)(uintptr_t)ADDR_ROOMDEF_COUNT;
 static volatile uintptr_t* g_game_leader = (volatile uintptr_t*)(uintptr_t)ADDR_LEADER;
 static volatile uintptr_t* g_game_loser = (volatile uintptr_t*)(uintptr_t)ADDR_LOSER;
 static volatile int* g_game_end_countdown = (volatile int*)(uintptr_t)ADDR_END_COUNTDOWN;
@@ -2001,25 +2169,35 @@ static void hooks_resolve_player_colour(int index, float out[4]) {
 
 static int __cdecl hooked_game_player_colour_index(uint32_t player_index, int clothing) {
     int slot = hooks_player_colour_slot(player_index, clothing);
-    return g_player_clr_index ? g_player_clr_index[slot] : 0;
+    return g_player_clr_index &&
+           hooks_ptr_accessible((const void*)(g_player_clr_index + slot), sizeof(int), 0)
+        ? g_player_clr_index[slot] : 0;
 }
 
 static int __cdecl hooked_game_set_player_colour_index(uint32_t player_index, int clothing, uint32_t colour_index) {
     int slot = hooks_player_colour_slot(player_index, clothing);
     int wrapped = hooks_wrap_player_colour_index((int32_t)colour_index);
-    if (g_player_clr_index) g_player_clr_index[slot] = wrapped;
+    if (g_player_clr_index &&
+        hooks_ptr_accessible((const void*)(g_player_clr_index + slot), sizeof(int), 1)) {
+        g_player_clr_index[slot] = wrapped;
+    }
     return wrapped;
 }
 
 int hooks_player_colour_index(int player_index, int clothing) {
     int slot = hooks_player_colour_slot((uint32_t)player_index, clothing);
-    return g_player_clr_index ? g_player_clr_index[slot] : 0;
+    return g_player_clr_index &&
+           hooks_ptr_accessible((const void*)(g_player_clr_index + slot), sizeof(int), 0)
+        ? g_player_clr_index[slot] : 0;
 }
 
 int hooks_set_player_colour_index(int player_index, int clothing, int colour_index) {
     int slot = hooks_player_colour_slot((uint32_t)player_index, clothing);
     int wrapped = hooks_wrap_player_colour_index(colour_index);
-    if (g_player_clr_index) g_player_clr_index[slot] = wrapped;
+    if (g_player_clr_index &&
+        hooks_ptr_accessible((const void*)(g_player_clr_index + slot), sizeof(int), 1)) {
+        g_player_clr_index[slot] = wrapped;
+    }
     return wrapped;
 }
 
@@ -2050,7 +2228,14 @@ static int hooks_player_index_for_ptr(uintptr_t player_ptr) {
 
 int __cdecl hooks_should_skip_draw_player_body(uintptr_t player_ptr) {
     int slot = hooks_player_index_for_ptr(player_ptr);
-    return slot >= 0 ? hooks_player_body_hidden(slot) : 0;
+    MapScriptPlayerPresentation presentation;
+    MapScriptPlayerSprite sprite;
+    if(slot<0)return 0;
+    if(hooks_player_body_hidden(slot))return 1;
+    if(map_script_player_sprite((uint32_t)slot,&sprite))return 1;
+    return map_script_player_presentation((uint32_t)slot,&presentation) &&
+           (presentation.flags&MAP_SCRIPT_PLAYER_PRESENTATION_BODY_VISIBLE) &&
+           !presentation.body_visible;
 }
 
 static int hooks_is_player_body_sprite_call(uintptr_t return_addr) {
@@ -2070,6 +2255,11 @@ static int hooks_is_player_body_sprite_call(uintptr_t return_addr) {
 
 int __cdecl hooks_should_skip_sprite_batch_plot(uintptr_t return_addr, uintptr_t player_ptr, int sprite) {
     (void)sprite;
+    /* These four draw_things sites are the two glyphs of each off-screen
+     * player marker. Keep them independent of the player's body setting. */
+    if (return_addr == 0x41C71Cu || return_addr == 0x41C750u ||
+        return_addr == 0x41C814u || return_addr == 0x41C84Au)
+        return g_render_hide_heads_drawing;
     if (!hooks_is_player_body_sprite_call(return_addr)) return 0;
     return hooks_should_skip_draw_player_body(player_ptr);
 }
@@ -2159,26 +2349,36 @@ static void __cdecl hooked_game_player_colour(float* out, uint32_t player_index,
     int clothing_index = g_player_clr_index ? g_player_clr_index[player + 2] : 0;
     int selected_index = clothing ? clothing_index : skin_index;
     float colour[4];
+    MapScriptPlayerPresentation presentation;
+    uint32_t tint=0;
+    int has_tint=0;
 
     if (!out) return;
     if (p_game_player_colour_trampoline &&
         skin_index >= 0 && skin_index < VANILLA_PLAYER_COLOUR_COUNT &&
         clothing_index >= 0 && clothing_index < VANILLA_PLAYER_COLOUR_COUNT) {
         p_game_player_colour_trampoline(out, player_index, clothing);
-        return;
+    } else {
+        hooks_resolve_player_colour(selected_index, colour);
+        if (clothing && skin_index == clothing_index && skin_index != 0x0d) {
+            colour[0] *= 0.75f;
+            colour[1] *= 0.75f;
+            colour[2] *= 0.75f;
+        }
+        out[0] = colour[0];out[1] = colour[1];out[2] = colour[2];out[3] = colour[3];
     }
-
-    hooks_resolve_player_colour(selected_index, colour);
-    if (clothing && skin_index == clothing_index && skin_index != 0x0d) {
-        colour[0] *= 0.75f;
-        colour[1] *= 0.75f;
-        colour[2] *= 0.75f;
+    if(map_script_player_presentation((uint32_t)player,&presentation)) {
+        uint8_t flag=clothing?MAP_SCRIPT_PLAYER_PRESENTATION_CLOTHING_TINT:
+            MAP_SCRIPT_PLAYER_PRESENTATION_SKIN_TINT;
+        has_tint=(presentation.flags&flag)!=0;
+        if(has_tint)tint=clothing?presentation.clothing_tint:presentation.skin_tint;
     }
-
-    out[0] = colour[0];
-    out[1] = colour[1];
-    out[2] = colour[2];
-    out[3] = colour[3];
+    if(has_tint) {
+        out[0]*=(float)((tint>>24)&255u)/255.0f;
+        out[1]*=(float)((tint>>16)&255u)/255.0f;
+        out[2]*=(float)((tint>>8)&255u)/255.0f;
+        out[3]*=(float)(tint&255u)/255.0f;
+    }
 }
 
 static int hooks_player_colour_combo_matches(int player) {
@@ -3310,6 +3510,8 @@ static void rebuild_rows(void) {
     char update_line_display[64];
     char latest_display[40];
     char update_action[192];
+    char music_volume[16];
+    char sfx_volume[16];
     rows_clear();
 
     // Framework settings (apply to the mod framework itself, not a specific mod).
@@ -3324,6 +3526,16 @@ static void rebuild_rows(void) {
              discord_rpc_ext_available()
                  ? (discord_rpc_ext_enabled() ? "ON" : "OFF")
                  : "UNAVAILABLE");
+    snprintf(music_volume, sizeof(music_volume), "%ld%%",
+             (long)InterlockedCompareExchange(
+                 &g_framework_music_volume, 0, 0));
+    snprintf(sfx_volume, sizeof(sfx_volume), "%ld%%",
+             (long)InterlockedCompareExchange(
+                 &g_framework_sfx_volume, 0, 0));
+    rows_add(ROW_FW_VALUE, 1, -1, FW_VALUE_MUSIC_VOLUME,
+             "  Music volume", music_volume);
+    rows_add(ROW_FW_VALUE, 1, -1, FW_VALUE_SFX_VOLUME,
+             "  SFX volume", sfx_volume);
 
     update_status = update_ext_status();
     update_line = update_ext_status_line();
@@ -3575,6 +3787,13 @@ static void apply_adjustment_on_selected(int delta) {
                 LOG_WARN("[discord] could not persist Rich Presence setting");
             }
         }
+    } else if (row->kind == ROW_FW_VALUE) {
+        int music = row->cfg_index == FW_VALUE_MUSIC_VOLUME;
+        volatile LONG* target = music
+            ? &g_framework_music_volume : &g_framework_sfx_volume;
+        int current = (int)InterlockedCompareExchange(target, 0, 0);
+        framework_audio_set_volume(
+            music, current + (delta < 0 ? -5 : 5));
     }
 
     rebuild_rows();
@@ -3629,6 +3848,12 @@ static void activate_selected(void) {
                 LOG_WARN("[discord] could not persist Rich Presence setting");
             }
         }
+    } else if (row->kind == ROW_FW_VALUE) {
+        int music = row->cfg_index == FW_VALUE_MUSIC_VOLUME;
+        volatile LONG* target = music
+            ? &g_framework_music_volume : &g_framework_sfx_volume;
+        int current = (int)InterlockedCompareExchange(target, 0, 0);
+        framework_audio_set_volume(music, current + 5);
     } else if (row->kind == ROW_FW_ACTION && row->cfg_index == FW_ACTION_UPDATE) {
         UpdateStatus status = update_ext_status();
         if (status == UPDATE_AVAILABLE) {
@@ -6810,17 +7035,53 @@ static void framework_audio_load_config(void) {
     char value[64];
     char* end = NULL;
     long parsed;
-    if (!update_ext_config_get(
-            "music_output_rate", value, sizeof(value))) {
-        return;
+    const char* keys[2] = {"music_volume", "sfx_volume"};
+    volatile LONG* targets[2] = {
+        &g_framework_music_volume, &g_framework_sfx_volume
+    };
+    if (update_ext_config_get("music_output_rate", value, sizeof(value))) {
+        parsed = strtol(value, &end, 10);
+        if (!end || *end != '\0' || !framework_audio_rate_valid(parsed)) {
+            LOG_WARN("[music] ignoring invalid music_output_rate=%s "
+                     "(expected 8000..192000)", value);
+        } else {
+            InterlockedExchange(&g_framework_audio_config_rate, (LONG)parsed);
+        }
     }
-    parsed = strtol(value, &end, 10);
-    if (!end || *end != '\0' || !framework_audio_rate_valid(parsed)) {
-        LOG_WARN("[music] ignoring invalid music_output_rate=%s "
-                 "(expected 8000..192000)", value);
-        return;
+    for (int i = 0; i < 2; i++) {
+        if (!update_ext_config_get(keys[i], value, sizeof(value))) continue;
+        end = NULL;
+        parsed = strtol(value, &end, 10);
+        if (!end || *end != '\0' || parsed < 0 || parsed > 100) {
+            LOG_WARN("[audio] ignoring invalid %s=%s (expected 0..100)",
+                     keys[i], value);
+        } else {
+            InterlockedExchange(targets[i], (LONG)parsed);
+        }
     }
-    InterlockedExchange(&g_framework_audio_config_rate, (LONG)parsed);
+    lua_manager_set_master_audio_volumes(
+        (int)InterlockedCompareExchange(&g_framework_sfx_volume, 0, 0),
+        (int)InterlockedCompareExchange(&g_framework_music_volume, 0, 0));
+}
+
+static int framework_audio_set_volume(int music,int percent) {
+    char value[16];
+    const char* key = music ? "music_volume" : "sfx_volume";
+    volatile LONG* target = music
+        ? &g_framework_music_volume : &g_framework_sfx_volume;
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    snprintf(value, sizeof(value), "%d", percent);
+    if (!update_ext_config_set(key, value)) {
+        LOG_WARN("[audio] could not persist %s", key);
+        return 0;
+    }
+    InterlockedExchange(target, (LONG)percent);
+    lua_manager_set_master_audio_volumes(
+        (int)InterlockedCompareExchange(&g_framework_sfx_volume, 0, 0),
+        (int)InterlockedCompareExchange(&g_framework_music_volume, 0, 0));
+    framework_audio_update_callback_ownership();
+    return 1;
 }
 
 static int framework_audio_apply_rate(int requested_rate) {
@@ -6860,6 +7121,28 @@ static void __cdecl hooked_mad_init_audio_stream(int requested_rate,
     if (selected_rate != requested_rate) {
         LOG_INFO("[music] mixer output upgraded from %d Hz to %d Hz",
                  requested_rate, selected_rate);
+    }
+    framework_audio_update_callback_ownership();
+}
+
+static int16_t framework_audio_scale_sample(int16_t sample,LONG percent) {
+    int value;
+    if (percent <= 0) return 0;
+    if (percent >= 100) return sample;
+    value = ((int)sample * (int)percent) / 100;
+    if (value < -32768) value = -32768;
+    if (value > 32767) value = 32767;
+    return (int16_t)value;
+}
+
+static void __cdecl hooked_syn_update(void* synth,int16_t* samples,int count) {
+    LONG volume;
+    if (!p_syn_update_trampoline) return;
+    p_syn_update_trampoline(synth, samples, count);
+    volume = InterlockedCompareExchange(&g_framework_sfx_volume, 0, 0);
+    if (!samples || count <= 0 || count > 1048576 || volume >= 100) return;
+    for (int i = 0; i < count; i++) {
+        samples[i] = framework_audio_scale_sample(samples[i], volume);
     }
 }
 
@@ -7242,6 +7525,17 @@ static void __cdecl framework_tune_audio_callback(int16_t* samples,
     if (previous && previous != framework_tune_audio_callback) {
         previous(samples, frame_count, output_rate);
     }
+    {
+        LONG volume=InterlockedCompareExchange(&g_framework_music_volume,0,0);
+        if (volume < 100) {
+            for (frame = 0; frame < frame_count; frame++) {
+                samples[frame * 2] = framework_audio_scale_sample(
+                    samples[frame * 2], volume);
+                samples[frame * 2 + 1] = framework_audio_scale_sample(
+                    samples[frame * 2 + 1], volume);
+            }
+        }
+    }
 
     if (g_framework_tune.lock_initialized &&
         TryEnterCriticalSection(&g_framework_tune.lock)) {
@@ -7284,11 +7578,12 @@ static void __cdecl framework_tune_audio_callback(int16_t* samples,
                     }
                     g_framework_tune.source_t++;
                 }
+                LONG volume=InterlockedCompareExchange(&g_framework_music_volume,0,0);
                 samples[frame * 2] = framework_tune_mix_sample(
-                    samples[frame * 2], g_framework_tune.held_left);
+                    samples[frame * 2], framework_audio_scale_sample(g_framework_tune.held_left,volume));
                 samples[frame * 2 + 1] = framework_tune_mix_sample(
                     samples[frame * 2 + 1],
-                    g_framework_tune.held_right);
+                    framework_audio_scale_sample(g_framework_tune.held_right,volume));
             }
         }
         LeaveCriticalSection(&g_framework_tune.lock);
@@ -7301,7 +7596,8 @@ static void __cdecl framework_tune_audio_callback(int16_t* samples,
 static void framework_audio_update_callback_ownership(void) {
     fn_glitch_audio_callback_t current;
     int needed = g_framework_tune.active ||
-                 lua_manager_audio_generated_active();
+                 lua_manager_audio_generated_active() ||
+                 InterlockedCompareExchange(&g_framework_music_volume,0,0)!=100;
     if (!g_native_glitch_callback) return;
     current = *g_native_glitch_callback;
     if (needed) {
@@ -9596,10 +9892,25 @@ static void online_set_prematch_error(char* err, size_t err_cap,
 static int online_validate_pinned_map_script(int selector,
                                              char* err,
                                              size_t err_cap) {
+    char pinned_map_key[128];
     uint64_t expected_script_id = 0;
     uint64_t active_script_id = map_script_is_active()
         ? map_script_active_id() : 0;
     int pinned = custom_maps_pinned_script_id(selector, &expected_script_id);
+    if (custom_maps_pinned_online_key(selector, pinned_map_key,
+                                      sizeof(pinned_map_key)) != 1 ||
+        !g_online_pending_match.map_key[0] ||
+        _stricmp(pinned_map_key, g_online_pending_match.map_key) != 0) {
+        online_set_prematch_error(
+            err, err_cap,
+            "The selected map changed after matchmaking. Refresh maps and try again.");
+        LOG_ERROR("online.prematch: pinned map identity mismatch selector=%d expected=%s pinned=%s",
+                  selector,
+                  g_online_pending_match.map_key[0]
+                      ? g_online_pending_match.map_key : "<missing>",
+                  pinned_map_key[0] ? pinned_map_key : "<unavailable>");
+        return 0;
+    }
     if (!map_script_network_admissible(err, err_cap)) return 0;
     if (pinned < 0) {
         online_set_prematch_error(
@@ -9815,12 +10126,12 @@ static void online_server_begin_pending_match(const char* line) {
         return;
     }
 
-    if (map_key_result < ONLINE_CONTROL_JSON_NOT_FOUND) {
-        online_abort_prematch_setup("server sent an invalid map key");
+    if (map_key_result != ONLINE_CONTROL_JSON_OK ||
+        !g_online_pending_match.map_key[0]) {
+        online_abort_prematch_setup("server sent a missing or invalid map key");
         return;
     }
-    if (map_key_result == ONLINE_CONTROL_JSON_OK &&
-        g_online_pending_match.map_key[0]) {
+    {
         int selector = 0;
         if (!custom_maps_selector_for_key(g_online_pending_match.map_key, &selector)) {
             online_abort_prematch_setup("selected map is not installed or changed since matchmaking");
@@ -15573,6 +15884,37 @@ void hooks_clear_ai_match(void) {
     g_ai_match_training = 0;
 }
 
+static int hooks_room_connection_allows(uintptr_t player, int connection,
+                                        int* out_crossing_focus) {
+    int policy = 0;
+    int focus = 0;
+    int slot = -1;
+    int is_go = g_game_leader && *g_game_leader == player;
+    if (out_crossing_focus) *out_crossing_focus = 0;
+    if (custom_maps_room_connection_policy(
+            g_hook_map_selector ? *g_hook_map_selector : -1,
+            connection, &policy, &focus) < 0) return 0;
+    if (p_player_slots) {
+        if (p_player_slots[0] == player) slot = 0;
+        else if (p_player_slots[1] == player) slot = 1;
+    }
+    if (slot < 0) return 0;
+    if ((policy == 1 && slot != 0) ||
+        (policy == 2 && slot != 1) ||
+        (policy == 3 && !is_go) ||
+        policy < 0 || policy > 3) return 0;
+    if (out_crossing_focus) *out_crossing_focus = focus == 1;
+    return 1;
+}
+
+static int hooks_room_graph_has_go_player(void) {
+    uintptr_t leader;
+    if (!g_game_leader || !p_player_slots) return 0;
+    leader = *g_game_leader;
+    return leader != 0u &&
+        (leader == p_player_slots[0] || leader == p_player_slots[1]);
+}
+
 void hooks_get_ai_match(int* out_active, int* out_ai_player, int* out_training) {
     if (out_active) *out_active = g_ai_match_active;
     if (out_ai_player) *out_ai_player = g_ai_match_player;
@@ -15587,6 +15929,26 @@ static void __cdecl hooked_player_die(int player_ptr) {
     int ec_before = 0, ec_after = 0;
     int s0_before = 0, s1_before = 0, s0_after = 0, s1_after = 0;
     int scored = 0;
+    int authored_pit_fall = 0;
+    /* Native player_update_logic refuses to finish a death timer while the
+     * corpse has no solid tile below it unless byte +0x10 is set. Native tile
+     * deaths set that byte, but the map-bottom death branch does not. In an
+     * authored room this leaves a corpse below the room pinning its timer at
+     * one indefinitely. Remember that exact death cause before player_die
+     * mutates the body, then opt that corpse into the native ungrounded
+     * respawn path after the original routine has initialized the death. */
+    if (player_ptr && !IsBadReadPtr((const void*)(uintptr_t)player_ptr, PLAYER_SIZE)) {
+        const unsigned char* player = (const unsigned char*)(uintptr_t)player_ptr;
+        int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+        int room = (int)*(const signed char*)(player + PLAYER_OFS_ROOM);
+        int start_y = 0;
+        int height = 0;
+        float y = *(const float*)(player + PLAYER_OFS_Y);
+        authored_pit_fall =
+            custom_maps_variable_room_bounds_2d_for_index(
+                selector, room, NULL, &start_y, NULL, &height) == 1 &&
+            height > 0 && isfinite(y) && y > (float)(start_y + height);
+    }
     if (p_player_slots) {
         if ((uintptr_t)player_ptr == (uintptr_t)p_player_slots[0]) idx = 0;
         else if ((uintptr_t)player_ptr == (uintptr_t)p_player_slots[1]) idx = 1;
@@ -15598,6 +15960,12 @@ static void __cdecl hooked_player_die(int player_ptr) {
     if (!IsBadReadPtr((const void*)sc1, sizeof(int))) s1_before = *sc1;
 
     if (real) real(player_ptr);
+
+    if (authored_pit_fall &&
+        !IsBadWritePtr((void*)((uintptr_t)player_ptr + PLAYER_OFS_RESPAWN_UNGROUNDED),
+                       sizeof(unsigned char))) {
+        *((unsigned char*)(uintptr_t)player_ptr + PLAYER_OFS_RESPAWN_UNGROUNDED) = 1u;
+    }
 
     if (g_game_end_countdown && !IsBadReadPtr((const void*)g_game_end_countdown, sizeof(int))) {
         ec_after = *g_game_end_countdown;
@@ -15654,6 +16022,84 @@ static void* __cdecl hooked_thing_new(int type) {
         (void)map_script_object_lifecycle_advance(slot);
     }
     return result;
+}
+
+/* player_check_opponent_hit is also called once per tick for an idle held
+ * sword.  Vanilla uses that 0x429e7d call for sword/body blocking and applies
+ * several target-relative tests before it can become a stab.  Treating every
+ * call as an attack therefore makes a managed object take damage merely for
+ * touching an AFK player's sword.
+ *
+ * These are the verified continuations of every call in the supported
+ * executable.  The two 0x10 sword-animation calls are the only held-sword
+ * attack probes.  The 0x400 stance/run/jump call at 0x429e7d is deliberately
+ * absent.  Unarmed probes are already gated by check_hits' 0x20 attack state;
+ * the thrown-sword probe is gated by sword_update_movement's live projectile
+ * path (speed >= 0.5 and byte +0x89 == 0). */
+static int hooks_native_attack_probe_kind(const uint8_t* object,int unarmed,
+                                          uintptr_t caller,uint8_t* out_kind) {
+    uint8_t kind=0;
+    if(!object||!out_kind)return 0;
+    if(object[1]==2) {
+        if(caller!=0x42BD6Bu)return 0;
+        kind=MAP_SCRIPT_NATIVE_DAMAGE_THROWN_SWORD;
+    } else if(object[1]==1&&unarmed) {
+        uintptr_t animation;
+        if(caller!=0x429BF7u&&caller!=0x42A572u&&caller!=0x42A5E8u)return 0;
+        animation=*(const uintptr_t*)(object+0x158);
+        kind=animation==ADDR_PLAYER_ANIM_PUNCH
+            ? MAP_SCRIPT_NATIVE_DAMAGE_PUNCH
+            : MAP_SCRIPT_NATIVE_DAMAGE_KICK;
+    } else if(object[1]==1&&!unarmed) {
+        const uint32_t state=*(const uint32_t*)(object+0x80);
+        if((caller!=0x429F55u&&caller!=0x42A6FAu)||(state&0x10u)==0u)return 0;
+        kind=MAP_SCRIPT_NATIVE_DAMAGE_SWORD;
+    }
+    *out_kind=kind;
+    return kind!=0;
+}
+
+/* Mirror verified native attack probes after vanilla has evaluated them. This
+ * function never runs Lua on the combat stack; map_script defers callbacks to
+ * the ordinary post-update dispatch boundary. attacker is either a player
+ * (kind 1) or thrown sword (kind 2), and byte +0x0b is its owning player. */
+static int __cdecl hooked_player_check_opponent_hit(int attacker,float x,float y,
+                                                    int native_target,float radius,
+                                                    int unarmed) {
+    fn_player_check_opponent_hit_t real=p_player_check_opponent_hit_trampoline;
+    const uintptr_t caller=(uintptr_t)__builtin_return_address(0);
+    int result=real?real(attacker,x,y,native_target,radius,unarmed):0;
+    if(attacker&&!IsBadReadPtr((const void*)(uintptr_t)attacker,0x15cu)) {
+        const uint8_t* object=(const uint8_t*)(uintptr_t)attacker;
+        MapScriptNativeAttackProbe probe;memset(&probe,0,sizeof(probe));
+        probe.x=x;probe.y=y;probe.radius=radius;probe.player_slot=(uint8_t)(object[0x0b]&1u);
+        if(hooks_native_attack_probe_kind(object,unarmed,caller,&probe.kind))
+            map_script_submit_native_attack_probe(&probe);
+    }
+    return result;
+}
+
+/* mine_anim is the explosion, while trigger_mine_pos only arms a tile.  Queue
+ * the managed combat probe only when the exact native entry guard accepts the
+ * explosion.  The original then consumes the mine and writes the same-tick
+ * guard before map.lua callbacks are dispatched after game_update. */
+static void __cdecl hooked_mine_anim(void* thing) {
+    fn_mine_anim_t real=p_mine_anim_trampoline;
+    MapScriptNativeAttackProbe probe;int explodes=0;
+    memset(&probe,0,sizeof(probe));
+    if(thing&&!IsBadReadPtr(thing,THING_SIZE)&&g_mad_ticks&&
+       !IsBadReadPtr((const void*)g_mad_ticks,sizeof(*g_mad_ticks))&&
+       !IsBadReadPtr((const void*)(uintptr_t)ADDR_MINE_ANIM_LAST_TICK,sizeof(uint32_t))) {
+        const uint8_t* object=(const uint8_t*)thing;
+        const volatile uint32_t* last_mine_tick=(const volatile uint32_t*)(uintptr_t)ADDR_MINE_ANIM_LAST_TICK;
+        if(object[0x89]==0&&*g_mad_ticks!=*last_mine_tick) {
+            probe.x=*(const float*)(object+0x24);probe.y=*(const float*)(object+0x28);
+            probe.radius=24.0f;probe.player_slot=0xff;probe.kind=MAP_SCRIPT_NATIVE_DAMAGE_MINE;
+            explodes=isfinite(probe.x)&&isfinite(probe.y);
+        }
+    }
+    if(real)real(thing);
+    if(explodes)map_script_submit_native_attack_probe(&probe);
 }
 
 /* Native spawn_thing_action (0x43CA20) writes through the result of
@@ -16008,6 +16454,14 @@ static int hooks_map_script_solid_box(void* userdata,double x,double y,double wi
     if(IsBadReadPtr((const void*)g_tilemap_data_ptr,sizeof(*g_tilemap_data_ptr))||IsBadReadPtr((const void*)g_tilemap_width,sizeof(int))||IsBadReadPtr((const void*)g_tilemap_height,sizeof(int))||IsBadReadPtr((const void*)g_tile_width,sizeof(int))||IsBadReadPtr((const void*)g_tile_height,sizeof(int)))return -1;
     return hooks_solid_box_data(*g_tilemap_data_ptr,*g_tilemap_width,*g_tilemap_height,*g_tile_width,*g_tile_height,(const unsigned char*)(uintptr_t)0x55AB44u,x,y,width,height);
 }
+static int hooks_map_script_tile_at(void* userdata,double x,double y,char* out_reference,size_t out_size){
+    int selector;
+    (void)userdata;
+    if(!out_reference||out_size<2u||!g_hook_map_selector||
+       IsBadReadPtr((const void*)g_hook_map_selector,sizeof(*g_hook_map_selector)))return -1;
+    selector=*g_hook_map_selector;
+    return custom_maps_pinned_tile_at_world(selector,x,y,out_reference,out_size);
+}
 #ifdef EGGNOGGPLUS_SERIALIZER_TESTING
 int hooks_test_solid_box(const unsigned char* cells,int columns,int rows,const unsigned char* table,double x,double y,double width,double height){return hooks_solid_box_data((uintptr_t)cells,columns,rows,16,16,table,x,y,width,height);}
 #endif
@@ -16024,40 +16478,114 @@ static int hooks_map_script_read_player(void* userdata,uint32_t slot,MapScriptOb
     return 1;
 }
 
-static int hooks_map_script_commit_player_batch(uint32_t mask,uint32_t defeat_mask,const MapScriptObjectView players[2],fn_player_die_t defeat) {
-    uintptr_t bodies[2]={0,0};uint32_t targets=mask|defeat_mask;
-    if((targets&~3u) || (defeat_mask && !defeat))return 0;
+static int hooks_map_script_read_player_observation(void* userdata,uint32_t slot,MapScriptPlayerObservation* out) {
+    uintptr_t player;int kind,skin,clothing;(void)userdata;
+    if(!out || slot>=2 || !p_player_slots || IsBadReadPtr(p_player_slots+slot,sizeof(uintptr_t)))return 0;
+    player=p_player_slots[slot];kind=hooks_map_script_kind_for_body(player);
+    if(kind!=MAP_SCRIPT_OBJECT_PLAYER || IsBadReadPtr((const void*)(player+PLAYER_OFS_STATE_ID),
+       PLAYER_OFS_COLLISION_FLAGS-PLAYER_OFS_STATE_ID+1u))return 0;
+    skin=hooks_player_colour_index((int)slot,0);clothing=hooks_player_colour_index((int)slot,1);
+    /* Palette indices are presentation state and must not make deterministic
+     * movement/input observation unavailable. A transient or synthetic host
+     * can expose an unset index before the native palette tables initialize. */
+    if(skin<0||skin>=hooks_player_colour_count())skin=0;
+    if(clothing<0||clothing>=hooks_player_colour_count())clothing=0;
+    memset(out,0,sizeof(*out));
+    out->previous_command_bits=((g_map_script_previous_commands_valid&(uint8_t)(1u<<slot))&&
+        g_map_script_previous_command_players[slot]==player)?g_map_script_previous_commands[slot]:0;
+    out->command_bits=*(const uint8_t*)(player+PLAYER_OFS_CMD_BITS);
+    out->previously_grounded=(*(const uint8_t*)(player+PLAYER_OFS_PREV_COLLISION)&PLAYER_COLLIDE_GROUNDED)!=0;
+    out->grounded=(*(const uint8_t*)(player+PLAYER_OFS_COLLISION_FLAGS)&PLAYER_COLLIDE_GROUNDED)!=0;
+    out->native_state=*(const uint8_t*)(player+PLAYER_OFS_STATE_ID);
+    out->room=*(const int8_t*)(player+PLAYER_OFS_ROOM);
+    out->facing=*(const int8_t*)(player+PLAYER_OFS_FACING);
+    out->has_sword=*(const uint8_t*)(player+PLAYER_OFS_HAS_SWORD)==0;
+    out->previous_collision_flags=*(const uint8_t*)(player+PLAYER_OFS_PREV_COLLISION);
+    out->collision_flags=*(const uint8_t*)(player+PLAYER_OFS_COLLISION_FLAGS);
+    out->skin_palette=(uint32_t)skin;out->clothing_palette=(uint32_t)clothing;
+    return 1;
+}
+
+static int hooks_map_script_commit_player_batch(uint32_t mask,uint32_t defeat_mask,
+                                                 uint32_t room_mask,const int8_t rooms[2],
+                                                 const MapScriptObjectView players[2],fn_player_die_t defeat) {
+    uintptr_t bodies[2]={0,0};float previous_x[2]={0,0},previous_y[2]={0,0};uint32_t targets=mask|defeat_mask|room_mask;
+    int selector=-1;
+    if((targets&~3u) || (defeat_mask && !defeat) || (room_mask && !rooms))return 0;
+    /* Velocity and defeat-only batches do not need any map globals. Besides
+     * avoiding needless native memory reads in the hot path, this keeps the
+     * bounded batch writer usable by tools/tests that intentionally bind only
+     * player slots. A room change still fails closed if the selector is not
+     * readable. */
+    if(room_mask) {
+        if(!g_hook_map_selector || IsBadReadPtr((const void*)g_hook_map_selector,sizeof(*g_hook_map_selector)))return 0;
+        selector=*g_hook_map_selector;
+    }
     for(uint32_t slot=0;slot<2;slot++)if(targets&(1u<<slot)) {
         if(players[slot].object_id!=slot || players[slot].lifecycle_id || players[slot].object_kind!=MAP_SCRIPT_OBJECT_PLAYER ||
+           !isfinite(players[slot].x) || !isfinite(players[slot].y) ||
            !isfinite(players[slot].vx) || !isfinite(players[slot].vy))return 0;
         bodies[slot]=hooks_map_script_body_for_object(&players[slot]);
-        if(!bodies[slot] || IsBadWritePtr((void*)(bodies[slot]+THING_OFS_VX),sizeof(float)*2u))return 0;
+        if(!bodies[slot] || IsBadReadPtr((void*)(bodies[slot]+THING_OFS_X),sizeof(float)*6u) ||
+           IsBadWritePtr((void*)(bodies[slot]+THING_OFS_X),sizeof(float)*6u))return 0;
+        if(mask&(1u<<slot)) {
+            float current_x=*(float*)(bodies[slot]+THING_OFS_X),current_y=*(float*)(bodies[slot]+THING_OFS_Y);
+            float delta_x=players[slot].x-current_x,delta_y=players[slot].y-current_y;
+            previous_x[slot]=*(float*)(bodies[slot]+THING_OFS_PREV_X)+delta_x;
+            previous_y[slot]=*(float*)(bodies[slot]+THING_OFS_PREV_Y)+delta_y;
+            if(!isfinite(current_x)||!isfinite(current_y)||!isfinite(previous_x[slot])||!isfinite(previous_y[slot]))return 0;
+        }
         if(defeat_mask&(1u<<slot)) {
             if(IsBadWritePtr((void*)bodies[slot],THING_SIZE) ||
                *(uint8_t*)(bodies[slot]+0x0bu)!=slot || *(uint8_t*)(bodies[slot]+PLAYER_OFS_STATE_ID)==9u)return 0;
         }
+        if((room_mask&(1u<<slot)) &&
+           custom_maps_variable_room_bounds_2d_for_index(selector,(int)rooms[slot],NULL,NULL,NULL,NULL)!=1)return 0;
     }
     if(targets==3u && bodies[0]==bodies[1])return 0;
     /* No fallible VM work follows this all-target preflight. Native defeat owns
      * corpse/sword creation, leader changes, animation and its RNG draws. */
     for(uint32_t slot=0;slot<2;slot++)if(mask&(1u<<slot)) {
+        *(float*)(bodies[slot]+THING_OFS_PREV_X)=previous_x[slot];
+        *(float*)(bodies[slot]+THING_OFS_PREV_Y)=previous_y[slot];
+        *(float*)(bodies[slot]+THING_OFS_X)=players[slot].x;
+        *(float*)(bodies[slot]+THING_OFS_Y)=players[slot].y;
         *(float*)(bodies[slot]+THING_OFS_VX)=players[slot].vx;
         *(float*)(bodies[slot]+THING_OFS_VY)=players[slot].vy;
+    }
+    for(uint32_t slot=0;slot<2;slot++)if(room_mask&(1u<<slot)) {
+        *((unsigned char*)bodies[slot]+PLAYER_OFS_ROOM)=(unsigned char)rooms[slot];
+        if(g_game_leader&&*g_game_leader==bodies[slot])
+            *((unsigned char*)bodies[slot]+0x9d)=1;
     }
     for(uint32_t slot=0;slot<2;slot++)if(defeat_mask&(1u<<slot))defeat((int)bodies[slot]);
     return 1;
 }
 static int hooks_map_script_apply_player_velocities(void* userdata,uint32_t mask,const MapScriptObjectView players[2]) {
-    (void)userdata;return hooks_map_script_commit_player_batch(mask,0,players,NULL);
+    (void)userdata;return hooks_map_script_commit_player_batch(mask,0,0,NULL,players,NULL);
 }
-static int hooks_map_script_commit_players(void* userdata,uint32_t mask,uint32_t defeat_mask,const MapScriptObjectView players[2]) {
-    (void)userdata;return hooks_map_script_commit_player_batch(mask,defeat_mask,players,p_player_die_trampoline?hooked_player_die:NULL);
+static int hooks_map_script_commit_players(void* userdata,uint32_t mask,uint32_t defeat_mask,
+                                            uint32_t room_mask,const int8_t rooms[2],
+                                            const MapScriptObjectView players[2]) {
+    (void)userdata;return hooks_map_script_commit_player_batch(mask,defeat_mask,room_mask,rooms,players,p_player_die_trampoline?hooked_player_die:NULL);
+}
+
+static void hooks_map_script_trigger_mines(void* userdata,const MapScriptMineTrigger* triggers,uint32_t count) {
+    uint32_t i;(void)userdata;
+    if(!triggers||!p_map_coord_tile||!p_trigger_mine_pos)return;
+    for(i=0;i<count;i++) {
+        float x=(float)triggers[i].x,y=(float)triggers[i].y;
+        uint8_t* tile=p_map_coord_tile(x,y);
+        /* Native tile 0x06 is the verified mine action. Never expose the
+         * underlying generic tile_action_ex behavior through this API. */
+        if(tile&&!IsBadReadPtr(tile,1)&&*tile==0x06u)p_trigger_mine_pos(x,y);
+    }
 }
 
 #ifdef EGGNOGGPLUS_SERIALIZER_TESTING
 int hooks_test_commit_players(uintptr_t* slots,uint32_t mask,uint32_t defeat_mask,const MapScriptObjectView players[2],fn_player_die_t defeat) {
     uintptr_t* saved=p_player_slots;int result;p_player_slots=slots;
-    result=hooks_map_script_commit_player_batch(mask,defeat_mask,players,defeat);
+    result=hooks_map_script_commit_player_batch(mask,defeat_mask,0,NULL,players,defeat);
     p_player_slots=saved;return result;
 }
 int hooks_test_apply_player_velocities(uintptr_t* slots,uint32_t mask,const MapScriptObjectView players[2]) {
@@ -16177,6 +16705,13 @@ static void hooks_apply_content_tile_interactions(void) {
                 object_kind != MAP_SCRIPT_OBJECT_HAZARD) {
                 continue;
             }
+            if(object_kind==MAP_SCRIPT_OBJECT_HAZARD&&
+               !IsBadReadPtr(thing+THING_OFS_X,sizeof(float)*2u)) {
+                MapScriptNativeAttackProbe probe;memset(&probe,0,sizeof(probe));
+                probe.x=*(const float*)(thing+THING_OFS_X);probe.y=*(const float*)(thing+THING_OFS_Y);
+                probe.radius=10.0f;probe.player_slot=0xff;probe.kind=MAP_SCRIPT_NATIVE_DAMAGE_SPIKE_BALL;
+                map_script_submit_native_attack_probe(&probe);
+            }
             hooks_apply_content_interactions_to_body(
                 2u + thing_slot,
                 map_script_object_lifecycle_current(thing_slot),
@@ -16257,13 +16792,75 @@ typedef struct HooksNativeGameTick {
     int prepare_deterministic_clock;
 } HooksNativeGameTick;
 
+static void hooks_capture_map_script_previous_commands(void) {
+    uint8_t valid=0;
+    memset(g_map_script_previous_commands,0,sizeof(g_map_script_previous_commands));
+    memset(g_map_script_previous_command_players,0,sizeof(g_map_script_previous_command_players));
+    if(p_player_slots&&!IsBadReadPtr(p_player_slots,sizeof(uintptr_t)*2u)) {
+        for(uint32_t slot=0;slot<2u;slot++) {
+            uintptr_t player=p_player_slots[slot];
+            if(hooks_map_script_kind_for_body(player)==MAP_SCRIPT_OBJECT_PLAYER&&
+               !IsBadReadPtr((const void*)(player+PLAYER_OFS_CMD_BITS),sizeof(uint8_t))) {
+                g_map_script_previous_commands[slot]=*(const uint8_t*)(player+PLAYER_OFS_CMD_BITS);
+                g_map_script_previous_command_players[slot]=player;
+                valid|=(uint8_t)(1u<<slot);
+            }
+        }
+    }
+    g_map_script_previous_commands_valid=valid;
+}
+
+#ifdef EGGNOGGPLUS_SERIALIZER_TESTING
+int hooks_test_observe_player_edge(uintptr_t* slots,uint32_t slot,uint8_t post_tick_commands,MapScriptPlayerObservation* out) {
+    uintptr_t* saved_slots=p_player_slots;
+    uint8_t saved_commands[2],saved_valid=g_map_script_previous_commands_valid;
+    uintptr_t saved_players[2];int result=0;
+    memcpy(saved_commands,g_map_script_previous_commands,sizeof(saved_commands));
+    memcpy(saved_players,g_map_script_previous_command_players,sizeof(saved_players));
+    p_player_slots=slots;hooks_capture_map_script_previous_commands();
+    if(slot<2u&&slots&&!IsBadWritePtr((void*)(slots[slot]+PLAYER_OFS_CMD_BITS),sizeof(uint8_t))) {
+        *(uint8_t*)(slots[slot]+PLAYER_OFS_PREV_CMD_BITS)=post_tick_commands;
+        *(uint8_t*)(slots[slot]+PLAYER_OFS_CMD_BITS)=post_tick_commands;
+        result=hooks_map_script_read_player_observation(NULL,slot,out);
+    }
+    p_player_slots=saved_slots;
+    memcpy(g_map_script_previous_commands,saved_commands,sizeof(saved_commands));
+    memcpy(g_map_script_previous_command_players,saved_players,sizeof(saved_players));
+    g_map_script_previous_commands_valid=saved_valid;
+    return result;
+}
+#endif
+
+static void hooks_update_variable_room_extra_tiles(void) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = g_game_active_room ? *g_game_active_room : -1;
+    int start_px = 0, start_y_px = 0, width_px = 0, height_px = 0;
+    int x, y, width, height, start_col, start_row;
+    if (!p_map_tile_raw_trampoline || !p_tile_action_ex ||
+        custom_maps_variable_room_bounds_2d_for_index(
+            selector, room, &start_px, &start_y_px, &width_px,
+            &height_px) != 1) return;
+    width = width_px / 16;
+    height = height_px / 16;
+    start_col = start_px / 16;
+    start_row = start_y_px / 16;
+    for (y = 0; y < height; ++y) for (x = 0; x < width; ++x) {
+        void* tile;
+        if (x < 33 && y < 12) continue;
+        tile = p_map_tile_raw_trampoline(start_col + x, start_row + y);
+        if (tile) p_tile_action_ex(tile, 8, start_col + x, start_row + y, 0);
+    }
+}
+
 static int hooks_native_game_tick_callback(void* user) {
     HooksNativeGameTick* tick = (HooksNativeGameTick*)user;
     if (!tick || !tick->update) return 0;
     if (tick->prepare_deterministic_clock) {
         hooks_prepare_deterministic_game_update();
     }
+    hooks_capture_map_script_previous_commands();
     tick->update(tick->arg0);
+    hooks_update_variable_room_extra_tiles();
     hooks_apply_content_tile_interactions();
     return 1;
 }
@@ -16518,6 +17115,7 @@ static void render_rows(void) {
             case ROW_MOD_TOGGLE:
             case ROW_FW_TOGGLE:
             case ROW_FW_ACTION:
+            case ROW_FW_VALUE:
             case ROW_CONFIG:
             case ROW_BIND: {
                 float lr = selected ? sel_r : base_r;
@@ -16527,7 +17125,7 @@ static void render_rows(void) {
                 if (row->kind == ROW_MOD_TOGGLE || row->kind == ROW_FW_TOGGLE) {
                     if (row->right[0] == 'O' && row->right[1] == 'N') { vr = 0.48f; vg = 0.88f; vb = 0.58f; }
                     else { vr = 0.74f; vg = 0.76f; vb = 0.82f; }
-                } else if (row->kind == ROW_FW_ACTION) {
+                } else if (row->kind == ROW_FW_ACTION || row->kind == ROW_FW_VALUE) {
                     vr = 0.48f; vg = 0.82f; vb = 0.96f;
                 } else if (row->kind == ROW_BIND) {
                     if (lua_manager_mod_bind_has_conflict(row->mod_index, row->cfg_index)) {
@@ -17330,6 +17928,109 @@ static int install_detour(Detour* d, void* target, void* hook, size_t length) {
         VirtualProtect(target, length, old_protect, &old_protect);
     }
 
+    return 1;
+}
+
+/* A copied x86 rel32 CALL/JMP remains relative to the instruction address.
+ * Detour trampolines live at a different address, so the displacement must be
+ * rebased or the copied instruction will jump into unrelated heap memory.
+ * Keep relocation explicit at each verified prologue: blindly scanning bytes
+ * could mistake an immediate operand for an opcode. */
+static int relocate_detour_rel32(Detour* d, size_t instruction_offset) {
+    uint8_t* original;
+    uint8_t* original_ip;
+    uint8_t* copied;
+    uintptr_t destination;
+    intptr_t displacement;
+    if (!d || !d->target || !d->trampoline ||
+        instruction_offset + 5u > d->length) return 0;
+    /* install_detour has already replaced d->target with a JMP by the time
+     * this runs. Decode the saved prologue, while still using the original
+     * instruction address as the rel32 base. */
+    original = d->original + instruction_offset;
+    original_ip = (uint8_t*)d->target + instruction_offset;
+    copied = (uint8_t*)d->trampoline + instruction_offset;
+    if (original[0] != 0xE8u && original[0] != 0xE9u) return 0;
+    destination = (uintptr_t)(original_ip + 5) +
+                  (intptr_t)*(const int32_t*)(original + 1);
+    displacement = (intptr_t)destination - (intptr_t)(copied + 5);
+#if UINTPTR_MAX > UINT32_MAX
+    if (displacement < INT32_MIN || displacement > INT32_MAX) return 0;
+#endif
+    copied[0] = original[0];
+    *(int32_t*)(copied + 1) = (int32_t)displacement;
+    FlushInstructionCache(GetCurrentProcess(), copied, 5);
+    return 1;
+}
+
+static int install_detour_relocated_rel32(Detour* d, void* target, void* hook,
+                                          size_t length,
+                                          size_t instruction_offset) {
+    DWORD old_protect = 0;
+    if (!install_detour(d, target, hook, length)) return 0;
+    if (relocate_detour_rel32(d, instruction_offset)) return 1;
+    /* Do not leave an installed hook pointing at an unusable trampoline if a
+     * future executable revision changes the verified instruction shape. */
+    if (VirtualProtect(target, length, PAGE_EXECUTE_READWRITE, &old_protect)) {
+        memcpy(target, d->original, length);
+        FlushInstructionCache(GetCurrentProcess(), target, length);
+        VirtualProtect(target, length, old_protect, &old_protect);
+    }
+    VirtualFree(d->trampoline, 0, MEM_RELEASE);
+    memset(d, 0, sizeof(*d));
+    return 0;
+}
+
+/* game_update's shared thing-collision path clamps both separated bodies with
+ * two values held in EDX:EAX: active_room * room_pixel_width and
+ * room_pixel_width - 1. Returning uint64_t on i386 gives us exactly those two
+ * registers without replacing any of the native collision response. */
+static uint64_t __attribute__((noinline, force_align_arg_pointer))
+hooks_variable_room_collision_bounds(void) {
+    int room = g_game_active_room ? *g_game_active_room : 0;
+    int native_width = g_room_pixel_width ? *g_room_pixel_width : 0;
+    int start_px = room * native_width;
+    int width_px = native_width;
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    if (custom_maps_variable_room_bounds_for_index(selector, room, &start_px,
+                                                    &width_px, NULL) != 1) {
+        start_px = room * native_width;
+        width_px = native_width;
+    }
+    if (width_px < 1) width_px = 1;
+    return ((uint64_t)(uint32_t)start_px << 32) |
+           (uint32_t)(width_px - 1);
+}
+
+static int hooks_install_variable_room_collision_bounds(void) {
+    static const unsigned char expected[] = {
+        0xA1, 0x34, 0xAB, 0x55, 0x00,
+        0x8B, 0x15, 0x08, 0x1E, 0x54, 0x00,
+        0x0F, 0xAF, 0xD0,
+        0x83, 0xE8, 0x01
+    };
+    unsigned char replacement[sizeof(expected)];
+    void* target = (void*)(uintptr_t)0x0042D6A1u;
+    DWORD old_protect = 0, ignored = 0;
+    uint32_t displacement;
+    if (IsBadReadPtr(target, sizeof(expected)) ||
+        memcmp(target, expected, sizeof(expected)) != 0) return 0;
+    memset(replacement, 0x90, sizeof(replacement));
+    replacement[0] = 0xE8;
+    displacement = (uint32_t)((uintptr_t)hooks_variable_room_collision_bounds -
+                              ((uintptr_t)target + 5u));
+    memcpy(replacement + 1, &displacement, sizeof(displacement));
+    if (!VirtualProtect(target, sizeof(expected), PAGE_EXECUTE_READWRITE,
+                        &old_protect)) return 0;
+    memcpy(target, replacement, sizeof(replacement));
+    if (!FlushInstructionCache(GetCurrentProcess(), target, sizeof(expected))) {
+        memcpy(target, expected, sizeof(expected));
+        FlushInstructionCache(GetCurrentProcess(), target, sizeof(expected));
+        VirtualProtect(target, sizeof(expected), old_protect, &ignored);
+        return 0;
+    }
+    if (!VirtualProtect(target, sizeof(expected), old_protect, &ignored))
+        LOG_WARN("hooks_init: could not restore variable-room collision code protection");
     return 1;
 }
 
@@ -19251,9 +19952,71 @@ static int __cdecl hooked_atlas_upload(int atlas, int arg2, int format) {
     return real ? real(atlas, arg2, format) : -1;
 }
 
+static void __cdecl hooked_main_sprite_batches_draw(void) {
+    fn_main_sprite_batches_draw_t real =
+        p_main_sprite_batches_draw_trampoline;
+    if (real) real();
+    lua_manager_draw_custom_atlas();
+}
+
 static void __cdecl hooked_mapgen_init(void) {
     fn_void_void_t real = p_mapgen_init_trampoline ? p_mapgen_init_trampoline : p_mapgen_init;
     custom_maps_handle_mapgen_init(real);
+}
+
+/* Native game_init creates both players at the rebuilt map's geometric
+ * center, derives active_room from camera_x / 528, and only then asks
+ * find_good_spot to place them.  A graph room can share X with another room,
+ * so that horizontal derivation cannot represent an authored start room.
+ * find_good_spot performs the room-local collision search; this post-pass
+ * commits the resulting world-space state as one coherent initial room. */
+static void hooks_commit_authored_start_room(void) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = custom_maps_start_room(selector);
+    int start_x = 0, start_y = 0, width = 0, height = 0;
+    float camera_x = 0.0f, camera_y = 0.0f;
+    int camera_samples = 0;
+    int slot;
+    if (room < 0 || !g_game_active_room || !g_game_old_active_room ||
+        !g_camera_x || !g_camera_y ||
+        custom_maps_variable_room_bounds_2d_for_index(
+            selector, room, &start_x, &start_y, &width, &height) != 1)
+        return;
+    for (slot = 0; slot < 2; ++slot) {
+        uintptr_t player = p_player_slots ? p_player_slots[slot] : 0u;
+        float x, y;
+        if (!player || IsBadReadPtr((const void*)player, 0xa0u) ||
+            IsBadWritePtr((void*)player, 0xa0u)) continue;
+        *((unsigned char*)player + PLAYER_OFS_ROOM) = (unsigned char)room;
+        x = *(float*)(player + 0x24u);
+        y = *(float*)(player + 0x28u);
+        if (isfinite(x) && isfinite(y) && x >= (float)start_x &&
+            x < (float)(start_x + width) && y >= (float)start_y &&
+            y < (float)(start_y + height)) {
+            camera_x += x;
+            camera_y += y;
+            camera_samples++;
+        }
+    }
+    *g_game_active_room = room;
+    *g_game_old_active_room = -1;
+    if (camera_samples > 0) {
+        *g_camera_x = camera_x / (float)camera_samples;
+        *g_camera_y = camera_y / (float)camera_samples;
+    } else {
+        *g_camera_x = (float)start_x + (float)width * 0.5f;
+        *g_camera_y = (float)start_y + (float)height * 0.5f;
+    }
+    LOG_INFO("room graph: initialized authored start room=%d bounds=(%d,%d %dx%d) camera=(%.1f,%.1f)",
+             room, start_x, start_y, width, height,
+             (double)*g_camera_x, (double)*g_camera_y);
+}
+
+static void __cdecl hooked_game_init(void) {
+    fn_void_void_t real = p_game_init_trampoline
+        ? p_game_init_trampoline : p_game_init;
+    if (real) real();
+    hooks_commit_authored_start_room();
 }
 
 static int content_bridge_resolve_sprite(void* user,
@@ -19335,12 +20098,16 @@ static int entity_resolve_sprite(void* user,const char* sheet,int index,int* spr
     return custom_maps_pinned_visual_sheet(sheet,index,key,sizeof(key)) &&
         lua_manager_content_resolve_sprite(key,index,sprite);
 }
+static const ContentBridgeDrawOps g_content_draw_ops={NULL,(void*)(uintptr_t)ADDR_TURTLE_STATE,
+    CONTENT_BRIDGE_TURTLE_STATE_SIZE,entity_resolve_sprite,content_bridge_sprite_get,
+    content_bridge_turtle_trans,content_bridge_turtle_set_angle,content_bridge_turtle_set_scalex,
+    content_bridge_turtle_set_scaley,content_bridge_turtle_set_rgba,content_bridge_sprite_batch_plot,NULL};
+static int g_ambiance_diag_selector = -1;
+static int g_ambiance_diag_room = -1;
+static int g_ambiance_diag_index = -1;
+static unsigned g_ambiance_diag_failed_layers = 0u;
 static void draw_custom_entities_for_order(unsigned draw_order) {
     /* World Y is inverted at translation. The caller selects actor-relative order. */
-    static const ContentBridgeDrawOps ops={NULL,(void*)(uintptr_t)ADDR_TURTLE_STATE,
-        CONTENT_BRIDGE_TURTLE_STATE_SIZE,entity_resolve_sprite,content_bridge_sprite_get,
-        content_bridge_turtle_trans,content_bridge_turtle_set_angle,content_bridge_turtle_set_scalex,
-        content_bridge_turtle_set_scaley,content_bridge_turtle_set_rgba,content_bridge_sprite_batch_plot,NULL};
     uint32_t cursor=0;EntityRenderView view;
     while(map_script_entity_render_next(&cursor,&view)) {
         if(view.visual.layer!=draw_order)continue;
@@ -19350,16 +20117,162 @@ static void draw_custom_entities_for_order(unsigned draw_order) {
         render.offset_x=(float)(((double)view.x+view.visual.offset_x)/256.0-*g_camera_x);
         render.offset_y=(float)(*g_camera_y-((double)view.y+view.visual.offset_y)/256.0);
         render.scale_x=view.visual.scale_x/256.0f;render.scale_y=view.visual.scale_y/256.0f;
+        render.angle_degrees=view.visual.rotation/256.0f;
         for(unsigned i=0;i<4;i++) render.tint[i]=((view.visual.rgba>>(24-8*i))&255)/255.0f;
-        (void)content_bridge_draw_visual(&render,&ops);
+        (void)content_bridge_draw_visual(&render,&g_content_draw_ops);
+    }
+}
+static void draw_custom_player_sprites_for_order(unsigned draw_order) {
+    if (g_render_hide_players_drawing) return;
+    for(uint32_t slot=0;slot<2;slot++) {
+        MapScriptPlayerSprite view;ContentTileRender render;
+        if(!map_script_player_sprite(slot,&view)||!view.visible||view.layer!=draw_order)continue;
+        memset(&render,0,sizeof(render));snprintf(render.sprite_sheet,sizeof(render.sprite_sheet),"%s",view.sheet);
+        render.sprite_index=(int)view.sprite;render.layer=(int)view.layer;
+        render.offset_x=view.x+(float)view.offset_x/256.0f-*g_camera_x;
+        render.offset_y=*g_camera_y-(view.y+(float)view.offset_y/256.0f);
+        render.scale_x=(float)view.scale_x/256.0f;render.scale_y=(float)view.scale_y/256.0f;
+        render.angle_degrees=(float)view.rotation/256.0f;
+        for(unsigned i=0;i<4;i++)render.tint[i]=((view.rgba>>(24-8*i))&255)/255.0f;
+        (void)content_bridge_draw_visual(&render,&g_content_draw_ops);
     }
 }
 
+static void draw_custom_ambiance_layer(int particle_layer) {
+    const MapAmbianceCatalog* catalog;
+    const MapParticleDefinition* definition;
+    MapAmbianceRenderParticle particle;
+    ContentTileRender render;
+    uint16_t ambiance_index;
+    uint32_t cursor = 0u;
+    int selector;
+    int final_room;
+    int source_room;
+    int mirror_room;
+    int result;
+    unsigned generated = 0u;
+    unsigned queued = 0u;
+    float camera_x;
+    float camera_y;
+    if (particle_layer < 0 || particle_layer > 4 || !g_hook_map_selector ||
+        !g_game_active_room || !g_game_ticks || !g_camera_x || !g_camera_y ||
+        IsBadReadPtr((const void*)g_hook_map_selector, sizeof(int)) ||
+        IsBadReadPtr((const void*)g_game_active_room, sizeof(int)) ||
+        IsBadReadPtr((const void*)g_game_ticks, sizeof(uint32_t)) ||
+        IsBadReadPtr((const void*)g_camera_x, sizeof(float)) ||
+        IsBadReadPtr((const void*)g_camera_y, sizeof(float))) return;
+    /* Native layers 4 and 3 are invoked with screen-space camera arguments,
+     * while layers 2..0 receive the world camera. Custom ambiance coordinates
+     * are always in map/world space, so every layer must use these globals. */
+    camera_x = *g_camera_x;
+    camera_y = *g_camera_y;
+    selector = *g_hook_map_selector;
+    final_room = *g_game_active_room;
+    result = custom_maps_pinned_ambiance(
+        selector, final_room, &catalog, &ambiance_index, &source_room,
+        &mirror_room);
+    if (result != 1) {
+        if (particle_layer == 4) {
+            CustomMapContentView pinned_view;
+            int pinned_result =
+                custom_maps_pinned_content_view(selector, &pinned_view);
+            if (pinned_result != 0 &&
+                (selector != g_ambiance_diag_selector ||
+                 final_room != g_ambiance_diag_room ||
+                 g_ambiance_diag_index != -1)) {
+                g_ambiance_diag_selector = selector;
+                g_ambiance_diag_room = final_room;
+                g_ambiance_diag_index = -1;
+                g_ambiance_diag_failed_layers = 0u;
+                if (result < 0) {
+                    LOG_WARN("[ambiance] selected custom map has no usable pinned ambiance view: selector=%d room=%d",
+                             selector, final_room);
+                }
+            }
+        }
+        return;
+    }
+    if (selector != g_ambiance_diag_selector ||
+        final_room != g_ambiance_diag_room ||
+        ambiance_index != (uint16_t)g_ambiance_diag_index) {
+        g_ambiance_diag_selector = selector;
+        g_ambiance_diag_room = final_room;
+        g_ambiance_diag_index = ambiance_index;
+        g_ambiance_diag_failed_layers = 0u;
+        LOG_INFO("[ambiance] active id=%s selector=%d room=%d source_room=%d mirrored=%d emitters=%u",
+                 catalog->ambiances[ambiance_index].id, selector, final_room,
+                 source_room, mirror_room,
+                 (unsigned)catalog->ambiances[ambiance_index].emitter_count);
+    }
+    while ((result = map_ambiance_render_next(
+                catalog, ambiance_index, source_room, final_room,
+                mirror_room, (uint64_t)*g_game_ticks,
+                (uint8_t)particle_layer, &cursor, &particle)) == 1) {
+        if (particle.particle_index >= catalog->particle_count) break;
+        definition = &catalog->particles[particle.particle_index];
+        /* A zero lifetime endpoint is a valid authored shrink-away. The
+         * general visual bridge deliberately rejects zero turtle scales, so
+         * consume that invisible lane without treating it as a draw fault. */
+        if (particle.scale_x == 0.0f || particle.scale_y == 0.0f) continue;
+        generated++;
+        memset(&render, 0, sizeof(render));
+        snprintf(render.sprite_sheet, sizeof(render.sprite_sheet), "%s",
+                 definition->sprite_sheet);
+        render.sprite_index = particle.sprite_index;
+        render.layer = particle.blend;
+        render.offset_x = (float)(particle.world_x - camera_x);
+        render.offset_y = (float)(camera_y - particle.world_y);
+        render.angle_degrees = (float)particle.angle_degrees;
+        render.scale_x = particle.scale_x;
+        render.scale_y = particle.scale_y;
+        memcpy(render.tint, particle.tint, sizeof(render.tint));
+        if (content_bridge_draw_visual(&render, &g_content_draw_ops)) queued++;
+    }
+    if ((result < 0 || (generated > 0u && queued == 0u)) &&
+        !(g_ambiance_diag_failed_layers & (1u << (unsigned)particle_layer))) {
+        g_ambiance_diag_failed_layers |= 1u << (unsigned)particle_layer;
+        if (result < 0) {
+            LOG_WARN("[ambiance] particle generation failed: id=%s room=%d layer=%d",
+                     catalog->ambiances[ambiance_index].id, final_room,
+                     particle_layer);
+        } else {
+            LOG_WARN("[ambiance] could not queue %u generated particle(s): id=%s room=%d layer=%d; check the picture sheet and frame range",
+                     generated, catalog->ambiances[ambiance_index].id,
+                     final_room, particle_layer);
+        }
+    }
+}
+
+static void __cdecl hooked_particles_draw_ex(int mode, float camera_x,
+                                               float camera_y, int layer) {
+    if (p_particles_draw_ex_trampoline) {
+        p_particles_draw_ex_trampoline(mode, camera_x, camera_y, layer);
+    }
+    draw_custom_ambiance_layer(layer);
+}
+
 static void __attribute__((regparm(1))) hooked_entity_draw_things(int native_layer) {
+    uint8_t* hidden_players[2] = {NULL, NULL};
+    uint8_t saved_active[2] = {0, 0};
+    int hidden_count = 0;
     /* Verified native call order: 1, 0, -1, -2 at game_render+0x655. */
-    if(native_layer==1)draw_custom_entities_for_order(0);
+    if(native_layer==1){draw_custom_entities_for_order(0);draw_custom_player_sprites_for_order(0);}
+    if (g_render_hide_players_drawing && p_player_slots) {
+        for (int slot = 0; slot < 2; ++slot) {
+            uint8_t* player = (uint8_t*)(uintptr_t)p_player_slots[slot];
+            if (!hooks_ptr_accessible(player, THING_OFS_TYPE + 1u, 1) ||
+                player[THING_OFS_TYPE] != THING_TYPE_PLAYER ||
+                (hidden_count && player == hidden_players[0])) continue;
+            hidden_players[hidden_count] = player;
+            saved_active[hidden_count] = player[THING_OFS_ACTIVE];
+            player[THING_OFS_ACTIVE] = 0;
+            ++hidden_count;
+        }
+    }
     if(p_entity_draw_things_trampoline)p_entity_draw_things_trampoline(native_layer);
-    if(native_layer==-2)draw_custom_entities_for_order(1);
+    for (int i = 0; i < hidden_count; ++i)
+        hidden_players[i][THING_OFS_ACTIVE] = saved_active[i];
+    if(native_layer==-2){draw_custom_entities_for_order(1);draw_custom_player_sprites_for_order(1);}
 }
 
 static int content_bridge_map_script_visual_override(
@@ -19386,22 +20299,35 @@ static void hooks_map_native_tileset_clear(void) {
     g_map_native_tileset_sheet[0] = '\0';
     g_map_native_tileset_sprite_count = 0;
     g_map_native_tileset_enabled = 0;
+    g_map_native_tileset_selector = -1;
+    g_map_native_tileset_room = -1;
 }
 
-static void hooks_map_native_tileset_configure(int selector) {
-    CustomMapContentView view;
+static void hooks_map_native_tileset_configure(int selector, int final_room) {
+    int resolved;
     hooks_map_native_tileset_clear();
-    if (custom_maps_pinned_content_view(selector, &view) != 1 ||
-        !view.native_layout || !view.default_sheet_key[0] ||
-        view.default_sheet_sprite_count < 128 ||
-        strlen(view.default_sheet_key) >= sizeof(g_map_native_tileset_sheet)) {
-        return;
-    }
-    snprintf(g_map_native_tileset_sheet,
-             sizeof(g_map_native_tileset_sheet), "%s",
-             view.default_sheet_key);
-    g_map_native_tileset_sprite_count = view.default_sheet_sprite_count;
+    g_map_native_tileset_selector = selector;
+    g_map_native_tileset_room = final_room;
+    resolved = custom_maps_pinned_native_tileset(
+        selector, final_room, g_map_native_tileset_sheet,
+        sizeof(g_map_native_tileset_sheet),
+        &g_map_native_tileset_sprite_count);
+    if (resolved != 1) return;
     g_map_native_tileset_enabled = 1;
+}
+
+static void hooks_map_native_tileset_refresh_room(void) {
+    int selector;
+    int room;
+    if (!g_hook_map_selector || !g_game_active_room ||
+        IsBadReadPtr((const void*)g_hook_map_selector, sizeof(int)) ||
+        IsBadReadPtr((const void*)g_game_active_room, sizeof(int))) return;
+    selector = *g_hook_map_selector;
+    room = *g_game_active_room;
+    if (selector != g_map_native_tileset_selector ||
+        room != g_map_native_tileset_room) {
+        hooks_map_native_tileset_configure(selector, room);
+    }
 }
 
 /* Native tile actions address their sprites as byte offsets from the `_tiles`
@@ -19414,6 +20340,7 @@ static int hooks_map_native_tileset_begin_draw(int* out_saved_tiles) {
     int sprite_id;
     int last_sprite_id;
     void* sprite;
+    hooks_map_native_tileset_refresh_room();
     if (!out_saved_tiles || !g_map_native_tileset_enabled ||
         !g_map_native_tileset_sheet[0] ||
         g_map_native_tileset_sprite_count < 128 || !g_layer || !p_sprite_get ||
@@ -19519,6 +20446,73 @@ static int hooks_draw_native_tile_underlay(fn_tile_action_t real,
     return result;
 }
 
+enum {
+    NATIVE_ROOMDEF_WORDS = 53,
+    NATIVE_ROOMDEF_AMBIENT_WORD = 1,
+    NATIVE_ROOMDEF_COLOR_WORDS = 24,
+    NATIVE_ROOMDEF_PRIMARY_WORD = 4,
+    NATIVE_ROOMDEF_MIRROR_WORD = 28
+};
+
+/* mapgen_room_info normally folds the linear final-room index around the
+ * center source room. A room graph instead names its source definition and
+ * appearance bank independently. Return the exact source roomdef and, when
+ * the game's old left/right bank heuristic disagrees with the graph node,
+ * swap the two 8xRGB banks in a stable per-instance copy. The ambient type,
+ * template, callback, and all other fields remain untouched. */
+static uint32_t g_graph_roomdef_scratch[CUSTOM_MAP_ENGINE_MAX_FINAL_ROOMS]
+                                           [NATIVE_ROOMDEF_WORDS];
+
+static void* __cdecl hooked_mapgen_room_info(int final_room) {
+    fn_mapgen_room_info_t real = p_mapgen_room_info_trampoline
+        ? p_mapgen_room_info_trampoline
+        : p_mapgen_room_info;
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int source_room = -1;
+    int appearance_mirror = 0;
+    int roomdef_count;
+    int canonical_room;
+    int native_mirror;
+    int ambient_override = 0;
+    int has_ambient_override;
+    uint32_t* source;
+    uint32_t* scratch;
+    int word;
+    if (!real) return NULL;
+    if (custom_maps_pinned_room_definition(selector, final_room,
+            &source_room, &appearance_mirror) != 1) {
+        return real(final_room);
+    }
+    roomdef_count = g_native_roomdef_count ? *g_native_roomdef_count : 0;
+    if (roomdef_count < 1 || source_room < 0 ||
+        source_room >= roomdef_count || final_room < 0 ||
+        final_room >= CUSTOM_MAP_ENGINE_MAX_FINAL_ROOMS) {
+        return real(final_room);
+    }
+    canonical_room = (roomdef_count - 1) - source_room;
+    source = (uint32_t*)real(canonical_room);
+    if (!source) return NULL;
+    native_mirror = final_room < roomdef_count - 1;
+    has_ambient_override = custom_maps_pinned_room_ambient_override(
+        selector, final_room, &ambient_override);
+    if (has_ambient_override < 0) return source;
+    if (native_mirror == appearance_mirror && !has_ambient_override)
+        return source;
+    scratch = g_graph_roomdef_scratch[final_room];
+    memcpy(scratch, source, sizeof(g_graph_roomdef_scratch[final_room]));
+    if (native_mirror != appearance_mirror) {
+        for (word = 0; word < NATIVE_ROOMDEF_COLOR_WORDS; ++word) {
+            uint32_t temporary = scratch[NATIVE_ROOMDEF_PRIMARY_WORD + word];
+            scratch[NATIVE_ROOMDEF_PRIMARY_WORD + word] =
+                scratch[NATIVE_ROOMDEF_MIRROR_WORD + word];
+            scratch[NATIVE_ROOMDEF_MIRROR_WORD + word] = temporary;
+        }
+    }
+    if (has_ambient_override)
+        scratch[NATIVE_ROOMDEF_AMBIENT_WORD] = (uint32_t)ambient_override;
+    return scratch;
+}
+
 static void __cdecl hooked_mapgen_build_map(void) {
     fn_void_void_t real = p_mapgen_build_map_trampoline
         ? p_mapgen_build_map_trampoline
@@ -19528,7 +20522,7 @@ static void __cdecl hooked_mapgen_build_map(void) {
     void* tilemap_base;
     int tilemap_width;
     int tilemap_height;
-    int selector;
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
     MapScriptHost script_host;
 
     hooks_map_native_tileset_clear();
@@ -19538,6 +20532,15 @@ static void __cdecl hooked_mapgen_build_map(void) {
         return;
     }
     real();
+    {
+        int variable_result = custom_maps_rebuild_variable_map(selector);
+        if (variable_result < 0) {
+            LOG_ERROR("custom map variable-room rebuild failed for selector=%d", selector);
+            content_tiles_map_end();
+            custom_maps_deactivate_script();
+            return;
+        }
+    }
     if (InterlockedCompareExchange(&g_content_bridge_enabled, 0, 0) == 0) {
         content_tiles_map_end();
         custom_maps_deactivate_script();
@@ -19547,7 +20550,6 @@ static void __cdecl hooked_mapgen_build_map(void) {
         ? (void*)(uintptr_t)(*g_tilemap_data_ptr) : NULL;
     tilemap_width = g_tilemap_width ? *g_tilemap_width : 0;
     tilemap_height = g_tilemap_height ? *g_tilemap_height : 0;
-    selector = g_hook_map_selector ? *g_hook_map_selector : -1;
     err[0] = '\0';
     if (!content_bridge_bind_selector(tilemap_base, tilemap_width,
                                       tilemap_height, selector,
@@ -19557,15 +20559,22 @@ static void __cdecl hooked_mapgen_build_map(void) {
         custom_maps_deactivate_script();
         return;
     }
-    hooks_map_native_tileset_configure(selector);
+    hooks_map_native_tileset_configure(
+        selector,
+        g_game_active_room &&
+                !IsBadReadPtr((const void*)g_game_active_room, sizeof(int))
+            ? *g_game_active_room : 0);
     memset(&script_host, 0, sizeof(script_host));
     script_host.rng_seed = g_native_seed ? *g_native_seed : 0u;
     script_host.log_fn = hooks_map_script_log;
     script_host.apply_object_fn = hooks_map_script_apply_object;
     script_host.solid_box_fn = hooks_map_script_solid_box;
+    script_host.tile_at_fn = hooks_map_script_tile_at;
     script_host.read_player_fn = hooks_map_script_read_player;
+    script_host.read_player_observation_fn = hooks_map_script_read_player_observation;
     script_host.commit_players_fn = hooks_map_script_commit_players;
     script_host.apply_player_velocities_fn = hooks_map_script_apply_player_velocities;
+    script_host.trigger_mines_fn = hooks_map_script_trigger_mines;
     err[0] = '\0';
     if (!custom_maps_activate_script_for_selector(selector, &script_host,
                                                    err, sizeof(err))) {
@@ -19583,6 +20592,898 @@ static void __cdecl hooked_mapgen_build_map(void) {
                  (unsigned)summary.unique_definitions,
                  (unsigned long long)summary.custom_maps_generation);
     }
+}
+
+static int __cdecl hooked_thing_roomnum(float world_x) {
+    int room = -1;
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int result;
+    extern volatile LONG g_variable_room_local_movement;
+    if (InterlockedCompareExchange(&g_variable_room_local_movement, 0, 0) != 0)
+        return p_thing_roomnum_trampoline ? p_thing_roomnum_trampoline(world_x) : 0;
+    /* A graph may place active rooms above or below each other with overlapping
+     * X ranges. This ABI exposes only X, so prefer the already authoritative
+     * active instance whenever the point lies inside its horizontal extent.
+     * Player movement performs the full X/Y lookup in its wrapper; this path
+     * keeps swords and hazards in a vertically placed active room. */
+    if (g_game_active_room) {
+        int active = *g_game_active_room;
+        int start_x = 0;
+        int width = 0;
+        if (custom_maps_variable_room_bounds_2d_for_index(
+                selector, active, &start_x, NULL, &width, NULL) == 1 &&
+            isfinite(world_x) && world_x >= (float)start_x &&
+            world_x < (float)(start_x + width)) return active;
+    }
+    result = custom_maps_variable_room_bounds(selector, world_x,
+                                                   &room, NULL, NULL, NULL);
+    if (result == 1) return room;
+    return p_thing_roomnum_trampoline ? p_thing_roomnum_trampoline(world_x) : 0;
+}
+
+static int __cdecl hooked_game_room_count(void) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int count = custom_maps_variable_room_count(selector);
+    if (count > 0) return count;
+    return p_game_room_count_trampoline ? p_game_room_count_trampoline() : 0;
+}
+
+static int __cdecl hooked_map_pixels_h(void) {
+    extern volatile LONG g_variable_room_local_movement;
+    extern volatile LONG g_variable_room_player_query_room;
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = g_game_active_room ? *g_game_active_room : -1;
+    int start_y_px = 0;
+    int height_px = 0;
+    /* player_update_logic compares a world-space player Y with map_pixels_h.
+     * For a vertically placed room the correct lower bound is its world-space
+     * bottom, not the room's local height. player_update_movement runs
+     * immediately before this call and records the particular player's room,
+     * avoiding cross-player and camera queries borrowing active_room. */
+    if (caller == 0x42AB5Au &&
+        InterlockedCompareExchange(&g_variable_room_local_movement, 0, 0) == 0) {
+        int player_room = (int)InterlockedCompareExchange(
+            &g_variable_room_player_query_room, -1, -1);
+        if (custom_maps_variable_room_bounds_2d_for_index(
+                selector, player_room, NULL, &start_y_px, NULL,
+                &height_px) == 1 && height_px > 0)
+            return start_y_px + height_px;
+    }
+    /* Other native callers compare world coordinates too: game_update applies
+     * a second camera clamp after hooked_game_update_camera returns, and
+     * moving physics objects use this as their lower cleanup boundary. Return
+     * the active room's world-space bottom so neither path snaps a vertically
+     * placed room back toward Y=0. */
+    if (InterlockedCompareExchange(&g_variable_room_local_movement, 0, 0) == 0 &&
+        custom_maps_variable_room_bounds_2d_for_index(
+            selector, room, NULL, &start_y_px, NULL, &height_px) == 1 &&
+        height_px > 0) return start_y_px + height_px;
+    return p_map_pixels_h_trampoline ? p_map_pixels_h_trampoline() : 0;
+}
+
+/* room_info is still a fixed array indexed by a native world-X/room-width
+ * division. Choose a temporary width whose positive quotient truncates to the
+ * authored cumulative room index. This preserves native room_info layout while
+ * the actual player/camera X remains in cumulative variable-room space. */
+static int hooks_room_info_index_width(float world_x, int room,
+                                       int fallback_width) {
+    double x = (double)world_x;
+    int minimum;
+    int maximum;
+    if (!isfinite(world_x) || world_x < 0.0f || room < 0)
+        return fallback_width > 0 ? fallback_width : 1;
+    if (room == 0) {
+        double width = x * 2.0;
+        if (width < 1.0) width = 1.0;
+        if (width > 2147483647.0) width = 2147483647.0;
+        return (int)ceil(width);
+    }
+    minimum = (int)floor(x / ((double)room + 1.0)) + 1;
+    maximum = (int)floor(x / (double)room);
+    if (minimum < 1) minimum = 1;
+    if (maximum < minimum)
+        return fallback_width > 0 ? fallback_width : minimum;
+    return minimum + (maximum - minimum) / 2;
+}
+
+static void __attribute__((regparm(1))) hooked_skeleton_statue(void* player) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = -1;
+    int saved_width;
+    float world_x;
+    float world_y;
+    if (!p_skeleton_statue_trampoline || !player ||
+        IsBadReadPtr(player, 0x2cu) || !g_room_pixel_width) return;
+    world_x = *(const float*)((const unsigned char*)player + 0x24u);
+    world_y = *(const float*)((const unsigned char*)player + 0x28u);
+    if (custom_maps_variable_room_at(selector, world_x, world_y, &room,
+                                     NULL, NULL, NULL, NULL) != 1 &&
+        custom_maps_variable_room_bounds(selector, world_x, &room,
+                                         NULL, NULL, NULL) != 1) {
+        p_skeleton_statue_trampoline(player);
+        return;
+    }
+    saved_width = *g_room_pixel_width;
+    *g_room_pixel_width = hooks_room_info_index_width(world_x, room,
+                                                       saved_width);
+    p_skeleton_statue_trampoline(player);
+    *g_room_pixel_width = saved_width;
+}
+
+static struct {
+    char owner[64];
+    float x, y, zoom;
+    unsigned hidden_flags;
+    int active;
+} g_render_camera;
+static int g_render_camera_drawing = 0;
+static float g_render_camera_draw_zoom = 1.0f;
+static volatile int* g_map_view_w = (volatile int*)(uintptr_t)0x54A208u;
+static volatile int* g_map_view_h = (volatile int*)(uintptr_t)0x54A20Cu;
+
+static void __cdecl hooked_map_draw(float camera_x, float camera_y) {
+    int saved_w, saved_h;
+    if (!p_map_draw_trampoline) return;
+    if (!g_render_camera_drawing || g_render_camera_draw_zoom >= 1.0f) {
+        p_map_draw_trampoline(camera_x, camera_y);
+        return;
+    }
+    saved_w = *g_map_view_w;
+    saved_h = *g_map_view_h;
+    if (saved_w > 0 && saved_h > 0 && saved_w <= 8192 && saved_h <= 8192) {
+        /* The native tile drawer enumerates its view rectangle independently
+         * from the GL projection. Expand that enumeration for zoomed-out
+         * frames, then restore the native dimensions after each layer. */
+        *g_map_view_w = (int)fminf(8192.0f,
+                                  ceilf((float)saved_w / g_render_camera_draw_zoom));
+        *g_map_view_h = (int)fminf(8192.0f,
+                                  ceilf((float)saved_h / g_render_camera_draw_zoom));
+    }
+    p_map_draw_trampoline(camera_x, camera_y);
+    *g_map_view_w = saved_w;
+    *g_map_view_h = saved_h;
+}
+
+int hooks_render_camera_set(const char* owner, float x, float y, float zoom,
+                            unsigned hidden_flags) {
+    if (!owner || !owner[0] || strlen(owner) >= sizeof(g_render_camera.owner) ||
+        !isfinite(x) || !isfinite(y) || fabsf(x) > 10000000.0f ||
+        fabsf(y) > 10000000.0f || !isfinite(zoom) ||
+        zoom < 0.25f || zoom > 4.0f) return 0;
+    snprintf(g_render_camera.owner, sizeof(g_render_camera.owner), "%s", owner);
+    g_render_camera.x = x;
+    g_render_camera.y = y;
+    g_render_camera.zoom = zoom;
+    g_render_camera.hidden_flags = hidden_flags &
+        (HOOKS_RENDER_HIDE_PLAYERS | HOOKS_RENDER_HIDE_HEAD_INDICATORS |
+         HOOKS_RENDER_HIDE_GO_ARROW | HOOKS_RENDER_HIDE_PAUSE_BUTTON);
+    g_render_camera.active = 1;
+    return 1;
+}
+
+void hooks_render_camera_clear(const char* owner) {
+    if (!owner || (g_render_camera.active &&
+                   strcmp(g_render_camera.owner, owner) == 0)) {
+        memset(&g_render_camera, 0, sizeof(g_render_camera));
+    }
+}
+
+static void __cdecl hooked_buttons_draw(void) {
+    int count, index;
+    if (!p_buttons_draw_trampoline) return;
+    if (g_render_camera.active &&
+        (g_render_camera.hidden_flags & HOOKS_RENDER_HIDE_PAUSE_BUTTON) != 0 &&
+        !ggpo_net_active() && p_state_current &&
+        p_state_current() == (void*)(uintptr_t)ADDR_GAME_STATE &&
+        p_button_count && p_button_get) {
+        count = p_button_count();
+        if (count > 0 && count <= 300) {
+            for (index = 0; index < count; ++index) {
+                unsigned char* button = (unsigned char*)p_button_get(index);
+                float saved_x;
+                if (!button || *(uintptr_t*)(button + 0xe0) !=
+                    (uintptr_t)ADDR_OPTIONS_STATE_PAUSED) continue;
+                /* The native game layout links its pause button to the paused
+                 * options state. Cull only that button for this draw, then put
+                 * its position back before cursor/input handling resumes. */
+                saved_x = *(float*)(button + 0x10);
+                *(float*)(button + 0x10) = -1000000.0f;
+                p_buttons_draw_trampoline();
+                *(float*)(button + 0x10) = saved_x;
+                return;
+            }
+        }
+    }
+    p_buttons_draw_trampoline();
+}
+
+static void __cdecl hooked_game_render(void) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = g_game_active_room ? *g_game_active_room : -1;
+    int saved_width = g_room_pixel_width ? *g_room_pixel_width : 0;
+    float native_x, native_y;
+    GLint matrix_mode = GL_MODELVIEW;
+    GLfloat projection[16];
+    int column;
+    int override_active;
+    int mod_camera_active, map_camera_active;
+    float draw_x = 0.0f, draw_y = 0.0f, draw_zoom = 1.0f;
+    unsigned hidden_flags = 0u;
+    uintptr_t saved_leader = 0u;
+    int leader_masked = 0;
+    if (!p_game_render_trampoline) return;
+    native_x = g_camera_x ? *g_camera_x : 0.0f;
+    native_y = g_camera_y ? *g_camera_y : 0.0f;
+    if (g_camera_x && g_room_pixel_width &&
+        custom_maps_variable_room_bounds_for_index(selector, room,
+                                                    NULL, NULL, NULL) == 1) {
+        *g_room_pixel_width = hooks_room_info_index_width(native_x, room,
+                                                           saved_width);
+    }
+    mod_camera_active = g_render_camera.active && !ggpo_net_active();
+    map_camera_active = !mod_camera_active &&
+        map_script_render_camera(&draw_x, &draw_y, &draw_zoom);
+    if (mod_camera_active) {
+        draw_x = g_render_camera.x;
+        draw_y = g_render_camera.y;
+        draw_zoom = g_render_camera.zoom;
+        hidden_flags = g_render_camera.hidden_flags;
+    }
+    override_active = (mod_camera_active || map_camera_active) &&
+                      g_camera_x && g_camera_y;
+    if (override_active) {
+        *g_camera_x = draw_x;
+        *g_camera_y = draw_y;
+        glGetIntegerv(GL_MATRIX_MODE, &matrix_mode);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        /* Scale clip-space X/Y around the screen center, regardless of the
+         * native projection's pixel origin or window aspect ratio. */
+        glGetFloatv(GL_PROJECTION_MATRIX, projection);
+        for (column = 0; column < 4; ++column) {
+            projection[column * 4] *= draw_zoom;
+            projection[column * 4 + 1] *= draw_zoom;
+        }
+        glLoadMatrixf(projection);
+        glMatrixMode(matrix_mode);
+    }
+    g_render_camera_drawing = override_active;
+    g_render_camera_draw_zoom = draw_zoom;
+    if (override_active) {
+        g_render_hide_players_drawing =
+            (hidden_flags & HOOKS_RENDER_HIDE_PLAYERS) != 0;
+        g_render_hide_heads_drawing =
+            (hidden_flags & HOOKS_RENDER_HIDE_HEAD_INDICATORS) != 0;
+        /* The GO arrow and its text are guarded by the native leader pointer.
+         * Mask it only for this draw, then restore it before any game update. */
+        if ((hidden_flags & HOOKS_RENDER_HIDE_GO_ARROW) != 0 &&
+            g_game_leader) {
+            saved_leader = *g_game_leader;
+            *g_game_leader = 0u;
+            leader_masked = 1;
+        }
+    }
+    p_game_render_trampoline();
+    if (leader_masked) *g_game_leader = saved_leader;
+    g_render_hide_players_drawing = 0;
+    g_render_hide_heads_drawing = 0;
+    g_render_camera_drawing = 0;
+    g_render_camera_draw_zoom = 1.0f;
+    if (override_active) {
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(matrix_mode);
+        *g_camera_x = native_x;
+        *g_camera_y = native_y;
+    }
+    if (g_room_pixel_width) *g_room_pixel_width = saved_width;
+}
+
+volatile LONG g_variable_room_local_movement = 0;
+volatile LONG g_variable_room_player_query_room = -1;
+static uint32_t g_variable_room_movement_tiles[128 * 64];
+
+static void* __cdecl hooked_map_tile_raw(int x, int y) {
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    /* player_update_movement already swapped in a compact room-local tilemap
+     * and translated the player. In particular, trigger_mine_pos reaches
+     * map_tile from this scope. Remapping that local coordinate a second time
+     * made player contact miss mines in every room whose cumulative start was
+     * nonzero. */
+    if (InterlockedCompareExchange(&g_variable_room_local_movement, 0, 0) != 0)
+        return p_map_tile_raw_trampoline
+            ? p_map_tile_raw_trampoline(x, y) : NULL;
+    /* reset_room and game_update enumerate a synthetic room * 33 column and
+     * need translation into the cumulative authored map. trigger_mine_pos
+     * (return 0x41E9B4) instead derives a real tile column from its caller's
+     * world position. Player movement reaches it while the local-map guard
+     * above is active; swords and hazards reach it in world space. Remapping
+     * that world column here prevents those physics objects from arming mines
+     * outside the first room. */
+    if ((caller == 0x42CA38u || caller == 0x42CCEFu) && g_game_active_room) {
+        int room = *g_game_active_room;
+        int start_px = 0, start_y_px = 0, width_px = 0, height_px = 0;
+        if (custom_maps_variable_room_bounds_2d_for_index(
+                selector, room, &start_px, &start_y_px, &width_px,
+                &height_px) == 1) {
+            int local_x = x - room * 33;
+            int width = width_px / 16;
+            int height = height_px / 16;
+            if (local_x < 0 || local_x >= width || y < 0 || y >= height) return NULL;
+            x = start_px / 16 + local_x;
+            y += start_y_px / 16;
+        }
+    }
+    return p_map_tile_raw_trampoline ? p_map_tile_raw_trampoline(x, y) : NULL;
+}
+
+static void __attribute__((regparm(1))) hooked_reset_room(int final_room) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int start_px = 0, start_y_px = 0, width_px = 0, height_px = 0;
+    int x, y, width, height, start_col, start_row;
+    if (p_reset_room_trampoline) p_reset_room_trampoline(final_room);
+    if (!p_map_tile_raw_trampoline || !p_tile_action_ex ||
+        custom_maps_variable_room_bounds_2d_for_index(
+            selector, final_room, &start_px, &start_y_px, &width_px,
+            &height_px) != 1) return;
+    width = width_px / 16;
+    height = height_px / 16;
+    start_col = start_px / 16;
+    start_row = start_y_px / 16;
+    for (y = 0; y < height; ++y) for (x = 0; x < width; ++x) {
+        void* tile;
+        if (x < 33 && y < 12) continue;
+        tile = p_map_tile_raw_trampoline(start_col + x, start_row + y);
+        if (tile) p_tile_action_ex(tile, 9, start_col + x, start_row + y, 0);
+    }
+}
+
+static void __attribute__((regparm(1))) hooked_player_update_movement(void* player) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = -1, start_px = 0, start_y_px = 0, width_px = 0, height_px = 0;
+    int saved_active, saved_room_px, saved_map_w, saved_map_h, saved_room_w;
+    int saved_tile_w, saved_tile_h, start_col, start_row, width, height, row;
+    uintptr_t saved_tiles;
+    float* x;
+    float* y;
+    float* previous_x;
+    float* previous_y;
+    float old_world_x;
+    float old_world_y;
+    if (!p_player_update_movement_trampoline || !player ||
+        IsBadReadPtr(player, 0xa0) || IsBadWritePtr(player, 0xa0)) return;
+    x = (float*)((unsigned char*)player + 0x24);
+    y = (float*)((unsigned char*)player + 0x28);
+    previous_x = (float*)((unsigned char*)player + 0x2c);
+    previous_y = (float*)((unsigned char*)player + 0x30);
+    old_world_x = *x;
+    old_world_y = *y;
+    if (custom_maps_variable_room_at(selector, *x, *y, &room, &start_px,
+                                     &start_y_px, &width_px, &height_px) != 1) {
+        int prior_room = (int)*(signed char*)((unsigned char*)player + PLAYER_OFS_ROOM);
+        if (custom_maps_variable_room_bounds_2d_for_index(
+                selector, prior_room, &start_px, &start_y_px, &width_px,
+                &height_px) == 1 && *x >= (float)start_px &&
+            *x < (float)(start_px + width_px)) {
+            room = prior_room;
+        } else if (custom_maps_variable_room_bounds(
+                       selector, *x, &room, &start_px, &width_px,
+                       &height_px) == 1) {
+            custom_maps_variable_room_bounds_2d_for_index(
+                selector, room, &start_px, &start_y_px, &width_px,
+                &height_px);
+        } else {
+            room = -1;
+        }
+    }
+    if (room < 0 || !g_tilemap_data_ptr || !g_tilemap_width || !g_tilemap_height ||
+        !g_game_active_room || !g_room_pixel_width || !g_native_map_w ||
+        !g_native_map_h || !g_native_room_w) {
+        InterlockedExchange(&g_variable_room_player_query_room,
+                            (LONG)*(signed char*)((unsigned char*)player +
+                                                 PLAYER_OFS_ROOM));
+        p_player_update_movement_trampoline(player);
+        return;
+    }
+    InterlockedExchange(&g_variable_room_player_query_room, (LONG)room);
+    width = width_px / 16;
+    height = height_px / 16;
+    start_col = start_px / 16;
+    start_row = start_y_px / 16;
+    saved_tiles = *g_tilemap_data_ptr;
+    saved_tile_w = *g_tilemap_width;
+    saved_tile_h = *g_tilemap_height;
+    if (!saved_tiles || width <= 0 || width > 128 || height <= 0 || height > 64 ||
+        start_col < 0 || start_row < 0 || start_col + width > saved_tile_w ||
+        start_row + height > saved_tile_h) {
+        p_player_update_movement_trampoline(player);
+        return;
+    }
+    for (row = 0; row < height; ++row)
+        memcpy(g_variable_room_movement_tiles + row * width,
+               (const uint32_t*)(uintptr_t)saved_tiles +
+                   (start_row + row) * saved_tile_w + start_col,
+               (size_t)width * sizeof(uint32_t));
+    saved_active = *g_game_active_room;
+    saved_room_px = *g_room_pixel_width;
+    saved_map_w = *g_native_map_w;
+    saved_map_h = *g_native_map_h;
+    saved_room_w = *g_native_room_w;
+    *x -= (float)start_px;
+    *y -= (float)start_y_px;
+    *previous_x -= (float)start_px;
+    *previous_y -= (float)start_y_px;
+    *g_tilemap_data_ptr = (uintptr_t)g_variable_room_movement_tiles;
+    *g_tilemap_width = width;
+    *g_tilemap_height = height;
+    *g_game_active_room = 0;
+    *g_room_pixel_width = width_px;
+    *g_native_room_w = width;
+    *g_native_map_w = width;
+    *g_native_map_h = height;
+    InterlockedExchange(&g_variable_room_local_movement, 1);
+    p_player_update_movement_trampoline(player);
+    InterlockedExchange(&g_variable_room_local_movement, 0);
+    for (row = 0; row < height; ++row)
+        memcpy((uint32_t*)(uintptr_t)saved_tiles +
+                   (start_row + row) * saved_tile_w + start_col,
+               g_variable_room_movement_tiles + row * width,
+               (size_t)width * sizeof(uint32_t));
+    *g_tilemap_data_ptr = saved_tiles;
+    *g_tilemap_width = saved_tile_w;
+    *g_tilemap_height = saved_tile_h;
+    *g_game_active_room = saved_active;
+    *g_room_pixel_width = saved_room_px;
+    *g_native_room_w = saved_room_w;
+    *g_native_map_w = saved_map_w;
+    *g_native_map_h = saved_map_h;
+    *x += (float)start_px;
+    *y += (float)start_y_px;
+    *previous_x += (float)start_px;
+    *previous_y += (float)start_y_px;
+    {
+        int destination_room = -1;
+        int transition_connection = -1;
+        int crossing_focus = 0;
+        int focus_follows_player;
+        int transition = custom_maps_resolve_room_transition(
+            selector, room, old_world_x, old_world_y, *x, *y,
+            &destination_room, &transition_connection);
+        int connection_allowed = transition == 1 && transition_connection >= 0 &&
+            hooks_room_connection_allows((uintptr_t)player,
+                                         transition_connection,
+                                         &crossing_focus);
+        if (transition == 1 && transition_connection >= 0 &&
+            (map_script_exit_locked((uint32_t)transition_connection) ||
+             !connection_allowed)) {
+            /* Treat a scripted lock like a solid boundary. Rewind only the
+             * crossing tick; velocity remains native so releasing the lock
+             * lets the player continue naturally on the following tick. */
+            *x = old_world_x;
+            *y = old_world_y;
+            *previous_x = old_world_x;
+            *previous_y = old_world_y;
+            *((unsigned char*)player + PLAYER_OFS_ROOM) =
+                (unsigned char)room;
+        } else if (transition == 1) {
+            *((unsigned char*)player + PLAYER_OFS_ROOM) =
+                (unsigned char)destination_room;
+            InterlockedExchange(&g_variable_room_player_query_room,
+                                (LONG)destination_room);
+            /* Native updates active_room only from the GO player's room byte.
+             * That cannot focus a vertical/non-linear edge when a connection
+             * explicitly follows whichever player crossed it. Commit the
+             * destination here so reset, palette and camera all see the same
+             * room during the remainder of this game_update. */
+            /* Some modes/ticks have no GO owner at all. A GO-focused doorway
+             * must still choose a room in that state or a valid downward
+             * crossing leaves the camera above and eventually trips native
+             * distance/death handling. The first crossing player becomes the
+             * deterministic focus until the game assigns a GO player. */
+            focus_follows_player = crossing_focus ||
+                !hooks_room_graph_has_go_player() ||
+                (g_game_leader && *g_game_leader == (uintptr_t)player);
+            if (g_game_active_room && focus_follows_player)
+                *g_game_active_room = destination_room;
+            if (focus_follows_player)
+                *((unsigned char*)player + 0x9d) = 1;
+            LOG_INFO("room graph: player=%d crossed connection=%d room=%d->%d focus=%s",
+                     *((unsigned char*)player + 0x0b), transition_connection,
+                     room, destination_room,
+                     crossing_focus ? "crossing" :
+                     hooks_room_graph_has_go_player() ? "go" : "no-go fallback");
+        } else {
+            *((unsigned char*)player + PLAYER_OFS_ROOM) =
+                (unsigned char)room;
+            InterlockedExchange(&g_variable_room_player_query_room,
+                                (LONG)room);
+        }
+    }
+}
+
+static void hooks_remove_thing_below_authored_room(void* thing) {
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int room = -1, start_y_px = 0, height_px = 0;
+    float x, y;
+    if (!thing || !p_thing_free || IsBadReadPtr(thing, 0x2cu) ||
+        IsBadWritePtr(thing, 1u) || *(const unsigned char*)thing == 0) return;
+    x = *(const float*)((const unsigned char*)thing + 0x24);
+    y = *(const float*)((const unsigned char*)thing + 0x28);
+    if (!isfinite(x) || !isfinite(y)) return;
+    if (custom_maps_variable_room_at(selector, x, y, &room, NULL,
+                                     &start_y_px, NULL, &height_px) != 1) {
+        int active = g_game_active_room ? *g_game_active_room : -1;
+        int active_start_x = 0;
+        int active_width = 0;
+        if (custom_maps_variable_room_bounds_2d_for_index(
+                selector, active, &active_start_x, &start_y_px, &active_width,
+                &height_px) == 1 && x >= (float)active_start_x &&
+            x < (float)(active_start_x + active_width)) {
+            room = active;
+        } else if (custom_maps_variable_room_bounds(selector, x, &room, NULL,
+                                                    NULL, &height_px) != 1 ||
+                   custom_maps_variable_room_bounds_2d_for_index(
+                       selector, room, NULL, &start_y_px, NULL,
+                       &height_px) != 1) {
+            return;
+        }
+    }
+    /* Native sword/hazard cleanup compares against the tallest row in the
+     * rebuilt map. In a shorter room this leaves falling physics objects alive
+     * in the blank rows below its authored floor. Match the native strict
+     * lower-bound check against this object's own room. */
+    if (y > (float)(start_y_px + height_px)) p_thing_free(thing);
+}
+
+static void __cdecl hooked_sword_update_movement(void* sword) {
+    if (p_sword_update_movement_trampoline)
+        p_sword_update_movement_trampoline(sword);
+    hooks_remove_thing_below_authored_room(sword);
+}
+
+static void __cdecl hooked_hazard_update_movement(void* hazard) {
+    if (p_hazard_update_movement_trampoline)
+        p_hazard_update_movement_trampoline(hazard);
+    hooks_remove_thing_below_authored_room(hazard);
+}
+
+static void __cdecl hooked_game_update_camera(float target_x, float target_y,
+                                               float x_smoothing, float y_smoothing) {
+    int room = g_game_active_room ? *g_game_active_room : -1;
+    int start_px = 0;
+    int start_y_px = 0;
+    int width_px = 0;
+    int height_px = 0;
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    fn_game_update_camera_t real = p_game_update_camera_trampoline;
+    if (!real) return;
+    if (custom_maps_variable_room_bounds_2d_for_index(
+            selector, room, &start_px, &start_y_px, &width_px,
+            &height_px) == 1 &&
+        g_camera_x && g_camera_y && g_room_pixel_width && width_px > 0) {
+        float saved_camera = *g_camera_x;
+        float saved_camera_y = *g_camera_y;
+        float world_target_x;
+        float world_target_y;
+        float coordinate_offset = 0.0f;
+        int camera_width = width_px;
+        int saved_width = *g_room_pixel_width;
+        float old_start = (float)(room * saved_width);
+        /* game_update clamps the target against active_room * 528 before this
+         * call. Recover the actual tracked player's X when that obsolete bound
+         * was hit; mapping the clamp straight to the new far edge makes the
+         * camera jump instead of following through a wide room. */
+        if (target_x <= old_start + 16.01f ||
+            target_x >= old_start + (float)saved_width - 16.01f) {
+            uintptr_t leader = g_game_leader ? *g_game_leader : 0u;
+            float tracked_x = target_x;
+            int tracked = 0;
+            if (leader && !IsBadReadPtr((const void*)leader, 0x2cu)) {
+                tracked_x = *(const float*)(leader + 0x24u);
+                tracked = 1;
+            } else if (p_player_slots) {
+                uintptr_t first = p_player_slots[0];
+                uintptr_t second = p_player_slots[1];
+                int first_ok = first && !IsBadReadPtr((const void*)first, 0x2cu);
+                int second_ok = second && !IsBadReadPtr((const void*)second, 0x2cu);
+                if (first_ok && second_ok) {
+                    tracked_x = (*(const float*)(first + 0x24u) +
+                                 *(const float*)(second + 0x24u)) * 0.5f;
+                    tracked = 1;
+                } else if (first_ok || second_ok) {
+                    uintptr_t only = first_ok ? first : second;
+                    tracked_x = *(const float*)(only + 0x24u);
+                    tracked = 1;
+                }
+            }
+            if (tracked && isfinite(tracked_x) && tracked_x >= (float)start_px &&
+                tracked_x < (float)(start_px + width_px)) target_x = tracked_x;
+        }
+        if (target_x < (float)start_px + 16.0f) target_x = (float)start_px + 16.0f;
+        else if (target_x > (float)(start_px + width_px) - 16.0f)
+            target_x = (float)(start_px + width_px) - 16.0f;
+        /* game_update clamps Y against the tallest row in the rebuilt map.
+         * Re-clamp the target for this authored room. Both the target and the
+         * existing camera are translated into room-local Y for the native
+         * update, then translated back, preserving its easing across vertical
+         * room placement. */
+        if (g_game_h_native && isfinite(*g_game_h_native) &&
+            *g_game_h_native > 0.0f && height_px > 0) {
+            float half_view = *g_game_h_native * 0.5f;
+            if ((float)height_px <= *g_game_h_native)
+                target_y = (float)start_y_px + (float)height_px * 0.5f;
+            else if (target_y < (float)start_y_px + half_view)
+                target_y = (float)start_y_px + half_view;
+            else if (target_y > (float)(start_y_px + height_px) - half_view)
+                target_y = (float)(start_y_px + height_px) - half_view;
+        }
+        /* Vanilla assumes every room is at least one viewport wide. For a
+         * narrower authored room both horizontal clamps fire and the second
+         * one leaves the camera at width-half_view, which can even be
+         * negative. Center the authored room in a virtual viewport-width
+         * camera space. Keeping the previous world camera in that same space
+         * preserves the normal transition pan between unequal rooms. */
+        if (g_game_w_native && isfinite(*g_game_w_native) &&
+            *g_game_w_native > 0.0f) {
+            float half_view = *g_game_w_native * 0.5f;
+            if ((float)width_px <= *g_game_w_native)
+                target_x = (float)start_px + (float)width_px * 0.5f;
+            else if (target_x < (float)start_px + half_view)
+                target_x = (float)start_px + half_view;
+            else if (target_x > (float)(start_px + width_px) - half_view)
+                target_x = (float)(start_px + width_px) - half_view;
+            if ((float)width_px < *g_game_w_native) {
+                camera_width = (int)ceilf(*g_game_w_native);
+                if (camera_width < width_px) camera_width = width_px;
+                coordinate_offset = ((float)camera_width - (float)width_px) * 0.5f;
+            }
+        }
+        world_target_x = target_x;
+        world_target_y = target_y;
+        *g_camera_x = saved_camera - (float)start_px + coordinate_offset;
+        *g_camera_y = saved_camera_y - (float)start_y_px;
+        *g_room_pixel_width = camera_width;
+        real(target_x - (float)start_px + coordinate_offset,
+             target_y - (float)start_y_px,
+             x_smoothing, y_smoothing);
+        *g_camera_x += (float)start_px - coordinate_offset;
+        *g_camera_y += (float)start_y_px;
+        /* Native easing is proportional to distance. That feels normal for
+         * fixed adjacent rooms, but an authored graph may put rooms hundreds
+         * or thousands of pixels apart and produce a one-frame camera lurch.
+         * Bound world-space travel per tick while retaining the native ease at
+         * ordinary distances, then finish tiny residuals instead of drifting. */
+        if (*g_camera_x > saved_camera + 32.0f) *g_camera_x = saved_camera + 32.0f;
+        else if (*g_camera_x < saved_camera - 32.0f) *g_camera_x = saved_camera - 32.0f;
+        if (*g_camera_y > saved_camera_y + 24.0f) *g_camera_y = saved_camera_y + 24.0f;
+        else if (*g_camera_y < saved_camera_y - 24.0f) *g_camera_y = saved_camera_y - 24.0f;
+        if (fabsf(*g_camera_x - world_target_x) < 0.05f) *g_camera_x = world_target_x;
+        if (fabsf(*g_camera_y - world_target_y) < 0.05f) *g_camera_y = world_target_y;
+        *g_room_pixel_width = saved_width;
+        return;
+    }
+    real(target_x, target_y, x_smoothing, y_smoothing);
+}
+
+static int __attribute__((regparm(2))) hooked_find_good_spot(void* player,
+                                                             int direction) {
+    int result;
+    int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+    int player_index = -1;
+    int spawn_room = -1;
+    int start_px = 0, start_y_px = 0, width_px = 0, height_px = 0;
+    uintptr_t caller = (uintptr_t)__builtin_return_address(0);
+    int initial_spawn = caller == 0x421C12u || caller == 0x421C1Eu;
+    float preferred_spawn_x = NAN;
+    float preferred_spawn_y = NAN;
+    float* x = NULL;
+    float* y = NULL;
+    if (!p_find_good_spot_trampoline) return 0;
+    if (player && !IsBadReadPtr(player, 0xa0) &&
+        !IsBadWritePtr(player, 0xa0)) {
+        float before_x = *((float*)((unsigned char*)player + 0x24));
+        player_index = *((unsigned char*)player + 0x0b);
+        x = (float*)((unsigned char*)player + 0x24);
+        y = (float*)((unsigned char*)player + 0x28);
+        if (initial_spawn) {
+            int authored_start = custom_maps_start_room(selector);
+            if (authored_start >= 0 &&
+                custom_maps_variable_room_bounds_2d_for_index(
+                    selector, authored_start, &start_px, &start_y_px,
+                    &width_px, &height_px) == 1)
+                spawn_room = authored_start;
+        }
+        /* Death/forced respawn candidates are computed by player_respawn
+         * with active_room * 528. On unequal rooms that candidate can land in
+         * a neighboring authored range. The GO player's active room is the
+         * authoritative respawn room; only initial placement derives it from
+         * the players' rebuilt-map coordinates. */
+        if (!initial_spawn && g_game_active_room &&
+            custom_maps_variable_room_bounds_2d_for_index(
+                selector, *g_game_active_room, &start_px, &start_y_px,
+                &width_px, &height_px) == 1) {
+            spawn_room = *g_game_active_room;
+        }
+        if (spawn_room < 0)
+            custom_maps_variable_room_at(selector, before_x, *y, &spawn_room,
+                                         &start_px, &start_y_px, &width_px,
+                                         &height_px);
+        if (spawn_room < 0)
+            custom_maps_variable_room_bounds(selector, before_x, &spawn_room,
+                                             &start_px, &width_px, &height_px);
+        if (spawn_room >= 0)
+            custom_maps_variable_room_bounds_2d_for_index(
+                selector, spawn_room, &start_px, &start_y_px, &width_px,
+                &height_px);
+        if (spawn_room < 0 && g_game_active_room &&
+            custom_maps_variable_room_bounds_2d_for_index(
+                selector, *g_game_active_room, &start_px, &start_y_px,
+                &width_px, &height_px) == 1) {
+            spawn_room = *g_game_active_room;
+        }
+        /* Keep the position that player_respawn selected near the GO player.
+         * Native find_good_spot clamps every search to columns 1..31 even
+         * after _room_w is replaced, so using its result as the marker/floor
+         * preference pulls respawns toward the left half of wide rooms. The
+         * authored-floor pass below can search the complete room; seed it
+         * with the intended world position instead. Its native Y seed uses
+         * half of the tallest rebuilt map, so center an out-of-room seed in
+         * the active room before measuring candidate distance. */
+        if (!initial_spawn && spawn_room >= 0 && width_px > 0 && height_px > 0) {
+            preferred_spawn_x = before_x;
+            preferred_spawn_y = *y;
+            if (!isfinite(preferred_spawn_x) ||
+                preferred_spawn_x < (float)start_px ||
+                preferred_spawn_x >= (float)(start_px + width_px)) {
+                preferred_spawn_x = (float)start_px + (float)width_px * 0.5f;
+            }
+            if (!isfinite(preferred_spawn_y) ||
+                preferred_spawn_y < (float)start_y_px ||
+                preferred_spawn_y >= (float)(start_y_px + height_px)) {
+                preferred_spawn_y = (float)start_y_px +
+                    (float)height_px * 0.5f;
+            }
+        }
+        /* game_init derives this with round(camera / 528), which is only a
+         * valid room index for the stock fixed-width layout. The initial
+         * players are already at the rebuilt map's center, so cumulative
+         * authored bounds give the authoritative center room. */
+        if (initial_spawn && spawn_room >= 0 && g_game_active_room)
+            *g_game_active_room = spawn_room;
+    }
+    if (spawn_room >= 0 && x && y && g_tilemap_data_ptr && g_tilemap_width &&
+        g_tilemap_height && g_game_active_room && g_room_pixel_width &&
+        g_native_map_w && g_native_map_h && g_native_room_w) {
+        int width = width_px / 16;
+        int height = height_px / 16;
+        int start_col = start_px / 16;
+        int start_row = start_y_px / 16;
+        uintptr_t saved_tiles = *g_tilemap_data_ptr;
+        int saved_tile_w = *g_tilemap_width;
+        int saved_tile_h = *g_tilemap_height;
+        if (saved_tiles && width > 0 && width <= 128 && height > 0 &&
+            height <= 64 && start_col >= 0 && start_row >= 0 &&
+            start_col + width <= saved_tile_w &&
+            start_row + height <= saved_tile_h) {
+            int saved_active = *g_game_active_room;
+            int saved_room_px = *g_room_pixel_width;
+            int saved_map_w = *g_native_map_w;
+            int saved_map_h = *g_native_map_h;
+            int saved_room_w = *g_native_room_w;
+            float* previous_x = (float*)((unsigned char*)player + 0x2c);
+            float* previous_y = (float*)((unsigned char*)player + 0x30);
+            uintptr_t opponent = 0;
+            float* opponent_x = NULL;
+            float* opponent_y = NULL;
+            float* opponent_previous_x = NULL;
+            float* opponent_previous_y = NULL;
+            unsigned char saved_opponent_room = 0;
+            int opponent_localized = 0;
+            int row;
+            for (row = 0; row < height; ++row)
+                memcpy(g_variable_room_movement_tiles + row * width,
+                       (const uint32_t*)(uintptr_t)saved_tiles +
+                           (start_row + row) * saved_tile_w + start_col,
+                       (size_t)width * sizeof(uint32_t));
+            if (p_player_slots && player_index >= 0 && player_index < 2) {
+                opponent = p_player_slots[(player_index + 1) & 1];
+                if (opponent && opponent != (uintptr_t)player &&
+                    !IsBadReadPtr((const void*)opponent, 0xa0) &&
+                    !IsBadWritePtr((void*)opponent, 0xa0)) {
+                    opponent_x = (float*)(opponent + 0x24u);
+                    opponent_y = (float*)(opponent + 0x28u);
+                    opponent_previous_x = (float*)(opponent + 0x2cu);
+                    opponent_previous_y = (float*)(opponent + 0x30u);
+                    if (*opponent_x >= (float)start_px &&
+                        *opponent_x < (float)(start_px + width_px) &&
+                        *opponent_y >= (float)start_y_px &&
+                        *opponent_y < (float)(start_y_px + height_px)) {
+                        saved_opponent_room =
+                            *((unsigned char*)opponent + PLAYER_OFS_ROOM);
+                        *opponent_x -= (float)start_px;
+                        *opponent_y -= (float)start_y_px;
+                        *opponent_previous_x -= (float)start_px;
+                        *opponent_previous_y -= (float)start_y_px;
+                        *((unsigned char*)opponent + PLAYER_OFS_ROOM) = 0;
+                        opponent_localized = 1;
+                    }
+                }
+            }
+            *x -= (float)start_px;
+            *y -= (float)start_y_px;
+            *previous_x -= (float)start_px;
+            *previous_y -= (float)start_y_px;
+            *((unsigned char*)player + PLAYER_OFS_ROOM) = 0;
+            *g_tilemap_data_ptr = (uintptr_t)g_variable_room_movement_tiles;
+            *g_tilemap_width = width;
+            *g_tilemap_height = height;
+            *g_game_active_room = 0;
+            *g_room_pixel_width = width_px;
+            *g_native_room_w = width;
+            *g_native_map_w = width;
+            *g_native_map_h = height;
+            InterlockedExchange(&g_variable_room_local_movement, 1);
+            result = p_find_good_spot_trampoline(player, direction);
+            InterlockedExchange(&g_variable_room_local_movement, 0);
+            *g_tilemap_data_ptr = saved_tiles;
+            *g_tilemap_width = saved_tile_w;
+            *g_tilemap_height = saved_tile_h;
+            *g_game_active_room = saved_active;
+            *g_room_pixel_width = saved_room_px;
+            *g_native_room_w = saved_room_w;
+            *g_native_map_w = saved_map_w;
+            *g_native_map_h = saved_map_h;
+            *x += (float)start_px;
+            *y += (float)start_y_px;
+            *previous_x += (float)start_px;
+            *previous_y += (float)start_y_px;
+            *((unsigned char*)player + PLAYER_OFS_ROOM) =
+                (unsigned char)spawn_room;
+            if (opponent_localized) {
+                *opponent_x += (float)start_px;
+                *opponent_y += (float)start_y_px;
+                *opponent_previous_x += (float)start_px;
+                *opponent_previous_y += (float)start_y_px;
+                *((unsigned char*)opponent + PLAYER_OFS_ROOM) =
+                    saved_opponent_room;
+            }
+        } else {
+            result = p_find_good_spot_trampoline(player, direction);
+        }
+    } else {
+        result = p_find_good_spot_trampoline(player, direction);
+    }
+    if (!player || IsBadReadPtr(player, 0xa0) || IsBadWritePtr(player, 0xa0)) return result;
+    if (player_index < 0) player_index = *((unsigned char*)player + 0x0b);
+    if (!x) x = (float*)((unsigned char*)player + 0x24);
+    if (!y) y = (float*)((unsigned char*)player + 0x28);
+    {
+        int facing = 0;
+        if (initial_spawn &&
+            custom_maps_player_start_position(selector, player_index, *x,
+                                              x, y, &facing)) {
+            *((float*)((unsigned char*)player + 0x2c)) = *x;
+            *((float*)((unsigned char*)player + 0x30)) = *y;
+            *((signed char*)player + 0x98) = (signed char)facing;
+            *((signed char*)player + 0x9c) = (signed char)facing;
+            return 1;
+        }
+    }
+    {
+        float adjusted_x = isfinite(preferred_spawn_x) ? preferred_spawn_x : *x;
+        float adjusted_y = isfinite(preferred_spawn_y) ? preferred_spawn_y : *y;
+        if (custom_maps_adjust_spawn_position(selector, spawn_room, player_index,
+                                              &adjusted_x, &adjusted_y)) {
+            *x = adjusted_x;
+            *y = adjusted_y;
+            *((float*)((unsigned char*)player + 0x2c)) = *x;
+            *((float*)((unsigned char*)player + 0x30)) = *y;
+            return 1;
+        }
+    }
+    return result;
 }
 
 static void __cdecl hooked_eggnogg_colour(float* rgb) {
@@ -19627,6 +21528,31 @@ static int __cdecl hooked_tile_action_ex(void* tile,
             mode, *g_game_started, *g_game_old_active_room,
             *g_game_start_countdown)) {
         return 1;
+    }
+
+    /* player_update_movement runs against a compact room-local tilemap so
+     * vanilla collision works at every authored width. Mine activation (mode
+     * 5) uses the supplied tile coordinates to place its fuse entity. Keep
+     * the local tile pointer, whose armed byte is copied back after movement,
+     * but derive world coordinates from the current player's authored room.
+     * Reject an inconsistent local coordinate instead of spawning a fuse in
+     * another placed copy of the same source room. */
+    if (mode == 5 &&
+        InterlockedCompareExchange(&g_variable_room_local_movement, 0, 0) != 0) {
+        int room = (int)InterlockedCompareExchange(
+            &g_variable_room_player_query_room, -1, -1);
+        int start_x_px = 0, start_y_px = 0, width_px = 0, height_px = 0;
+        int selector = g_hook_map_selector ? *g_hook_map_selector : -1;
+        if (custom_maps_variable_room_bounds_2d_for_index(
+                selector, room, &start_x_px, &start_y_px, &width_px,
+                &height_px) != 1 || x < 0 || y < 0 ||
+            x >= width_px / 16 || y >= height_px / 16) {
+            LOG_WARN("variable-room mine activation rejected: room=%d local=(%d,%d)",
+                     room, x, y);
+            return 0;
+        }
+        x += start_x_px / 16;
+        y += start_y_px / 16;
     }
 
     /* tile_action_ex calls the tile definition's action pointer directly.
@@ -19776,7 +21702,30 @@ void hooks_init(void) {
                 g_mad_init_audio_stream_detour.trampoline;
     }
 
+    /* syn_update starts with four complete instructions totaling five bytes.
+     * Scaling its mono output controls native synthesized effects before the
+     * game's mixer copies them into the stereo device buffer. */
+    {
+        static const unsigned char expected[] = {
+            0x55, 0x31, 0xD2, 0x57, 0x56
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_SYN_UPDATE,
+                   expected, sizeof(expected)) != 0 ||
+            !install_detour(&g_syn_update_detour,
+                            (void*)(uintptr_t)ADDR_SYN_UPDATE,
+                            (void*)&hooked_syn_update,
+                            sizeof(expected))) {
+            LOG_WARN("hooks_init: native SFX volume unavailable; "
+                     "syn_update verification failed");
+        } else {
+            p_syn_update_trampoline =
+                (fn_syn_update_t)g_syn_update_detour.trampoline;
+        }
+    }
+
     custom_maps_init();
+    if (!hooks_install_variable_room_collision_bounds())
+        LOG_WARN("hooks_init: variable-room collision bounds unavailable; native instruction verification failed");
     {
         static const unsigned char expected[]={0x55,0xB9,0x18,0x00,0x00,0x00,0x57};
         if(memcmp((void*)(uintptr_t)0x41C3F0u,expected,sizeof(expected)) ||
@@ -19784,6 +21733,24 @@ void hooks_init(void) {
                            (void*)hooked_entity_draw_things,sizeof(expected)))
             LOG_ERROR("hooks_init: entity rendering hook unavailable");
         else p_entity_draw_things_trampoline=(fn_entity_native_draw_things)g_entity_draw_things_detour.trampoline;
+    }
+    {
+        static const unsigned char expected[] = {
+            0x55, 0xB9, 0x18, 0x00, 0x00, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_PARTICLES_DRAW_EX,
+                   expected, sizeof(expected)) != 0 ||
+            !install_detour(&g_particles_draw_ex_detour,
+                            (void*)(uintptr_t)ADDR_PARTICLES_DRAW_EX,
+                            (void*)&hooked_particles_draw_ex,
+                            sizeof(expected))) {
+            LOG_WARN("hooks_init: custom ambiance renderer unavailable; "
+                     "particles_draw_ex verification failed");
+        } else {
+            p_particles_draw_ex_trampoline =
+                (fn_particles_draw_ex_t)
+                    g_particles_draw_ex_detour.trampoline;
+        }
     }
     if (!hooks_install_opponent_spawn_policy())
         LOG_WARN("hooks_init: opponent spawn policy unavailable; native call verification failed");
@@ -19824,6 +21791,26 @@ void hooks_init(void) {
         p_game_update_trampoline = (fn_game_update_t)g_game_update_detour.trampoline;
     }
 
+    /* game_init begins push edi / push esi / push ebx / xor ebx,ebx /
+     * sub esp,0x30.  The graph start-room post-pass must run after both native
+     * find_good_spot calls have completed. */
+    {
+        static const unsigned char game_init_prologue[] = {
+            0x57, 0x56, 0x53, 0x31, 0xDB, 0x83, 0xEC, 0x30
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_GAME_INIT, game_init_prologue,
+                   sizeof(game_init_prologue)) != 0 ||
+            !install_detour(&g_game_init_detour,
+                            (void*)(uintptr_t)ADDR_GAME_INIT,
+                            (void*)&hooked_game_init,
+                            sizeof(game_init_prologue))) {
+            LOG_WARN("hooks_init: authored start-room initialization unavailable; game_init verification failed");
+        } else {
+            p_game_init_trampoline =
+                (fn_void_void_t)g_game_init_detour.trampoline;
+        }
+    }
+
     /* thing_new 0x41FD40 begins: push edi (1), xor ecx,ecx (2), push esi
      * (1), mov esi,[0x54204c] (6). Ten bytes is the first complete boundary
      * large enough for the detour. The post-call hook advances a generation
@@ -19836,6 +21823,33 @@ void hooks_init(void) {
     } else {
         p_thing_new_trampoline = (fn_thing_new_t)g_thing_new_detour.trampoline;
         InterlockedExchange(&g_thing_lifecycle_tracking_enabled, 1);
+    }
+
+    /* player_check_opponent_hit begins push ebp/edi/esi/ebx then
+     * sub esp,0x4c. Seven bytes is the first complete detour boundary. */
+    {
+        static const unsigned char expected[]={0x55,0x57,0x56,0x53,0x83,0xEC,0x4C};
+        if(memcmp((void*)(uintptr_t)ADDR_PLAYER_CHECK_OPPONENT_HIT,expected,sizeof(expected))||
+           !install_detour(&g_player_check_opponent_hit_detour,
+                           (void*)(uintptr_t)ADDR_PLAYER_CHECK_OPPONENT_HIT,
+                           (void*)&hooked_player_check_opponent_hit,sizeof(expected))) {
+            LOG_WARN("hooks_init: native attacks cannot damage custom objects; combat probe verification failed");
+        } else {
+            p_player_check_opponent_hit_trampoline=(fn_player_check_opponent_hit_t)g_player_check_opponent_hit_detour.trampoline;
+        }
+    }
+    /* mine_anim begins push ebp/edi/esi/ebx then sub esp,0x7c.  It is the
+     * explosion callback; trigger_mine_pos only arms the tile and must never
+     * deal managed damage by itself. */
+    {
+        static const unsigned char expected[]={0x55,0x57,0x56,0x53,0x83,0xEC,0x7C};
+        if(memcmp((void*)(uintptr_t)ADDR_MINE_ANIM,expected,sizeof(expected))||
+           !install_detour(&g_mine_anim_detour,(void*)(uintptr_t)ADDR_MINE_ANIM,
+                           (void*)&hooked_mine_anim,sizeof(expected))) {
+            LOG_WARN("hooks_init: native mines cannot damage custom objects; mine explosion verification failed");
+        } else {
+            p_mine_anim_trampoline=(fn_mine_anim_t)g_mine_anim_detour.trampoline;
+        }
     }
 
     /* game_eggnogg_colour: sub esp,0x30 (3), mov ecx,[abs] (6).
@@ -19962,6 +21976,26 @@ void hooks_init(void) {
     }
     p_mapgen_init_trampoline = (fn_void_void_t)g_mapgen_init_detour.trampoline;
 
+    /* mapgen_room_info begins with `mov eax, 1` (five bytes). Graph layouts
+     * need this lookup to resolve placed instances instead of folding their
+     * indices through the legacy mirrored line. */
+    {
+        static const unsigned char room_info_prologue[] = {
+            0xB8, 0x01, 0x00, 0x00, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_MAPGEN_ROOM_INFO,
+                   room_info_prologue, sizeof(room_info_prologue)) != 0 ||
+            !install_detour(&g_mapgen_room_info_detour,
+                            (void*)(uintptr_t)ADDR_MAPGEN_ROOM_INFO,
+                            (void*)&hooked_mapgen_room_info,
+                            sizeof(room_info_prologue))) {
+            LOG_WARN("hooks_init: room-graph appearance unavailable; mapgen_room_info verification failed");
+        } else {
+            p_mapgen_room_info_trampoline =
+                (fn_mapgen_room_info_t)g_mapgen_room_info_detour.trampoline;
+        }
+    }
+
     // mapgen_build_map starts with:
     //   push ebx        (1)
     //   xor ebx, ebx    (2)
@@ -19993,6 +22027,231 @@ void hooks_init(void) {
         }
     }
 
+    /* Variable-width rooms need room lookup and horizontal camera clamping to
+     * use authored cumulative bounds instead of active_room * 33 tiles. */
+    {
+        static const unsigned char thing_roomnum_prologue[] = {
+            0x83, 0xEC, 0x08, 0xA1, 0x60, 0xA3, 0x54, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_THING_ROOMNUM,
+                   thing_roomnum_prologue, sizeof(thing_roomnum_prologue)) != 0 ||
+            !install_detour(&g_thing_roomnum_detour,
+                            (void*)(uintptr_t)ADDR_THING_ROOMNUM,
+                            (void*)&hooked_thing_roomnum,
+                            sizeof(thing_roomnum_prologue))) {
+            LOG_WARN("hooks_init: variable-room lookup unavailable; thing_roomnum verification failed");
+        } else {
+            p_thing_roomnum_trampoline =
+                (fn_thing_roomnum_t)g_thing_roomnum_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char room_count_prologue[] = {
+            0x83, 0xEC, 0x0C, 0xE8, 0x08, 0x52, 0x00, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_GAME_ROOM_COUNT,
+                   room_count_prologue, sizeof(room_count_prologue)) != 0 ||
+            !install_detour_relocated_rel32(
+                &g_game_room_count_detour,
+                (void*)(uintptr_t)ADDR_GAME_ROOM_COUNT,
+                (void*)&hooked_game_room_count,
+                sizeof(room_count_prologue), 3u)) {
+            LOG_WARN("hooks_init: variable-room count unavailable; game_room_count verification failed");
+        } else {
+            p_game_room_count_trampoline =
+                (fn_int_void_t)g_game_room_count_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char map_pixels_h_prologue[] = {
+            0xA1, 0x04, 0xA2, 0x54, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_MAP_PIXELS_H,
+                   map_pixels_h_prologue,
+                   sizeof(map_pixels_h_prologue)) != 0 ||
+            !install_detour(&g_map_pixels_h_detour,
+                            (void*)(uintptr_t)ADDR_MAP_PIXELS_H,
+                            (void*)&hooked_map_pixels_h,
+                            sizeof(map_pixels_h_prologue))) {
+            LOG_WARN("hooks_init: variable-room height unavailable; map_pixels_h verification failed");
+        } else {
+            p_map_pixels_h_trampoline =
+                (fn_int_void_t)g_map_pixels_h_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char camera_prologue[] = {
+            0x83, 0xEC, 0x3C, 0xD9, 0x44, 0x24, 0x40
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_GAME_UPDATE_CAMERA,
+                   camera_prologue, sizeof(camera_prologue)) != 0 ||
+            !install_detour(&g_game_update_camera_detour,
+                            (void*)(uintptr_t)ADDR_GAME_UPDATE_CAMERA,
+                            (void*)&hooked_game_update_camera,
+                            sizeof(camera_prologue))) {
+            LOG_WARN("hooks_init: variable-room camera unavailable; game_update_camera verification failed");
+        } else {
+            p_game_update_camera_trampoline =
+                (fn_game_update_camera_t)g_game_update_camera_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char skeleton_prologue[] = {
+            0x55, 0x57, 0x56, 0x53, 0x89, 0xC3
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_SKELETON_STATUE,
+                   skeleton_prologue, sizeof(skeleton_prologue)) != 0 ||
+            !install_detour(&g_skeleton_statue_detour,
+                            (void*)(uintptr_t)ADDR_SKELETON_STATUE,
+                            (void*)&hooked_skeleton_statue,
+                            sizeof(skeleton_prologue))) {
+            LOG_WARN("hooks_init: variable-room death marker unavailable; skeleton_statue verification failed");
+        } else {
+            p_skeleton_statue_trampoline =
+                (fn_skeleton_statue_t)g_skeleton_statue_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char game_render_prologue[] = {
+            0x55, 0x57, 0x56, 0xBE, 0xC0, 0x80, 0x44, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_GAME_RENDER,
+                   game_render_prologue, sizeof(game_render_prologue)) != 0 ||
+            !install_detour(&g_game_render_detour,
+                            (void*)(uintptr_t)ADDR_GAME_RENDER,
+                            (void*)&hooked_game_render,
+                            sizeof(game_render_prologue))) {
+            LOG_WARN("hooks_init: variable-room death-marker rendering unavailable; game_render verification failed");
+        } else {
+            p_game_render_trampoline =
+                (fn_void_void_t)g_game_render_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char buttons_draw_prologue[] = {
+            0x55, 0xB9, 0x18, 0x00, 0x00, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_BUTTONS_DRAW,
+                   buttons_draw_prologue, sizeof(buttons_draw_prologue)) != 0 ||
+            !install_detour(&g_buttons_draw_detour,
+                            (void*)(uintptr_t)ADDR_BUTTONS_DRAW,
+                            (void*)&hooked_buttons_draw,
+                            sizeof(buttons_draw_prologue))) {
+            LOG_WARN("hooks_init: freecam pause-button hiding unavailable; buttons_draw verification failed");
+        } else {
+            p_buttons_draw_trampoline =
+                (fn_void_void_t)g_buttons_draw_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char map_draw_prologue[] = {
+            0x55, 0xB9, 0x18, 0x00, 0x00, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_MAP_DRAW,
+                   map_draw_prologue, sizeof(map_draw_prologue)) != 0 ||
+            !install_detour(&g_map_draw_detour,
+                            (void*)(uintptr_t)ADDR_MAP_DRAW,
+                            (void*)&hooked_map_draw,
+                            sizeof(map_draw_prologue))) {
+            LOG_WARN("hooks_init: freecam tile range unavailable; map_draw verification failed");
+        } else {
+            p_map_draw_trampoline = (fn_map_draw_t)g_map_draw_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char spawn_prologue[] = {
+            0x55, 0x57, 0x89, 0xC7, 0x56, 0x53, 0x89, 0xD3
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_FIND_GOOD_SPOT,
+                   spawn_prologue, sizeof(spawn_prologue)) != 0 ||
+            !install_detour(&g_find_good_spot_detour,
+                            (void*)(uintptr_t)ADDR_FIND_GOOD_SPOT,
+                            (void*)&hooked_find_good_spot,
+                            sizeof(spawn_prologue))) {
+            LOG_WARN("hooks_init: custom respawn markers unavailable; find_good_spot verification failed");
+        } else {
+            p_find_good_spot_trampoline =
+                (fn_find_good_spot_t)g_find_good_spot_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char movement_prologue[] = {
+            0x55, 0x57, 0x56, 0x53, 0x89, 0xC3
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_PLAYER_UPDATE_MOVEMENT,
+                   movement_prologue, sizeof(movement_prologue)) != 0 ||
+            !install_detour(&g_player_update_movement_detour,
+                            (void*)(uintptr_t)ADDR_PLAYER_UPDATE_MOVEMENT,
+                            (void*)&hooked_player_update_movement,
+                            sizeof(movement_prologue))) {
+            LOG_WARN("hooks_init: variable-room player movement unavailable; prologue verification failed");
+        } else {
+            p_player_update_movement_trampoline =
+                (fn_player_update_movement_t)g_player_update_movement_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char physics_movement_prologue[] = {
+            0x55, 0x57, 0x56, 0x53, 0x83, 0xEC, 0x6C
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_SWORD_UPDATE_MOVEMENT,
+                   physics_movement_prologue,
+                   sizeof(physics_movement_prologue)) != 0 ||
+            !install_detour(&g_sword_update_movement_detour,
+                            (void*)(uintptr_t)ADDR_SWORD_UPDATE_MOVEMENT,
+                            (void*)&hooked_sword_update_movement,
+                            sizeof(physics_movement_prologue))) {
+            LOG_WARN("hooks_init: variable-room sword lower bound unavailable; prologue verification failed");
+        } else {
+            p_sword_update_movement_trampoline =
+                (fn_thing_update_movement_t)g_sword_update_movement_detour.trampoline;
+        }
+        if (memcmp((void*)(uintptr_t)ADDR_HAZARD_UPDATE_MOVEMENT,
+                   physics_movement_prologue,
+                   sizeof(physics_movement_prologue)) != 0 ||
+            !install_detour(&g_hazard_update_movement_detour,
+                            (void*)(uintptr_t)ADDR_HAZARD_UPDATE_MOVEMENT,
+                            (void*)&hooked_hazard_update_movement,
+                            sizeof(physics_movement_prologue))) {
+            LOG_WARN("hooks_init: variable-room hazard lower bound unavailable; prologue verification failed");
+        } else {
+            p_hazard_update_movement_trampoline =
+                (fn_thing_update_movement_t)g_hazard_update_movement_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char map_tile_prologue[] = {
+            0x8B, 0x44, 0x24, 0x04, 0x8B, 0x54, 0x24, 0x08
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_MAP_TILE,
+                   map_tile_prologue, sizeof(map_tile_prologue)) != 0 ||
+            !install_detour(&g_map_tile_raw_detour,
+                            (void*)(uintptr_t)ADDR_MAP_TILE,
+                            (void*)&hooked_map_tile_raw,
+                            sizeof(map_tile_prologue))) {
+            LOG_WARN("hooks_init: variable-room tile updates unavailable; map_tile verification failed");
+        } else {
+            p_map_tile_raw_trampoline =
+                (fn_map_tile_raw_t)g_map_tile_raw_detour.trampoline;
+        }
+    }
+    {
+        static const unsigned char reset_room_prologue[] = {
+            0x55, 0x89, 0xC5, 0x57, 0x31, 0xFF
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_RESET_ROOM,
+                   reset_room_prologue, sizeof(reset_room_prologue)) != 0 ||
+            !install_detour(&g_reset_room_detour,
+                            (void*)(uintptr_t)ADDR_RESET_ROOM,
+                            (void*)&hooked_reset_room,
+                            sizeof(reset_room_prologue))) {
+            LOG_WARN("hooks_init: variable-room reset unavailable; reset_room verification failed");
+        } else {
+            p_reset_room_trampoline =
+                (fn_reset_room_t)g_reset_room_detour.trampoline;
+        }
+    }
+
     // high_water_action starts with:
     //   push ebx         (1)
     //   sub esp, 0x28    (3)
@@ -20014,6 +22273,26 @@ void hooks_init(void) {
         LOG_WARN("hooks_init: failed to detour atlas_upload (mod.assets PNG sheets will stay pending)");
     } else {
         p_atlas_upload_trampoline = (fn_atlas_upload_t)g_atlas_upload_detour.trampoline;
+    }
+
+    /* Flush the isolated map-content page wherever the game flushes page 0.
+     * The first two instructions are sub esp,0x1c and mov [esp],0. */
+    {
+        static const unsigned char expected[] = {
+            0x83, 0xEC, 0x1C, 0xC7, 0x04, 0x24, 0x00, 0x00, 0x00, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW,
+                   expected, sizeof(expected)) != 0 ||
+            !install_detour(&g_main_sprite_batches_draw_detour,
+                            (void*)(uintptr_t)ADDR_MAIN_SPRITE_BATCHES_DRAW,
+                            (void*)&hooked_main_sprite_batches_draw,
+                            sizeof(expected))) {
+            LOG_WARN("hooks_init: isolated map atlas drawing unavailable; sprite batch verification failed");
+        } else {
+            p_main_sprite_batches_draw_trampoline =
+                (fn_main_sprite_batches_draw_t)
+                    g_main_sprite_batches_draw_detour.trampoline;
+        }
     }
 
     if (!install_detour(&g_rng_mrand_detour, (void*)(uintptr_t)ADDR_MRAND, (void*)&hooked_mrand, 10)) {

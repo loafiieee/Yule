@@ -20,7 +20,8 @@ def body(signature: str) -> str:
 
 
 build = body("static void __cdecl hooked_mapgen_build_map(void)")
-configure = body("static void hooks_map_native_tileset_configure(int selector)")
+configure = body("static void hooks_map_native_tileset_configure(int selector, int final_room)")
+refresh = body("static void hooks_map_native_tileset_refresh_room")
 begin = body("static int hooks_map_native_tileset_begin_draw")
 fallback = body("static int hooks_plot_native_tile_fallback")
 underlay = body("static int hooks_draw_native_tile_underlay")
@@ -30,16 +31,19 @@ draw = body("static int __cdecl hooked_tile_action_ex")
 # whose validated content view enables native_layout can install a new sheet.
 assert build.index("hooks_map_native_tileset_clear();") < build.index("real();")
 assert build.index("content_bridge_bind_selector") < build.index(
-    "hooks_map_native_tileset_configure(selector);"
+    "hooks_map_native_tileset_configure("
 )
-assert "custom_maps_pinned_content_view(selector, &view)" in configure
-assert "view.native_layout" in configure
-assert "view.default_sheet_key" in configure
-assert "view.default_sheet_sprite_count" in configure
-assert "view.default_sheet_sprite_count < 128" in configure
+assert "custom_maps_pinned_native_tileset(" in configure
+assert "selector, final_room" in configure
+assert "g_map_native_tileset_selector = selector" in configure
+assert "g_map_native_tileset_room = final_room" in configure
+assert "g_game_active_room" in refresh
+assert "room != g_map_native_tileset_room" in refresh
+assert "hooks_map_native_tileset_configure(selector, room)" in refresh
 
 # Atlas ids are not cached across rebuilds.  The external sheet's first sprite
 # is resolved each draw and becomes the native `_tiles` pointer temporarily.
+assert "hooks_map_native_tileset_refresh_room();" in begin
 assert "lua_manager_content_resolve_sprite(g_map_native_tileset_sheet, 0" in begin
 assert "lua_manager_content_resolve_sprite(g_map_native_tileset_sheet, 127" in begin
 assert "last_sprite_id != sprite_id + 127" in begin

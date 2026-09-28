@@ -138,10 +138,19 @@ prepare_load = prepare.index("ggpo_net_load_start_state_if_ready")
 prepare_loaded_guard = prepare.index("if (!g_net.start_state_loaded)", prepare_load)
 prepare_publish = prepare.index("ggpo_net_track_remote_cmd", prepare_loaded_guard)
 assert prepare_load < prepare_loaded_guard < prepare_publish
+chunk_initial_reject = state_chunk.index("host initial state rejected before apply")
+chunk_prevalidate = state_chunk.rindex(
+    "ggpo_ext_validate_rollback_transport_blob(g_net.recv_state",
+    0,
+    chunk_initial_reject,
+)
+chunk_terminal_mismatch = state_chunk.index(
+    "g_net.peer_disconnected = 1", chunk_initial_reject
+)
 chunk_local = state_chunk.index("ggpo_net_capture_local_render_geometry")
 chunk_apply = state_chunk.index("ggpo_net_apply_received_state_transaction", chunk_local)
 chunk_restore = state_chunk.index("ggpo_net_restore_local_render_geometry", chunk_apply)
-assert chunk_local < chunk_apply < chunk_restore
+assert chunk_prevalidate < chunk_terminal_mismatch < chunk_local < chunk_apply < chunk_restore
 load_call = live.index("ggpo_net_load_start_state_if_ready")
 live_local_capture = live.index("ggpo_net_capture_local_render_geometry")
 loaded_guard = live.index("if (!g_net.start_state_loaded)", load_call)

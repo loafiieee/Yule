@@ -20,7 +20,7 @@
     <p class="lead">Yule separates framework-wide preferences, online-account settings, and each mod’s own settings. Most everyday changes can be made in-game.</p>
 
     <h2 id="in-game-settings">Prefer in-game settings</h2>
-    <p>Open <strong>Options → Mods</strong>. The Framework section owns general toggles and updater actions. Each enabled mod with a <code>config</code> entry in its manifest gets its own settings section. The online hub has a separate Settings tab for online-specific choices.</p>
+    <p>Open <strong>Options → Mods</strong>. The Framework section owns general toggles, separate Music/SFX master volume controls, and updater actions. Use left/right to change volume in five-point steps. Each enabled mod with a <code>config</code> entry in its manifest gets its own settings section. The online hub has a separate Settings tab for online-specific choices.</p>
     <p>In-game changes update live state and use the framework’s persistence helpers. Close the game before hand-editing files so an in-game save cannot overwrite your edit.</p>
 
     <h2 id="framework-config">Framework configuration</h2>
@@ -33,6 +33,8 @@
         <tr><td><code>auto_update=0|1</code></td><td>Allow automatic update checks and installation prompts. If absent, automatic updates are enabled.</td></tr>
         <tr><td><code>update_channel_url=https://…</code></td><td>Override the release channel. Ordinary players should keep the release default.</td></tr>
         <tr><td><code>music_output_rate=48000</code></td><td>Set the SDL mixer device rate from 8,000 through 192,000 Hz. A track may temporarily override it.</td></tr>
+        <tr><td><code>music_volume=100</code></td><td>Master volume from 0 through 100 for Eggnogg/Yule music and mod-owned music files.</td></tr>
+        <tr><td><code>sfx_volume=100</code></td><td>Master volume from 0 through 100 for native synth, generated, and mod-owned file effects.</td></tr>
         <tr><td><code>discord_presence=0|1</code></td><td>Enable or disable the dependency-free Discord desktop Rich Presence client.</td></tr>
         <tr><td><code>discord_application_id=&lt;digits&gt;</code></td><td>Public Discord Application ID. This is not a client secret.</td></tr>
       </tbody>
@@ -82,4 +84,3 @@ mods.config.action my_mod reset_stats</code></pre>
   </article></main></div>
 </body>
 </html>
-

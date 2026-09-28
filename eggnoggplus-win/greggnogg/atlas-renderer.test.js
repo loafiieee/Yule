@@ -93,6 +93,61 @@ function testExportedApi() {
   assert(typeof GregAtlas._nativeSpinnerAlphaBytes === "function", "spinner-alpha test hook");
   assert(typeof GregAtlas._nativeSunPosition === "function", "sun-position test hook");
   assert(typeof GregAtlas._previewEnemyColour === "function", "goal-preview contrast test hook");
+  assert(typeof GregAtlas._particleEase === "function", "particle transition test hook");
+  assert(typeof GregAtlas._nativeSheetSelection === "function", "per-room native sheet selection test hook");
+  assert(typeof GregAtlas._nativeSheetAssets === "function", "per-room native sheet asset test hook");
+  assert(typeof GregAtlas._externalImage === "function", "external image resolution test hook");
+}
+
+function testPerRoomNativeSheetSelection() {
+  var tileset = {
+    sprite_sheet: "legacy.png", cell_w: 16, cell_h: 16, padding: 0, native_layout: true,
+    sheets: [{ sprite_sheet: "cave.png", cell_w: 24, cell_h: 20, padding: 2, source_x: 7, source_y: 9, source_w: 240, source_h: 200 }]
+  };
+  var legacy = GregAtlas._nativeSheetSelection({ tileset: tileset });
+  var room = GregAtlas._nativeSheetSelection({ tileset: tileset, nativeTileset: "cave.png" });
+  assertEqual(legacy.sprite_sheet, "legacy.png", "legacy native-layout sheet remains the map fallback");
+  assertEqual(room.sprite_sheet, "cave.png", "resolved room sheet overrides the map fallback");
+  assertEqual(room.cell_w, 24, "room sheet uses its own cell width");
+  assertEqual(room.cell_h, 20, "room sheet uses its own cell height");
+  assertEqual(room.padding, 2, "room sheet uses its own padding");
+  assertEqual(room.source_x, 7, "room sheet preserves its crop origin");
+  assertEqual(room.source_y, 9, "room sheet preserves its vertical crop origin");
+  assertEqual(room.source_w, 240, "room sheet preserves its crop width");
+  assert(GregAtlas._nativeSheetSelection({ tileset: tileset, nativeTileset: "missing.png" }) === null,
+    "an undeclared room sheet cannot replace native preview assets");
+}
+
+function testExternalImageResolution() {
+  var decoded = { width: 128, height: 256 };
+  var replacement = { width: 256, height: 128 };
+  var builtin = { width: 128, height: 256 };
+  var assets = { tiles: builtin, sprites: builtin, misc: builtin, external: { "cave.png": decoded } };
+  var selectionOptions = {
+    tileset: { sheets: [{ sprite_sheet: "cave.png", cell_w: 16, cell_h: 16, padding: 0 }] },
+    nativeTileset: "cave.png",
+    externalImages: { "cave.png": "data:image/png;base64,AAAA" }
+  };
+
+  assert(GregAtlas._externalImage("cave.png", assets, selectionOptions) === decoded,
+    "a packaged PNG data URL resolves to the decoded loadAssets image");
+  assert(GregAtlas._nativeSheetAssets(assets, selectionOptions).tiles === decoded,
+    "switching room graphics uses the decoded packaged sheet instead of its data URL source");
+  assert(GregAtlas._externalImage("cave.png", assets, {
+    externalImages: { "cave.png": replacement }
+  }) === replacement, "an explicitly supplied decoded image takes precedence");
+  assert(GregAtlas._externalImage("missing.png", { external: {} }, {
+    externalImages: { "missing.png": "blob:greggnogg-source" }
+  }) === null, "an undecoded image URL is never passed to canvas drawImage");
+}
+
+function testParticleTransitionCurves() {
+  assertEqual(GregAtlas._particleEase(0, "linear"), 0, "linear particle start");
+  assertEqual(GregAtlas._particleEase(1, "ease_in_out"), 1, "particle final tick reaches its end value");
+  assertNear(GregAtlas._particleEase(0.5, "ease_in"), 0.25, 0.000001, "particle ease-in curve");
+  assertNear(GregAtlas._particleEase(0.5, "ease_out"), 0.75, 0.000001, "particle ease-out curve");
+  assertNear(GregAtlas._particleEase(0.25, "ease_in_out"), 0.125, 0.000001, "particle ease-in-out first half");
+  assertNear(GregAtlas._particleEase(0.75, "ease_in_out"), 0.875, 0.000001, "particle ease-in-out second half");
 }
 
 function testGoalPreviewContrast() {
@@ -369,10 +424,44 @@ function testV2Binding() {
   assertEqual(cells[5][5].kind, "floor", "solid preset uses automatic native terrain fallback");
 }
 
+function testVariableRoomDimensions() {
+  var grid = [];
+  var y;
+  for (y = 0; y < 18; y += 1) grid.push(new Array(47).fill(" "));
+  grid[17][46] = "@";
+  var cells = GregAtlas._buildCells(grid, { roomCols: 47, roomRows: 18, worldXOffset: 100 });
+  assertEqual(cells.length, 18, "variable room height is preserved");
+  assertEqual(cells[0].length, 47, "variable room width is preserved");
+  assert(cells[17][46] && cells[17][46].solid, "terrain outside 33 by 12 is rendered");
+  assertEqual(cells[17][46].nativeWorldX, 146, "variable room uses its cumulative world offset");
+}
+
+function testEmitterSpawnShapes() {
+  var rectangle = GregAtlas._emitterSpawnUnit(undefined, 0.2, 0.8);
+  var line = GregAtlas._emitterSpawnUnit("line", 0.2, 0.8);
+  var ellipse = GregAtlas._emitterSpawnUnit("ellipse", 0.25, 1);
+  assertEqual(rectangle.x, 0.2, "legacy emitter keeps rectangular X placement");
+  assertEqual(rectangle.y, 0.8, "legacy emitter keeps rectangular Y placement");
+  assertEqual(line.x, line.y, "line emitter shares one progress value on both axes");
+  assert(Math.abs(ellipse.x - 0.5) < 1e-12 && Math.abs(ellipse.y - 1) < 1e-12,
+    "ellipse emitter reaches the bottom of its authored bounds at one quarter turn");
+}
+
+function testEmitterMotionTiming() {
+  assertEqual(GregAtlas._emitterMotionAge(8, 3, undefined), 3, "legacy particle movement remains linear");
+  assert(Math.abs(GregAtlas._emitterMotionAge(8, 3, "ease_in") - 9 / 7) < 1e-12,
+    "ease-in movement remaps elapsed ticks");
+  assertEqual(GregAtlas._emitterMotionAge(8, 7, "ease_in"), 7,
+    "eased movement reaches the same end position");
+}
+
 try {
   loadRenderer();
   testExportedApi();
   testGoalPreviewContrast();
+  testParticleTransitionCurves();
+  testPerRoomNativeSheetSelection();
+  testExternalImageResolution();
   var forcedOptions = { eggnoggColor: [0, 0.25, 1], enemyColor: [1, 0, 0] };
   assertEqual(GregAtlas._goalColour("E", {}, forcedOptions).slice(0, 3).join(","), "0,0.25,1", "forced E color overrides player-derived preview");
   assertEqual(GregAtlas._goalColour("^", {}, forcedOptions).slice(0, 3).join(","), "0,0.25,1", "waving goals share forced color");
@@ -394,6 +483,9 @@ try {
   testWaterfallBackfill();
   testWaterfallBackfillUsesRawFrameByte();
   testV2Binding();
+  testVariableRoomDimensions();
+  testEmitterSpawnShapes();
+  testEmitterMotionTiming();
   if (typeof WScript !== "undefined") WScript.Echo("atlas-renderer tests: OK");
   else console.log("atlas-renderer tests: OK");
 } catch (error) {

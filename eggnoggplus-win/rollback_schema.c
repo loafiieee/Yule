@@ -115,16 +115,22 @@
 #define RB_MS_OVERRIDE_COUNT_OFFSET 42u
 #define RB_MS_CONTACT_COUNT_OFFSET 44u
 #define RB_MS_LIMIT_COUNT_OFFSET 46u
-#define RB_MS_RESERVED_OFFSET 48u
-#define RB_MS_LIFECYCLE_OFFSET 64u
-#define RB_MS_STATE_OFFSET 128u
+#define RB_MS_OBSERVATION_INITIALIZED_OFFSET 48u
+#define RB_MS_OBSERVATION_PRESENT_OFFSET 49u
+#define RB_MS_PREVIOUS_ROOM_OFFSET 50u
+#define RB_MS_PREVIOUS_STATE_OFFSET 52u
+#define RB_MS_RESERVED_OFFSET 54u
+#define RB_MS_EXIT_LOCKS_OFFSET 64u
+#define RB_MS_LIFECYCLE_OFFSET 96u
+#define RB_MS_STATE_OFFSET 160u
 #define RB_MS_STATE_SIZE 112u
-#define RB_MS_OVERRIDE_OFFSET 7296u
+#define RB_MS_OVERRIDE_OFFSET 7328u
 #define RB_MS_OVERRIDE_SIZE 28u
-#define RB_MS_CONTACT_OFFSET 14464u
+#define RB_MS_CONTACT_OFFSET 14496u
 #define RB_MS_CONTACT_SIZE 56u
-#define RB_MS_LIMIT_OFFSET 28800u
+#define RB_MS_LIMIT_OFFSET 28832u
 #define RB_MS_LIMIT_SIZE 36u
+#define RB_MS_CAMERA_OFFSET 29812u
 
 #define RB_MS_MAX_STATE 64u
 #define RB_MS_MAX_OVERRIDES 256u
@@ -158,18 +164,24 @@ _Static_assert(DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
  * its packed little-endian snapshot directly in map_script_bytes. The wire
  * parser below still reads every field as explicit LE; future non-x86/native
  * adapters must build that canonical subdocument field by field. */
-_Static_assert(offsetof(MapScriptSnapshot, timer_count) == 29448u, "timer count offset changed");
-_Static_assert(offsetof(MapScriptSnapshot, timers) == 29452u, "timer payload offset changed");
+_Static_assert(offsetof(MapScriptSnapshot, timer_count) == 29480u, "timer count offset changed");
+_Static_assert(offsetof(MapScriptSnapshot, timers) == 29484u, "timer payload offset changed");
 _Static_assert(sizeof(MapScriptSnapshot) == ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES,
-               "MapScriptSnapshot v6 size changed; bump the rollback schema");
+               "MapScriptSnapshot v9 size changed; bump the rollback schema");
+_Static_assert(offsetof(MapScriptSnapshot, camera) == RB_MS_CAMERA_OFFSET,
+               "MapScriptSnapshot v9 camera boundary changed");
+_Static_assert(offsetof(MapScriptSnapshot, exit_locks) == RB_MS_EXIT_LOCKS_OFFSET,
+               "MapScriptSnapshot v8 exit-lock layout changed");
+_Static_assert(offsetof(MapScriptSnapshot, lifecycle_generation) == RB_MS_LIFECYCLE_OFFSET,
+               "MapScriptSnapshot v8 lifecycle layout changed");
 _Static_assert(offsetof(MapScriptSnapshot, state) == RB_MS_STATE_OFFSET,
-               "MapScriptSnapshot v6 header changed");
+               "MapScriptSnapshot v8 header changed");
 _Static_assert(offsetof(MapScriptSnapshot, overrides) == RB_MS_OVERRIDE_OFFSET,
-               "MapScriptSnapshot v6 override layout changed");
+               "MapScriptSnapshot v8 override layout changed");
 _Static_assert(offsetof(MapScriptSnapshot, contacts) == RB_MS_CONTACT_OFFSET,
-               "MapScriptSnapshot v6 contact layout changed");
+               "MapScriptSnapshot v8 contact layout changed");
 _Static_assert(offsetof(MapScriptSnapshot, velocity_limits) == RB_MS_LIMIT_OFFSET,
-               "MapScriptSnapshot v6 velocity layout changed");
+               "MapScriptSnapshot v8 velocity layout changed");
 
 static void rb_set_error(char* err, size_t err_cap, const char* fmt, ...) {
     va_list ap;
@@ -667,9 +679,20 @@ static int rb_validate_map_script(const RollbackSchemaState* state,
         rb_set_error(err, err_cap, "embedded map script checksum is invalid");
         return 0;
     }
-    if (!rb_bytes_zero(ms + RB_MS_RESERVED_OFFSET, 16u)) {
+    if ((ms[RB_MS_OBSERVATION_INITIALIZED_OFFSET] & ~UINT8_C(3)) != 0u ||
+        (ms[RB_MS_OBSERVATION_PRESENT_OFFSET] &
+         ~ms[RB_MS_OBSERVATION_INITIALIZED_OFFSET]) != 0u ||
+        !rb_bytes_zero(ms + RB_MS_RESERVED_OFFSET, 10u)) {
         rb_set_error(err, err_cap, "embedded map script reserved bytes are non-zero");
         return 0;
+    }
+    for (i = 0u; i < 2u; ++i) {
+        if ((ms[RB_MS_OBSERVATION_PRESENT_OFFSET] & (UINT8_C(1) << i)) == 0u &&
+            (ms[RB_MS_PREVIOUS_ROOM_OFFSET + i] != 0u ||
+             ms[RB_MS_PREVIOUS_STATE_OFFSET + i] != 0u)) {
+            rb_set_error(err, err_cap, "absent player observation retains history");
+            return 0;
+        }
     }
 
     script_id = rb_read_u64(ms + RB_MS_SCRIPT_ID_OFFSET);
@@ -700,8 +723,8 @@ static int rb_validate_map_script(const RollbackSchemaState* state,
         if (tick != 0u || rb_read_u32(ms + RB_MS_RNG_OFFSET) != 0u || flags != 0u ||
             state_count != 0u || override_count != 0u || contact_count != 0u ||
             limit_count != 0u ||
-            !rb_bytes_zero(ms + RB_MS_LIFECYCLE_OFFSET,
-                           ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES - RB_MS_LIFECYCLE_OFFSET)) {
+            !rb_bytes_zero(ms + RB_MS_EXIT_LOCKS_OFFSET,
+                           ROLLBACK_SCHEMA_MAP_SCRIPT_BYTES - RB_MS_EXIT_LOCKS_OFFSET)) {
             rb_set_error(err, err_cap, "inactive map script snapshot is not canonical");
             return 0;
         }
@@ -712,16 +735,31 @@ static int rb_validate_map_script(const RollbackSchemaState* state,
         return 0;
     }
     if ((flags & RB_MS_FLAG_FAULTED) != 0u &&
-        (override_count != 0u || contact_count != 0u || limit_count != 0u)) {
+        (override_count != 0u || contact_count != 0u || limit_count != 0u ||
+         ms[RB_MS_CAMERA_OFFSET] != 0u)) {
         rb_set_error(err, err_cap, "faulted map script retains active effects");
         return 0;
     }
+    if (ms[RB_MS_CAMERA_OFFSET] > 1u ||
+        !rb_bytes_zero(ms + RB_MS_CAMERA_OFFSET + 1u, 3u) ||
+        rb_read_u16(ms + RB_MS_CAMERA_OFFSET + 14u) != 0u ||
+        (ms[RB_MS_CAMERA_OFFSET] == 0u ?
+         !rb_bytes_zero(ms + RB_MS_CAMERA_OFFSET, 16u) :
+         (rb_read_i32(ms + RB_MS_CAMERA_OFFSET + 4u) < -4194303 * 256 ||
+          rb_read_i32(ms + RB_MS_CAMERA_OFFSET + 4u) > 4194303 * 256 ||
+          rb_read_i32(ms + RB_MS_CAMERA_OFFSET + 8u) < -4194303 * 256 ||
+          rb_read_i32(ms + RB_MS_CAMERA_OFFSET + 8u) > 4194303 * 256 ||
+          rb_read_u16(ms + RB_MS_CAMERA_OFFSET + 12u) < 64u ||
+          rb_read_u16(ms + RB_MS_CAMERA_OFFSET + 12u) > 1024u))) {
+        rb_set_error(err, err_cap, "map script camera is invalid");
+        return 0;
+    }
     {
-        uint32_t timer_count = rb_read_u32(ms + 29448u);
+        uint32_t timer_count = rb_read_u32(ms + 29480u);
         if (timer_count > 32u) { rb_set_error(err, err_cap, "invalid timer count"); return 0; }
         for (i = 0; i < 32u; ++i) {
-            uint32_t remaining = rb_read_u32(ms + 29452u + i * 8u);
-            uint32_t interval = rb_read_u32(ms + 29456u + i * 8u);
+            uint32_t remaining = rb_read_u32(ms + 29484u + i * 8u);
+            uint32_t interval = rb_read_u32(ms + 29488u + i * 8u);
             if (remaining > 1000000000u || interval > 1000000000u ||
                 (interval && !remaining) || (i >= timer_count && (remaining || interval))) {
                 rb_set_error(err, err_cap, "invalid timer state"); return 0;

@@ -4,10 +4,10 @@
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header"><a class="brand" href="../index.html">Eggnogg+ Developer Docs</a><nav class="top-nav" aria-label="Primary"><a href="../guides/maps.html">Guides</a><a href="../api/map-lua.html">API</a><a aria-current="page" href="map-format.html">Reference</a></nav></header>
-<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Map format</h2><a href="#package">Package &amp; limits</a><a href="#json">V1 JSON</a><a href="#rooms">Rooms &amp; appearance</a><a href="#map-text">data.map</a><a href="#glyphs">Native glyphs</a><a href="#v2">V2 tileset</a><a href="#tile-fields">Tile fields</a><a href="#assets">Asset rules</a><a href="#identity">Identity &amp; reload</a><a href="#validation">Validation</a></nav></aside>
+<div class="docs-layout"><aside class="sidebar"><nav class="section-nav" aria-label="On this page"><h2>Map format</h2><a href="#package">Package &amp; limits</a><a href="#json">V1 JSON</a><a href="#rooms">Rooms &amp; appearance</a><a href="#particles">Custom particles</a><a href="#map-text">data.map</a><a href="#glyphs">Native glyphs</a><a href="#v2">V2 tileset</a><a href="#tile-fields">Tile fields</a><a href="#assets">Asset rules</a><a href="#identity">Identity &amp; reload</a><a href="#validation">Validation</a></nav></aside>
 <main id="main" class="content" data-doc-title="Map format reference"><nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../index.html">Docs</a> / Reference / Map format</nav><article>
 <h1>Custom map format</h1>
-<p class="lead">V1 defines engine-native rooms. V2 is backward-compatible and adds namespaced symbolic tiles, a map-wide sprite sheet, per-tile sheet overrides, and optional deterministic map Lua. Both use the fixed native room dimensions.</p>
+<p class="lead">V1 defines engine-native rooms. V2 is backward-compatible and adds namespaced symbolic tiles, sprite sheets, deterministic map Lua, and independently sized source rooms through <code>variable_cells</code>.</p>
 
 <section id="package"><h2>Package and engine limits</h2>
 <pre><code>maps/map_id/
@@ -16,14 +16,15 @@
   tiles.png   # V2 optional
   map.lua     # V2 optional</code></pre>
 <table><tbody>
-  <tr><th>Source room</th><td>Exactly 33 columns × 12 rows</td></tr>
+  <tr><th>Source room</th><td>V1 and <code>vanilla_33x12</code>: exactly 33 columns × 12 rows. V2 <code>variable_cells</code>: independently sized 8–128 columns × 6–64 rows.</td></tr>
   <tr><th>Source rooms</th><td>1..9, ordered center outward</td></tr>
   <tr><th>Final layout</th><td>Center plus mirrored outer copies: <code>2n − 1</code> rooms</td></tr>
   <tr><th><code>data.json</code> / <code>data.map</code></th><td>4 MiB each</td></tr>
   <tr><th><code>map.lua</code></th><td>Direct non-reparse file, 256 KiB</td></tr>
   <tr><th>Package safety</th><td>Folders beginning with <code>_</code> ignored; map folder and package files may not be reparse points</td></tr>
 </tbody></table>
-<p>V1 does not support variable room dimensions, asymmetric final layouts, custom glyph definitions, or room callbacks. Those constraints cannot be relaxed without a new format/native generator contract.</p></section>
+<p>V1 does not support variable room dimensions, asymmetric final layouts, custom glyph definitions, or room callbacks. V2 <code>variable_cells</code> supports per-room dimensions while retaining the mirrored source-room layout.</p>
+<aside class="callout"><strong>Two-dimensional room layouts.</strong> V2 <code>room_graph</code> maps support up to 17 placed room instances with validated horizontal, vertical, branched, looped, and one-way connections. Each node may override <code>ambient</code>, <code>native_tileset</code>, and <code>opponent_spawn</code> inside an <code>overrides</code> object without changing its reusable source room. A connection's optional <code>players</code> value is <code>both</code>, <code>player1</code>, <code>player2</code>, or <code>go</code>; its optional <code>focus</code> is <code>go</code> or <code>crossing</code>. These control who can traverse the opening and whether the GO player or whichever player crosses moves the active room. Falling through an allowed bottom opening reaches the connected room instead of triggering the native map-boundary death. Greggnogg's Full map view edits these choices and exports the same graph used by native traversal and online content identity. <code>mirrored_source_rooms</code> remains supported.</aside></section>
 
 <section id="json"><h2>V1 <code>data.json</code> schema</h2>
 <pre><code>{
@@ -58,10 +59,25 @@
   <tr><td><code>rules.score_target</code></td><td>Positive integer or null.</td></tr>
   <tr><td><code>rules.armed_respawn_limit</code></td><td>Integer, default 4.</td></tr>
   <tr><td><code>layout.kind</code></td><td>Required <code>mirrored_source_rooms</code>.</td></tr>
-  <tr><td><code>layout.room_format</code></td><td>Required <code>vanilla_33x12</code>.</td></tr>
+  <tr><td><code>layout.room_format</code></td><td><code>vanilla_33x12</code>, or <code>variable_cells</code> for independently sized 8–128 by 6–64 source rooms.</td></tr>
   <tr><td><code>layout.order</code></td><td>Nonempty unique room ids from center outward; each must exist in <code>data.map</code>.</td></tr>
   <tr><td><code>rooms.*.hook</code></td><td>Reserved; omitted or null. Non-null is an error.</td></tr>
 </tbody></table></section>
+
+<section id="spawns"><h2>Player starts and respawn markers</h2>
+<p>Spawn markers are overlays stored separately from terrain. Greggnogg places them from the <strong>Spawn markers</strong> group in the normal tile catalog and shows them only while a spawn marker is selected.</p>
+<pre><code>"spawn": {
+  "players": {
+    "1": {"x": 4, "y": 10, "facing": "right"},
+    "2": {"x": 28, "y": 10, "facing": "left"}
+  },
+  "markers": [
+    {"x": 4, "y": 11, "kind": "allow_p1"},
+    {"x": 28, "y": 11, "kind": "allow_p2"},
+    {"x": 16, "y": 11, "kind": "deny"}
+  ]
+}</code></pre>
+<p>Coordinates identify the floor cell beneath the player. Marker kinds are <code>deny</code>, <code>allow</code>, <code>allow_p1</code>, and <code>allow_p2</code>. Any applicable allow marker enables whitelist mode for that player; otherwise native spawn search runs while excluding deny cells. Rooms accept at most 128 unique markers. Mirrored rooms mirror positions and facing, and online package identity includes all spawn metadata.</p></section>
 
 <section id="rooms"><h2>Room ambience and appearance</h2>
 <p>Ambience accepts integer 0..9 or: <code>none</code> (0), <code>bugs</code>, <code>clouds</code>, <code>art</code>, <code>flies</code>, <code>drips</code>, <code>dust</code>, <code>bats</code>, <code>bubbles</code>, and <code>boil</code>/<code>fumes</code> (9).</p>
@@ -75,6 +91,36 @@
   "mirror": {"bg1": [.1,0,.2]}
 }</code></pre>
 <p>Each color is exactly three finite channels in 0..1. Per-room fields inherit field-by-field from <code>defaults.room</code>; omitted mirror values inherit the fully resolved primary bank. These values are presentation-only. Water placement/hazard behavior comes from <code>data.map</code>.</p></section>
+
+<section id="particles"><h2>V2 custom particles and ambiances</h2>
+<p>V2 maps can declare reusable particle pictures in <code>particles</code>, combine them into named <code>ambiances</code>, and select a custom ambiance id through the ordinary room <code>ambient</code> field. Greggnogg exposes this through <strong>Edit particles</strong> beside the room selector.</p>
+<pre><code>{
+  "particles": [{
+    "id": "ember", "name": "Ember", "lifetime_ticks": 210,
+    "fade_in_ticks": 12, "fade_out_ticks": 32,
+    "visual": {"sprite_sheet": "builtin:misc", "sprite_index": 30,
+      "frame_count": 1, "frame_ticks": 1,
+      "tint": [1,.48,.16,.86], "end_tint": [.55,.08,.01,0],
+      "scale_x": .55, "scale_y": .55,
+      "end_scale_x": .15, "end_scale_y": .15,
+      "start_rotation": -15, "end_rotation": 45,
+      "interpolation": "ease_out"}
+  }],
+  "ambiances": [{
+    "id": "emberfall", "name": "Emberfall", "native_ambient": "dust",
+    "emitters": [{"particle": "ember", "count": 28,
+      "area": {"x": 0, "y": -16, "width": 528, "height": 208},
+      "velocity_x": {"min": -.08, "max": .08},
+      "velocity_y": {"min": .12, "max": .34},
+      "acceleration_x": 0, "acceleration_y": .0005,
+      "rotation_speed": {"min": -.8, "max": .8},
+      "particle_layer": 1, "blend": "additive", "mirror_with_room": true}]
+  }],
+  "defaults": {"room": {"ambient": "emberfall"}}
+}</code></pre>
+<p><code>tint</code> and <code>scale_x</code>/<code>scale_y</code> set the start color and size. Optional <code>end_tint</code> and <code>end_scale_x</code>/<code>end_scale_y</code> interpolate to exact values on the final visible lifetime tick; an omitted end axis inherits its start axis and an end scale may be zero. <code>start_rotation</code> and <code>end_rotation</code> are degrees and their transition is added to emitter <code>rotation_speed</code>. <code>interpolation</code> accepts <code>linear</code> (default), <code>ease_in</code>, <code>ease_out</code>, or <code>ease_in_out</code>. Lifetime fades multiply the resulting alpha. Colors use four finite channels in 0..1, scales use -64..64 (start scales cannot be zero), and rotations use -3600..3600 degrees.</p>
+<p>Layers 0..4 mean front of players, behind players, behind normal terrain, behind background tiles, and furthest background. Limits are 64 particles, 32 ambiances, 16 emitters per ambiance and 512 lanes across the package. External particle PNGs must identify exactly one declared V2 sheet and the complete consecutive animation must fit it.</p>
+<p>Custom ambiance is presentation-only. Each lane is derived from the pinned map identity, room, game tick, emitter and lane number without gameplay RNG or mutable simulation state. It is rollback-safe and covered by the normal map/asset online fingerprint; use map.lua or custom objects for gameplay behavior.</p></section>
 
 <section id="map-text"><h2><code>data.map</code> grammar</h2>
 <pre><code>; comments outside rows begin with ; or //
@@ -168,9 +214,11 @@ A C E F G H I K L N O P Q S T W X Y Z
   <dt><code>asset_sha256</code></dt><dd>Optional 64-hex external asset pin. The loader always computes the hash; omit this for normal authoring and all built-ins.</dd>
   <dt><code>cell_w</code>, <code>cell_h</code></dt><dd>External grid cell dimensions, default 16, each 1..512.</dd>
   <dt><code>padding</code></dt><dd>Inter-cell spacing removed during packing, default 0, range 0..64.</dd>
+  <dt><code>source_x/y</code>, <code>source_w/h</code></dt><dd>Optional usable rectangle inside a larger PNG. Origins default to 0; a width or height of 0 continues to the image edge. Only this rectangle must form a whole cell grid.</dd>
   <dt><code>native_layout</code></dt><dd>External sheet only. When true, its first 128 row-major cells replace the native tile prefix for all unlisted ordinary glyph rendering. Extra cells are custom. Grid/image shape is otherwise unrestricted.</dd>
   <dt><code>tiles</code></dt><dd>Zero to 64 symbolic definition objects. A native-layout-only package may leave it empty.</dd>
 </dl>
+<p>For per-room art, set <code>defaults.room.native_tileset</code> or <code>rooms.&lt;source-room-id&gt;.native_tileset</code> to a declared external PNG sheet name whose grid has at least 128 cells. A room override wins over the room default, then <code>tileset.native_layout</code> supplies the backward-compatible map-wide fallback. Omitted, empty, and null values inherit. Mirrored final rooms use their source room's sheet. This changes tile presentation only.</p>
 <p>V2 requires a namespace-safe id: ASCII letters/numbers/<code>._-</code>, not beginning with dot/hyphen, maximum 43 characters (the runtime owner is <code>map.&lt;id&gt;</code>). Qualified tiles are <code>map.&lt;id&gt;:&lt;tile-id&gt;</code>.</p></section>
 
 <section id="tile-fields"><h2>V2 <code>tileset.tiles[]</code></h2>
@@ -183,7 +231,7 @@ A C E F G H I K L N O P Q S T W X Y Z
   <tr><td><code>force_mode</code></td><td><code>add</code> (default) or <code>set</code>; needs a force axis.</td></tr>
   <tr><td><code>force_x</code>, <code>force_y</code></td><td>Each present axis opts in, finite -64..64.</td></tr>
   <tr><td><code>max_speed_x/y</code></td><td>Matching post-force absolute clamp 0..64; zero means unclamped.</td></tr>
-  <tr><td><code>sprite_sheet</code>, <code>asset_sha256</code>, <code>cell_w/h</code>, <code>padding</code></td><td>Optional per-tile sheet/grid exception; same constraints as map default.</td></tr>
+  <tr><td><code>sprite_sheet</code>, <code>asset_sha256</code>, <code>cell_w/h</code>, <code>padding</code>, <code>source_x/y/w/h</code></td><td>Optional per-tile sheet, grid, and crop rectangle; unrelated pixels outside the rectangle are ignored.</td></tr>
   <tr><td><code>sprite_index</code></td><td>Default 0, range 0..1,000,000; final range must fit the actual grid.</td></tr>
   <tr><td><code>frame_count</code></td><td>Default 1, range 1..256.</td></tr>
   <tr><td><code>frame_ticks</code></td><td>Default 1, range 1..3,600 deterministic ticks.</td></tr>
@@ -203,8 +251,8 @@ A C E F G H I K L N O P Q S T W X Y Z
 <section id="assets"><h2>External asset rules</h2>
 <ul>
   <li>Direct filename in the package only: no slash, drive, absolute path, <code>..</code>, ADS, or reparse file.</li>
-  <li>Valid PNG signature/IHDR, nonempty, ≤64 MiB, dimensions 1..4096 each.</li>
-  <li>Declared grid must divide exactly after padding, contain at most 8,192 cells, and cover every frame range.</li>
+  <li>Valid PNG signature/IHDR, nonempty, ≤64 MiB, dimensions 1..8192 each.</li>
+  <li>The selected source rectangle must fit and divide exactly after padding, contain at most 8,192 cells, and cover every frame range. The rest of the PNG may have any layout.</li>
   <li>The bridge rechecks path/header/full SHA-256 immediately before decode/pack, strips padding into a tight grid, and refuses global native atlas overflow.</li>
   <li>Missing/changed/invalid/unpacked assets remain unresolved and use the declared native fallback.</li>
 </ul></section>

@@ -191,6 +191,17 @@ map key/local selector, a per-user probe token, and the shared match packet-auth
 token. Host/join decides player/initial-state authority only; both clients probe
 and send HELLOs symmetrically.
 
+Custom map keys have the form `custom:<normalized-id>:<signature>`. Current clients
+derive the 32-character lowercase signature from a domain-separated SHA-256 digest
+of the exact map/config text and loader-computed hashes for external sheets,
+`map.lua`, and `entities.json`. The server treats the complete key as opaque and
+only offers maps present byte-for-byte in both authenticated manifests; numeric
+selectors remain local to each client.
+Clients require a nonempty key in every match message, resolve it locally, and
+recheck the exact package generation pinned during native setup. A package edit
+or selector reorder between matchmaking and frame-zero preparation therefore
+aborts the match instead of starting under a stale advertised identity.
+
 If a direct attempt needs a fresh UDP socket, the server changes both clients to one
 `relay` route on `UDP_PORT`. Relay packets are admitted only from the observed endpoint
 owned by that active match and server-assigned player slot, are bounded to protocol-v17

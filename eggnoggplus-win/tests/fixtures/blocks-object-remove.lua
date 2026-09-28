@@ -4,7 +4,7 @@ entity.on_update('demo:orb', function(handle, value)
   map.state['tick'] = map.tick()
   if map.every(1) then
     for count = 1, 2 do
-      map.state['random'] = math.abs(map.random(1, 10))
+      map.state['random'] = math.abs((function() local low, high = 1, 10; if low > high then low, high = high, low end; return map.random(low, high) end)())
     end
   end
   entity.remove(handle)

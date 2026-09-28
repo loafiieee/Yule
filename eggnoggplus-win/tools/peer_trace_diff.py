@@ -8,7 +8,7 @@ Each record is little-endian:
     uint8  canonical_state[canonical_state_size]
 
 The tool deliberately reports hashes and the first differing byte offset, never
-the state bytes themselves. Recognized canonical EGG0 v9/v10/v11/v12 states also report
+the state bytes themselves. Recognized canonical EGG0 v9 through v15 states also report
 component hashes and a schema location for the first difference. Exit 0 means
 identical, 1 means a valid divergence, and 2 means invalid input or usage.
 """
@@ -39,6 +39,22 @@ EGG0_ROOM_INFO_END_V9 = 48520
 PLAYER_SIZE_V9 = 0x15C
 THING_SIZE_V9 = 0x15C
 THING_COUNT_MAX_V9 = 128
+
+
+def _egg0_layout_delta(version: int) -> int:
+    if version == 15:
+        return 380
+    if version == 14:
+        return 364
+    if version == 13:
+        return 332
+    if version in (10, 11, 12):
+        return 260
+    return 0
+
+
+def _egg0_map_script_bytes(version: int) -> int:
+    return 29448 + _egg0_layout_delta(version)
 
 
 class TraceFormatError(ValueError):
@@ -270,10 +286,11 @@ def parse_egg0_v9(state: bytes) -> Egg0View | None:
     versions/layouts deliberately fall back to the generic byte-level report.
     """
 
-    delta = 260 if len(state) >= 8 and _u32(state, 4) in (10, 11, 12) else 0
+    version = _u32(state, 4) if len(state) >= 8 else 0
+    delta = _egg0_layout_delta(version)
     if len(state) < (EGG0_HEADER_SIZE_V9 + delta + (4 if delta else 0)):
         return None
-    if _u32(state, 0) != EGG0_MAGIC or _u32(state, 4) not in (9, 10, 11, 12):
+    if _u32(state, 0) != EGG0_MAGIC or version not in (9, 10, 11, 12, 13, 14, 15):
         return None
     thing_count = _u32(state, 8)
     player_size = _u32(state, 12)
@@ -295,21 +312,31 @@ def parse_egg0_v9(state: bytes) -> Egg0View | None:
     if base_size > len(state):
         return None
     if base_size != len(state):
-        if _u32(state, 4) not in (11, 12):
+        if version not in (11, 12, 13, 14, 15):
             return None
         tail = state[base_size:]
-        map_bytes = 29708
-        content_header = 48 if _u32(state, 4) == 12 else 16
+        map_bytes = _egg0_map_script_bytes(version)
+        content_header = 48 if version >= 12 else 16
         package_at = content_header + map_bytes
         world_at = package_at + 72
-        magic = b"YMC2" if content_header == 48 else b"YMC1"
-        if len(tail) < world_at + 32 or tail[:4] != magic or tail[content_header-12:content_header] != bytes(12):
+        magic = tail[:4]
+        if content_header == 16:
+            valid_content_header = magic == b"YMC1" and tail[4:16] == bytes(12)
+        elif magic == b"YMC2":
+            valid_content_header = tail[36:48] == bytes(12)
+        elif magic == b"YMC3":
+            valid_content_header = tail[44:48] == bytes(4) and _u32(tail, 36) >= 32 and _u32(tail, 40) == 1
+        else:
+            valid_content_header = False
+        if len(tail) < world_at + 32 or not valid_content_header:
             return None
         if tail[content_header:package_at] != state[252:252 + map_bytes]:
             return None
         if tail[package_at:package_at + 4] != b"YEP1" or tail[world_at:world_at + 4] != b"YEW1":
             return None
-        if tail[package_at + 68:world_at] != bytes(4) or _u32(tail, world_at + 4) != 1:
+        world_version = _u32(tail, world_at + 4)
+        record_sizes = {1: 32, 2: 40, 3: 48, 4: 60, 5: 76, 6: 80}
+        if tail[package_at + 68:world_at] != bytes(4) or world_version not in record_sizes:
             return None
         if any(c not in b"0123456789abcdef" for c in tail[package_at + 4:package_at + 68]):
             return None
@@ -317,7 +344,19 @@ def parse_egg0_v9(state: bytes) -> Egg0View | None:
         types = _u32(tail, world_at + 24)
         if not 1 <= capacity <= 4096 or not 1 <= types <= 4096:
             return None
-        if len(tail) != world_at + 32 + capacity * 32 + types * 520:
+        record_bytes = record_sizes[world_version]
+        world_end = world_at + 32 + capacity * record_bytes + types * 520
+        if magic == b"YMC3":
+            object_bytes = _u32(tail, 36)
+            if len(tail) != world_end + object_bytes or tail[world_end:world_end + 4] != b"YMVS":
+                return None
+            if (struct.unpack_from("<H", tail, world_end + 4)[0] != 1 or
+                    struct.unpack_from("<H", tail, world_end + 6)[0] != 32 or
+                    _u32(tail, world_end + 8) != object_bytes or
+                    struct.unpack_from("<H", tail, world_end + 16)[0] > 512 or
+                    tail[world_end + 18:world_end + 32] != bytes(14)):
+                return None
+        elif len(tail) != world_end:
             return None
     if tilemap_w and tilemap_h and tilemap_w * tilemap_h * 4 > tilemap_bytes:
         return None
@@ -350,13 +389,85 @@ def _named_range(
     return None
 
 
-def _map_script_location(relative: int) -> dict[str, int | str]:
-    if relative >= 29448:
-        if relative < 29452:
-            return {"component": "map_script", "field": "timer_count", "component_byte": relative}
-        timer, byte = divmod(relative - 29452, 8)
-        return {"component": "map_script", "field": "timer_remaining" if byte < 4 else "timer_interval",
-                "timer": timer, "field_byte": byte % 4, "component_byte": relative}
+def _map_script_location(relative: int, version: int) -> dict[str, int | str]:
+    if version >= 14:
+        lifecycle_start = 96
+        state_start = 160
+        override_start = 7328
+        contact_start = 14496
+        velocity_start = 28832
+        timer_count_start = 29480
+    else:
+        lifecycle_start = 64
+        state_start = 128
+        override_start = 7296
+        contact_start = 14464
+        velocity_start = 28800
+        timer_count_start = 29448
+
+    timer_start = timer_count_start + 4
+    timer_end = timer_start + 32 * 8
+    if timer_count_start <= relative < timer_start:
+        return {
+            "component": "map_script",
+            "field": "timer_count",
+            "component_byte": relative,
+        }
+    if timer_start <= relative < timer_end:
+        timer, byte = divmod(relative - timer_start, 8)
+        return {
+            "component": "map_script",
+            "field": "timer_remaining" if byte < 4 else "timer_interval",
+            "timer": timer,
+            "field_byte": byte % 4,
+            "component_byte": relative,
+        }
+    if version >= 13 and timer_end <= relative < timer_end + 24:
+        rel = relative - timer_end
+        player, entry_byte = divmod(rel, 12)
+        fields = (
+            ("flags", 0, 1),
+            ("body_visible", 1, 1),
+            ("reserved", 2, 2),
+            ("skin_tint", 4, 4),
+            ("clothing_tint", 8, 4),
+        )
+        entry = _named_range(entry_byte, fields)
+        return {
+            "component": "map_script",
+            "field": f"player_presentation[{player}].{entry[0] if entry else 'raw'}",
+            "field_byte": entry[1] if entry else entry_byte,
+            "component_byte": relative,
+        }
+    if version >= 13 and timer_end + 24 <= relative < timer_end + 72:
+        rel = relative - timer_end - 24
+        player, entry_byte = divmod(rel, 24)
+        fields = (
+            ("enabled", 0, 1),
+            ("awaiting_respawn", 1, 1),
+            ("invulnerable", 2, 1),
+            ("reserved", 3, 5),
+            ("health", 8, 8),
+            ("max_health", 16, 8),
+        )
+        entry = _named_range(entry_byte, fields)
+        return {
+            "component": "map_script",
+            "field": f"player_health[{player}].{entry[0] if entry else 'raw'}",
+            "field_byte": entry[1] if entry else entry_byte,
+            "component_byte": relative,
+        }
+    if version >= 15 and timer_end + 72 <= relative < timer_end + 88:
+        entry = _named_range(relative - timer_end - 72, (
+            ("active", 0, 1), ("reserved", 1, 3), ("x_q", 4, 4),
+            ("y_q", 8, 4), ("zoom_q", 12, 2), ("reserved2", 14, 2),
+        ))
+        return {
+            "component": "map_script",
+            "field": f"camera.{entry[0] if entry else 'raw'}",
+            "field_byte": entry[1] if entry else relative - timer_end - 72,
+            "component_byte": relative,
+        }
     header_fields = (
         ("magic", 0, 4),
         ("version", 4, 2),
@@ -371,7 +482,11 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
         ("override_count", 42, 2),
         ("contact_count", 44, 2),
         ("velocity_limit_count", 46, 2),
-        ("reserved", 48, 16),
+        ("player_observation_initialized_mask", 48, 1),
+        ("player_observation_present_mask", 49, 1),
+        ("player_previous_room", 50, 2),
+        ("player_previous_native_state", 52, 2),
+        ("reserved", 54, 10),
     )
     found = _named_range(relative, header_fields)
     if found:
@@ -381,8 +496,17 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
             "field_byte": found[1],
             "component_byte": relative,
         }
-    if 64 <= relative < 128:
-        rel = relative - 64
+    if version >= 14 and 64 <= relative < 96:
+        byte = relative - 64
+        return {
+            "component": "map_script",
+            "field": "exit_locks",
+            "lock_byte": byte,
+            "first_connection": byte * 8 + 1,
+            "component_byte": relative,
+        }
+    if lifecycle_start <= relative < state_start:
+        rel = relative - lifecycle_start
         return {
             "component": "map_script",
             "field": "lifecycle_generation",
@@ -390,8 +514,8 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
             "field_byte": rel % 4,
             "component_byte": relative,
         }
-    if 128 <= relative < 7296:
-        rel = relative - 128
+    if state_start <= relative < override_start:
+        rel = relative - state_start
         index, entry_byte = divmod(rel, 112)
         entry_fields = (
             ("in_use", 0, 1),
@@ -411,8 +535,8 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
             "field_byte": entry[1] if entry else entry_byte,
             "component_byte": relative,
         }
-    if 7296 <= relative < 14464:
-        rel = relative - 7296
+    if override_start <= relative < contact_start:
+        rel = relative - override_start
         index, entry_byte = divmod(rel, 28)
         fields = (
             ("in_use_reserved", 0, 4),
@@ -429,8 +553,8 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
             "field_byte": entry[1] if entry else entry_byte,
             "component_byte": relative,
         }
-    if 14464 <= relative < 28800:
-        rel = relative - 14464
+    if contact_start <= relative < velocity_start:
+        rel = relative - contact_start
         index, entry_byte = divmod(rel, 56)
         fields = (
             ("identity", 0, 4),
@@ -453,29 +577,36 @@ def _map_script_location(relative: int) -> dict[str, int | str]:
             "field_byte": entry[1] if entry else entry_byte,
             "component_byte": relative,
         }
-    rel = relative - 28800
-    index, entry_byte = divmod(rel, 36)
-    fields = (
-        ("identity", 0, 4),
-        ("object_id", 4, 4),
-        ("lifecycle_id", 8, 4),
-        ("min_vx", 12, 4),
-        ("max_vx", 16, 4),
-        ("min_vy", 20, 4),
-        ("max_vy", 24, 4),
-        ("expires_after_tick", 28, 8),
-    )
-    entry = _named_range(entry_byte, fields)
+    if velocity_start <= relative < timer_count_start:
+        rel = relative - velocity_start
+        index, entry_byte = divmod(rel, 36)
+        fields = (
+            ("identity", 0, 4),
+            ("object_id", 4, 4),
+            ("lifecycle_id", 8, 4),
+            ("min_vx", 12, 4),
+            ("max_vx", 16, 4),
+            ("min_vy", 20, 4),
+            ("max_vy", 24, 4),
+            ("expires_after_tick", 28, 8),
+        )
+        entry = _named_range(entry_byte, fields)
+        return {
+            "component": "map_script",
+            "field": f"velocity_limits[{index}].{entry[0] if entry else 'raw'}",
+            "field_byte": entry[1] if entry else entry_byte,
+            "component_byte": relative,
+        }
     return {
         "component": "map_script",
-        "field": f"velocity_limits[{index}].{entry[0] if entry else 'raw'}",
-        "field_byte": entry[1] if entry else entry_byte,
+        "field": "raw",
         "component_byte": relative,
     }
 
 
 def egg0_location(view: Egg0View, offset: int) -> dict[str, int | str]:
-    delta = 260 if _u32(view.state, 4) in (10, 11, 12) else 0
+    version = _u32(view.state, 4)
+    delta = _egg0_layout_delta(version)
     if offset < 0 or offset >= len(view.state):
         return {"component": "outside_state", "state_byte": offset}
     if offset < EGG0_SCALAR_HEADER_SIZE_V9:
@@ -487,7 +618,7 @@ def egg0_location(view: Egg0View, offset: int) -> dict[str, int | str]:
             "state_byte": offset,
         }
     if offset < (EGG0_MAP_SCRIPT_END_V9 + delta):
-        result = _map_script_location(offset - EGG0_SCALAR_HEADER_SIZE_V9)
+        result = _map_script_location(offset - EGG0_SCALAR_HEADER_SIZE_V9, version)
         result["state_byte"] = offset
         return result
     if offset < (EGG0_TRANSIENT_END_V9 + delta):
@@ -567,7 +698,8 @@ def _sha256(data: bytes) -> str:
 
 
 def egg0_component_bytes(view: Egg0View) -> dict[str, bytes]:
-    delta = 260 if _u32(view.state, 4) in (10, 11, 12) else 0
+    version = _u32(view.state, 4)
+    delta = _egg0_layout_delta(version)
     return {
         "header": view.state[:EGG0_SCALAR_HEADER_SIZE_V9],
         "map_script": view.state[

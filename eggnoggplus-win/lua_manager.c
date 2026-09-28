@@ -31,6 +31,7 @@
 #include "console_catalog.h"
 #include "console_parse.h"
 #include "ui_geometry.h"
+#include "image_util.h"
 
 static lua_State *L = NULL;
 
@@ -76,8 +77,10 @@ void luna_force_crash_report(unsigned int exit_code);
 #define ADDR_SPRITE_COUNT            0x405D60u
 #define ADDR_ATLAS_GET               0x4013E0u
 #define ADDR_ATLAS_UPLOAD            0x401480u
+#define ADDR_ATLAS_CREATE_TEXTURE    0x4017B0u
 #define ADDR_ATLAS_EXIT              0x402560u
 #define ADDR_ATLAS_ADD_SPRITESHEET_FROM_RGBA 0x402330u
+#define ADDR_SPRITE_BATCH_DRAW       0x405A90u
 #define ADDR_SPRITES_RESET           0x405D70u
 #define ADDR_LOAD_GFX                0x42FB00u
 #define ADDR_FREETYPE_ATLAS          0x45B4E0u
@@ -257,8 +260,10 @@ typedef void* (__cdecl *fn_sprite_get_t)(uint32_t sprite_id);
 typedef int   (__cdecl *fn_sprite_count_t)(void);
 typedef int   (__cdecl *fn_atlas_get_t)(int);
 typedef int   (__cdecl *fn_atlas_upload_t)(int, int, int);
+typedef void  (__cdecl *fn_atlas_create_texture_t)(void*, int, int);
 typedef void  (__cdecl *fn_atlas_exit_t)(void);
 typedef int   (__cdecl *fn_atlas_add_spritesheet_from_rgba_t)(int, int, int, int, uint32_t, int*);
+typedef void  (__cdecl *fn_sprite_batch_draw_t)(int);
 typedef void  (__cdecl *fn_sprites_reset_t)(void);
 typedef int   (__cdecl *fn_load_gfx_t)(void);
 typedef unsigned char* (__cdecl *fn_stbi_load_t)(const char*, int*, int*, int*, int);
@@ -325,9 +330,13 @@ static fn_sprite_get_t        p_sprite_get        = (fn_sprite_get_t)(uintptr_t)
 static fn_sprite_count_t      p_sprite_count      = (fn_sprite_count_t)(uintptr_t)ADDR_SPRITE_COUNT;
 static fn_atlas_get_t         p_atlas_get         = (fn_atlas_get_t)(uintptr_t)ADDR_ATLAS_GET;
 static fn_atlas_upload_t      p_atlas_upload      = (fn_atlas_upload_t)(uintptr_t)ADDR_ATLAS_UPLOAD;
+static fn_atlas_create_texture_t p_atlas_create_texture =
+    (fn_atlas_create_texture_t)(uintptr_t)ADDR_ATLAS_CREATE_TEXTURE;
 static fn_atlas_exit_t        p_atlas_exit        = (fn_atlas_exit_t)(uintptr_t)ADDR_ATLAS_EXIT;
 static fn_atlas_add_spritesheet_from_rgba_t p_atlas_add_spritesheet_from_rgba =
     (fn_atlas_add_spritesheet_from_rgba_t)(uintptr_t)ADDR_ATLAS_ADD_SPRITESHEET_FROM_RGBA;
+static fn_sprite_batch_draw_t p_sprite_batch_draw =
+    (fn_sprite_batch_draw_t)(uintptr_t)ADDR_SPRITE_BATCH_DRAW;
 static fn_sprites_reset_t     p_sprites_reset     = (fn_sprites_reset_t)(uintptr_t)ADDR_SPRITES_RESET;
 static fn_load_gfx_t          p_load_gfx          = (fn_load_gfx_t)(uintptr_t)ADDR_LOAD_GFX;
 static fn_stbi_load_t         p_stbi_load         = (fn_stbi_load_t)(uintptr_t)ADDR_STBI_LOAD;
@@ -923,6 +932,11 @@ static int g_ui_mouse_down_right = 0;
 static int g_ui_mouse_pressed_right = 0;
 static int g_ui_default_custom_cursor_suppressed = 0;
 static int g_mod_asset_injection_active = 0;
+#define MAP_ASSET_ATLAS_INDEX 15
+#define MAP_ASSET_ATLAS_MIN_DIMENSION 512
+#define MAP_ASSET_ATLAS_MAX_DIMENSION 4096
+static int g_map_asset_atlas_ptr = 0;
+static int g_map_asset_atlas_ready = 0;
 
 // Runtime hot-reload state. Automatic polling is disabled by default because
 // generated mod cache assets can otherwise trigger reload loops during play.
@@ -954,8 +968,14 @@ static int g_audio_mixer_disabled = 0;
 static int g_audio_mixer_warned = 0;
 static int g_audio_channels_reserved = 0;
 static int g_audio_next_channel_base = 0;
+static int* g_audio_channel_base_volumes = NULL;
+static int g_audio_channel_base_volume_cap = 0;
+static int g_audio_channel_volume_warned = 0;
+static volatile LONG g_audio_master_sfx_percent = 100;
+static volatile LONG g_audio_master_music_percent = 100;
 static LoadedMod* g_audio_music_owner = NULL;
 static Mix_Music* g_audio_music = NULL;
+static float g_audio_music_play_volume = 1.0f;
 static HMODULE g_audio_winmm_module = NULL;
 static int g_audio_winmm_ready = 0;
 static int g_audio_winmm_warned = 0;
@@ -4238,7 +4258,7 @@ static void lua_push_asset_sheet_info(lua_State* Ls, const ModAssetSheet* s) {
 }
 
 #define MOD_ASSET_NATIVE_SPRITE_CAPACITY 0x2000
-#define MOD_ASSET_NATIVE_MAX_IMAGE_DIM 4096
+#define MOD_ASSET_NATIVE_MAX_IMAGE_DIM 8192
 
 /* The engine's atlas_add_sprite_sheet path stores sprites in one fixed
  * 8192-record array and does not check sprite_alloc() before dereferencing it.
@@ -4250,6 +4270,10 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
                                               int cell_w,
                                               int cell_h,
                                               int padding,
+                                              int source_x,
+                                              int source_y,
+                                              int source_region_w,
+                                              int source_region_h,
                                               uint32_t flags,
                                               int expected_count) {
     unsigned char* source = NULL;
@@ -4258,6 +4282,8 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
     int source_w = 0;
     int source_h = 0;
     int components = 0;
+    int region_w;
+    int region_h;
     int columns;
     int rows;
     int sprite_count;
@@ -4266,34 +4292,58 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
     int before;
     int rgba[3];
     int loaded;
+    int portable_decoder = 0;
 
     if (!atlas_ptr || !full_path || !full_path[0] || cell_w <= 0 ||
-        cell_h <= 0 || padding < 0 || expected_count < 0) {
+        cell_h <= 0 || padding < 0 || source_x < 0 || source_y < 0 ||
+        source_region_w < 0 || source_region_h < 0 || expected_count < 0) {
         return -2;
     }
     source = p_stbi_load(full_path, &source_w, &source_h, &components, 4);
+    if (!source) {
+        portable_decoder = rgba_load_image_portable(full_path, &source,
+                                                   &source_w, &source_h);
+        if (portable_decoder) {
+            components = 4;
+            LOG_INFO("assets: decoded PNG through portable compatibility path: %s",
+                     full_path);
+        }
+    }
     if (!source || source_w <= 0 || source_h <= 0 ||
         source_w > MOD_ASSET_NATIVE_MAX_IMAGE_DIM ||
         source_h > MOD_ASSET_NATIVE_MAX_IMAGE_DIM ||
-        source_w < cell_w || source_h < cell_h ||
-        ((source_w + padding) % (cell_w + padding)) != 0 ||
-        ((source_h + padding) % (cell_h + padding)) != 0) {
-        LOG_WARN("assets: PNG does not form a bounded whole %dx%d grid with padding %d: %s",
+        source_x >= source_w || source_y >= source_h) {
+        LOG_WARN("assets: PNG or source origin is invalid for a bounded %dx%d grid with padding %d: %s",
                  cell_w, cell_h, padding, full_path);
-        if (source) p_stbi_image_free(source);
+        if (source) {
+            if (portable_decoder) free(source);
+            else p_stbi_image_free(source);
+        }
         return -3;
     }
-    columns = (source_w + padding) / (cell_w + padding);
-    rows = (source_h + padding) / (cell_h + padding);
+    region_w = source_region_w > 0 ? source_region_w : source_w - source_x;
+    region_h = source_region_h > 0 ? source_region_h : source_h - source_y;
+    if (region_w < cell_w || region_h < cell_h ||
+        region_w > source_w - source_x || region_h > source_h - source_y ||
+        ((region_w + padding) % (cell_w + padding)) != 0 ||
+        ((region_h + padding) % (cell_h + padding)) != 0) {
+        LOG_WARN("assets: source rectangle %d,%d %dx%d does not fit or form a whole %dx%d grid with padding %d: %s",
+                 source_x, source_y, region_w, region_h,
+                 cell_w, cell_h, padding, full_path);
+        if (portable_decoder) free(source); else p_stbi_image_free(source);
+        return -3;
+    }
+    columns = (region_w + padding) / (cell_w + padding);
+    rows = (region_h + padding) / (cell_h + padding);
     if (columns <= 0 || rows <= 0 || columns > INT_MAX / rows) {
-        p_stbi_image_free(source);
+        if (portable_decoder) free(source); else p_stbi_image_free(source);
         return -3;
     }
     sprite_count = columns * rows;
     if (expected_count > 0 && sprite_count != expected_count) {
         LOG_WARN("assets: validated sprite count changed before packing (expected=%d actual=%d): %s",
                  expected_count, sprite_count, full_path);
-        p_stbi_image_free(source);
+        if (portable_decoder) free(source); else p_stbi_image_free(source);
         return -4;
     }
     before = p_sprite_count();
@@ -4304,14 +4354,15 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
                  before >= 0 && before <= MOD_ASSET_NATIVE_SPRITE_CAPACITY
                      ? MOD_ASSET_NATIVE_SPRITE_CAPACITY - before : 0,
                  full_path);
-        p_stbi_image_free(source);
+        if (portable_decoder) free(source); else p_stbi_image_free(source);
         return -5;
     }
 
     pixels = source;
-    packed_w = source_w;
-    packed_h = source_h;
-    if (padding > 0) {
+    packed_w = region_w;
+    packed_h = region_h;
+    if (padding > 0 || source_x > 0 || source_y > 0 ||
+        region_w != source_w || region_h != source_h) {
         size_t packed_bytes;
         int row;
         int column;
@@ -4319,13 +4370,13 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
         packed_h = rows * cell_h;
         if (packed_w <= 0 || packed_h <= 0 ||
             (size_t)packed_w > SIZE_MAX / (size_t)packed_h / 4u) {
-            p_stbi_image_free(source);
+            if (portable_decoder) free(source); else p_stbi_image_free(source);
             return -6;
         }
         packed_bytes = (size_t)packed_w * (size_t)packed_h * 4u;
         packed = (unsigned char*)malloc(packed_bytes);
         if (!packed) {
-            p_stbi_image_free(source);
+            if (portable_decoder) free(source); else p_stbi_image_free(source);
             return -6;
         }
         for (row = 0; row < rows; row++) {
@@ -4333,9 +4384,9 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
             for (pixel_y = 0; pixel_y < cell_h; pixel_y++) {
                 for (column = 0; column < columns; column++) {
                     const size_t source_offset =
-                        ((size_t)(row * (cell_h + padding) + pixel_y) *
+                        ((size_t)(source_y + row * (cell_h + padding) + pixel_y) *
                              (size_t)source_w +
-                         (size_t)(column * (cell_w + padding))) * 4u;
+                         (size_t)(source_x + column * (cell_w + padding))) * 4u;
                     const size_t packed_offset =
                         ((size_t)(row * cell_h + pixel_y) * (size_t)packed_w +
                          (size_t)(column * cell_w)) * 4u;
@@ -4353,7 +4404,7 @@ static int mod_assets_native_load_spritesheet(int atlas_ptr,
     loaded = p_atlas_add_spritesheet_from_rgba(atlas_ptr, cell_w, cell_h, 0,
                                                 flags, rgba);
     free(packed);
-    p_stbi_image_free(source);
+    if (portable_decoder) free(source); else p_stbi_image_free(source);
     return loaded;
 }
 
@@ -4380,6 +4431,57 @@ static int mod_assets_can_rebuild_now(void) {
     return p_sprite_count() > 0;
 }
 
+/* Map-owned graphics live on a separate native atlas page. The stock renderer
+ * has UV paths that assume page 0 is exactly 512x512, so resizing that page
+ * corrupts built-in art. Give the skyline packer ample fragmentation room and
+ * keep the result within the already validated 4096 texture bound. */
+static int map_asset_atlas_dimension(void) {
+    uint64_t pixel_area = 0;
+    int largest_side = MAP_ASSET_ATLAS_MIN_DIMENSION;
+    int dimension = MAP_ASSET_ATLAS_MIN_DIMENSION;
+    int count = custom_maps_content_sheet_count();
+    int index;
+    for (index = 0; index < count; ++index) {
+        CustomMapContentSheetInfo sheet;
+        uint64_t cell_area;
+        uint64_t sheet_area;
+        if (!custom_maps_content_sheet_get(index, &sheet) ||
+            sheet.cell_w <= 0 || sheet.cell_h <= 0 ||
+            sheet.sprite_count <= 0) continue;
+        if (sheet.cell_w + 1 > largest_side) largest_side = sheet.cell_w + 1;
+        if (sheet.cell_h + 1 > largest_side) largest_side = sheet.cell_h + 1;
+        cell_area = (uint64_t)(sheet.cell_w + 1) *
+                    (uint64_t)(sheet.cell_h + 1);
+        if (cell_area > UINT64_MAX / (uint64_t)sheet.sprite_count) {
+            pixel_area = UINT64_MAX;
+            break;
+        }
+        sheet_area = cell_area * (uint64_t)sheet.sprite_count;
+        if (pixel_area > UINT64_MAX - sheet_area) {
+            pixel_area = UINT64_MAX;
+            break;
+        }
+        pixel_area += sheet_area;
+    }
+    while (dimension < MAP_ASSET_ATLAS_MAX_DIMENSION &&
+           (dimension < largest_side ||
+            pixel_area > ((uint64_t)dimension * (uint64_t)dimension) / 2u)) {
+        dimension *= 2;
+    }
+    if (dimension < largest_side ||
+        pixel_area > ((uint64_t)dimension * (uint64_t)dimension) / 2u) {
+        return 0;
+    }
+    return dimension;
+}
+
+void lua_manager_draw_custom_atlas(void) {
+    if (g_map_asset_atlas_ready && g_map_asset_atlas_ptr &&
+        p_sprite_batch_draw) {
+        p_sprite_batch_draw(g_map_asset_atlas_ptr);
+    }
+}
+
 void lua_manager_before_atlas_upload(int atlas_ptr) {
     int map_sheet_count;
     if (g_mod_asset_injection_active) return;
@@ -4389,6 +4491,8 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
     }
 
     g_mod_asset_injection_active = 1;
+    g_map_asset_atlas_ptr = 0;
+    g_map_asset_atlas_ready = 0;
     map_asset_atlas_sheets_clear();
     for (int mi = 0; mi < g_mod_count; mi++) {
         LoadedMod* mod = &g_mods[mi];
@@ -4415,6 +4519,7 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
                                                         sheet->cell_w,
                                                         sheet->cell_h,
                                                         sheet->padding,
+                                                        0, 0, 0, 0,
                                                         sheet->flags,
                                                         0);
             after = p_sprite_count();
@@ -4437,6 +4542,21 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
         mod->asset_batch_dirty = 0;
     }
     map_sheet_count = custom_maps_content_sheet_count();
+    if (map_sheet_count > 0) {
+        int dimension = map_asset_atlas_dimension();
+        int custom_atlas = p_atlas_get ? p_atlas_get(MAP_ASSET_ATLAS_INDEX) : 0;
+        if (!dimension || !custom_atlas || !p_atlas_create_texture) {
+            LOG_WARN("map content: isolated atlas unavailable; %d sheet(s) skipped",
+                     map_sheet_count);
+            map_sheet_count = 0;
+        } else {
+            p_atlas_create_texture((void*)(intptr_t)custom_atlas,
+                                   dimension, dimension);
+            g_map_asset_atlas_ptr = custom_atlas;
+            LOG_INFO("map content: created isolated %dx%d atlas page %d",
+                     dimension, dimension, MAP_ASSET_ATLAS_INDEX);
+        }
+    }
     for (int si = 0; si < map_sheet_count; si++) {
         CustomMapContentSheetInfo sheet;
         CustomMapContentSheetInfo verified_sheet;
@@ -4450,11 +4570,15 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
             continue;
         }
         before = p_sprite_count();
-        loaded = mod_assets_native_load_spritesheet(atlas_ptr,
+        loaded = mod_assets_native_load_spritesheet(g_map_asset_atlas_ptr,
                                                     sheet.full_path,
                                                     sheet.cell_w,
                                                     sheet.cell_h,
                                                     sheet.padding,
+                                                    sheet.source_x,
+                                                    sheet.source_y,
+                                                    sheet.source_w,
+                                                    sheet.source_h,
                                                     sheet.atlas_flags,
                                                     sheet.sprite_count);
         after = p_sprite_count();
@@ -4469,7 +4593,11 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
             strcmp(verified_sheet.asset_sha256, sheet.asset_sha256) != 0 ||
             verified_sheet.cell_w != sheet.cell_w ||
             verified_sheet.cell_h != sheet.cell_h ||
-            verified_sheet.padding != sheet.padding) {
+            verified_sheet.padding != sheet.padding ||
+            verified_sheet.source_x != sheet.source_x ||
+            verified_sheet.source_y != sheet.source_y ||
+            verified_sheet.source_w != sheet.source_w ||
+            verified_sheet.source_h != sheet.source_h) {
             LOG_WARN("map content: %s changed while it was being packed; atlas range discarded",
                      sheet.key);
             continue;
@@ -4481,6 +4609,18 @@ void lua_manager_before_atlas_upload(int atlas_ptr) {
         }
         LOG_INFO("map content: packed %s base=%d count=%d",
                  sheet.key, before, packed_count);
+    }
+    if (g_map_asset_atlas_ptr) {
+        int upload_result = p_atlas_upload
+            ? p_atlas_upload(g_map_asset_atlas_ptr, 0, 3) : -1;
+        if (upload_result == 1) {
+            g_map_asset_atlas_ready = 1;
+        } else {
+            LOG_WARN("map content: isolated atlas upload failed (code=%d)",
+                     upload_result);
+            map_asset_atlas_sheets_clear();
+            g_map_asset_atlas_ptr = 0;
+        }
     }
     g_map_asset_registry_generation = custom_maps_generation();
     g_map_asset_deferred_generation = 0;
@@ -5557,6 +5697,9 @@ static int audio_runtime_disable(const char* reason) {
     g_audio_mixer_ready = 0;
     g_audio_channels_reserved = 0;
     g_audio_next_channel_base = 0;
+    free(g_audio_channel_base_volumes);
+    g_audio_channel_base_volumes = NULL;
+    g_audio_channel_base_volume_cap = 0;
     g_audio_music_owner = NULL;
     g_audio_music = NULL;
 
@@ -5581,6 +5724,114 @@ static int audio_runtime_disable(const char* reason) {
     p_mix_free_music = NULL;
     p_mix_get_error = NULL;
     return 0;
+}
+
+static int audio_master_clamp_percent(int percent) {
+    if (percent < 0) return 0;
+    if (percent > 100) return 100;
+    return percent;
+}
+
+static int audio_master_scaled_mix_volume(int base_volume, LONG percent) {
+    int scaled;
+    if (base_volume < 0) base_volume = 0;
+    if (base_volume > AUDIO_MIX_MAX_VOLUME) {
+        base_volume = AUDIO_MIX_MAX_VOLUME;
+    }
+    if (percent <= 0) return 0;
+    if (percent >= 100) return base_volume;
+    scaled = (base_volume * (int)percent + 50) / 100;
+    if (scaled > AUDIO_MIX_MAX_VOLUME) scaled = AUDIO_MIX_MAX_VOLUME;
+    return scaled;
+}
+
+#ifdef EGGNOGGPLUS_SERIALIZER_TESTING
+int lua_manager_test_scale_master_mix_volume(int base_volume,
+                                              int percent) {
+    return audio_master_scaled_mix_volume(base_volume, (LONG)percent);
+}
+#endif
+
+static int audio_channel_base_volumes_ensure(int count) {
+    int* resized;
+    int old_cap;
+    int new_cap;
+    if (count <= g_audio_channel_base_volume_cap) return 1;
+    old_cap = g_audio_channel_base_volume_cap;
+    new_cap = old_cap > 0 ? old_cap : AUDIO_DEFAULT_CHANNELS;
+    while (new_cap < count) {
+        if (new_cap > 16384) {
+            new_cap = count;
+            break;
+        }
+        new_cap *= 2;
+    }
+    resized = (int*)realloc(
+        g_audio_channel_base_volumes, sizeof(int) * (size_t)new_cap);
+    if (!resized) {
+        if (!g_audio_channel_volume_warned) {
+            LOG_WARN("Audio API: could not track live channel volumes; "
+                     "master SFX changes may only affect new file sounds");
+            g_audio_channel_volume_warned = 1;
+        }
+        return 0;
+    }
+    g_audio_channel_base_volumes = resized;
+    for (int i = old_cap; i < new_cap; i++) {
+        g_audio_channel_base_volumes[i] = AUDIO_MIX_MAX_VOLUME;
+    }
+    g_audio_channel_base_volume_cap = new_cap;
+    return 1;
+}
+
+static int audio_float_to_mix_volume(float volume) {
+    int ivol = (int)(audio_clampf(volume, 0.0f, 1.0f) *
+                     (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
+    if (ivol < 0) ivol = 0;
+    if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
+    return ivol;
+}
+
+static void audio_apply_master_music_volume(void) {
+    int base_volume;
+    LONG master;
+    if (!g_audio_mixer_ready || !g_audio_music || !p_mix_volume_music) {
+        return;
+    }
+    base_volume = audio_float_to_mix_volume(
+        (g_audio_music_owner ? g_audio_music_owner->audio_music_volume : 1.0f) *
+        g_audio_music_play_volume);
+    master = InterlockedCompareExchange(
+        &g_audio_master_music_percent, 0, 0);
+    p_mix_volume_music(audio_master_scaled_mix_volume(base_volume, master));
+}
+
+void lua_manager_set_master_audio_volumes(int sfx_percent,
+                                          int music_percent) {
+    LONG sfx_master;
+    InterlockedExchange(
+        &g_audio_master_sfx_percent,
+        (LONG)audio_master_clamp_percent(sfx_percent));
+    InterlockedExchange(
+        &g_audio_master_music_percent,
+        (LONG)audio_master_clamp_percent(music_percent));
+
+    sfx_master = InterlockedCompareExchange(
+        &g_audio_master_sfx_percent, 0, 0);
+    if (g_audio_mixer_ready && p_mix_volume_channel &&
+        g_audio_channel_base_volumes) {
+        int count = g_audio_channels_reserved;
+        if (count > g_audio_channel_base_volume_cap) {
+            count = g_audio_channel_base_volume_cap;
+        }
+        for (int channel = 0; channel < count; channel++) {
+            p_mix_volume_channel(
+                channel,
+                audio_master_scaled_mix_volume(
+                    g_audio_channel_base_volumes[channel], sfx_master));
+        }
+    }
+    audio_apply_master_music_volume();
 }
 
 static int audio_runtime_ensure_ready(void) {
@@ -5642,6 +5893,12 @@ static int audio_runtime_ensure_ready(void) {
     g_audio_channels_reserved = (ch > 0) ? ch : AUDIO_DEFAULT_CHANNELS;
     g_audio_next_channel_base = 0;
     g_audio_mixer_ready = 1;
+    (void)audio_channel_base_volumes_ensure(g_audio_channels_reserved);
+    lua_manager_set_master_audio_volumes(
+        (int)InterlockedCompareExchange(
+            &g_audio_master_sfx_percent, 0, 0),
+        (int)InterlockedCompareExchange(
+            &g_audio_master_music_percent, 0, 0));
     return 1;
 }
 
@@ -5658,6 +5915,7 @@ static void audio_release_music_for_owner(LoadedMod* owner) {
 
     g_audio_music = NULL;
     g_audio_music_owner = NULL;
+    g_audio_music_play_volume = 1.0f;
 }
 
 static void audio_runtime_reset_channels(void) {
@@ -5669,6 +5927,11 @@ static void audio_runtime_reset_channels(void) {
     {
         int ch = p_mix_allocate_channels(AUDIO_DEFAULT_CHANNELS);
         g_audio_channels_reserved = (ch > 0) ? ch : AUDIO_DEFAULT_CHANNELS;
+        if (audio_channel_base_volumes_ensure(g_audio_channels_reserved)) {
+            for (int i = 0; i < g_audio_channels_reserved; i++) {
+                g_audio_channel_base_volumes[i] = AUDIO_MIX_MAX_VOLUME;
+            }
+        }
     }
 }
 
@@ -5766,6 +6029,7 @@ static int mod_audio_ensure_channel_range(LoadedMod* mod, char* err, int err_sz)
             return 0;
         }
         g_audio_channels_reserved = got;
+        (void)audio_channel_base_volumes_ensure(got);
     }
 
     return 1;
@@ -5975,6 +6239,7 @@ int lua_manager_audio_generated_active(void) {
 
 void lua_manager_audio_mix_generated(int16_t* samples, int frame_count,
                                      int output_rate) {
+    LONG master_sfx;
     if (!samples || frame_count <= 0 || output_rate <= 0 ||
         !lua_manager_audio_generated_active() ||
         InterlockedCompareExchange(
@@ -5982,6 +6247,8 @@ void lua_manager_audio_mix_generated(int16_t* samples, int frame_count,
         !TryEnterCriticalSection(&g_audio_generated_lock)) {
         return;
     }
+    master_sfx = InterlockedCompareExchange(
+        &g_audio_master_sfx_percent, 0, 0);
     for (int frame = 0; frame < frame_count; frame++) {
         int added = 0;
         for (int i = 0; i < AUDIO_GENERATED_VOICE_MAX; i++) {
@@ -6021,6 +6288,11 @@ void lua_manager_audio_mix_generated(int16_t* samples, int frame_count,
                 }
             }
         }
+        if (master_sfx <= 0) {
+            added = 0;
+        } else if (master_sfx < 100) {
+            added = (added * (int)master_sfx) / 100;
+        }
         if (added != 0) {
             int left = (int)samples[frame * 2] + added;
             int right = (int)samples[frame * 2 + 1] + added;
@@ -6048,6 +6320,9 @@ static void mod_audio_clear(LoadedMod* mod) {
         int end = start + mod->audio_channel_count;
         for (int ch = start; ch < end; ch++) {
             p_mix_halt_channel(ch);
+            if (ch >= 0 && ch < g_audio_channel_base_volume_cap) {
+                g_audio_channel_base_volumes[ch] = AUDIO_MIX_MAX_VOLUME;
+            }
         }
     }
 
@@ -6098,6 +6373,10 @@ static void audio_runtime_shutdown(void) {
     g_audio_winmm_warned = 0;
     g_audio_channels_reserved = 0;
     g_audio_next_channel_base = 0;
+    free(g_audio_channel_base_volumes);
+    g_audio_channel_base_volumes = NULL;
+    g_audio_channel_base_volume_cap = 0;
+    g_audio_channel_volume_warned = 0;
     g_audio_music_owner = NULL;
     g_audio_music = NULL;
     g_audio_fallback_music_owner = NULL;
@@ -6796,7 +7075,7 @@ static int ui_safe_string_readable(const char* s, int maxlen) {
 #define TILEMAP_MAX_BYTES           (4u * 1024u * 1024u)
 
 #define FULL_STATE_BLOB_MAGIC       0x30474745u /* "EGG0" */
-#define FULL_STATE_BLOB_VERSION     12u
+#define FULL_STATE_BLOB_VERSION     15u
 
 typedef struct FullStateBlobHeader {
     uint32_t magic;
@@ -6868,22 +7147,22 @@ typedef struct FullStateBlobHeader {
     uint8_t particle_state[PARTICLE_STATE_SIZE];
 } FullStateBlobHeader;
 
-/* The offline peer-trace analyzer recognizes this exact 32-bit EGG0/v12
+/* The offline peer-trace analyzer recognizes this exact 32-bit EGG0/v15
  * canonical layout. Keep the scalar and major-component boundaries explicit:
  * any change must bump FULL_STATE_BLOB_VERSION and teach the analyzer the new
  * schema instead of silently relabeling offsets from an old trace. */
-_Static_assert(sizeof(FullStateBlobHeader) == 0x25790u,
-               "EGG0/v12 header size changed without a schema version bump");
+_Static_assert(sizeof(FullStateBlobHeader) == 0x25808u,
+               "EGG0/v15 header size changed without a schema version bump");
 _Static_assert(offsetof(FullStateBlobHeader, map_script_state) == 252u,
-               "EGG0/v12 map-script boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, transient_game_state) == 29960u,
-               "EGG0/v12 transient boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, thing_info_state) == 31112u,
-               "EGG0/v12 thing-info boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, room_info_state) == 31304u,
-               "EGG0/v12 room-info boundary changed");
-_Static_assert(offsetof(FullStateBlobHeader, particle_state) == 48780u,
-               "EGG0/v12 particle boundary changed");
+               "EGG0/v15 map-script boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, transient_game_state) == 30080u,
+               "EGG0/v15 transient boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, thing_info_state) == 31232u,
+               "EGG0/v15 thing-info boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, room_info_state) == 31424u,
+               "EGG0/v15 room-info boundary changed");
+_Static_assert(offsetof(FullStateBlobHeader, particle_state) == 48900u,
+               "EGG0/v15 particle boundary changed");
 
 enum {
     FULL_STATE_LEADER_NONE = 0,
@@ -6974,12 +7253,52 @@ const char* lua_manager_game_state_offset_name(size_t offset) {
     return "things";
 }
 
+static int ptr_accessible(const void* p, SIZE_T len, int writable) {
+    uintptr_t cursor;
+    uintptr_t end;
+    if (!p || len == 0) return 0;
+    cursor = (uintptr_t)p;
+    if (cursor > UINTPTR_MAX - (uintptr_t)len) return 0;
+    end = cursor + (uintptr_t)len;
+    while (cursor < end) {
+        MEMORY_BASIC_INFORMATION region;
+        uintptr_t region_end;
+        DWORD protection;
+        if (VirtualQuery((const void*)cursor, &region, sizeof(region)) !=
+                sizeof(region) ||
+            region.State != MEM_COMMIT ||
+            (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
+            return 0;
+        }
+        protection = region.Protect & 0xffu;
+        if (writable) {
+            if (protection != PAGE_READWRITE &&
+                protection != PAGE_WRITECOPY &&
+                protection != PAGE_EXECUTE_READWRITE &&
+                protection != PAGE_EXECUTE_WRITECOPY) return 0;
+        } else if (protection != PAGE_READONLY &&
+                   protection != PAGE_READWRITE &&
+                   protection != PAGE_WRITECOPY &&
+                   protection != PAGE_EXECUTE_READ &&
+                   protection != PAGE_EXECUTE_READWRITE &&
+                   protection != PAGE_EXECUTE_WRITECOPY) {
+            return 0;
+        }
+        if ((uintptr_t)region.BaseAddress >
+            UINTPTR_MAX - (uintptr_t)region.RegionSize) return 0;
+        region_end = (uintptr_t)region.BaseAddress + (uintptr_t)region.RegionSize;
+        if (region_end <= cursor) return 0;
+        cursor = region_end < end ? region_end : end;
+    }
+    return 1;
+}
+
 static int ptr_readable(const void* p, SIZE_T len) {
-    return (p && len > 0 && !IsBadReadPtr(p, len)) ? 1 : 0;
+    return ptr_accessible(p, len, 0);
 }
 
 static int ptr_writable(void* p, SIZE_T len) {
-    return (p && len > 0 && !IsBadWritePtr(p, len)) ? 1 : 0;
+    return ptr_accessible(p, len, 1);
 }
 
 /* Native adjust_layout normally keeps the logical gameplay width near the
@@ -7067,7 +7386,7 @@ static void full_state_set_err(char* err, size_t err_cap, const char* msg);
 static size_t full_state_content_bytes(void) {
     return map_script_has_entities() ? map_script_content_snapshot_size() : 0u;
 }
-/* v12 retains the native header/payload offsets and appends YMC2 only when the
+/* v12 retains the native header/payload offsets and appends YMC3 only when the
  * active map owns entities. Both copies of the map state must agree exactly. */
 static int full_state_validate_content(const void* src, size_t src_len,
     const FullStateBlobHeader* hdr, char* err, size_t err_cap) {
@@ -9536,11 +9855,11 @@ static int lua_ui_readable_scale(lua_State* Ls) {
     return 1;
 }
 
-/* â”€â”€ UI draw layering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ---------------- UI draw layering ----------------
  *
  * The engine's sprite batch system queues sprites/text and flushes them at
  * specific points during the render pipeline.  Mod on_frame callbacks fire
- * from SDL_GL_SwapWindow â€” AFTER the game has already flushed its batches.
+ * from SDL_GL_SwapWindow -- AFTER the game has already flushed its batches.
  * Anything mods plot into the batch carries over to the NEXT frame and
  * gets flushed BEFORE tiles, making mod UI appear below the game world.
  *
@@ -12128,10 +12447,14 @@ static int lua_audio_play_sfx(lua_State* Ls) {
     }
 
     if (p_mix_volume_channel) {
-        int ivol = (int)(volume * (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
-        if (ivol < 0) ivol = 0;
-        if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
-        p_mix_volume_channel(channel, ivol);
+        int base_volume = audio_float_to_mix_volume(volume);
+        LONG master = InterlockedCompareExchange(
+            &g_audio_master_sfx_percent, 0, 0);
+        if (audio_channel_base_volumes_ensure(channel + 1)) {
+            g_audio_channel_base_volumes[channel] = base_volume;
+        }
+        p_mix_volume_channel(
+            channel, audio_master_scaled_mix_volume(base_volume, master));
     }
 
     lua_pushboolean(Ls, 1);
@@ -12144,7 +12467,7 @@ static int lua_audio_play_music(lua_State* Ls) {
     char full_path[MAX_PATH];
     char err[256];
     int loops = -1;
-    float volume = 1.0f;
+    float play_volume = 1.0f;
     Mix_Music* music = NULL;
 
     if (!mod) {
@@ -12166,7 +12489,8 @@ static int lua_audio_play_music(lua_State* Ls) {
     }
 
     loops = audio_opts_get_int(Ls, 2, "loops", -1);
-    volume = audio_clampf(mod->audio_music_volume * audio_opts_get_float(Ls, 2, "volume", 1.0f), 0.0f, 1.0f);
+    play_volume = audio_clampf(
+        audio_opts_get_float(Ls, 2, "volume", 1.0f), 0.0f, 1.0f);
 
     if (!audio_runtime_ensure_ready()) {
         int fallback_loop = (loops != 0);
@@ -12204,13 +12528,9 @@ static int lua_audio_play_music(lua_State* Ls) {
 
     g_audio_music_owner = mod;
     g_audio_music = music;
+    g_audio_music_play_volume = play_volume;
 
-    if (p_mix_volume_music) {
-        int ivol = (int)(volume * (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
-        if (ivol < 0) ivol = 0;
-        if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
-        p_mix_volume_music(ivol);
-    }
+    audio_apply_master_music_volume();
 
     lua_pushboolean(Ls, 1);
     return 1;
@@ -12245,7 +12565,6 @@ static int lua_audio_stop_music(lua_State* Ls) {
 static int lua_audio_set_music_volume(lua_State* Ls) {
     LoadedMod* mod = mod_from_upvalue(Ls);
     float v = (float)luaL_checknumber(Ls, 1);
-    int ivol;
 
     if (!mod) {
         lua_pushboolean(Ls, 0);
@@ -12255,10 +12574,7 @@ static int lua_audio_set_music_volume(lua_State* Ls) {
 
     mod->audio_music_volume = audio_clampf(v, 0.0f, 1.0f);
     if (g_audio_music_owner == mod && g_audio_music && p_mix_volume_music) {
-        ivol = (int)(mod->audio_music_volume * (float)AUDIO_MIX_MAX_VOLUME + 0.5f);
-        if (ivol < 0) ivol = 0;
-        if (ivol > AUDIO_MIX_MAX_VOLUME) ivol = AUDIO_MIX_MAX_VOLUME;
-        p_mix_volume_music(ivol);
+        audio_apply_master_music_volume();
     } else if (g_audio_fallback_music_owner == mod) {
         if (!g_audio_winmm_warned) {
             LOG_WARN("Audio API: WinMM fallback active; music volume changes are not supported");
@@ -13230,6 +13546,55 @@ static int lua_game_camera(lua_State* Ls) {
     return 1;
 }
 
+/* A draw-only override. The native camera and viewport stay tick-owned. */
+static int lua_game_set_render_camera(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    double x = luaL_checknumber(Ls, 1);
+    double y = luaL_checknumber(Ls, 2);
+    double zoom = luaL_optnumber(Ls, 3, 1.0);
+    unsigned hidden_flags = 0u;
+    static const struct {
+        const char* name;
+        unsigned flag;
+    } options[] = {
+        {"hide_players", HOOKS_RENDER_HIDE_PLAYERS},
+        {"hide_head_indicators", HOOKS_RENDER_HIDE_HEAD_INDICATORS},
+        {"hide_go_arrow", HOOKS_RENDER_HIDE_GO_ARROW},
+        {"hide_pause_button", HOOKS_RENDER_HIDE_PAUSE_BUTTON}
+    };
+    if (!mod || !mod->enabled || g_online_suspend_active) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "render camera is unavailable while online or disabled");
+        return 2;
+    }
+    if (!isfinite(x) || !isfinite(y) || fabs(x) > 10000000.0 ||
+        fabs(y) > 10000000.0 || !isfinite(zoom) ||
+        zoom < 0.25 || zoom > 4.0) {
+        lua_pushboolean(Ls, 0);
+        lua_pushstring(Ls, "camera position or zoom is out of range");
+        return 2;
+    }
+    if (!lua_isnoneornil(Ls, 4)) {
+        luaL_checktype(Ls, 4, LUA_TTABLE);
+        for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); ++i) {
+            lua_getfield(Ls, 4, options[i].name);
+            if (!lua_isnil(Ls, -1) && !lua_isboolean(Ls, -1))
+                return luaL_error(Ls, "%s must be a boolean", options[i].name);
+            if (lua_toboolean(Ls, -1)) hidden_flags |= options[i].flag;
+            lua_pop(Ls, 1);
+        }
+    }
+    lua_pushboolean(Ls, hooks_render_camera_set(mod->id, (float)x, (float)y,
+                                               (float)zoom, hidden_flags));
+    return 1;
+}
+
+static int lua_game_clear_render_camera(lua_State* Ls) {
+    LoadedMod* mod = mod_from_upvalue(Ls);
+    if (mod) hooks_render_camera_clear(mod->id);
+    return 0;
+}
+
 static int lua_game_is_solid(lua_State* Ls) {
     float x = (float)luaL_checknumber(Ls, 1);
     float y = (float)luaL_checknumber(Ls, 2);
@@ -13293,6 +13658,8 @@ static void push_game_api_table(lua_State* Ls, LoadedMod* mod) {
     lua_pushcfunction(Ls, lua_game_tile_solid);                                          lua_setfield(Ls, -2, "tile_solid");
     lua_game_push_command_constants(Ls);
     lua_pushcfunction(Ls, lua_game_camera);                                              lua_setfield(Ls, -2, "camera");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_set_render_camera, 1); lua_setfield(Ls, -2, "set_render_camera");
+    lua_pushlightuserdata(Ls, mod); lua_pushcclosure(Ls, lua_game_clear_render_camera, 1); lua_setfield(Ls, -2, "clear_render_camera");
     lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_solid");
     lua_pushcfunction(Ls, lua_game_is_solid);                                            lua_setfield(Ls, -2, "is_pos_solid");
     /* map selector (online mod) */
@@ -14133,6 +14500,7 @@ static int create_lua_runtime(void) {
 
 static void unload_single_mod_runtime(LoadedMod* mod, int call_on_unload_cb) {
     if (!mod || !L) return;
+    hooks_render_camera_clear(mod->id);
 
     if (call_on_unload_cb && mod->enabled && !mod_is_gameplay_suspended(mod)) {
         call_lua_ref0(L, mod, mod->on_unload_ref, "on_unload");
@@ -15414,7 +15782,7 @@ void lua_manager_on_frame() {
         const char* new_name = ui_state_name_from_ptr(state_ptr);
         if (_stricmp(new_name, "main_initial") == 0) new_name = "main";
 
-        // Do NOT normalise old_name â€” we want main_initialâ†’main to count as a
+        // Do NOT normalise old_name -- we want main_initial->main to count as a
         // real transition so the callback fires once the button list is stable.
         const char* old_name = ui_state_name_from_ptr(g_last_layout_state);
 
@@ -15477,7 +15845,7 @@ void lua_manager_on_frame() {
     }
 
     // If the engine's button list was wiped (main_buttons_start was called by
-    // a state enter), any cached native btn_ptrs are stale â€” the slots may now
+    // a state enter), any cached native btn_ptrs are stale -- the slots may now
     // hold a completely different state's buttons.  Detect this by watching for
     // the count to drop back to near-zero and null out all cached ptrs so the
     // native_button path re-creates them cleanly on the next frame.

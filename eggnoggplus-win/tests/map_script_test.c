@@ -16,6 +16,7 @@ static int g_failures;
 typedef struct TestHost {
     int log_count;
     int apply_count;
+    int tile_query_count;
     char last_log[512];
     MapScriptObjectView applied;
 } TestHost;
@@ -30,6 +31,25 @@ static void test_apply(void* userdata, const MapScriptObjectView* object) {
     TestHost* host = (TestHost*)userdata;
     ++host->apply_count;
     host->applied = *object;
+}
+
+static int test_tile_at(void* userdata, double x, double y,
+                        char* out_reference, size_t out_size) {
+    TestHost* host = (TestHost*)userdata;
+    ++host->tile_query_count;
+    if (!out_reference || out_size < 2u) return -1;
+    out_reference[0] = '\0';
+    if (x < 0.0 || y < 0.0) return 0;
+    if (x == 1.0 && y == 2.0) {
+        snprintf(out_reference, out_size, "@");
+        return 1;
+    }
+    if (x == 13.0 && y == 17.0) {
+        snprintf(out_reference, out_size, "$");
+        return 1;
+    }
+    if (x == 99.0) return -1;
+    return 0;
 }
 
 static MapScriptDefinition make_definition(uint64_t id,
@@ -56,6 +76,29 @@ static const MapScriptSnapshotStateEntry* state_entry(const MapScriptSnapshot* s
         if (entry->in_use && entry->key_len == length &&
             memcmp(entry->key, key, length) == 0) return entry;
     }
+    return NULL;
+}
+
+static MapScriptSnapshotStateEntry* add_snapshot_number_state(MapScriptSnapshot* snapshot,
+                                                               const char* key,
+                                                               double value) {
+    size_t length = strlen(key);
+    int i;
+    CHECK(length < MAP_SCRIPT_STATE_KEY_MAX);
+    for (i = 0; i < MAP_SCRIPT_MAX_STATE_ENTRIES; ++i) {
+        MapScriptSnapshotStateEntry* entry = &snapshot->state[i];
+        if (!entry->in_use) {
+            memset(entry, 0, sizeof(*entry));
+            entry->in_use = 1;
+            entry->type = MAP_SCRIPT_STATE_NUMBER;
+            entry->key_len = (uint8_t)length;
+            entry->number_value = value;
+            memcpy(entry->key, key, length);
+            snapshot->state_count++;
+            return entry;
+        }
+    }
+    CHECK(0);
     return NULL;
 }
 
@@ -172,7 +215,7 @@ static void test_sensor_validation(const MapScriptTileBinding* bindings,
     MapScriptDefinition split_players = make_definition(441,
         "map.sensor('S', { objects = { 'alive_player', 'dead_body' } })",
         bindings, binding_count);
-    CHECK(MAP_SCRIPT_API_VERSION == UINT32_C(27));
+    CHECK(MAP_SCRIPT_API_VERSION == UINT32_C(36));
     CHECK(map_script_validate(&valid, error, sizeof(error)));
     CHECK(map_script_validate(&split_players, error, sizeof(error)));
     expect_validation_failure(421,
@@ -926,7 +969,7 @@ static void test_demo_runtime(const MapScriptTileBinding* bindings,
         "end)\n"
         "map.on_tick(function()\n"
         "  map.state.ticks = map.state.ticks + 1\n"
-        "  map.state.roll = map.random(1, 100)\n"
+        "  map.state.roll = map.random(100, 1)\n"
         "end)\n";
     MapScriptDefinition definition = make_definition(UINT64_C(0x123456789abcdef0),
                                                        source, bindings, binding_count);
@@ -1113,7 +1156,7 @@ static void test_velocity_limits(const MapScriptTileBinding* bindings,
     memset(&host_api, 0, sizeof(host_api));
     host_api.apply_object_fn = test_apply;
     host_api.userdata = &host;
-    CHECK(MAP_SCRIPT_SNAPSHOT_VERSION == 6u);
+    CHECK(MAP_SCRIPT_SNAPSHOT_VERSION == 9u);
     CHECK(map_script_activate(&definition, &host_api, error, sizeof(error)));
     memset(&object, 0, sizeof(object));
     object.object_id = 2;
@@ -1352,6 +1395,86 @@ static void test_reused_slot_lifecycle(const MapScriptTileBinding* bindings,
     CHECK(memcmp(&future_a, &future_b, sizeof(future_a)) == 0);
 }
 
+static void test_player_presentation(const MapScriptTileBinding* bindings,
+                                     size_t binding_count) {
+    static const char source[] =
+        "map.state.step = 0\n"
+        "map.on_tick(function()\n"
+        "  if map.state.step == 0 then\n"
+        "    map.set_player_presentation(1, { body_visible=false, skin_tint='#80ff40ff', clothing_tint='#00000000' })\n"
+        "  elseif map.state.step == 1 then\n"
+        "    map.set_player_presentation(1, { body_visible='default', skin_tint='default' })\n"
+        "  elseif map.state.step == 2 then\n"
+        "    map.reset_player_presentation(1)\n"
+        "  else\n"
+        "    map.set_player_presentation(2, { body_visible=false })\n"
+        "    error('presentation fault')\n"
+        "  end\n"
+        "  map.state.step = map.state.step + 1\n"
+        "end)\n";
+    MapScriptDefinition definition=make_definition(670,source,bindings,binding_count);
+    MapScriptSnapshot hidden,corrupted,sprite_state;
+    MapScriptPlayerPresentation presentation;
+    char error[512];
+
+    CHECK(map_script_activate(&definition,NULL,error,sizeof(error)));
+    CHECK(!map_script_player_presentation(0,&presentation));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_player_presentation(0,&presentation));
+    CHECK(presentation.flags==(MAP_SCRIPT_PLAYER_PRESENTATION_BODY_VISIBLE |
+                              MAP_SCRIPT_PLAYER_PRESENTATION_SKIN_TINT |
+                              MAP_SCRIPT_PLAYER_PRESENTATION_CLOTHING_TINT));
+    CHECK(!presentation.body_visible && presentation.skin_tint==UINT32_C(0x80ff40ff) &&
+          presentation.clothing_tint==0);
+    CHECK(map_script_snapshot_save(&hidden,error,sizeof(error)));
+    CHECK(!memcmp(&hidden.player_presentation[0],
+                  &(MapScriptSnapshotPlayerPresentation){
+                      MAP_SCRIPT_PLAYER_PRESENTATION_BODY_VISIBLE |
+                      MAP_SCRIPT_PLAYER_PRESENTATION_SKIN_TINT |
+                      MAP_SCRIPT_PLAYER_PRESENTATION_CLOTHING_TINT,
+                      0,{0,0},UINT32_C(0x80ff40ff),0},
+                  sizeof(hidden.player_presentation[0])));
+
+    corrupted=hidden;corrupted.player_presentation[0].reserved[0]=1;
+    corrupted.checksum=test_snapshot_checksum(&corrupted);
+    CHECK(!map_script_snapshot_validate(&corrupted,definition.script_id,error,sizeof(error)));
+    corrupted=hidden;corrupted.player_presentation[0].flags&=
+        (uint8_t)~MAP_SCRIPT_PLAYER_PRESENTATION_SKIN_TINT;
+    corrupted.checksum=test_snapshot_checksum(&corrupted);
+    CHECK(!map_script_snapshot_validate(&corrupted,definition.script_id,error,sizeof(error)));
+
+    sprite_state=hidden;
+    add_snapshot_number_state(&sprite_state,"__yule_p1_sprite_type",1);
+    add_snapshot_number_state(&sprite_state,"__yule_p1_sprite_animation",0);
+    add_snapshot_number_state(&sprite_state,"__yule_p1_sprite_started",0);
+    add_snapshot_number_state(&sprite_state,"__yule_p1_sprite_visible",0);
+    sprite_state.checksum=test_snapshot_checksum(&sprite_state);
+    CHECK(map_script_snapshot_validate(&sprite_state,definition.script_id,error,sizeof(error)));
+    corrupted=sprite_state;
+    ((MapScriptSnapshotStateEntry*)state_entry(&corrupted,"__yule_p1_sprite_visible"))->number_value=2;
+    corrupted.checksum=test_snapshot_checksum(&corrupted);
+    CHECK(!map_script_snapshot_validate(&corrupted,definition.script_id,error,sizeof(error)));
+    corrupted=sprite_state;
+    memset((MapScriptSnapshotStateEntry*)state_entry(&corrupted,"__yule_p1_sprite_started"),0,
+           sizeof(MapScriptSnapshotStateEntry));
+    corrupted.state_count--;
+    corrupted.checksum=test_snapshot_checksum(&corrupted);
+    CHECK(!map_script_snapshot_validate(&corrupted,definition.script_id,error,sizeof(error)));
+
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_player_presentation(0,&presentation));
+    CHECK(presentation.flags==MAP_SCRIPT_PLAYER_PRESENTATION_CLOTHING_TINT &&
+          presentation.body_visible && presentation.skin_tint==0);
+    CHECK(map_script_snapshot_load(&hidden,error,sizeof(error)));
+    CHECK(map_script_player_presentation(0,&presentation) && !presentation.body_visible);
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(!map_script_player_presentation(0,&presentation));
+    CHECK(!map_script_dispatch_tick(error,sizeof(error)));
+    CHECK(map_script_is_faulted());
+    CHECK(!map_script_player_presentation(1,&presentation));
+}
+
 static void test_runtime_fault(const MapScriptTileBinding* bindings,
                                size_t binding_count) {
     static const char source[] =
@@ -1418,6 +1541,70 @@ static void test_memory_limits(const MapScriptTileBinding* bindings,
     CHECK(map_script_is_faulted());
     CHECK(host.log_count == 1);
     CHECK(strstr(error, "memory") != NULL);
+}
+
+static void test_tile_query(const MapScriptTileBinding* bindings,
+                            size_t binding_count) {
+    static const char source[] =
+        "map.on_tick(function()\n"
+        "  map.state.native = map.tile_at(1, 2)\n"
+        "  map.state.custom = map.tile_at(13, 17)\n"
+        "  map.state.outside = map.tile_at(-1, 0) == nil\n"
+        "end)";
+    MapScriptDefinition definition = make_definition(390, source, bindings,
+                                                       binding_count);
+    MapScriptDefinition unavailable = make_definition(391,
+        "map.on_tick(function() map.tile_at(1, 2) end)",
+        bindings, binding_count);
+    MapScriptDefinition failed = make_definition(392,
+        "map.on_tick(function() map.tile_at(99, 2) end)",
+        bindings, binding_count);
+    MapScriptDefinition wrong_type = make_definition(393,
+        "map.on_tick(function() map.tile_at('x', 2) end)",
+        bindings, binding_count);
+    MapScriptHost host_api;
+    TestHost host;
+    MapScriptSnapshot baseline;
+    MapScriptSnapshot future;
+    MapScriptSnapshot replay;
+    const MapScriptSnapshotStateEntry* entry;
+    char error[512];
+
+    expect_validation_failure(389, "map.tile_at(1, 2)", bindings,
+                              binding_count, "outside a gameplay host");
+    memset(&host, 0, sizeof(host));
+    memset(&host_api, 0, sizeof(host_api));
+    host_api.userdata = &host;
+    host_api.tile_at_fn = test_tile_at;
+    CHECK(map_script_activate(&definition, &host_api, error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(host.tile_query_count == 3);
+    CHECK(map_script_snapshot_save(&future, error, sizeof(error)));
+    entry = state_entry(&future, "native");
+    CHECK(entry && entry->type == MAP_SCRIPT_STATE_STRING &&
+          entry->string_len == 1 && entry->string_value[0] == '@');
+    entry = state_entry(&future, "custom");
+    CHECK(entry && entry->type == MAP_SCRIPT_STATE_STRING &&
+          entry->string_len == 1 && entry->string_value[0] == '$');
+    entry = state_entry(&future, "outside");
+    CHECK(entry && entry->type == MAP_SCRIPT_STATE_BOOL && entry->bool_value);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    host.tile_query_count = 0;
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(host.tile_query_count == 3);
+    CHECK(map_script_snapshot_save(&replay, error, sizeof(error)));
+    CHECK(memcmp(&future, &replay, sizeof(future)) == 0);
+
+    CHECK(map_script_activate(&unavailable, NULL, error, sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(strstr(error, "tile queries unavailable") != NULL);
+    CHECK(map_script_activate(&failed, &host_api, error, sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(strstr(error, "native tile query failed") != NULL);
+    CHECK(map_script_activate(&wrong_type, &host_api, error, sizeof(error)));
+    CHECK(!map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(strstr(error, "expects x and y numbers") != NULL);
 }
 
 static void test_periodic_clock(const MapScriptTileBinding* bindings,
@@ -1585,6 +1772,35 @@ static void test_state_clear(const MapScriptTileBinding* bindings, size_t bindin
     expect_validation_failure(615, "map.state_clear(string.char(0))", bindings, binding_count, "prefix");
 }
 
+static void test_exit_locks(const MapScriptTileBinding* bindings,
+                            size_t binding_count) {
+    static const char source[] =
+        "assert(not map.exit_locked(2)) "
+        "map.set_exit_locked(2, true) map.set_exit_locked(256, true) "
+        "assert(map.exit_locked(2) and map.exit_locked(256) and #map.state_keys() == 0) "
+        "map.on_tick(function() "
+        "map.set_exit_locked(2, false) map.set_exit_locked(3, true) end)";
+    MapScriptDefinition definition = make_definition(617, source, bindings,
+                                                      binding_count);
+    MapScriptSnapshot baseline;
+    char error[512];
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_exit_locked(0) == 0 && map_script_exit_locked(1) == 1 &&
+          map_script_exit_locked(255) == 1);
+    CHECK(map_script_snapshot_save(&baseline, error, sizeof(error)));
+    CHECK(baseline.state_count == 0 && baseline.exit_locks[0] == 2u &&
+          baseline.exit_locks[31] == 128u);
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_exit_locked(1) == 0 && map_script_exit_locked(2) == 1);
+    CHECK(map_script_snapshot_load(&baseline, error, sizeof(error)));
+    CHECK(map_script_exit_locked(1) == 1 && map_script_exit_locked(2) == 0 &&
+          map_script_exit_locked(255) == 1);
+    expect_validation_failure(618, "map.exit_locked(0)", bindings,
+                              binding_count, "whole number");
+    expect_validation_failure(619, "map.set_exit_locked(1, 1)", bindings,
+                              binding_count, "true or false");
+}
+
 static void test_state_assignment_atomicity(const MapScriptTileBinding* bindings,
                                             size_t binding_count) {
     static const char* const invalid_values[] = {
@@ -1716,6 +1932,197 @@ static void test_timers(const MapScriptTileBinding* bindings, size_t binding_cou
     expect_validation_failure(658,"for i=1,33 do map.on_timer('t'..i,function() end) end",bindings,binding_count,"limit");
 }
 
+static void test_beginner_list_runtime(const MapScriptTileBinding* bindings,
+                                       size_t binding_count) {
+    const char* source =
+        "map.on_tick(function() "
+        "local list = (function() local list = {3, 5, 8}; "
+        "for i = 1, 3 do if list[i] == nil then error('List items cannot be empty.') end end; "
+        "return list end)() "
+        "if type(list) ~= 'table' then error('For each item needs a list.') end "
+        "if #list > 32 then error('Lists are limited to 32 items.') end "
+        "local total = 0 for _, item in ipairs(list) do total = total + item end "
+        "local wanted, found = 5, 0 for i = #list, 1, -1 do "
+        "if rawequal(list[i], wanted) then found = i break end end "
+        "local index = map.random(1, #list) "
+        "local vector = (function() local x, y = 3, 4 "
+        "if type(x) ~= 'number' or type(y) ~= 'number' then error('Vector x and y must be numbers.') end "
+        "return {x=x,y=y} end)() "
+        "local length = (function() local value=vector.x*vector.x+vector.y*vector.y "
+        "if type(value) ~= 'number' or value < 0 or value ~= value or value-value ~= 0 then error('Square root needs a finite non-negative number.') end "
+        "if value == 0 then return 0 end local normalized,scale=value,1 "
+        "for _=1,600 do if normalized <= 4 then break end normalized,scale=normalized/4,scale*2 end "
+        "for _=1,600 do if normalized >= 1 then break end normalized,scale=normalized*4,scale/2 end "
+        "local root=(normalized+1)*0.5 for _=1,12 do root=(root+normalized/root)*0.5 end return root*scale end)() "
+        "local converted_number = (function() local input, fallback = '-12.5', 99 "
+        "if type(fallback) ~= 'number' then error('Number conversion fallback must be a number.') end "
+        "if type(input) == 'number' then return input end "
+        "if type(input) == 'boolean' then return input and 1 or 0 end "
+        "if type(input) ~= 'string' or #input == 0 then return fallback end "
+        "local first, sign, start, number, divisor, decimal, digits = string.byte(input,1),1,1,0,1,false,0 "
+        "if first == 45 then sign,start=-1,2 elseif first == 43 then start=2 end "
+        "for i=start,#input do local byte=string.byte(input,i) "
+        "if byte == 46 and not decimal then decimal=true "
+        "elseif byte >= 48 and byte <= 57 then digits=digits+1 "
+        "if decimal then divisor=divisor*10 number=number+(byte-48)/divisor "
+        "else number=number*10+(byte-48) end else return fallback end end "
+        "number=number*sign if digits == 0 or number ~= number or number-number ~= 0 then return fallback end "
+        "return number end)() "
+        "map.state.list_total = total map.state.list_found = found "
+        "map.state.list_random = list[index] map.state.vector_x = vector.x/length "
+        "map.state.converted_text = tostring(total) map.state.converted_bool = not not vector map.state.converted_number = converted_number "
+        "return end)";
+    MapScriptDefinition definition = make_definition(663, source, bindings,
+                                                       binding_count);
+    MapScriptSnapshot snapshot;
+    const MapScriptSnapshotStateEntry* total;
+    const MapScriptSnapshotStateEntry* found;
+    const MapScriptSnapshotStateEntry* random;
+    const MapScriptSnapshotStateEntry* vector_x;
+    const MapScriptSnapshotStateEntry* converted_text;
+    const MapScriptSnapshotStateEntry* converted_bool;
+    const MapScriptSnapshotStateEntry* converted_number;
+    char error[512];
+    CHECK(map_script_validate(&definition, error, sizeof(error)));
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&snapshot, error, sizeof(error)));
+    total = state_entry(&snapshot, "list_total");
+    found = state_entry(&snapshot, "list_found");
+    random = state_entry(&snapshot, "list_random");
+    vector_x = state_entry(&snapshot, "vector_x");
+    converted_text = state_entry(&snapshot, "converted_text");
+    converted_bool = state_entry(&snapshot, "converted_bool");
+    converted_number = state_entry(&snapshot, "converted_number");
+    CHECK(total && total->number_value == 16.0);
+    CHECK(found && found->number_value == 2.0);
+    CHECK(random && (random->number_value == 3.0 ||
+                     random->number_value == 5.0 ||
+                     random->number_value == 8.0));
+    CHECK(vector_x && fabs(vector_x->number_value - 0.6) < 0.000001);
+    CHECK(converted_text && strcmp(converted_text->string_value, "16") == 0);
+    CHECK(converted_bool && converted_bool->bool_value);
+    CHECK(converted_number && converted_number->number_value == -12.5);
+    CHECK(state_entry(&snapshot, "unreachable") == NULL);
+}
+
+static void test_deterministic_beginner_math(const MapScriptTileBinding* bindings,
+                                             size_t binding_count) {
+    const char* source =
+        "map.on_tick(function() "
+        "local degrees=30 if type(degrees) ~= 'number' or degrees ~= degrees or degrees-degrees ~= 0 then error('finite') end "
+        "degrees=degrees%360 if degrees>180 then degrees=degrees-360 end "
+        "local radians=degrees*0.017453292519943295 local squared=radians*radians "
+        "local term,result=radians,radians for i=1,8 do term=-term*squared/((2*i)*(2*i+1)) result=result+term end "
+        "local dx,dy=1,1 local ax,ay=math.abs(dx),math.abs(dy) "
+        "local function atan_degrees(value) local absolute=math.abs(value) return value*(45+15.642246457208728*(1-absolute)) end "
+        "local angle if ax>=ay then angle=atan_degrees(dy/dx) if dx<0 then angle=angle+(dy>=0 and 180 or -180) end "
+        "elseif dy>0 then angle=90-atan_degrees(dx/dy) else angle=-90-atan_degrees(dx/dy) end "
+        "map.state.det_sine=result map.state.det_direction=angle end)";
+    MapScriptDefinition definition = make_definition(664, source, bindings,
+                                                       binding_count);
+    MapScriptSnapshot snapshot;
+    const MapScriptSnapshotStateEntry* sine;
+    const MapScriptSnapshotStateEntry* direction;
+    char error[512];
+    CHECK(map_script_validate(&definition, error, sizeof(error)));
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_snapshot_save(&snapshot, error, sizeof(error)));
+    sine = state_entry(&snapshot, "det_sine");
+    direction = state_entry(&snapshot, "det_direction");
+    CHECK(sine && fabs(sine->number_value - 0.5) < 0.000000001);
+    CHECK(direction && direction->number_value == 45.0);
+}
+
+static void test_room_metadata(const MapScriptTileBinding* bindings,
+                               size_t binding_count) {
+    const char* source =
+        "assert(map.room_count()==3) assert(map.start_room()==1) "
+        "local room=map.room_info(2) "
+        "assert(room.room==2 and room.id=='tower' and room.source_room==0 "
+        "and room.source_id=='base' and room.x==640 and room.y==192 "
+        "and room.width==320 and room.height==160 and room.mirrored "
+        "and room.placed and not room.start) "
+        "assert(map.room_info(1).start) map.on_tick(function() end)";
+    MapScriptDefinition definition = make_definition(665, source, bindings,
+                                                       binding_count);
+    char error[512];
+    definition.entity_layout.count = 2;
+    definition.entity_layout.rooms[0] = "base";
+    definition.entity_layout.rooms[1] = "side";
+    definition.entity_layout.instance_count = 3;
+    definition.entity_layout.start_room = 1;
+    definition.entity_layout.instances[0] = (EntityPackageRoomInstance){
+        .id="entrance",.source_room=1,.width=528,.height=192};
+    definition.entity_layout.instances[1] = (EntityPackageRoomInstance){
+        .id="center",.source_room=0,.x=528,.width=320,.height=160};
+    definition.entity_layout.instances[2] = (EntityPackageRoomInstance){
+        .id="tower",.source_room=0,.x=640,.y=192,.width=320,.height=160,
+        .mirror_x=1};
+    CHECK(map_script_validate(&definition, error, sizeof(error)));
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+
+    definition = make_definition(666,
+        "assert(map.room_count()==2 and map.start_room()==0) "
+        "local room=map.room_info(1) assert(room.id=='side' and "
+        "room.source_id=='side' and room.source_room==1 and not room.placed "
+        "and room.x==nil and not room.start) map.on_tick(function() end)",
+        bindings, binding_count);
+    definition.entity_layout.count = 2;
+    definition.entity_layout.rooms[0] = "base";
+    definition.entity_layout.rooms[1] = "side";
+    CHECK(map_script_validate(&definition, error, sizeof(error)));
+
+    definition = make_definition(667, "map.room_count()", bindings,
+                                 binding_count);
+    definition.entity_layout.count = 1;
+    definition.entity_layout.rooms[0] = "base";
+    definition.entity_layout.instance_count = 1;
+    definition.entity_layout.start_room = 1;
+    definition.entity_layout.instances[0] = (EntityPackageRoomInstance){
+        .id="only",.source_room=0,.width=528,.height=192};
+    CHECK(!map_script_validate(&definition, error, sizeof(error)));
+    CHECK(strstr(error, "start is out of range") != NULL);
+}
+
+static void test_authored_camera(const MapScriptTileBinding* bindings,
+                                 size_t binding_count) {
+    static const char source[] =
+        "map.on_tick(function() "
+        "if map.tick()==0 then "
+        "assert(map.camera_override()==nil) "
+        "map.set_camera_point(100.125,-20.5,0.5) "
+        "local c=map.camera_override() "
+        "assert(c.x==100.125 and c.y==-20.5 and c.zoom==0.5) "
+        "elseif map.tick()==1 then map.clear_camera() "
+        "assert(map.camera_override()==nil) end end)";
+    MapScriptDefinition definition = make_definition(668, source, bindings, binding_count);
+    MapScriptSnapshot saved, corrupt;
+    float x = 0, y = 0, zoom = 0;
+    char error[512];
+    CHECK(map_script_activate(&definition, NULL, error, sizeof(error)));
+    CHECK(!map_script_render_camera(&x, &y, &zoom));
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(map_script_render_camera(&x, &y, &zoom));
+    CHECK(x == 100.125f && y == -20.5f && zoom == 0.5f);
+    CHECK(map_script_snapshot_save(&saved, error, sizeof(error)));
+    CHECK(saved.camera.active == 1u && saved.camera.x_q == 25632 &&
+          saved.camera.y_q == -5248 && saved.camera.zoom_q == 128u);
+    CHECK(map_script_dispatch_tick(error, sizeof(error)));
+    CHECK(!map_script_render_camera(&x, &y, &zoom));
+    CHECK(map_script_snapshot_load(&saved, error, sizeof(error)));
+    CHECK(map_script_render_camera(&x, &y, &zoom) && zoom == 0.5f);
+    corrupt = saved;
+    corrupt.camera.zoom_q = 0;
+    corrupt.checksum = test_snapshot_checksum(&corrupt);
+    CHECK(!map_script_snapshot_validate(&corrupt, definition.script_id, error, sizeof(error)));
+    map_script_deactivate();
+    CHECK(!map_script_render_camera(&x, &y, &zoom));
+    definition = make_definition(669, "map.set_camera_point(0,0,1)", bindings, binding_count);
+    CHECK(!map_script_validate(&definition, error, sizeof(error)));
+}
+
 int main(void) {
     static const MapScriptTileBinding bindings[] = {
         { 'S', "demo:spring" },
@@ -1734,14 +2141,21 @@ int main(void) {
     test_demo_runtime(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_velocity_limits(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_reused_slot_lifecycle(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_player_presentation(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_runtime_fault(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_memory_limits(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_tile_query(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_periodic_clock(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_optional_bindings(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_state_keys(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_timers(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_beginner_list_runtime(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_deterministic_beginner_math(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_room_metadata(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_state_clear(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_exit_locks(bindings, sizeof(bindings) / sizeof(bindings[0]));
     test_state_assignment_atomicity(bindings, sizeof(bindings) / sizeof(bindings[0]));
+    test_authored_camera(bindings, sizeof(bindings) / sizeof(bindings[0]));
     map_script_deactivate();
     test_inactive_snapshot();
     if (g_failures) {

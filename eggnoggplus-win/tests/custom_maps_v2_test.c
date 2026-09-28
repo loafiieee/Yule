@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,17 @@ static int write_fixture_bytes(const char* path, const void* data, size_t size) 
     ok = fwrite(data, 1, size, file) == size;
     if (fclose(file) != 0) ok = 0;
     return ok;
+}
+
+static int has_lower_hex_signature(const char* key) {
+    const char* signature = key ? strrchr(key, ':') : NULL;
+    size_t i;
+    if (!signature || strlen(++signature) != 32u) return 0;
+    for (i = 0; i < 32u; i++) {
+        char c = signature[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return 0;
+    }
+    return 1;
 }
 
 static int write_png_header_fixture(const char* path,
@@ -176,6 +188,46 @@ static void build_one_room_map(char symbol, char* out, size_t out_size) {
     build_one_room_map_at(symbol, 0, 0, out, out_size);
 }
 
+static void build_one_room_floor_map(char* out, size_t out_size) {
+    size_t position = 0;
+    int row;
+    int written = snprintf(out, out_size, "; spawn floor test\n\n[center]\n");
+    if (written < 0) return;
+    position = (size_t)written;
+    for (row = 0; row < 12 && position < out_size; ++row) {
+        char cells[34];
+        memset(cells, row == 11 ? '@' : ' ', 33);
+        cells[33] = '\0';
+        written = snprintf(out + position, out_size - position,
+                           "\"%s\"\n", cells);
+        if (written < 0) return;
+        position += (size_t)written;
+    }
+}
+
+static void build_two_room_query_map(char* out, size_t out_size) {
+    size_t position = 0;
+    const char* names[] = { "left", "center" };
+    int room;
+    int row;
+    for (room = 0; room < 2 && position < out_size; ++room) {
+        int written = snprintf(out + position, out_size - position,
+                               "%s[%s]\n", room ? "\n" : "", names[room]);
+        if (written < 0 || (size_t)written >= out_size - position) return;
+        position += (size_t)written;
+        for (row = 0; row < 12 && position < out_size; ++row) {
+            char cells[34];
+            memset(cells, ' ', 33);
+            cells[33] = '\0';
+            if (row == 2) cells[room ? 3 : 2] = room ? '$' : '@';
+            written = snprintf(out + position, out_size - position,
+                               "\"%s\"\n", cells);
+            if (written < 0 || (size_t)written >= out_size - position) return;
+            position += (size_t)written;
+        }
+    }
+}
+
 static void build_one_room_spawn_map(int k_count,
                                      int sword_count,
                                      int mine_count,
@@ -201,6 +253,60 @@ static void build_one_room_spawn_map(int k_count,
         if (written < 0) return;
         position += (size_t)written;
     }
+}
+
+static void append_variable_room(char* out, size_t out_size, size_t* position,
+                                 const char* id, int width, int height,
+                                 int mark_x, int mark_y, char mark) {
+    int row;
+    int written;
+    if (!out || !position || !id || width < 1 || width > 128 || height < 1) return;
+    written = snprintf(out + *position, out_size - *position, "[%s]\n", id);
+    if (written < 0 || (size_t)written >= out_size - *position) return;
+    *position += (size_t)written;
+    for (row = 0; row < height && *position < out_size; ++row) {
+        char cells[129];
+        memset(cells, ' ', (size_t)width);
+        cells[width] = '\0';
+        if (row == mark_y && mark_x >= 0 && mark_x < width) cells[mark_x] = mark;
+        written = snprintf(out + *position, out_size - *position, "\"%s\"\n", cells);
+        if (written < 0 || (size_t)written >= out_size - *position) return;
+        *position += (size_t)written;
+    }
+    if (*position + 1u < out_size) out[(*position)++] = '\n';
+    if (*position < out_size) out[*position] = '\0';
+}
+
+static void append_variable_floor_room(char* out, size_t out_size,
+                                       size_t* position, const char* id,
+                                       int width, int height) {
+    int row;
+    int written;
+    if (!out || !position || !id || width < 1 || width > 128 || height < 2)
+        return;
+    written = snprintf(out + *position, out_size - *position, "[%s]\n", id);
+    if (written < 0 || (size_t)written >= out_size - *position) return;
+    *position += (size_t)written;
+    for (row = 0; row < height && *position < out_size; ++row) {
+        char cells[129];
+        memset(cells, row == height - 1 ? '@' : ' ', (size_t)width);
+        cells[width] = '\0';
+        written = snprintf(out + *position, out_size - *position,
+                           "\"%s\"\n", cells);
+        if (written < 0 || (size_t)written >= out_size - *position) return;
+        *position += (size_t)written;
+    }
+    if (*position + 1u < out_size) out[(*position)++] = '\n';
+    if (*position < out_size) out[*position] = '\0';
+}
+
+static void build_variable_two_room_map(char* out, size_t out_size) {
+    size_t position = 0;
+    if (!out || out_size == 0) return;
+    out[0] = '\0';
+    append_variable_floor_room(out, out_size, &position, "center", 37, 16);
+    append_variable_room(out, out_size, &position, "outer", 20, 9,
+                         0, 8, 'x');
 }
 
 static const char* v1_json(void) {
@@ -295,21 +401,31 @@ static void test_in_memory_v1_preview(void) {
         "{\"format\":\"eggnogg-map/v1\",\"id\":\"preview_test\","
         "\"name\":\"Preview Test\",\"author\":\"Greggnogg\","
         "\"layout\":{\"kind\":\"mirrored_source_rooms\","
-        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]}}";
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\",\"outer\"]},"
+        "\"rooms\":{\"center\":{\"opponent_spawn\":\"always\"},"
+        "\"outer\":{\"opponent_spawn\":\"default\"}}}";
     static const char v2_json[] =
         "{\"format\":\"eggnogg-map/v2\",\"id\":\"preview_test\","
         "\"name\":\"Preview Test\",\"author\":\"Greggnogg\","
         "\"layout\":{\"kind\":\"mirrored_source_rooms\","
         "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]}}";
-    char map_text[1024];
+    char one_room[1024], map_text[2048];
     char error[256];
     char* manifest = NULL;
     CustomMapContentView view;
     int selector = -1;
     int total_before;
     int needed;
+    CustomMapValidationSummary exported;
 
-    build_one_room_map(0, map_text, sizeof(map_text));
+    build_one_room_map(0, one_room, sizeof(one_room));
+    snprintf(map_text, sizeof(map_text), "%s[outer]\n%s", one_room,
+             strstr(one_room, "[center]\n") + strlen("[center]\n"));
+    CHECK(custom_maps_validate_package_text("preview_test", ".", json,
+                                            map_text, &exported));
+    CHECK(exported.final_opponent_spawn[0] == 2 &&
+          exported.final_opponent_spawn[1] == 1 &&
+          exported.final_opponent_spawn[2] == 2);
     custom_maps_init();
     total_before = custom_maps_total_selectors();
     CHECK(custom_maps_install_preview_text(json, map_text, &selector,
@@ -319,7 +435,16 @@ static void test_in_memory_v1_preview(void) {
     CHECK(custom_maps_total_selectors() == total_before + 1);
     CHECK(custom_maps_content_view_open(selector, &view) == 1);
     CHECK(view.format_version == 1);
-    CHECK(view.source_room_count == 1);
+    CHECK(view.source_room_count == 2);
+    selector = custom_maps_test_pin_folder("_greggnogg_preview");
+    CHECK(selector >= 0);
+    CHECK(custom_maps_opponent_spawn_policy(selector, 0) ==
+          exported.final_opponent_spawn[0]);
+    CHECK(custom_maps_opponent_spawn_policy(selector, 1) ==
+          exported.final_opponent_spawn[1]);
+    CHECK(custom_maps_opponent_spawn_policy(selector, 2) ==
+          exported.final_opponent_spawn[2]);
+    custom_maps_test_pin_folder(NULL);
 
     needed = custom_maps_build_manifest_json(NULL, 0);
     CHECK(needed > 0);
@@ -342,7 +467,31 @@ static void test_in_memory_v1_preview(void) {
 
 static void test_v2_preview_folder(void) {
     char token[33],relative[96],folder[MAX_PATH],path[MAX_PATH+32],map[1024],error[256];int selector=-1;
-    const char* json=spawn_budget_v2_json();
+    CustomMapValidationSummary export_summary;
+    const char* json=
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"spawn_budget\","
+        "\"name\":\"Spawn budget\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[{\"id\":\"preview_mote\",\"name\":\"Preview mote\","
+        "\"visual\":{\"sprite_sheet\":\"builtin:misc\",\"sprite_index\":0,"
+        "\"frame_count\":1,\"frame_ticks\":1,\"tint\":[1,0.5,0.25,0.8],"
+        "\"scale_x\":1,\"scale_y\":1,\"end_tint\":[0.1,0.2,0.3,0],"
+        "\"end_scale_x\":0,\"end_scale_y\":2,\"start_rotation\":-45,"
+        "\"end_rotation\":90,\"interpolation\":\"ease_in_out\"},"
+        "\"lifetime_ticks\":90,"
+        "\"fade_in_ticks\":5,\"fade_out_ticks\":15}],"
+        "\"ambiances\":[{\"id\":\"preview_glow\",\"name\":\"Preview glow\","
+        "\"native_ambient\":\"none\",\"emitters\":[{"
+        "\"particle\":\"preview_mote\",\"count\":12,"
+        "\"area\":{\"x\":0,\"y\":0,\"width\":528,\"height\":192},"
+        "\"velocity_x\":{\"min\":-0.1,\"max\":0.1},"
+        "\"velocity_y\":{\"min\":0.1,\"max\":0.3},"
+        "\"acceleration_x\":0,\"acceleration_y\":0,"
+        "\"rotation_speed\":{\"min\":-0.5,\"max\":0.5},"
+        "\"particle_layer\":1,\"blend\":\"additive\","
+        "\"mirror_with_room\":true}]}],"
+        "\"defaults\":{\"room\":{\"ambient\":\"preview_glow\",\"opponent_spawn\":\"never\"}}}";
     const char* entities="{\"schema\":2,\"capacity\":8,\"types\":[{\"key\":\"demo:preview\",\"regions\":[],\"visual\":{\"sheet\":\"builtin:tiles\",\"sprite\":4}}],\"placements\":[{\"name\":\"first\",\"type\":\"demo:preview\",\"room\":\"center\",\"x\":48,\"y\":64,\"vx\":1}]}";
     const char* source="entity.on_update('demo:preview',function(h) map.state.seen=true end)";
     snprintf(token,sizeof(token),"%08lx%08lx%08x%08x",(unsigned long)GetCurrentProcessId(),(unsigned long)GetTickCount(),1u,2u);
@@ -353,10 +502,32 @@ static void test_v2_preview_folder(void) {
     snprintf(path,sizeof(path),"%s/data.map",folder);CHECK(write_fixture_bytes(path,map,strlen(map)));
     snprintf(path,sizeof(path),"%s/entities.json",folder);CHECK(write_fixture_bytes(path,entities,strlen(entities)));
     snprintf(path,sizeof(path),"%s/map.lua",folder);CHECK(write_fixture_bytes(path,source,strlen(source)));
+    CHECK(custom_maps_validate_package_text("spawn_budget",folder,json,map,&export_summary));
+    CHECK(export_summary.final_opponent_spawn[0]==2);
     custom_maps_init();int before=custom_maps_total_selectors();
     CHECK(custom_maps_install_preview_folder(token,&selector,error,sizeof(error)));CHECK(selector==before);
     CHECK(custom_maps_total_selectors()==before+1);
     selector=custom_maps_test_pin_folder(relative);CHECK(selector>=0);
+    CHECK(custom_maps_opponent_spawn_policy(selector,0)==export_summary.final_opponent_spawn[0]);
+    {
+        const MapAmbianceCatalog* catalog=NULL;
+        uint16_t ambiance_index=UINT16_MAX;
+        int source_room=-1,mirror_room=-1;
+        CHECK(custom_maps_pinned_ambiance(selector,0,&catalog,&ambiance_index,
+                                          &source_room,&mirror_room)==1);
+        CHECK(catalog!=NULL&&catalog->particle_count==1&&
+              catalog->ambiance_count==1&&ambiance_index==0&&
+              catalog->ambiances[0].emitters[0].count==12&&
+              catalog->particles[0].end_scale_x_q==0&&
+              catalog->particles[0].end_scale_y_q==512&&
+              catalog->particles[0].end_rgba==UINT32_C(0x1a334d00)&&
+              catalog->particles[0].start_rotation_q==-45*256&&
+              catalog->particles[0].end_rotation_q==90*256&&
+              catalog->particles[0].transition_flags==7&&
+              catalog->particles[0].interpolation==
+                  MAP_PARTICLE_INTERPOLATION_EASE_IN_OUT&&
+              source_room==0&&mirror_room==0);
+    }
     CHECK(custom_maps_activate_script_for_selector(selector,NULL,error,sizeof(error)));CHECK(map_script_has_entities());
     CHECK(map_script_dispatch_tick(error,sizeof(error)));uint32_t cursor=0;EntityRenderView render;
     CHECK(map_script_entity_render_next(&cursor,&render)&&render.x==49*256);
@@ -456,6 +627,71 @@ static void test_v2_symbolic_builtin(void) {
     CHECK(summary.content_cell_count == 1);
 }
 
+static void test_pinned_world_tile_query(void) {
+    static const char json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"world_tile_query\","
+        "\"name\":\"World tile query\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"left\",\"center\"]},"
+        "\"tileset\":{\"tiles\":[{\"id\":\"moss\",\"symbol\":\"$\","
+        "\"native_glyph\":\"x\",\"sprite_sheet\":\"builtin:tiles\"}]}}";
+    char folder_id[96];
+    char folder[MAX_PATH];
+    char json_path[MAX_PATH + 32];
+    char map_path[MAX_PATH + 32];
+    char map_text[2048];
+    char reference[8];
+    int selector;
+
+    snprintf(folder_id, sizeof(folder_id), "world_tile_query_%lu",
+             (unsigned long)GetCurrentProcessId());
+    snprintf(folder, sizeof(folder), "maps/%s", folder_id);
+    snprintf(json_path, sizeof(json_path), "%s/data.json", folder);
+    snprintf(map_path, sizeof(map_path), "%s/data.map", folder);
+    DeleteFileA(json_path);
+    DeleteFileA(map_path);
+    RemoveDirectoryA(folder);
+    CHECK(CreateDirectoryA(folder, NULL) != 0);
+    build_two_room_query_map(map_text, sizeof(map_text));
+    CHECK(write_fixture_bytes(json_path, json, strlen(json)));
+    CHECK(write_fixture_bytes(map_path, map_text, strlen(map_text)));
+
+    custom_maps_init();
+    selector = custom_maps_test_pin_folder(folder_id);
+    CHECK(selector >= 0);
+    /* Final room order is center, left, mirrored center. */
+    CHECK(custom_maps_pinned_tile_at_world(selector, 3 * 16 + 8,
+                                           2 * 16 + 8,
+                                           reference, sizeof(reference)) == 1);
+    CHECK(strcmp(reference, "$") == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector, 33 * 16 + 2 * 16 + 8,
+                                           2 * 16 + 8,
+                                           reference, sizeof(reference)) == 1);
+    CHECK(strcmp(reference, "@") == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector,
+                                           2 * 33 * 16 + 29 * 16 + 8,
+                                           2 * 16 + 8,
+                                           reference, sizeof(reference)) == 1);
+    CHECK(strcmp(reference, "$") == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector, 4 * 16 + 8,
+                                           2 * 16 + 8,
+                                           reference, sizeof(reference)) == 1);
+    CHECK(strcmp(reference, " ") == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector, -1, 0,
+                                           reference, sizeof(reference)) == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector, 0, 12 * 16,
+                                           reference, sizeof(reference)) == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector + 1, 0, 0,
+                                           reference, sizeof(reference)) == -1);
+    CHECK(custom_maps_pinned_tile_at_world(selector, 0, 0,
+                                           reference, 1) == -1);
+    custom_maps_test_pin_folder(NULL);
+    custom_maps_shutdown();
+    CHECK(DeleteFileA(json_path) != 0);
+    CHECK(DeleteFileA(map_path) != 0);
+    CHECK(RemoveDirectoryA(folder) != 0);
+}
+
 static void test_v2_whole_symbol_override(void) {
     static const char expanded_symbol_json[] =
         "{\"format\":\"eggnogg-map/v2\",\"id\":\"expanded_skin\","
@@ -520,6 +756,24 @@ static void test_repository_runtime_fixture(void) {
         CHECK(fixture_tile_sprite_index(json_text, "spring_pad",
                                         &sprite_index));
         CHECK(sprite_index == 128);
+    }
+    free(json_text);
+    free(map_text);
+}
+
+static void test_repository_ambiance_fixture(void) {
+    const char* folder = "maps\\ambiance_demo";
+    char* json_text = read_fixture_text("maps\\ambiance_demo\\data.json");
+    char* map_text = read_fixture_text("maps\\ambiance_demo\\data.map");
+    CustomMapValidationSummary summary;
+    CHECK(json_text != NULL);
+    CHECK(map_text != NULL);
+    if (json_text && map_text) {
+        CHECK(custom_maps_validate_package_text("ambiance_demo", folder,
+                                                json_text, map_text, &summary));
+        CHECK(summary.particle_definition_count == 2);
+        CHECK(summary.ambiance_definition_count == 1);
+        CHECK(summary.ambiance_lane_count == 45);
     }
     free(json_text);
     free(map_text);
@@ -623,6 +877,141 @@ static void test_v2_hard_failures(void) {
     CHECK(!custom_maps_validate_package_text("bad", ".",
                                               invalid_native_visual_json,
                                               map_text, &summary));
+    CHECK(summary.error_count > 0);
+}
+
+static void test_v2_custom_ambiances(void) {
+    static const char valid_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"weather_test\","
+        "\"name\":\"Weather test\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[{\"id\":\"snowflake\",\"name\":\"Snowflake\","
+        "\"visual\":{\"sprite_sheet\":\"builtin:misc\",\"sprite_index\":0,"
+        "\"frame_count\":2,\"frame_ticks\":4,\"tint\":[0.8,0.9,1,0.75],"
+        "\"scale_x\":1.5,\"scale_y\":1.5},\"lifetime_ticks\":180,"
+        "\"fade_in_ticks\":12,\"fade_out_ticks\":24}],"
+        "\"ambiances\":[{\"id\":\"snow\",\"name\":\"Snow\","
+        "\"native_ambient\":\"dust\",\"emitters\":["
+        "{\"particle\":\"snowflake\",\"count\":40,\"shape\":\"ellipse\","
+        "\"motion_interpolation\":\"ease_in\","
+        "\"area\":{\"x\":0,\"y\":-16,\"width\":528,\"height\":16},"
+        "\"velocity_x\":{\"min\":-0.2,\"max\":0.2},"
+        "\"velocity_y\":{\"min\":0.4,\"max\":0.8},"
+        "\"rotation_speed\":{\"min\":-1,\"max\":1},"
+        "\"particle_layer\":1,\"blend\":\"alpha\","
+        "\"mirror_with_room\":true},"
+        "{\"particle\":\"snowflake\",\"count\":8,\"shape\":\"line\","
+        "\"area\":{\"x\":32,\"y\":0,\"width\":464,\"height\":192},"
+        "\"acceleration_y\":0.01,\"particle_layer\":3,"
+        "\"blend\":\"additive\"}]}],"
+        "\"defaults\":{\"room\":{\"ambient\":\"snow\"}}}";
+    static const char unknown_particle_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"bad_weather\","
+        "\"name\":\"Bad\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[],\"ambiances\":[{\"id\":\"rain\","
+        "\"name\":\"Rain\",\"emitters\":[{\"particle\":\"missing\","
+        "\"area\":{\"x\":0,\"y\":0,\"width\":528,\"height\":192}}]}]}";
+    static const char invalid_blend_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"bad_blend\","
+        "\"name\":\"Bad\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[{\"id\":\"dot\",\"name\":\"Dot\","
+        "\"visual\":{\"sprite_sheet\":\"builtin:misc\"}}],"
+        "\"ambiances\":[{\"id\":\"rain\",\"name\":\"Rain\","
+        "\"emitters\":[{\"particle\":\"dot\",\"blend\":\"multiply\","
+        "\"area\":{\"x\":0,\"y\":0,\"width\":528,\"height\":192}}]}]}";
+    static const char invalid_builtin_range_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"bad_range\","
+        "\"name\":\"Bad\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[{\"id\":\"dot\",\"name\":\"Dot\","
+        "\"visual\":{\"sprite_sheet\":\"builtin:misc\","
+        "\"sprite_index\":63,\"frame_count\":2}}],"
+        "\"ambiances\":[]}";
+    static const char invalid_transition_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"bad_transition\","
+        "\"name\":\"Bad\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[{\"id\":\"dot\",\"name\":\"Dot\","
+        "\"visual\":{\"sprite_sheet\":\"builtin:misc\","
+        "\"end_tint\":[1,0,0,2],\"interpolation\":\"bounce\"}}],"
+        "\"ambiances\":[]}";
+    static const char lane_overflow_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"too_busy\","
+        "\"name\":\"Too busy\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[{\"id\":\"dot\",\"name\":\"Dot\","
+        "\"visual\":{\"sprite_sheet\":\"builtin:misc\"}}],"
+        "\"ambiances\":[{\"id\":\"storm\",\"name\":\"Storm\","
+        "\"emitters\":[{\"particle\":\"dot\",\"count\":300,"
+        "\"area\":{\"x\":0,\"y\":0,\"width\":528,\"height\":192}},"
+        "{\"particle\":\"dot\",\"count\":300,"
+        "\"area\":{\"x\":0,\"y\":0,\"width\":528,\"height\":192}}]}]}";
+    static const char v1_catalog_json[] =
+        "{\"format\":\"eggnogg-map/v1\",\"id\":\"legacy_weather\","
+        "\"name\":\"Legacy\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
+        "\"particles\":[],\"ambiances\":[]}";
+    char map_text[1024];
+    char invalid_shape_json[sizeof(valid_json)];
+    char invalid_motion_json[sizeof(valid_json)];
+    CustomMapValidationSummary summary;
+
+    build_one_room_map(0, map_text, sizeof(map_text));
+    CHECK(custom_maps_validate_package_text("weather_test", ".", valid_json,
+                                            map_text, &summary));
+    CHECK(summary.particle_definition_count == 1);
+    CHECK(summary.ambiance_definition_count == 1);
+    CHECK(summary.ambiance_lane_count == 48);
+    memcpy(invalid_shape_json, valid_json, sizeof(valid_json));
+    {
+        char* shape = strstr(invalid_shape_json, "ellipse");
+        CHECK(shape != NULL);
+        if (shape) memcpy(shape, "unknown", 7u);
+    }
+    CHECK(!custom_maps_validate_package_text("weather_test", ".",
+                                             invalid_shape_json,
+                                             map_text, &summary));
+    memcpy(invalid_motion_json, valid_json, sizeof(valid_json));
+    {
+        char* motion = strstr(invalid_motion_json, "ease_in");
+        CHECK(motion != NULL);
+        if (motion) memcpy(motion, "unknown", 7u);
+    }
+    CHECK(!custom_maps_validate_package_text("weather_test", ".",
+                                             invalid_motion_json,
+                                             map_text, &summary));
+    CHECK(!custom_maps_validate_package_text("bad_weather", ".",
+                                             unknown_particle_json,
+                                             map_text, &summary));
+    CHECK(summary.error_count > 0);
+    CHECK(!custom_maps_validate_package_text("bad_blend", ".",
+                                             invalid_blend_json,
+                                             map_text, &summary));
+    CHECK(summary.error_count > 0);
+    CHECK(!custom_maps_validate_package_text("bad_range", ".",
+                                             invalid_builtin_range_json,
+                                             map_text, &summary));
+    CHECK(summary.error_count > 0);
+    CHECK(!custom_maps_validate_package_text("bad_transition", ".",
+                                             invalid_transition_json,
+                                             map_text, &summary));
+    CHECK(summary.error_count >= 2);
+    CHECK(!custom_maps_validate_package_text("too_busy", ".",
+                                             lane_overflow_json,
+                                             map_text, &summary));
+    CHECK(summary.error_count > 0);
+    CHECK(!custom_maps_validate_package_text("legacy_weather", ".",
+                                             v1_catalog_json,
+                                             map_text, &summary));
     CHECK(summary.error_count > 0);
 }
 
@@ -947,14 +1336,42 @@ static void test_tileset_default_online_identity_and_view(void) {
         "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\"]},"
         "\"tileset\":{\"sprite_sheet\":\"tiles.png\","
         "\"native_layout\":true}}";
+    static const char json_room_native[] =
+        "{\"format\":\"eggnogg-map/v2\","
+        "\"id\":\"tileset_identity_test\","
+        "\"name\":\"Tileset identity test\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"vanilla_33x12\",\"order\":[\"center\",\"left\"]},"
+        "\"tileset\":{\"sprite_sheet\":\"tiles.png\",\"native_layout\":false,"
+        "\"sheets\":[{\"sprite_sheet\":\"alt.png\"}]},"
+        "\"defaults\":{\"room\":{\"native_tileset\":\"tiles.png\"}},"
+        "\"rooms\":{\"center\":{\"native_tileset\":\"alt.png\"}}}";
+    static const char json_graph_native[] =
+        "{\"format\":\"eggnogg-map/v2\","
+        "\"id\":\"tileset_identity_test\","
+        "\"name\":\"Tileset identity test\",\"author\":\"Test\","
+        "\"rules\":{\"mode\":\"swords\",\"round_end_rooms\":\"any\"},"
+        "\"layout\":{\"kind\":\"room_graph\",\"room_format\":\"variable_cells\","
+        "\"start\":\"left_node\",\"nodes\":["
+        "{\"id\":\"left_node\",\"room\":\"left\",\"x\":0,\"y\":0},"
+        "{\"id\":\"center_node\",\"room\":\"center\",\"x\":33,\"y\":0,"
+        "\"overrides\":{\"native_tileset\":\"alt.png\"}}],"
+        "\"connections\":[{\"from\":\"left_node\",\"from_side\":\"right\","
+        "\"from_offset\":0,\"to\":\"center_node\",\"to_side\":\"left\","
+        "\"to_offset\":0,\"span\":12}]},"
+        "\"tileset\":{\"sprite_sheet\":\"tiles.png\",\"native_layout\":false,"
+        "\"sheets\":[{\"sprite_sheet\":\"alt.png\"}]},"
+        "\"defaults\":{\"room\":{\"native_tileset\":\"tiles.png\"}}}";
     char folder[MAX_PATH];
     char json_path[MAX_PATH * 2];
     char map_path[MAX_PATH * 2];
     char asset_path[MAX_PATH * 2];
+    char alt_asset_path[MAX_PATH * 2];
     char map_text[1024];
     char key_plain[160];
     char key_native[160];
     char key_asset[160];
+    char key_room[160];
     char sheet_key_native[128];
     char sheet_path[260];
     char sheet_sha[CONTENT_SHA256_HEX_SIZE];
@@ -970,9 +1387,11 @@ static void test_tileset_default_online_identity_and_view(void) {
     snprintf(json_path, sizeof(json_path), "%s\\data.json", folder);
     snprintf(map_path, sizeof(map_path), "%s\\data.map", folder);
     snprintf(asset_path, sizeof(asset_path), "%s\\tiles.png", folder);
+    snprintf(alt_asset_path, sizeof(alt_asset_path), "%s\\alt.png", folder);
     DeleteFileA(json_path);
     DeleteFileA(map_path);
     DeleteFileA(asset_path);
+    DeleteFileA(alt_asset_path);
     RemoveDirectoryA(folder);
     CHECK(CreateDirectoryA(folder, NULL) != 0);
     build_one_room_map(0, map_text, sizeof(map_text));
@@ -1056,10 +1475,80 @@ static void test_tileset_default_online_identity_and_view(void) {
     CHECK(view.native_layout == 1);
     CHECK(strcmp(sheet_key_native, view.default_sheet_key) != 0);
 
+    CHECK(write_png_header_fixture(alt_asset_path, 128, 256, 0x61));
+    build_two_room_query_map(map_text, sizeof(map_text));
+    {
+        char* custom_symbol = strchr(map_text, '$');
+        if (custom_symbol) *custom_symbol = '@';
+    }
+    CHECK(write_fixture_bytes(map_path, map_text, strlen(map_text)));
+    CHECK(write_fixture_bytes(json_path, json_room_native,
+                              strlen(json_room_native)));
+    needed = custom_maps_build_manifest_json(NULL, 0);
+    CHECK(needed > 0);
+    if (needed > 0) manifest = (char*)malloc((size_t)needed + 1u);
+    CHECK(manifest != NULL);
+    if (manifest) {
+        CHECK(custom_maps_build_manifest_json(manifest,
+                                              (size_t)needed + 1u) == needed);
+        CHECK(manifest_key_for_prefix(manifest,
+                                      "custom:tileset_identity_test:",
+                                      key_room, sizeof(key_room)));
+        CHECK(strcmp(key_asset, key_room) != 0);
+    }
+    free(manifest);
+    selector = custom_maps_test_pin_folder(strrchr(folder, '\\') + 1);
+    CHECK(selector >= 0);
+    {
+        char resolved_sheet[128];
+        int resolved_count = 0;
+        char mirrored_sheet[128];
+        int mirrored_count = 0;
+        CHECK(custom_maps_pinned_native_tileset(
+                  selector, 1, resolved_sheet, sizeof(resolved_sheet),
+                  &resolved_count) == 1);
+        CHECK(resolved_count == 128);
+        CHECK(strcmp(resolved_sheet, view.default_sheet_key) != 0);
+        CHECK(custom_maps_pinned_native_tileset(
+                  selector, 0, mirrored_sheet, sizeof(mirrored_sheet),
+                  &mirrored_count) == 1);
+        CHECK(mirrored_count == 128);
+        CHECK(strcmp(mirrored_sheet, view.default_sheet_key) == 0);
+        mirrored_sheet[0] = '\0';
+        CHECK(custom_maps_pinned_native_tileset(
+                  selector, 2, mirrored_sheet, sizeof(mirrored_sheet),
+                  &mirrored_count) == 1);
+        CHECK(strcmp(mirrored_sheet, view.default_sheet_key) == 0);
+    }
+    custom_maps_test_pin_folder(NULL);
+
+    CHECK(write_fixture_bytes(json_path, json_graph_native,
+                              strlen(json_graph_native)));
+    needed = custom_maps_build_manifest_json(NULL, 0);
+    CHECK(needed > 0);
+    selector = custom_maps_test_pin_folder(strrchr(folder, '\\') + 1);
+    CHECK(selector >= 0);
+    {
+        char inherited_sheet[128];
+        char instance_sheet[128];
+        int inherited_count = 0;
+        int instance_count = 0;
+        CHECK(custom_maps_pinned_native_tileset(
+                  selector, 0, inherited_sheet, sizeof(inherited_sheet),
+                  &inherited_count) == 1);
+        CHECK(custom_maps_pinned_native_tileset(
+                  selector, 1, instance_sheet, sizeof(instance_sheet),
+                  &instance_count) == 1);
+        CHECK(inherited_count == 128 && instance_count == 128);
+        CHECK(strcmp(inherited_sheet, instance_sheet) != 0);
+    }
+    custom_maps_test_pin_folder(NULL);
+
     custom_maps_shutdown();
     DeleteFileA(json_path);
     DeleteFileA(map_path);
     DeleteFileA(asset_path);
+    DeleteFileA(alt_asset_path);
     CHECK(RemoveDirectoryA(folder) != 0);
 }
 
@@ -1394,10 +1883,450 @@ static void test_opponent_spawn(void) {
         CHECK(summary.final_opponent_spawn[0] == 1 && summary.final_opponent_spawn[1] == 2 &&
               summary.final_opponent_spawn[2] == 0 && summary.final_opponent_spawn[3] == 2 &&
               summary.final_opponent_spawn[4] == 1);
+        /* Inherited and explicit native defaults both retain the traditional
+         * no-opponent outer rooms. Explicit Always above still wins. */
+        snprintf(json, sizeof(json),
+                 "{\"format\":\"eggnogg-map/v1\",\"id\":\"legacy\",\"name\":\"Policy\",\"author\":\"Test\","
+                 "\"layout\":{\"kind\":\"mirrored_source_rooms\",\"room_format\":\"vanilla_33x12\","
+                 "\"order\":[\"center\",\"inner\",\"outer\"]}}" );
+        CHECK(custom_maps_validate_package_text("legacy", ".", json, multi_map, &summary));
+        CHECK(summary.final_opponent_spawn[0] == 2 && summary.final_opponent_spawn[1] == 0 &&
+              summary.final_opponent_spawn[2] == 0 && summary.final_opponent_spawn[3] == 0 &&
+              summary.final_opponent_spawn[4] == 2);
+        snprintf(json, sizeof(json),
+                 "{\"format\":\"eggnogg-map/v1\",\"id\":\"legacy\",\"name\":\"Policy\",\"author\":\"Test\","
+                 "\"layout\":{\"kind\":\"mirrored_source_rooms\",\"room_format\":\"vanilla_33x12\","
+                 "\"order\":[\"center\",\"inner\",\"outer\"]},"
+                 "\"defaults\":{\"room\":{\"opponent_spawn\":\"default\"}},"
+                 "\"rooms\":{\"outer\":{\"opponent_spawn\":\"default\"}}}");
+        CHECK(custom_maps_validate_package_text("legacy", ".", json, multi_map, &summary));
+        CHECK(summary.final_opponent_spawn[0] == 2 && summary.final_opponent_spawn[4] == 2);
     }
     CHECK(custom_maps_opponent_spawn_policy(0, 0) == 0);
     CHECK(custom_maps_opponent_spawn_policy(-1, 0) == 0);
     CHECK(custom_maps_opponent_spawn_policy(999, 0) == 0);
+}
+
+static void test_spawn_markers(void) {
+    char json[4096], map_text[1024];
+    CustomMapValidationSummary summary;
+    const char* base = spawn_budget_v2_json();
+    build_one_room_floor_map(map_text, sizeof(map_text));
+    snprintf(json, sizeof(json), "%.*s,\"rooms\":{\"center\":{\"spawn\":{"
+        "\"players\":{\"1\":{\"x\":4,\"y\":11,\"facing\":\"right\"}},"
+        "\"markers\":[{\"x\":4,\"y\":11,\"kind\":\"allow_p1\"},"
+        "{\"x\":28,\"y\":11,\"kind\":\"allow_p2\"},"
+        "{\"x\":16,\"y\":11,\"kind\":\"deny\"}]}}}}",
+        (int)strlen(base) - 1, base);
+    CHECK(custom_maps_validate_package_text("spawn_budget", ".", json, map_text, &summary));
+    snprintf(json, sizeof(json), "%.*s,\"rooms\":{\"center\":{\"spawn\":{"
+        "\"markers\":[{\"x\":4,\"y\":11,\"kind\":\"sometimes\"}]}}}}",
+        (int)strlen(base) - 1, base);
+    CHECK(!custom_maps_validate_package_text("spawn_budget", ".", json, map_text, &summary));
+    snprintf(json, sizeof(json), "%.*s,\"rooms\":{\"center\":{\"spawn\":{"
+        "\"markers\":[{\"x\":40,\"y\":11,\"kind\":\"allow\"}]}}}}",
+        (int)strlen(base) - 1, base);
+    CHECK(!custom_maps_validate_package_text("spawn_budget", ".", json, map_text, &summary));
+    snprintf(json, sizeof(json), "%.*s,\"rooms\":{\"center\":{\"spawn\":{"
+        "\"markers\":[{\"x\":4,\"y\":10,\"kind\":\"allow\"}]}}}}",
+        (int)strlen(base) - 1, base);
+    CHECK(!custom_maps_validate_package_text("spawn_budget", ".", json, map_text, &summary));
+    snprintf(json, sizeof(json), "%.*s,\"rooms\":{\"center\":{\"spawn\":{"
+        "\"players\":{\"2\":{\"x\":4,\"y\":10,\"facing\":\"left\"}}}}}}",
+        (int)strlen(base) - 1, base);
+    CHECK(!custom_maps_validate_package_text("spawn_budget", ".", json, map_text, &summary));
+}
+
+static void test_variable_room_metadata_and_bounds(void) {
+    static const char json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"variable_room_fixture\","
+        "\"name\":\"Variable rooms\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"mirrored_source_rooms\","
+        "\"room_format\":\"variable_cells\",\"order\":[\"center\",\"outer\"]}}";
+    char token[33], relative[96], folder[MAX_PATH], path[MAX_PATH + 32];
+    char map_text[8192], error[256], glyph[8];
+    CustomMapContentView view;
+    CustomMapValidationSummary summary;
+    int selector = -1, room = -1, start = -1, top = -1, width = -1, height = -1;
+    int exit_room = -1, exit_side = -1, exit_offset = -1, connection = -1;
+    float spawn_x, spawn_y;
+
+    build_variable_two_room_map(map_text, sizeof(map_text));
+    CHECK(custom_maps_validate_package_text("variable_room_fixture", ".", json,
+                                            map_text, &summary));
+    snprintf(token, sizeof(token), "%08lx%08lx%08x%08x",
+             (unsigned long)GetCurrentProcessId(), (unsigned long)GetTickCount(),
+             3u, 4u);
+    snprintf(relative, sizeof(relative), "_greggnogg_previews/%s", token);
+    snprintf(folder, sizeof(folder), "maps/%s", relative);
+    CreateDirectoryA("maps/_greggnogg_previews", NULL);
+    CHECK(CreateDirectoryA(folder, NULL) != 0);
+    snprintf(path, sizeof(path), "%s/data.json", folder);
+    CHECK(write_fixture_bytes(path, json, strlen(json)));
+    snprintf(path, sizeof(path), "%s/data.map", folder);
+    CHECK(write_fixture_bytes(path, map_text, strlen(map_text)));
+
+    custom_maps_init();
+    CHECK(custom_maps_install_preview_folder(token, &selector, error, sizeof(error)));
+    selector = custom_maps_test_pin_folder(relative);
+    CHECK(selector >= 0);
+    CHECK(custom_maps_pinned_content_view(selector, &view) == 1);
+    CHECK(view.variable_rooms == 1 && view.source_room_count == 2);
+    CHECK(custom_maps_variable_room_count(selector) == 3);
+    CHECK(custom_maps_start_room(selector) == 1);
+    CHECK(view.room_width[0] == 37 && view.room_height[0] == 16);
+    CHECK(view.room_width[1] == 20 && view.room_height[1] == 9);
+    CHECK(view.final_room_count == 3 && view.graph_start_room == 1 &&
+          view.connection_count == 2 && view.layout_width == 77 &&
+          view.layout_height == 16);
+    CHECK(view.final_source_room[0] == 1 && view.final_x[0] == 0 &&
+          view.final_y[0] == 0 && view.final_mirror_x[0] == 0);
+    CHECK(view.final_source_room[1] == 0 && view.final_x[1] == 20 &&
+          view.final_y[1] == 0 && view.final_mirror_x[1] == 0);
+    CHECK(view.final_source_room[2] == 1 && view.final_x[2] == 57 &&
+          view.final_y[2] == 0 && view.final_mirror_x[2] == 1);
+    CHECK(custom_maps_room_exit(selector, 1, 0, 5, &exit_room, &exit_side,
+                                &exit_offset, &connection) == 1);
+    CHECK(exit_room == 0 && exit_side == 1 && exit_offset == 5 &&
+          connection == 0);
+    CHECK(custom_maps_room_exit(selector, 1, 1, 8, &exit_room, &exit_side,
+                                &exit_offset, &connection) == 1);
+    CHECK(exit_room == 2 && exit_side == 0 && exit_offset == 8 &&
+          connection == 1);
+    CHECK(custom_maps_room_exit(selector, 1, 1, 9, &exit_room, &exit_side,
+                                &exit_offset, &connection) == 0);
+    CHECK(exit_room == -1 && exit_side == -1 && exit_offset == -1 &&
+          connection == -1);
+
+    CHECK(custom_maps_variable_room_bounds_for_index(selector, 0, &start, &width,
+                                                     &height) == 1);
+    CHECK(start == 0 && width == 20 * 16 && height == 9 * 16);
+    CHECK(custom_maps_variable_room_bounds_for_index(selector, 1, &start, &width,
+                                                     &height) == 1);
+    CHECK(start == 20 * 16 && width == 37 * 16 && height == 16 * 16);
+    CHECK(custom_maps_variable_room_bounds_for_index(selector, 2, &start, &width,
+                                                     &height) == 1);
+    CHECK(start == (20 + 37) * 16 && width == 20 * 16 && height == 9 * 16);
+    CHECK(custom_maps_variable_room_bounds(selector, (20 + 5) * 16 + 1,
+                                           &room, &start, &width, &height) == 1);
+    CHECK(room == 1 && start == 20 * 16 && width == 37 * 16 && height == 16 * 16);
+    CHECK(custom_maps_variable_room_at(selector, (20 + 5) * 16 + 1,
+                                       15 * 16 + 1, &room, &start, &top,
+                                       &width, &height) == 1);
+    CHECK(room == 1 && start == 20 * 16 && top == 0 &&
+          width == 37 * 16 && height == 16 * 16);
+    CHECK(custom_maps_variable_room_at(selector, 5 * 16 + 1,
+                                       10 * 16 + 1, &room, NULL, NULL,
+                                       NULL, NULL) == -1);
+    CHECK(custom_maps_variable_room_bounds_2d_for_index(
+              selector, 2, &start, &top, &width, &height) == 1);
+    CHECK(start == (20 + 37) * 16 && top == 0 &&
+          width == 20 * 16 && height == 9 * 16);
+
+    CHECK(custom_maps_pinned_tile_at_world(selector, 1.0, 8 * 16 + 1.0,
+                                           glyph, sizeof(glyph)) == 1);
+    CHECK(strcmp(glyph, "x") == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector, (20 + 37 + 19) * 16 + 1.0,
+                                           8 * 16 + 1.0, glyph, sizeof(glyph)) == 1);
+    CHECK(strcmp(glyph, "x") == 0);
+    CHECK(custom_maps_pinned_tile_at_world(selector, (20 + 36) * 16 + 1.0,
+                                           15 * 16 + 1.0, glyph, sizeof(glyph)) == 1);
+    CHECK(strcmp(glyph, "@") == 0);
+
+    /* The safe-floor pass must cover authored columns beyond native
+     * find_good_spot's hardcoded 1..31 search window. */
+    spawn_x = (float)((20 + 35) * 16 + 8);
+    spawn_y = 8.0f;
+    CHECK(custom_maps_adjust_spawn_position(selector, 1, 0,
+                                            &spawn_x, &spawn_y) == 1);
+    CHECK(spawn_x == (float)((20 + 35) * 16 + 8));
+    CHECK(spawn_y == 14.0f * 16.0f);
+
+    custom_maps_clear_preview();
+    custom_maps_test_pin_folder(NULL);
+    CHECK(custom_maps_variable_room_count(selector) == 0);
+    custom_maps_shutdown();
+    snprintf(path, sizeof(path), "%s/data.json", folder); DeleteFileA(path);
+    snprintf(path, sizeof(path), "%s/data.map", folder); DeleteFileA(path);
+    RemoveDirectoryA(folder);
+}
+
+static void test_room_graph_manifest_and_transitions(void) {
+    static const char symmetric_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"room_graph_fixture\","
+        "\"name\":\"Symmetric graph\",\"author\":\"Test\","
+        "\"rules\":{\"mode\":\"swords\",\"round_end_rooms\":\"any\"},"
+        "\"layout\":{\"kind\":\"room_graph\",\"room_format\":\"variable_cells\","
+        "\"start\":\"center\",\"nodes\":["
+        "{\"id\":\"left_1\",\"room\":\"outer\",\"x\":0,\"y\":0},"
+        "{\"id\":\"center\",\"room\":\"center\",\"x\":20,\"y\":0},"
+        "{\"id\":\"right_1\",\"room\":\"outer\",\"x\":57,\"y\":0,\"mirror_x\":true}],"
+        "\"connections\":["
+        "{\"from\":\"left_1\",\"from_side\":\"right\",\"from_offset\":0,\"to\":\"center\",\"to_side\":\"left\",\"to_offset\":0,\"span\":9,\"players\":\"both\",\"focus\":\"go\"},"
+        "{\"from\":\"center\",\"from_side\":\"right\",\"from_offset\":0,\"to\":\"right_1\",\"to_side\":\"left\",\"to_offset\":0,\"span\":9,\"players\":\"both\",\"focus\":\"go\"}]}}";
+    static const char reordered_symmetric_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"room_graph_fixture\","
+        "\"name\":\"Reordered symmetric graph\",\"author\":\"Test\","
+        "\"rules\":{\"mode\":\"swords\",\"round_end_rooms\":\"any\"},"
+        "\"layout\":{\"kind\":\"room_graph\",\"room_format\":\"variable_cells\","
+        "\"start\":\"right_1\",\"nodes\":["
+        "{\"id\":\"center\",\"room\":\"center\",\"x\":20,\"y\":0},"
+        "{\"id\":\"right_1\",\"room\":\"outer\",\"x\":57,\"y\":0,\"mirror_x\":true},"
+        "{\"id\":\"left_1\",\"room\":\"outer\",\"x\":0,\"y\":0}],"
+        "\"connections\":["
+        "{\"from\":\"left_1\",\"from_side\":\"right\",\"from_offset\":0,\"to\":\"center\",\"to_side\":\"left\",\"to_offset\":0,\"span\":9},"
+        "{\"from\":\"center\",\"from_side\":\"right\",\"from_offset\":0,\"to\":\"right_1\",\"to_side\":\"left\",\"to_offset\":0,\"span\":9}]}}";
+    static const char valid_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"room_graph_fixture\","
+        "\"name\":\"Room graph\",\"author\":\"Test\","
+        "\"rules\":{\"mode\":\"swords\",\"round_end_rooms\":\"any\"},"
+        "\"rooms\":{\"center\":{\"spawn\":{\"players\":{\"1\":{\"x\":3,\"y\":15},\"2\":{\"x\":4,\"y\":15}},\"markers\":[{\"x\":8,\"y\":15,\"kind\":\"allow\"}]}}},"
+        "\"layout\":{\"kind\":\"room_graph\",\"room_format\":\"variable_cells\","
+        "\"start\":\"center_node\",\"nodes\":["
+        "{\"id\":\"center_node\",\"room\":\"center\",\"x\":0,\"y\":0,\"overrides\":{\"spawn\":{\"players\":{\"1\":{\"x\":5,\"y\":15,\"facing\":\"left\"}},\"markers\":[{\"x\":7,\"y\":15,\"kind\":\"allow\"}]}}},"
+        "{\"id\":\"lower_node\",\"room\":\"outer\",\"x\":10,\"y\":16,"
+        "\"mirror_x\":true,\"appearance\":\"mirror\","
+        "\"overrides\":{\"ambient\":\"bats\",\"opponent_spawn\":\"never\"}}],"
+        "\"connections\":[{\"from\":\"center_node\",\"from_side\":\"bottom\","
+        "\"from_offset\":10,\"to\":\"lower_node\",\"to_side\":\"top\","
+        "\"to_offset\":0,\"span\":4,\"one_way\":false,"
+        "\"players\":\"player2\",\"focus\":\"crossing\"}]}}";
+    static const char invalid_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"room_graph_fixture\","
+        "\"name\":\"Room graph\",\"author\":\"Test\","
+        "\"rules\":{\"mode\":\"swords\",\"round_end_rooms\":\"any\"},"
+        "\"layout\":{\"kind\":\"room_graph\",\"room_format\":\"variable_cells\","
+        "\"start\":\"center_node\",\"nodes\":["
+        "{\"id\":\"center_node\",\"room\":\"center\",\"x\":0,\"y\":0},"
+        "{\"id\":\"lower_node\",\"room\":\"outer\",\"x\":10,\"y\":16}],"
+        "\"connections\":[{\"from\":\"center_node\",\"from_side\":\"bottom\","
+        "\"from_offset\":10,\"to\":\"lower_node\",\"to_side\":\"top\","
+        "\"to_offset\":1,\"span\":4}]}}";
+    static const char classic_graph_json[] =
+        "{\"format\":\"eggnogg-map/v2\",\"id\":\"room_graph_fixture\","
+        "\"name\":\"Room graph\",\"author\":\"Test\","
+        "\"layout\":{\"kind\":\"room_graph\",\"room_format\":\"variable_cells\","
+        "\"start\":\"center_node\",\"nodes\":["
+        "{\"id\":\"center_node\",\"room\":\"center\",\"x\":0,\"y\":0},"
+        "{\"id\":\"lower_node\",\"room\":\"outer\",\"x\":10,\"y\":16}],"
+        "\"connections\":[{\"from\":\"center_node\",\"from_side\":\"bottom\","
+        "\"from_offset\":10,\"to\":\"lower_node\",\"to_side\":\"top\","
+        "\"to_offset\":0,\"span\":4}]}}";
+    static const char graph_entities[] =
+        "{\"schema\":2,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[]}],"
+        "\"placements\":[{\"name\":\"lower_orb\",\"type\":\"demo:orb\","
+        "\"room\":\"outer\",\"instance\":\"lower_node\",\"x\":8,\"y\":12}]}";
+    static const char ambiguous_graph_entities[] =
+        "{\"schema\":2,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[]}],"
+        "\"placements\":[{\"name\":\"lower_orb\",\"type\":\"demo:orb\","
+        "\"room\":\"outer\",\"x\":8,\"y\":12}]}";
+    char token[33], relative[96], folder[MAX_PATH], path[MAX_PATH + 32];
+    char map_text[8192], map_with_unused[8192], error[256];
+    CustomMapValidationSummary summary;
+    CustomMapContentView view;
+    int selector = -1;
+    int destination = -1;
+    int connection = -1;
+    int ambient = -1;
+    int player_policy = -1;
+    int focus_policy = -1;
+    char invalid_policy_json[sizeof(valid_json)];
+    char invalid_spawn_json[sizeof(valid_json)];
+    char symmetric_always_json[sizeof(symmetric_json) + 96];
+    char renamed_symmetric_json[sizeof(symmetric_json)];
+    char* policy_value;
+    build_variable_two_room_map(map_text, sizeof(map_text));
+
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", ".",
+                                            symmetric_json, map_text, &summary));
+    CHECK(summary.final_opponent_spawn[0] == 2 &&
+          summary.final_opponent_spawn[1] == 0 &&
+          summary.final_opponent_spawn[2] == 2);
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", ".",
+                                            reordered_symmetric_json, map_text,
+                                            &summary));
+    CHECK(summary.final_opponent_spawn[0] == 0 &&
+          summary.final_opponent_spawn[1] == 2 &&
+          summary.final_opponent_spawn[2] == 2);
+    snprintf(map_with_unused, sizeof(map_with_unused), "%s", map_text);
+    {
+        size_t position = strlen(map_with_unused);
+        append_variable_room(map_with_unused, sizeof(map_with_unused),
+                             &position, "unused", 8, 8, 0, 0, 'x');
+    }
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", ".",
+                                            reordered_symmetric_json,
+                                            map_with_unused, &summary));
+    CHECK(summary.source_room_count == 3 &&
+          summary.final_opponent_spawn[1] == 2 &&
+          summary.final_opponent_spawn[2] == 2);
+    memcpy(renamed_symmetric_json, symmetric_json, sizeof(symmetric_json));
+    for (char* name = renamed_symmetric_json;
+         (name = strstr(name, "left_1")) != NULL; name += 6)
+        memcpy(name, "west__", 6);
+    for (char* name = renamed_symmetric_json;
+         (name = strstr(name, "right_1")) != NULL; name += 7)
+        memcpy(name, "east___", 7);
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", ".",
+                                            renamed_symmetric_json, map_text,
+                                            &summary));
+    CHECK(summary.final_opponent_spawn[0] == 2 &&
+          summary.final_opponent_spawn[2] == 2);
+    snprintf(symmetric_always_json, sizeof(symmetric_always_json),
+             "%.*s\"rooms\":{\"outer\":{\"opponent_spawn\":\"always\"}},%s",
+             (int)(strstr(symmetric_json, "\"layout\"") - symmetric_json),
+             symmetric_json, strstr(symmetric_json, "\"layout\""));
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", ".",
+                                            symmetric_always_json, map_text,
+                                            &summary));
+    CHECK(summary.final_opponent_spawn[0] == 1 &&
+          summary.final_opponent_spawn[2] == 1);
+
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", ".",
+                                            valid_json, map_text, &summary));
+    CHECK(summary.error_count == 0 && summary.source_room_count == 2 &&
+          summary.room_graph == 1);
+    CHECK(summary.final_room_count == 2 && summary.graph_start_room == 0 &&
+          summary.connection_count == 1 && summary.layout_bounds_x == 0 &&
+          summary.layout_bounds_y == 0 && summary.layout_width == 37 &&
+          summary.layout_height == 25);
+    CHECK(summary.final_opponent_spawn[0] == 0 &&
+          summary.final_opponent_spawn[1] == 2);
+
+    memcpy(invalid_spawn_json, valid_json, sizeof(valid_json));
+    {
+        char* point = strstr(invalid_spawn_json, "\"x\":5,\"y\":15");
+        CHECK(point != NULL);
+        if (point) {
+            char* y = strstr(point, "15");
+            if (y) memcpy(y, "99", 2u);
+        }
+    }
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", ".",
+                                             invalid_spawn_json, map_text,
+                                             &summary));
+    CHECK(summary.error_count > 0);
+    memcpy(invalid_spawn_json, valid_json, sizeof(valid_json));
+    {
+        char* marker = strstr(invalid_spawn_json, "\"x\":7,\"y\":15");
+        CHECK(marker != NULL);
+        if (marker) {
+            char* y = strstr(marker, "15");
+            if (y) memcpy(y, "99", 2u);
+        }
+    }
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", ".",
+                                             invalid_spawn_json, map_text,
+                                             &summary));
+    CHECK(summary.error_count > 0);
+
+    memcpy(invalid_policy_json, valid_json, sizeof(valid_json));
+    policy_value = strstr(invalid_policy_json, "player2");
+    CHECK(policy_value != NULL);
+    if (policy_value) memcpy(policy_value, "winner!", 7u);
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", ".",
+                                             invalid_policy_json, map_text,
+                                             &summary));
+    CHECK(summary.error_count > 0);
+    memcpy(invalid_policy_json, valid_json, sizeof(valid_json));
+    policy_value = strstr(invalid_policy_json, "crossing");
+    CHECK(policy_value != NULL);
+    if (policy_value) memcpy(policy_value, "camera!!", 8u);
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", ".",
+                                             invalid_policy_json, map_text,
+                                             &summary));
+    CHECK(summary.error_count > 0);
+
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", ".",
+                                             invalid_json, map_text, &summary));
+    CHECK(summary.error_count == 1 && summary.source_room_count == 2);
+    CHECK(summary.final_room_count == 0 && summary.layout_width == 0 &&
+          summary.layout_height == 0);
+
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", ".",
+                                             classic_graph_json, map_text,
+                                             &summary));
+    CHECK(summary.error_count == 1 && summary.room_graph == 1 &&
+          summary.final_room_count == 0);
+
+    snprintf(token, sizeof(token), "%08lx%08lx%08x%08x",
+             (unsigned long)GetCurrentProcessId(), (unsigned long)GetTickCount(),
+             7u, 8u);
+    snprintf(relative, sizeof(relative), "_greggnogg_previews/%s", token);
+    snprintf(folder, sizeof(folder), "maps/%s", relative);
+    CreateDirectoryA("maps/_greggnogg_previews", NULL);
+    CHECK(CreateDirectoryA(folder, NULL) != 0);
+    snprintf(path, sizeof(path), "%s/data.json", folder);
+    CHECK(write_fixture_bytes(path, valid_json, strlen(valid_json)));
+    snprintf(path, sizeof(path), "%s/data.map", folder);
+    CHECK(write_fixture_bytes(path, map_text, strlen(map_text)));
+    snprintf(path, sizeof(path), "%s/entities.json", folder);
+    CHECK(write_fixture_bytes(path, graph_entities, strlen(graph_entities)));
+    CHECK(custom_maps_validate_package_text("room_graph_fixture", folder,
+                                            valid_json, map_text, &summary));
+    CHECK(write_fixture_bytes(path, ambiguous_graph_entities,
+                              strlen(ambiguous_graph_entities)));
+    CHECK(!custom_maps_validate_package_text("room_graph_fixture", folder,
+                                             valid_json, map_text, &summary));
+    CHECK(write_fixture_bytes(path, graph_entities, strlen(graph_entities)));
+    custom_maps_init();
+    CHECK(custom_maps_install_preview_folder(token, &selector, error,
+                                             sizeof(error)));
+    selector = custom_maps_test_pin_folder(relative);
+    CHECK(selector >= 0);
+    CHECK(custom_maps_pinned_content_view(selector, &view) == 1);
+    CHECK(view.room_graph == 1 && custom_maps_uses_room_graph(selector) == 1);
+    CHECK(view.final_source_room[0] == 0 && view.final_source_room[1] == 1);
+    CHECK(custom_maps_pinned_room_definition(selector, 1, &destination,
+                                              &connection) == 1);
+    CHECK(destination == 1 && connection == 1);
+    CHECK(custom_maps_opponent_spawn_policy(selector, 0) == 0);
+    CHECK(custom_maps_opponent_spawn_policy(selector, 1) == 2);
+    {
+        float x = 0.0f, y = 0.0f;
+        int facing = 0;
+        CHECK(custom_maps_player_start_position(selector, 0, 0.0f,
+                                                &x, &y, &facing) == 1);
+        CHECK(fabsf(x - 88.0f) < 0.001f && fabsf(y - 224.0f) < 0.001f && facing == -1);
+        CHECK(custom_maps_player_start_position(selector, 1, 0.0f,
+                                                &x, &y, &facing) == 1);
+        CHECK(fabsf(x - 72.0f) < 0.001f && fabsf(y - 224.0f) < 0.001f);
+        x = 0.0f; y = 0.0f;
+        CHECK(custom_maps_adjust_spawn_position(selector, 0, 0,
+                                                &x, &y) == 1);
+        CHECK(fabsf(x - 120.0f) < 0.001f && fabsf(y - 224.0f) < 0.001f);
+    }
+    CHECK(custom_maps_pinned_room_ambient_override(selector, 0, &ambient) == 0);
+    CHECK(custom_maps_pinned_room_ambient_override(selector, 1, &ambient) == 1 &&
+          ambient == 7);
+    CHECK(custom_maps_pinned_room_definition(selector, 2, &destination,
+                                              &connection) == -1);
+    CHECK(custom_maps_room_connection_policy(selector, 0, &player_policy,
+                                              &focus_policy) == 1);
+    CHECK(player_policy == 2 && focus_policy == 1);
+    CHECK(custom_maps_room_connection_policy(selector, 1, &player_policy,
+                                              &focus_policy) == -1);
+    destination = -1;
+    connection = -1;
+    CHECK(custom_maps_resolve_room_transition(
+              selector, 0, 10 * 16 + 8, 16 * 16 - 2,
+              10 * 16 + 8, 16 * 16, &destination, &connection) == 1);
+    CHECK(destination == 1 && connection == 0);
+    CHECK(custom_maps_resolve_room_transition(
+              selector, 1, 10 * 16 + 8, 16 * 16 + 2,
+              10 * 16 + 8, 16 * 16 - 1, &destination, &connection) == 1);
+    CHECK(destination == 0 && connection == 0);
+    CHECK(custom_maps_resolve_room_transition(
+              selector, 0, 2 * 16 + 8, 16 * 16 - 2,
+              2 * 16 + 8, 16 * 16, &destination, &connection) == 0);
+    CHECK(destination == -1 && connection == -1);
+    custom_maps_clear_preview();
+    custom_maps_test_pin_folder(NULL);
+    custom_maps_shutdown();
+    snprintf(path, sizeof(path), "%s/entities.json", folder); DeleteFileA(path);
+    snprintf(path, sizeof(path), "%s/data.json", folder); DeleteFileA(path);
+    snprintf(path, sizeof(path), "%s/data.map", folder); DeleteFileA(path);
+    RemoveDirectoryA(folder);
 }
 
 static void check_entity_map_tick_value(int expected) {
@@ -1417,6 +2346,7 @@ static void test_entity_package_discovery(void) {
     static const char source[]="entity.on_update('demo:orb',function(h) map.state.seen=entity.get(h).x end)";
     char folder_id[96],folder[MAX_PATH],entity_path[MAX_PATH+32],script_path[MAX_PATH+32];
     char json_path[MAX_PATH+32],map_path[MAX_PATH+32],map_text[1024],err[384],changed[sizeof(entities)];
+    char online_key_old[160]={0},online_key_new[160]={0},pinned_key[160]={0};
     CustomMapValidationSummary summary;uint64_t generation,old_script_id,new_script_id;
     WIN32_FILE_ATTRIBUTE_DATA info;int selector,needed;char* manifest;
     snprintf(folder_id,sizeof(folder_id),"entity_discovery_%lu",(unsigned long)GetCurrentProcessId());
@@ -1455,6 +2385,11 @@ static void test_entity_package_discovery(void) {
                 CHECK(write_fixture_bytes(entity_path,visual_json,strlen(visual_json)));
                 CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary)==(frames==2));
             }
+            for(int first=1;first<=2;first++) {
+                snprintf(visual_json,sizeof(visual_json),"{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[],\"visual\":{\"sheet\":\"visual.png\",\"sprite\":0},\"animations\":[{\"name\":\"flash\",\"sprite\":%d}]}],\"placements\":[]}",first);
+                CHECK(write_fixture_bytes(entity_path,visual_json,strlen(visual_json)));
+                CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary)==(first==1));
+            }
             snprintf(visual_json,sizeof(visual_json),"{\"schema\":1,\"capacity\":8,\"types\":[{\"key\":\"demo:orb\",\"regions\":[],\"visual\":{\"sheet\":\"visual.png\",\"sprite\":0}}],\"placements\":[]}");
             CHECK(write_fixture_bytes(entity_path,visual_json,strlen(visual_json)));
             for(int width=16;width>=8;width-=8) {
@@ -1465,6 +2400,17 @@ static void test_entity_package_discovery(void) {
             CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary));
             snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"sheets\":[{\"sprite_sheet\":\"visual.png\",\"cell_w\":0}]}}",(int)strlen(json)-1,json);
             CHECK(!custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary));
+            {
+                char odd_png[MAX_PATH+32];
+                CHECK(write_fixture_bytes(entity_path,entities,strlen(entities)));
+                snprintf(odd_png,sizeof(odd_png),"%s\\odd.png",folder);
+                CHECK(write_png_header_fixture(odd_png,35,19,0x72));
+                snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"tiles\":[{\"id\":\"crop\",\"symbol\":\"$\",\"native_glyph\":\"x\",\"sprite_sheet\":\"odd.png\",\"cell_w\":16,\"cell_h\":16,\"source_x\":3,\"source_y\":3,\"source_w\":32,\"source_h\":16}]}}",(int)strlen(json)-1,json);
+                CHECK(custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary));
+                snprintf(map_json,sizeof(map_json),"%.*s,\"tileset\":{\"tiles\":[{\"id\":\"crop\",\"symbol\":\"$\",\"native_glyph\":\"x\",\"sprite_sheet\":\"odd.png\",\"cell_w\":16,\"cell_h\":16,\"source_x\":3,\"source_y\":3,\"source_w\":31,\"source_h\":16}]}}",(int)strlen(json)-1,json);
+                CHECK(!custom_maps_validate_package_text("entities",folder,map_json,map_text,&summary));
+                CHECK(DeleteFileA(odd_png)!=0);
+            }
             CHECK(DeleteFileA(png)!=0);
         }
         CHECK(write_fixture_bytes(entity_path,entities,strlen(entities)));
@@ -1486,19 +2432,40 @@ static void test_entity_package_discovery(void) {
     generation=custom_maps_generation();
     needed=custom_maps_build_manifest_json(NULL,0);manifest=malloc((size_t)needed+1u);
     CHECK(manifest!=NULL);
-    if(manifest) {custom_maps_build_manifest_json(manifest,(size_t)needed+1u);CHECK(!strstr(manifest,"entity_discovery:"));free(manifest);}
+    if(manifest) {
+        custom_maps_build_manifest_json(manifest,(size_t)needed+1u);
+        CHECK(manifest_key_for_prefix(manifest,"custom:entity_discovery:",online_key_old,sizeof(online_key_old)));
+        CHECK(has_lower_hex_signature(online_key_old));
+        CHECK(custom_maps_selector_for_key(online_key_old,&selector));
+        free(manifest);
+    }
     selector=custom_maps_test_pin_folder(folder_id);CHECK(selector>=0);
+    CHECK(custom_maps_pinned_online_key(selector,pinned_key,sizeof(pinned_key))==1);
+    CHECK(strcmp(pinned_key,online_key_old)==0);
     CHECK(custom_maps_activate_script_for_selector(selector,NULL,err,sizeof(err)));
-    CHECK(map_script_has_entities() && !map_script_network_admissible(err,sizeof(err)));
+    CHECK(map_script_has_entities() && map_script_network_admissible(err,sizeof(err)) && !err[0]);
     check_entity_map_tick_value(1);
     memcpy(changed,entities,sizeof(changed));strstr(changed,"\"vx\":1")[5]='2';
     CHECK(write_fixture_bytes(entity_path,changed,strlen(changed)));
     CHECK(restore_file_write_time(entity_path,&info.ftLastWriteTime));
     CHECK(custom_maps_generation()>generation);
+    needed=custom_maps_build_manifest_json(NULL,0);manifest=malloc((size_t)needed+1u);
+    CHECK(manifest!=NULL);
+    if(manifest) {
+        custom_maps_build_manifest_json(manifest,(size_t)needed+1u);
+        CHECK(manifest_key_for_prefix(manifest,"custom:entity_discovery:",online_key_new,sizeof(online_key_new)));
+        CHECK(has_lower_hex_signature(online_key_new));
+        CHECK(strcmp(online_key_old,online_key_new)!=0);
+        free(manifest);
+    }
     CHECK(custom_maps_pinned_script_id(selector,&new_script_id)==1 && new_script_id==old_script_id);
+    CHECK(custom_maps_pinned_online_key(selector,pinned_key,sizeof(pinned_key))==1);
+    CHECK(strcmp(pinned_key,online_key_old)==0); /* Reload cannot mutate the pin. */
     CHECK(custom_maps_activate_script_for_selector(selector,NULL,err,sizeof(err)));
     check_entity_map_tick_value(1); /* Pinned old source survives registry replacement. */
     selector=custom_maps_test_pin_folder(folder_id);CHECK(selector>=0);
+    CHECK(custom_maps_pinned_online_key(selector,pinned_key,sizeof(pinned_key))==1);
+    CHECK(strcmp(pinned_key,online_key_new)==0);
     CHECK(custom_maps_pinned_script_id(selector,&new_script_id)==1 && new_script_id!=old_script_id);
     CHECK(custom_maps_activate_script_for_selector(selector,NULL,err,sizeof(err)));
     check_entity_map_tick_value(2);
@@ -1546,14 +2513,20 @@ int main(void) {
     test_v1_compatibility();
     test_eggnogg_color();
     test_opponent_spawn();
+    test_spawn_markers();
+    test_variable_room_metadata_and_bounds();
+    test_room_graph_manifest_and_transitions();
     test_native_tentacle_headroom();
     test_in_memory_v1_preview();
     test_v2_preview_folder();
     test_native_room_spawn_budget();
     test_v2_symbolic_builtin();
+    test_pinned_world_tile_query();
     test_v2_whole_symbol_override();
     test_repository_runtime_fixture();
+    test_repository_ambiance_fixture();
     test_v2_hard_failures();
+    test_v2_custom_ambiances();
     test_external_asset_hash();
     test_tileset_defaults_and_native_layout();
     test_external_asset_online_identity();

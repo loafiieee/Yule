@@ -18,6 +18,8 @@ extern "C" {
 #define MAP_SCRIPT_STATE_STRING_MAX       64
 #define MAP_SCRIPT_MAX_SPRITE_OVERRIDES   256
 #define MAP_SCRIPT_MAX_CONTACTS           256
+#define MAP_SCRIPT_MAX_MINE_TRIGGERS       32
+#define MAP_SCRIPT_MAX_NATIVE_ATTACK_PROBES 64
 #define MAP_SCRIPT_MAX_LIFECYCLE_SLOTS    16
 #define MAP_SCRIPT_MAX_VELOCITY_LIMITS    18
 
@@ -26,7 +28,7 @@ extern "C" {
 
 /* Bump when the source-visible map API or host dispatch contract changes.
  * Online layout negotiation mixes this value into its compatibility key. */
-#define MAP_SCRIPT_API_VERSION            UINT32_C(27)
+#define MAP_SCRIPT_API_VERSION            UINT32_C(36)
 
 #define MAP_SCRIPT_SENSOR_QUANTIZATION    256
 #define MAP_SCRIPT_PLAYER_CONTACT_RADIUS  6.0f
@@ -37,7 +39,18 @@ extern "C" {
 #define MAP_SCRIPT_RENDER_OFFSET_LIMIT    4096
 
 #define MAP_SCRIPT_SNAPSHOT_MAGIC         UINT32_C(0x4d534c53) /* "MSLS" */
-#define MAP_SCRIPT_SNAPSHOT_VERSION       6u
+#define MAP_SCRIPT_SNAPSHOT_VERSION       9u
+#define MAP_SCRIPT_EXIT_LOCK_BYTES        32u
+
+/* Managed object variables deliberately live outside MapScriptSnapshot.  That
+ * fixed structure is embedded in every ordinary online rollback state, while
+ * managed entities are currently admitted only offline.  Keeping this store in
+ * the combined content extension gives object authors substantially more state
+ * without inflating supported online packets. */
+#define MAP_SCRIPT_OBJECT_STATE_MAGIC     UINT32_C(0x53564d59) /* "YMVS" */
+#define MAP_SCRIPT_OBJECT_STATE_VERSION   1u
+#define MAP_SCRIPT_MAX_OBJECT_STATE_ENTRIES 512u
+#define MAP_SCRIPT_OBJECT_STATE_KEY_MAX   32u
 
 typedef struct MapScriptTileBinding {
     char symbol;
@@ -90,6 +103,27 @@ enum MapScriptObjectKind {
     MAP_SCRIPT_OBJECT_HAZARD = 4
 };
 
+/* Verified native combat classifications. These are deliberately separate
+ * from managed entity type ids: Lua receives them as stable source_type names
+ * such as "native:punch" and "native:sword". */
+enum MapScriptNativeDamageKind {
+    MAP_SCRIPT_NATIVE_DAMAGE_PUNCH = 1,
+    MAP_SCRIPT_NATIVE_DAMAGE_KICK = 2,
+    MAP_SCRIPT_NATIVE_DAMAGE_SWORD = 3,
+    MAP_SCRIPT_NATIVE_DAMAGE_THROWN_SWORD = 4,
+    MAP_SCRIPT_NATIVE_DAMAGE_SPIKE_BALL = 5,
+    MAP_SCRIPT_NATIVE_DAMAGE_MINE = 6
+};
+
+typedef struct MapScriptNativeAttackProbe {
+    float x;
+    float y;
+    float radius;
+    uint8_t player_slot; /* zero based; 0xff when the native source has no owner */
+    uint8_t kind;        /* enum MapScriptNativeDamageKind */
+    uint8_t reserved[2];
+} MapScriptNativeAttackProbe;
+
 enum MapScriptContactScope {
     MAP_SCRIPT_CONTACT_SCOPE_CELL = 0,
     MAP_SCRIPT_CONTACT_SCOPE_BINDING = 1
@@ -134,9 +168,47 @@ typedef int (*MapScriptReadPlayerFn)(void* userdata,uint32_t slot,MapScriptObjec
  * failure return zero with NO native mutations. Bits 0/1 identify players 1/2. */
 typedef int (*MapScriptApplyPlayerVelocitiesFn)(void* userdata,uint32_t mask,const MapScriptObjectView players[2]);
 
-/* Combined final commit: preflight ALL targets before velocity/death effects.
- * Return zero with no effects on failure; slot-order deaths follow velocities. */
-typedef int (*MapScriptCommitPlayersFn)(void* userdata,uint32_t velocity_mask,uint32_t defeat_mask,const MapScriptObjectView players[2]);
+/* Combined final commit: preflight ALL targets before position/velocity, room,
+ * or death effects. Room values are zero-based placed-room numbers. Return zero
+ * with no effects on failure; slot-order deaths follow movement and room writes. */
+typedef int (*MapScriptCommitPlayersFn)(void* userdata,uint32_t velocity_mask,
+    uint32_t defeat_mask,uint32_t room_mask,const int8_t rooms[2],
+    const MapScriptObjectView players[2]);
+
+enum MapScriptPlayerCommandBits {
+    MAP_SCRIPT_COMMAND_ATTACK = 1u << 0,
+    MAP_SCRIPT_COMMAND_JUMP = 1u << 1,
+    MAP_SCRIPT_COMMAND_RIGHT = 1u << 2,
+    MAP_SCRIPT_COMMAND_LEFT = 1u << 3,
+    MAP_SCRIPT_COMMAND_UP = 1u << 4,
+    MAP_SCRIPT_COMMAND_DOWN = 1u << 5,
+    MAP_SCRIPT_COMMAND_MENU = 1u << 6
+};
+typedef struct MapScriptPlayerObservation {
+    uint32_t command_bits;
+    uint32_t previous_command_bits;
+    uint8_t grounded;
+    uint8_t previously_grounded;
+    uint8_t native_state;
+    uint8_t collision_flags;
+    uint8_t previous_collision_flags;
+    int8_t room;
+    int8_t facing;                   /* -1 left, 0 neutral/unknown, 1 right */
+    uint8_t has_sword;
+    uint32_t skin_palette;
+    uint32_t clothing_palette;
+} MapScriptPlayerObservation;
+/* Optional deterministic detail for map.players(). Return one on success.
+ * Production reads only rollback-owned native player state. */
+typedef int (*MapScriptReadPlayerObservationFn)(void* userdata,uint32_t slot,MapScriptPlayerObservation* out);
+typedef struct MapScriptMineTrigger {
+    double x;
+    double y;
+} MapScriptMineTrigger;
+/* Called only after every scripted callback and fallible native-player commit
+ * succeeds. Production ignores positions which do not currently resolve to a
+ * native mine tile. */
+typedef void (*MapScriptTriggerMinesFn)(void* userdata,const MapScriptMineTrigger* triggers,uint32_t count);
 
 typedef struct MapScriptHost {
     uint32_t rng_seed;               /* zero is canonicalized to a fixed seed */
@@ -147,6 +219,9 @@ typedef struct MapScriptHost {
     MapScriptApplyPlayerVelocitiesFn apply_player_velocities_fn;
     MapScriptCommitPlayersFn commit_players_fn;
     int (*solid_box_fn)(void* userdata,double x,double y,double width,double height);
+    int (*tile_at_fn)(void* userdata,double x,double y,char* out_reference,size_t out_size);
+    MapScriptReadPlayerObservationFn read_player_observation_fn;
+    MapScriptTriggerMinesFn trigger_mines_fn;
 } MapScriptHost;
 
 enum {
@@ -230,6 +305,44 @@ typedef struct MapScriptTimerState {
     uint32_t interval;
 } MapScriptTimerState;
 
+enum MapScriptPlayerPresentationFlags {
+    MAP_SCRIPT_PLAYER_PRESENTATION_BODY_VISIBLE = 1u << 0,
+    MAP_SCRIPT_PLAYER_PRESENTATION_SKIN_TINT = 1u << 1,
+    MAP_SCRIPT_PLAYER_PRESENTATION_CLOTHING_TINT = 1u << 2
+};
+
+/* Draw-only player overrides. Tints are packed RRGGBBAA multipliers. A clear
+ * flag canonically stores zero in its corresponding value. */
+typedef struct MapScriptSnapshotPlayerPresentation {
+    uint8_t flags;
+    uint8_t body_visible;
+    uint8_t reserved[2];
+    uint32_t skin_tint;
+    uint32_t clothing_tint;
+} MapScriptSnapshotPlayerPresentation;
+
+/* Optional map-owned health for native players. This is gameplay state and is
+ * therefore part of the deterministic rollback payload. */
+typedef struct MapScriptSnapshotPlayerHealth {
+    uint8_t enabled;
+    uint8_t awaiting_respawn;
+    uint8_t invulnerable;
+    uint8_t reserved[5];
+    double health;
+    double max_health;
+} MapScriptSnapshotPlayerHealth;
+
+/* Draw-only point camera. Values use 1/256 pixels/zoom; zeroed when inactive.
+ * It travels with rollback even though native gameplay camera state is untouched. */
+typedef struct MapScriptSnapshotCamera {
+    uint8_t active;
+    uint8_t reserved[3];
+    int32_t x_q;
+    int32_t y_q;
+    uint16_t zoom_q;
+    uint16_t reserved2;
+} MapScriptSnapshotCamera;
+
 typedef struct MapScriptSnapshot {
     uint32_t magic;
     uint16_t version;
@@ -244,7 +357,12 @@ typedef struct MapScriptSnapshot {
     uint16_t override_count;
     uint16_t contact_count;
     uint16_t velocity_limit_count;
-    uint8_t reserved[16];
+    uint8_t player_observation_initialized_mask;
+    uint8_t player_observation_present_mask;
+    int8_t player_previous_room[2];
+    uint8_t player_previous_native_state[2];
+    uint8_t reserved[10];
+    uint8_t exit_locks[MAP_SCRIPT_EXIT_LOCK_BYTES];
     uint32_t lifecycle_generation[MAP_SCRIPT_MAX_LIFECYCLE_SLOTS];
     MapScriptSnapshotStateEntry state[MAP_SCRIPT_MAX_STATE_ENTRIES];
     MapScriptSnapshotSpriteOverride overrides[MAP_SCRIPT_MAX_SPRITE_OVERRIDES];
@@ -252,7 +370,34 @@ typedef struct MapScriptSnapshot {
     MapScriptSnapshotVelocityLimit velocity_limits[MAP_SCRIPT_MAX_VELOCITY_LIMITS];
     uint32_t timer_count;
     MapScriptTimerState timers[MAP_SCRIPT_MAX_TIMERS];
+    MapScriptSnapshotPlayerPresentation player_presentation[2];
+    MapScriptSnapshotPlayerHealth player_health[2];
+    MapScriptSnapshotCamera camera;
 } MapScriptSnapshot;
+
+typedef struct MapScriptObjectStateEntry {
+    uint8_t in_use;
+    uint8_t type;
+    uint8_t key_len;
+    uint8_t string_len;
+    uint8_t bool_value;
+    uint8_t reserved[3];
+    uint64_t handle;
+    double number_value;
+    char key[MAP_SCRIPT_OBJECT_STATE_KEY_MAX];
+    char string_value[MAP_SCRIPT_STATE_STRING_MAX];
+} MapScriptObjectStateEntry;
+
+typedef struct MapScriptObjectStateSnapshot {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t header_size;
+    uint32_t total_size;
+    uint32_t checksum;
+    uint16_t count;
+    uint8_t reserved[14];
+    MapScriptObjectStateEntry entries[MAP_SCRIPT_MAX_OBJECT_STATE_ENTRIES];
+} MapScriptObjectStateSnapshot;
 #pragma pack(pop)
 
 /* Validation runs the source in a disposable sandbox and verifies callback and
@@ -281,9 +426,15 @@ int map_script_content_snapshot_load(const void* bytes, size_t size, char* err, 
 void map_script_deactivate(void);
 int map_script_is_active(void);
 int map_script_is_faulted(void);
+/* Deterministic authored draw camera; returns zero for native behavior. */
+int map_script_render_camera(float* x, float* y, float* zoom);
 uint64_t map_script_active_id(void);
 uint64_t map_script_tick_count(void);
 const char* map_script_last_error(void);
+/* Read-only native bridge for room-graph traversal. connection_index is the
+ * zero-based canonical connection array index; Lua authors see it as 1-based.
+ * Lock values live in a dedicated 256-bit ordinary rollback snapshot field. */
+int map_script_exit_locked(uint32_t connection_index);
 
 /* Host-managed reusable object pools assign one rollback-tracked generation
  * per fixed slot. Advance exactly once after a successful allocation, then put
@@ -316,6 +467,10 @@ int map_script_update_object(MapScriptObjectView* object,
                              char* err,
                              size_t err_cap);
 int map_script_dispatch_tick(char* err, size_t err_cap);
+/* Queue one native combat probe while the native simulation is running. Lua
+ * callbacks are deferred until dispatch_tick, after the native stack unwinds.
+ * Invalid/inactive submissions are ignored and return zero. */
+int map_script_submit_native_attack_probe(const MapScriptNativeAttackProbe* probe);
 
 typedef struct MapScriptVisualOverride {
     int sprite_index;
@@ -323,6 +478,30 @@ typedef struct MapScriptVisualOverride {
     float offset_y;
     uint64_t expires_after_tick;
 } MapScriptVisualOverride;
+
+typedef struct MapScriptPlayerPresentation {
+    int body_visible;
+    uint32_t skin_tint;              /* packed RRGGBBAA multiplier */
+    uint32_t clothing_tint;
+    uint8_t flags;                   /* enum MapScriptPlayerPresentationFlags */
+} MapScriptPlayerPresentation;
+
+typedef struct MapScriptPlayerSprite {
+    char sheet[128];
+    uint32_t sprite;
+    int32_t offset_x,offset_y,scale_x,scale_y;
+    int32_t rotation;
+    uint32_t rgba,layer;
+    int visible;
+    float x,y;
+} MapScriptPlayerSprite;
+
+/* Pure draw-time query. Returns zero for an inactive/faulted runtime, an
+ * invalid slot, or a player with no presentation override. */
+int map_script_player_presentation(uint32_t slot,
+                                   MapScriptPlayerPresentation* out);
+/* Draw-only replacement resolved from a validated managed-object visual. */
+int map_script_player_sprite(uint32_t slot,MapScriptPlayerSprite* out);
 
 int map_script_visual_override(uint32_t cell_index,
                                MapScriptVisualOverride* out);

@@ -19,6 +19,7 @@ static const char* const k_mod_api_capabilities[] = {
     "events.removable",
     "font.unregister",
     "fs.pick_file",
+    "game.render_camera",
     "game.rollback_state",
     "http.async_get",
     "http.response_metadata",

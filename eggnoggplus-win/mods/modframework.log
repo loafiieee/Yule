@@ -1,85 +1,92 @@
-[15:31:57] [INFO] Mod framework initializing...
-[15:31:57] [INFO] Mod framework API version: 1
-[15:31:57] [INFO] Scanning mods/ folder...
-[15:31:57] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
-[15:31:57] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
-[15:31:57] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
-[15:31:57] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
-[15:31:57] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
-[15:31:57] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
-[15:31:57] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
-[15:31:57] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
-[15:31:57] [INFO] Loaded mod: ai_opponent
-[15:31:57] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by loaf
-[15:31:57] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
-[15:31:57] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
-[15:31:57] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
-[15:31:57] [INFO] Loaded mod: flight
-[15:31:57] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
-[15:31:57] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
-[15:31:57] [INFO] [mod:options_demo] Loaded options demo
-[15:31:57] [INFO] [mod:options_demo] difficulty=normal greeting=good day
-[15:31:57] [INFO] Loaded mod: options_demo
-[15:31:57] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
-[15:31:57] [INFO]   Tests the framework, speedhack for demonstration purposes.
-[15:31:57] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
-[15:31:57] [INFO] [mod:speedhack] speed=1
-[15:31:57] [INFO] Loaded mod: speedhack
-[15:31:57] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
-[15:31:57] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
-[15:31:57] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
-[15:31:57] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
-[15:31:57] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
-[15:31:57] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
-[15:31:57] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
-[15:31:57] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
-[15:31:57] [INFO] Loaded mod: texture_pack_test
-[15:31:57] [INFO] Done. 6 mod folder(s) scanned, 5 candidate manifest(s), 5 mod(s) loaded.
-[15:31:57] [INFO] [maps] scanning maps/ for custom maps
-[15:31:57] [INFO] [maps][basketsword] scanning folder: maps\basketsword
-[15:31:57] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
-[15:31:57] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
-[15:31:57] [WARN] [maps][basketsword] warning: map has only one source room
-[15:31:57] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
-[15:31:57] [INFO] [maps][example_map] scanning folder: maps\example_map
-[15:31:57] [INFO] [maps][example_map] loading json: maps\example_map\data.json
-[15:31:57] [INFO] [maps][example_map] loading map: maps\example_map\data.map
-[15:31:57] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
-[15:31:57] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
-[15:31:57] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
-[15:31:57] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
-[15:31:57] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
-[15:31:57] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
-[15:31:57] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
-[15:31:57] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
-[15:31:57] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
-[15:31:57] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
-[15:31:57] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
-[15:31:57] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
-[15:31:57] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
-[15:31:57] [INFO] [maps][the big jump] scanning folder: maps\the big jump
-[15:31:57] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
-[15:31:57] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
-[15:31:57] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
-[15:31:57] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
-[15:31:57] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
-[15:31:57] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
-[15:31:57] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
-[15:31:57] [INFO] [maps] registry ready: 6 custom maps (was 0)
-[15:31:57] [INFO] hooks_init: custom MODS menu ready
-[15:31:57] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
-[15:31:58] [INFO] map content: packed map.v2_symbolic_demo:sheet-31d5aa0b-16x16-p0 base=704 count=192
-[15:31:58] [INFO] [maps][leafy_greens] applying custom map for selector index 7
-[15:31:58] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
-[15:31:58] [INFO] [discord] Rich Presence connected
-[15:31:58] [INFO] update: boot local=1.92 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
-[15:31:58] [INFO] update: current (local=1.92 channel=1.92)
-[15:31:58] [INFO] menu: mode -> TRAIN VS ME
-[15:31:59] [INFO] menu: mode -> TRAIN AI
-[15:32:00] [INFO] menu: mode -> VS AI
-[15:32:00] [INFO] ai_match: armed (ai_player=1 training=0)
-[15:32:00] [INFO] [mod:ai_opponent] VS AI: driving player 1 (hard, brain=heur)
-[15:33:15] [INFO] [maps][leafy_greens] applying custom map for selector index 7
-[15:33:15] [INFO] ai_match: cleared
-[15:33:15] [INFO] [mod:speedhack] Unloaded
-[15:33:15] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.
+[14:42:58] [INFO] Mod framework initializing...
+[14:42:58] [INFO] Mod framework API version: 1
+[14:42:58] [INFO] Scanning mods/ folder...
+[14:42:58] [WARN] Skipping mod folder desync_repros: could not open mods\desync_repros\mod.json
+[14:42:58] [INFO] Loading mod: ai_opponent (AI Opponent) v0.1.0 by modframework
+[14:42:58] [INFO]   Singleplayer: a neuroevolution-trained AI opponent (VS AI / TRAIN AI on the main menu).
+[14:42:58] [INFO] [mod:ai_opponent] classified gameplay-affecting (mod.game.register_menu_mode)
+[14:42:58] [INFO] [mod:ai_opponent] registered menu mode 'vs_ai' (VS AI)
+[14:42:58] [INFO] [mod:ai_opponent] registered menu mode 'train_ai' (TRAIN AI)
+[14:42:58] [INFO] [mod:ai_opponent] registered menu mode 'train_vs_me' (TRAIN VS ME)
+[14:42:58] [INFO] [mod:ai_opponent] ai_opponent loaded (inputs=28 actions=14, hybrid arbiter)
+[14:42:58] [INFO] Loaded mod: ai_opponent
+[14:42:59] [INFO] Loading mod: flight (Flight Mode) v1.0.0 by loaf
+[14:42:59] [INFO]   Toggle collision-free flight and steer with the player's movement controls.
+[14:42:59] [INFO] [mod:flight] classified gameplay-affecting (mod.on_tick handler)
+[14:42:59] [INFO] [mod:flight] Flight Mode loaded. Press Ctrl+F during a match to toggle flight.
+[14:42:59] [INFO] Loaded mod: flight
+[14:42:59] [INFO] Loading mod: freecam (Free Camera) v1.0.0 by Eggnogg+
+[14:42:59] [INFO]   Pan, drag and zoom the game camera independently of room bounds.
+[14:42:59] [INFO] [mod:freecam] Free Camera loaded. Press Shift+G during a match to toggle.
+[14:42:59] [INFO] Loaded mod: freecam
+[14:42:59] [INFO] Loading mod: options_demo (Options Demo) v1.0 by framework
+[14:42:59] [INFO]   Demonstrates the options[...] (enum) config type. Purely cosmetic logging - does not affect gameplay.
+[14:42:59] [INFO] [mod:options_demo] Loaded options demo
+[14:42:59] [INFO] [mod:options_demo] difficulty=normal greeting=good day
+[14:42:59] [INFO] Loaded mod: options_demo
+[14:42:59] [INFO] Loading mod: speedhack (Speed Hack) v1.0.0 by loaf
+[14:42:59] [INFO]   Tests the framework, speedhack for demonstration purposes.
+[14:42:59] [INFO] [mod:speedhack] Loaded! id=speedhack name=Speed Hack
+[14:42:59] [INFO] [mod:speedhack] speed=1
+[14:42:59] [INFO] Loaded mod: speedhack
+[14:42:59] [INFO] Loading mod: texture_pack_test (Texture Pack Test) v0.1.0 by codex
+[14:42:59] [INFO]   Replaces sprites/tiles/misc/glow atlases with test texture pack images.
+[14:42:59] [INFO] [mod:texture_pack_test] Texture Pack Test loading...
+[14:42:59] [INFO] [mod:texture_pack_test] Registered spritesheet from assets/sprites_test.png
+[14:42:59] [INFO] [mod:texture_pack_test] Registered tilesheet from assets/tiles_test.png
+[14:42:59] [INFO] [mod:texture_pack_test] Registered miscsheet from assets/misc_test.png
+[14:42:59] [INFO] [mod:texture_pack_test] Registered glowsheet from assets/glow_test.png
+[14:42:59] [INFO] [mod:texture_pack_test] Press R in-game to run mod.texture.reload_all().
+[14:42:59] [INFO] Loaded mod: texture_pack_test
+[14:42:59] [INFO] Done. 7 mod folder(s) scanned, 6 candidate manifest(s), 6 mod(s) loaded.
+[14:42:59] [INFO] [maps] scanning maps/ for custom maps
+[14:42:59] [INFO] [maps][ambiance_demo] scanning folder: maps\ambiance_demo
+[14:42:59] [INFO] [maps][ambiance_demo] loading json: maps\ambiance_demo\data.json
+[14:42:59] [INFO] [maps][ambiance_demo] loading map: maps\ambiance_demo\data.map
+[14:42:59] [WARN] [maps][ambiance_demo] warning: map has only one source room
+[14:42:59] [INFO] [maps][ambiance_demo] registered: name="Particle Ambiance Demo" author="Eggnogg+" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=0 k_markers=0
+[14:42:59] [INFO] [maps][basketsword] scanning folder: maps\basketsword
+[14:42:59] [INFO] [maps][basketsword] loading json: maps\basketsword\data.json
+[14:42:59] [INFO] [maps][basketsword] loading map: maps\basketsword\data.map
+[14:42:59] [WARN] [maps][basketsword] warning: map has only one source room
+[14:42:59] [INFO] [maps][basketsword] registered: name="basketsword" author="loaf" source_rooms=1 final_rooms=1 mode=swords native_reset_spawners<=7 k_markers=0
+[14:42:59] [INFO] [maps][example_map] scanning folder: maps\example_map
+[14:42:59] [INFO] [maps][example_map] loading json: maps\example_map\data.json
+[14:42:59] [INFO] [maps][example_map] loading map: maps\example_map\data.map
+[14:42:59] [WARN] [maps][example_map] [data.json][rooms.center.appearance] warning: primary and mirror define duplicate explicit colours
+[14:42:59] [WARN] [maps][example_map] [data.json][rooms.mid_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:42:59] [WARN] [maps][example_map] [data.json][rooms.mid_2.appearance] warning: primary and mirror define duplicate explicit colours
+[14:42:59] [WARN] [maps][example_map] [data.json][rooms.outer_1.appearance] warning: primary and mirror define duplicate explicit colours
+[14:42:59] [INFO] [maps][example_map] registered: name="Example Map" author="loaf" source_rooms=4 final_rooms=7 mode=swords K-room reset budget<=4/13 k_markers=1
+[14:42:59] [INFO] [maps][flooded_caves] scanning folder: maps\flooded_caves
+[14:42:59] [INFO] [maps][flooded_caves] loading json: maps\flooded_caves\data.json
+[14:42:59] [INFO] [maps][flooded_caves] loading map: maps\flooded_caves\data.map
+[14:42:59] [INFO] [maps][flooded_caves] registered: name="Flooded Caves" author="AtraxiA" source_rooms=5 final_rooms=9 mode=karate native_reset_spawners<=3 k_markers=0
+[14:42:59] [INFO] [maps][leafy_greens] scanning folder: maps\leafy_greens
+[14:42:59] [INFO] [maps][leafy_greens] loading json: maps\leafy_greens\data.json
+[14:42:59] [INFO] [maps][leafy_greens] loading map: maps\leafy_greens\data.map
+[14:42:59] [INFO] [maps][leafy_greens] registered: name="LEAFY GREENS" author="loaf" source_rooms=5 final_rooms=9 mode=swords native_reset_spawners<=6 k_markers=0
+[14:42:59] [INFO] [maps][the big jump] scanning folder: maps\the big jump
+[14:42:59] [INFO] [maps][the big jump] loading json: maps\the big jump\data.json
+[14:42:59] [INFO] [maps][the big jump] loading map: maps\the big jump\data.map
+[14:42:59] [INFO] [maps][big_jump] registered: name="The Big Jump" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=25 k_markers=0
+[14:42:59] [INFO] [maps][untitled_map] scanning folder: maps\untitled_map(2)\untitled_map
+[14:42:59] [INFO] [maps][untitled_map] loading json: maps\untitled_map(2)\untitled_map\data.json
+[14:42:59] [INFO] [maps][untitled_map] loading map: maps\untitled_map(2)\untitled_map\data.map
+[14:42:59] [INFO] [maps][untitled_map] registered: name="Untitled Map" author="loaf" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=1 k_markers=0
+[14:42:59] [INFO] [maps][v2_symbolic_demo] scanning folder: maps\v2_symbolic_demo
+[14:42:59] [INFO] [maps][v2_symbolic_demo] loading json: maps\v2_symbolic_demo\data.json
+[14:42:59] [INFO] [maps][v2_symbolic_demo] loading map: maps\v2_symbolic_demo\data.map
+[14:42:59] [INFO] [maps][v2_symbolic_demo] registered: name="V2 Symbolic Tile Demo" author="Eggnogg+" source_rooms=2 final_rooms=3 mode=swords native_reset_spawners<=2 k_markers=0
+[14:42:59] [INFO] [maps] registry ready: 8 custom maps (was 0)
+[14:42:59] [INFO] hooks_init: custom MODS menu ready
+[14:43:00] [INFO] [music] mixer output upgraded from 22050 Hz to 48000 Hz
+[14:43:00] [INFO] map content: created isolated 512x512 atlas page 15
+[14:43:00] [INFO] map content: packed map.v2_symbolic_demo:sheet-99b623c9-16x16-p0 base=704 count=192
+[14:43:00] [INFO] window[event]: display=0 window=1440x960 drawable=1440x960 flags=0x00000606 viewport=0,0 1440x960 dpi-scale=1.000x1.000
+[14:43:00] [INFO] [discord] Rich Presence connected
+[14:43:00] [INFO] update: boot local=1.92 auto=1 channel=https://loafiieee.com/yule/releases/latest.json
+[14:43:00] [INFO] update: current (local=1.92 channel=1.92)
+[14:43:02] [INFO] MODS: entering mods menu
+[14:43:05] [INFO] [mod:speedhack] Unloaded
+[14:43:05] [INFO] [mod:texture_pack_test] Texture Pack Test unloaded.

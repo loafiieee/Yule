@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "capacity": 16,
+  "types": [
+    {
+      "key": "demo:jump_indicator",
+      "regions": [],
+      "visual": {
+        "sheet": "builtin:glyphs",
+        "sprite": 42,
+        "scale_x": 0.5,
+        "scale_y": 0.5,
+        "tint": "#80FFFFFF"
+      }
+    },
+    {
+      "key": "demo:jump_refill",
+      "regions": [
+        {
+          "id": 1,
+          "name": "pickup",
+          "role": "sensor",
+          "layer": 1,
+          "mask": 1,
+          "x": -5,
+          "y": -5,
+          "width": 10,
+          "height": 10
+        }
+      ],
+      "visual": {
+        "sheet": "builtin:tiles",
+        "sprite": 4,
+        "scale_x": 0.5,
+        "scale_y": 0.5,
+        "tint": "#80FFFFFF"
+      }
+    }
+  ],
+  "placements": [
+    {
+      "name": "jump_indicator_1",
+      "type": "demo:jump_indicator",
+      "x": 0,
+      "y": 0,
+      "visible": false
+    },
+    {
+      "name": "jump_indicator_2",
+      "type": "demo:jump_indicator",
+      "x": 0,
+      "y": 0,
+      "visible": false
+    },
+    {
+      "name": "jump_refill",
+      "type": "demo:jump_refill",
+      "x": 264,
+      "y": 144
+    }
+  ]
+}

@@ -92,7 +92,34 @@ These are deliberate `v1` constraints:
 - No custom room callbacks yet.
 - No asymmetric final-room layout yet.
 
-If we want true variable-width rooms later, that should be a new format version because the current engine hardcodes `33` tile room width in map generation and room math.
+V2 `variable_cells` supplies true per-source width and height. The `room_graph`
+layout described in `docs/room-graph-design.md` places up to 17 final room
+instances in two dimensions with explicit horizontal or vertical connections.
+The native loader, player traversal, Greggnogg preview/export, and online
+identity use the same validated graph. `mirrored_source_rooms` remains supported
+and can be converted without changing its geometry.
+
+Every graph connection may set `players` to `both` (default), `player1`,
+`player2`, or `go` to control who can cross it. `focus` is `go` by default, so
+only the GO player's crossing changes the active room and camera; `crossing`
+lets whichever allowed player crosses focus the destination. This is useful for
+co-op routes, player-specific passages, and vertical pits that should move the
+room without transferring GO ownership. Greggnogg exposes both choices beside
+the doorway's one-way and opening controls. Falling through an allowed bottom
+doorway transitions into the connected room before native fall death is
+committed. The selected `layout.start` instance also owns initial player room
+state and the countdown camera; it may be above, below, or horizontally offset
+from the layout's geometric center. Runtime fall and camera bounds use each
+placed room's world-space top and bottom rather than assuming every room begins
+at Y zero.
+
+A graph node may include an `overrides` object with `ambient`,
+`native_tileset`, and `opponent_spawn`. These settings affect only that placed
+copy; omitted fields inherit from the referenced source room and then
+`defaults.room`. Ambient values use the ordinary built-in/custom ambiance
+syntax, native tilesets must name a declared sheet with at least 128 cells, and
+opponent spawn accepts `default`, `always`, or `never`. The full graph and its
+instance overrides participate in the online package identity.
 
 ## Map model
 
@@ -248,7 +275,9 @@ So in `v1`:
 - `kind`: required
   - must be `"mirrored_source_rooms"` in `v1`
 - `room_format`: required
-  - must be `"vanilla_33x12"` in `v1`
+  - `"vanilla_33x12"` keeps the original fixed room size
+  - `"variable_cells"` allows each source room to be 8–128 cells wide and
+    6–64 cells tall; quoted rows within one room must still have equal width
 - `order`: required non-empty array of room ids
   - listed from center outward
   - each id must exist in `data.map`
@@ -261,6 +290,8 @@ Optional room defaults applied before per-room overrides.
 - `ambient`: optional
 - `appearance.primary`: optional
 - `appearance.mirror`: optional
+- `native_tileset`: optional V2 external sheet name used by rooms that do not
+  override it
 
 ### rooms.<room_id>
 
@@ -269,6 +300,8 @@ Per-room overrides keyed by room id.
 Supported fields:
 - `ambient`
 - `appearance`
+- `native_tileset`
+- `spawn`
 - `hook`
 
 `hook` is reserved for future room callbacks.
@@ -276,6 +309,50 @@ Supported fields:
 In `v1`:
 - `hook` must be omitted or `null`
 - any non-null value is an error
+
+### Spawn markers
+
+`rooms.<room_id>.spawn` stores editor overlays separately from terrain:
+
+```json
+"spawn": {
+  "players": {
+    "1": {"x": 4, "y": 10, "facing": "right"},
+    "2": {"x": 28, "y": 10, "facing": "left"}
+  },
+  "markers": [
+    {"x": 4, "y": 10, "kind": "allow_p1"},
+    {"x": 28, "y": 10, "kind": "allow_p2"},
+    {"x": 16, "y": 10, "kind": "deny"}
+  ]
+}
+```
+
+Player start points are optional and unique per player. Clicking the same start
+marker in Greggnogg flips its facing. Respawn marker kinds are `deny`, `allow`,
+`allow_p1`, and `allow_p2`. If a room has an `allow` marker or an allow marker
+for a particular player, that player uses whitelist mode and can respawn only
+at applicable markers. With no applicable allow marker, native respawn search
+continues and `deny` cells are excluded. Marker coordinates refer to the floor
+cell under the spawning player. Starts and markers must use a native-safe `@`
+floor cell with open, non-hazardous space above it; package validation rejects
+empty cells, walls, hazards, water and blocked floor cells with the exact room
+and marker path. Mirrored rooms mirror coordinates and facing.
+Markers never replace `data.map` glyphs and ordinary package fingerprints cover
+them for online play. A source room may contain at most 128 respawn markers.
+
+In a V2 `room_graph`, a placed node may also set `overrides.spawn` with the
+same `players` and `markers` fields. A player start supplied there takes
+precedence for that player when this node is the starting room; omitted players
+inherit the source room's start. Supplying `markers` replaces the source room's
+entire respawn overlay for this copy, including when it is an empty array.
+Coordinates stay in the source room's tile space and are mirrored with the
+placed copy. The loader validates every placed-copy point against that room's
+safe floor tiles. Greggnogg's **Full map** inspector exposes per-copy player
+starts. In the normal room editor, choose a spawn marker tile and use
+**Markers apply to** to paint on the reusable room design or only on the
+selected placed copy. The first copy-specific marker edit starts with the
+design's markers so existing respawn rules are preserved until changed.
 
 ## Forced Eggnogg color
 
@@ -320,6 +397,95 @@ Named values for `v1`:
 - `boil` / `fumes` = `9`
 
 If we discover a better canonical name for one of the numbered styles later, we can add it as an alias without changing the stored integer meaning.
+
+V2 maps may also define reusable particle ambiances. Greggnogg exposes this
+beside the normal room Ambient effect selector through **Edit particles**. An
+ambiance selected by `defaults.room.ambient` or `rooms.<id>.ambient` may use a
+custom ambiance ID:
+
+```json
+{
+  "particles": [{
+    "id": "ember", "name": "Falling ember",
+    "visual": {
+      "sprite_sheet": "builtin:misc", "sprite_index": 30,
+      "frame_count": 1, "frame_ticks": 1,
+      "tint": [1.0, 0.48, 0.16, 0.86],
+      "end_tint": [0.55, 0.08, 0.01, 0.0],
+      "scale_x": 0.55, "scale_y": 0.55,
+      "end_scale_x": 0.15, "end_scale_y": 0.15,
+      "start_rotation": -15, "end_rotation": 45,
+      "interpolation": "ease_out"
+    },
+    "lifetime_ticks": 210, "fade_in_ticks": 12, "fade_out_ticks": 32
+  }],
+  "ambiances": [{
+    "id": "emberfall", "name": "Emberfall", "native_ambient": "dust",
+    "emitters": [{
+      "particle": "ember", "count": 28,
+      "shape": "ellipse",
+      "area": {"x": 0, "y": -16, "width": 528, "height": 208},
+      "velocity_x": {"min": -0.08, "max": 0.08},
+      "velocity_y": {"min": 0.12, "max": 0.34},
+      "acceleration_x": 0, "acceleration_y": 0.0005,
+      "rotation_speed": {"min": -0.8, "max": 0.8},
+      "particle_layer": 1, "blend": "additive", "mirror_with_room": true
+    }]
+  }],
+  "defaults": {"room": {"ambient": "emberfall"}}
+}
+```
+
+Particle definitions control consecutive animation frames, lifetime and fades.
+`tint` and `scale_x`/`scale_y` are the start color and size. Optional
+`end_tint` and `end_scale_x`/`end_scale_y` interpolate those values over the
+particle's lifetime; an omitted end axis inherits its corresponding start
+axis, and an end scale may be zero. `start_rotation` and `end_rotation` are
+degrees and default to zero and the start rotation respectively. Their
+transition is added to the emitter's randomized rotation speed. The optional
+`interpolation` is `linear`, `ease_in`, `ease_out`, or `ease_in_out`; it defaults
+to `linear`. The final visible lifetime tick reaches the exact authored end
+values. Lifetime fades multiply the interpolated alpha.
+
+A non-built-in `sprite_sheet` must match exactly one PNG
+sheet declared by the V2 tileset, and its complete animation must fit that
+sheet. IDs start with a lowercase letter and contain at most 32 lowercase
+letters, numbers, `.`, `_` or `-`. Names contain 1..64 UTF-8 bytes.
+
+Each ambiance contains 0..16 emitters and may compose one native effect through
+`native_ambient`. Emitters define stable lane count and spawn bounds in room
+pixels. Optional `shape` chooses a filled `rectangle` (the default for older
+maps), a filled `ellipse` inscribed in those bounds, or a `line` from the
+area's top-left to bottom-right. Zero width or height collapses that axis.
+Emitters also define velocity ranges per game tick, acceleration, rotation-speed range,
+alpha/additive blending and room mirroring.
+Optional `motion_interpolation` independently eases movement and randomized
+spin over each particle's lifetime: `linear` (default), `ease_in`, `ease_out`,
+or `ease_in_out`. The curve remaps elapsed time for velocity and acceleration;
+the final lifetime tick reaches the same position and angle as linear motion.
+It does not change the particle's visual transition curve.
+
+`particle_layer` follows the native draw schedule:
+
+- `0`: in front of players and foreground tiles
+- `1`: behind players, in front of normal terrain
+- `2`: behind normal terrain
+- `3`: behind background tiles
+- `4`: furthest background
+
+Limits are 64 particles, 32 ambiances, 16 emitters per ambiance and 512 total
+lanes across the package. Lifetimes are 1..360,000 ticks; fades cannot exceed
+lifetime. Velocity and rotation endpoints are -256..256, acceleration is
+-64..64, visual scales are -64..64 (start scales cannot be zero), start/end
+rotations are -3600..3600 degrees, and areas require non-negative width and
+height.
+
+These particles are presentation-only. The runtime derives every lane from the
+pinned map identity, source room, game tick, emitter and lane number without
+gameplay RNG or mutable particle state. Rollback and online play therefore do
+not need extra simulation state. `data.json` and referenced PNGs are covered by
+the map's online compatibility identity. Use custom objects or map.lua for
+effects that affect gameplay.
 
 ## Room appearance
 
@@ -548,16 +714,20 @@ Custom maps should sort after vanilla maps, using:
 ## Online identity and local selectors
 
 The online manifest identifies a validated custom package as
-`custom:<normalized-id>:<sig>`, where `sig` is derived from the package's
-`data.json` and `data.map` text plus the loader-computed SHA-256 of every
-external V2 sprite sheet. Authors do not need to calculate or maintain those
-digests. Changing a PNG therefore changes the advertised map key even when
-`data.json` is untouched. Vanilla entries use `vanilla:<index>`.
+`custom:<normalized-id>:<sig>`. `sig` is the first 128 bits of a domain-separated
+SHA-256 over the exact `data.json` and `data.map` text plus the loader-computed
+SHA-256 of every external V2 sprite sheet, `map.lua`, and `entities.json`.
+Authors do not calculate or maintain it. Changing any runtime package byte changes
+the advertised map key even when `data.json` is untouched. Vanilla entries use
+`vanilla:<index>`.
 
 Numeric selectors are local registry positions and may change when installed
 maps are added, removed, renamed, or reordered. The server matches the stable
 manifest key, then sends each peer its own selector; peers must not compare or
-persist another client's numeric selector. The broader process-wide content
+persist another client's numeric selector. After native map creation, each client
+checks that the immutable pinned package still has the server-selected key; a map
+reload or selector reorder during setup aborts before the rollback layout is
+published. The broader process-wide content
 registry fingerprint is available for diagnostics, but online enforcement of
 that fingerprint remains future work.
 
@@ -738,8 +908,9 @@ Those can be added later, but they should not blur the first loader implementati
 
 ## V2 symbolic tiles and per-map tilesets
 
-`eggnogg-map/v2` is a backwards-compatible extension of the fixed `33x12`,
-center-out mirrored map model. All v1 metadata, rules, room ordering, ambience,
+`eggnogg-map/v2` is a backwards-compatible extension of the center-out mirrored
+map model. It can retain classic `33x12` rooms or opt into per-room
+`variable_cells` dimensions. All v1 metadata, rules, room ordering, ambience,
 and appearance fields keep the same meaning. Existing v1 packages require no
 changes.
 
@@ -914,6 +1085,10 @@ listed tile that does not override them:
 - `asset_sha256`: optional external-PNG integrity pin; normally omitted
 - `cell_w`, `cell_h`: external-sheet cell size, default `16`, range `1..512`
 - `padding`: external-sheet spacing in pixels, default `0`, range `0..64`
+- `source_x`, `source_y`: top-left pixel of the usable rectangle inside an
+  external PNG, default `0`, range `0..8191`
+- `source_w`, `source_h`: usable rectangle size, range `0..8192`; `0` means
+  continue from the source origin to that image edge
 - `native_layout`: default `false`. When `true`, the default must be a direct
   external PNG whose declared grid contains at least 128 cells. The first 128
   cells are the native prefix and use the same row-major order as
@@ -933,6 +1108,16 @@ no explicit tile references the sheet.
 
 With `native_layout: false`, the top-level sheet/grid is simply a concise default
 for entries in `tileset.tiles`. It does not reskin unlisted native glyphs.
+
+V2 rooms can select different native-layout sheets without duplicating tile
+definitions. Set `defaults.room.native_tileset` or
+`rooms.<source_room_id>.native_tileset` to the direct PNG name of the top-level
+external sheet or an entry in `tileset.sheets[]`. The selected grid must contain
+at least 128 cells. A room setting overrides the room default; otherwise the
+legacy map-wide `tileset.native_layout` choice is used. `null`, an empty string,
+or an omitted value inherits. Mirrored final rooms use their source room's
+selection. The renderer resolves the active room at each room boundary, while
+native collision and update behavior continue to use the authored glyphs.
 
 ### `tileset.tiles[]`
 
@@ -967,6 +1152,9 @@ Optional fields and defaults:
   (otherwise `16`), range `1..512`
 - `padding`: external-sheet spacing inherited from the map default (otherwise
   `0`), range `0..64`
+- `source_x`, `source_y`, `source_w`, `source_h`: optional per-tile crop inside
+  the PNG. This lets unrelated sprites share a larger image. Only the selected
+  rectangle must form a whole cell grid; the rest of the PNG is ignored.
 - `sprite_index`: first frame, default `0`, range `0..1000000`
 - `frame_count`: consecutive frames, default `1`, range `1..256`
 - `frame_ticks`: deterministic ticks per frame, default `1`, range `1..3600`
@@ -1037,6 +1225,13 @@ auto-discovered; do not add a script path or behavior program to JSON. Keeping
 native collision in JSON means the map stays physically safe if a sprite or
 script fails, while Lua can express the behavior that is actually unique to the
 map.
+
+For authored camera presentation, gameplay callbacks may call
+`map.set_camera_point(world_x, world_y, zoom)` (zoom 0.25..4),
+`map.clear_camera()`, and `map.camera_override()`. The point/zoom is bounded,
+quantized, and included in rollback; it changes drawing without changing the
+native simulation camera, collision, or respawn. Greggnogg exposes corresponding
+Game blocks. Follow/easing/bounds/shake controls remain future work.
 
 ```lua
 map.sensor(">", {
@@ -1202,7 +1397,22 @@ keys are at most 31 bytes, and values are `nil`, boolean, finite number, or a
 string of at most 63 bytes. `nil` deletes a value. `map.tick()` returns the
 rollback-tracked clock. `map.random()`, `map.random(max)`, and
 `map.random(min,max)` use a separate rollback-tracked deterministic generator.
+The two-bound form accepts either endpoint order and evaluates an inclusive range;
+the one-bound form still requires a maximum of at least one.
 Do not keep mutable callback state in ordinary globals or captured locals.
+
+Managed objects have a separate handle-owned state store in Map API 29. Use
+`entity.value(handle, name)` and `entity.set_value(handle, name, value)` for an
+instance's direction, cooldown, health, or similar state. `entity.change_value`
+adds to an unset-or-numeric value and returns the result; `entity.has_value`
+distinguishes false from absent; `entity.value_keys` returns bytewise-sorted names;
+and `entity.clear_values` clears one generation. Names are 1-32 bytes, values use
+the same scalar rules as `map.state`, and the entity package has 512 entries that
+do not consume the shared 64 slots. Values remain readable during `on_remove` and
+are automatically cleared after it succeeds. They are checksummed and restored
+with the combined entity snapshot. Online peers must advertise the identical
+map-package key; direct sessions additionally reject incompatible snapshot size or
+YMC3 content identity before the first gameplay frame.
 
 `map.state_keys()` (Map API version 10) returns a detached array of existing
 state keys in bytewise lexicographic order. It is available during loading and
@@ -1258,8 +1468,8 @@ thing slot creates a new contact identity; exact kind/updater/lifecycle checks
 prevent a delayed sword or K-hazard leave callback from writing into the
 replacement object. Script
 bytes and canonical tile bindings affect the package signature and advertised
-server map key; that existing 32-bit key is compatibility metadata, not a
-cryptographic content proof. The script is
+server map key. Its domain-separated 128-bit SHA-256 prefix covers the exact map
+package and all loader-hashed external content. The script is
 validated and retained from one exact bounded read, then activated only from
 the map generation pinned by native map creation. It never hot-swaps underneath
 a running online rollback match. Managed prematch requires that exact pinned
@@ -1301,10 +1511,11 @@ External v2 sprite sheets are intentionally constrained:
   drive names, `..`, alternate data streams, or absolute paths);
 - the file may not be a directory or reparse point;
 - it must have a valid PNG signature/IHDR and dimensions from `1x1` through
-  `4096x4096`;
+  `8192x8192`;
 - it must be non-empty and no larger than 64 MiB;
-- its dimensions must form a whole `cell_w` by `cell_h` grid with the declared
-  inter-cell `padding`, with at most 8,192 cells;
+- the selected source rectangle must fit inside the image and form a whole
+  `cell_w` by `cell_h` grid with the declared inter-cell `padding`, with at most
+  8,192 cells; pixels outside that rectangle may use any layout;
 - `sprite_index + frame_count` must stay inside that grid;
 - the loader always computes the file's SHA-256; an optional declared
   `asset_sha256` must match it; and
@@ -1320,12 +1531,14 @@ field is only an optional pin for packages that want an explicit expected hash.
 
 Before every atlas upload, the bridge rechecks the PNG header, non-reparse
 status, and full SHA-256 against the digest captured during the registry scan,
-then decodes each valid sheet, removes declared inter-cell padding into a tight
-temporary grid, and checks that the complete sheet fits the engine's fixed
-8,192-sprite global store before packing it. Its symbolic key is cached with
-the resulting atlas range. A missing, modified, mis-sliced, over-capacity, or
-unsuccessfully packed file is not resolved and therefore degrades to the native
-fallback instead of loading stale metadata.
+then decodes each valid sheet and removes declared inter-cell padding into a
+tight temporary grid. Map-owned sheets are packed into their own bounded native
+atlas page; Eggnogg's built-in 512x512 page is never resized, since native draw
+paths depend on that size. The bridge also checks that the complete sheet fits
+the engine's fixed 8,192-sprite global store before packing it. Its symbolic key
+is cached with the resulting atlas range. A missing, modified, mis-sliced,
+over-capacity, or unsuccessfully packed file is not resolved and therefore
+degrades to the native fallback instead of loading stale metadata.
 
 The normal hot-reload poll rescans map packages, commits a valid registry swap,
 and rebuilds the graphics atlas when the map generation changes. Reload is held
@@ -1451,18 +1664,22 @@ V1 and V2 packages may set `defaults.room.opponent_spawn` and override it in
 
 This is a fragment to merge into a complete package's `data.json`.
 
-- `default`: retain the native room/rules behavior. Explicit `default` overrides
-  a map-wide `always` or `never` setting.
+- `default`: retain the native room/rules behavior. In symmetrical layouts, the
+  two outermost goal rooms suppress new opponent spawns by default. Explicit
+  `default` overrides a map-wide `always` or `never` setting, but still keeps
+  that traditional outer-room behavior.
 - `always`: allow the trailing opponent to respawn, including end rooms. Combat
   remains enabled there and the native end-room removal path no longer removes
   that opponent. Score-target and victory-countdown restrictions still apply.
-- `never`: suppress the trailing opponent's subsequent respawns in that room.
-  This does not delete an already living opponent or disable combat.
+- `never`: suppress creation of the trailing opponent on room entry and on
+  subsequent respawn attempts in that room. It does not kill or remove an
+  already living opponent; combat with that fighter remains enabled.
 
 Omitting a room setting inherits `defaults.room`; omitting both uses `default`.
 The two mirrored copies share their source room's setting. Ordinary initial
 spawning, deaths before either player leads, and the leader's own respawn retain
-native behavior. This controls respawn permission, not delay or spawn position.
+native behavior. Preview and export use the same `data.json` policy. This
+controls spawn permission, not delay or spawn position.
 It does not change goal detection or round completion.
 
 Greggnogg exposes **Default opponent spawning** in map settings and
@@ -1539,8 +1756,10 @@ supports logical entity packages loaded from a direct `entities.json` file in V2
 map folders. Copy [the example package](docs/examples/entity_package.json) under
 that name; [the update example](docs/examples/entity_update.lua) can be saved as
 `map.lua`. The entity package is limited to 1 MiB and must pass validation. Maps
-with entities are offline-only for now; rendering, collision response, native
-combat and online admission remain under work.
+with entities enter the online map list only after full package validation. The
+server pairs identical 128-bit package signatures, and rollback transfer validates
+the complete YMC3 content identity before mutation. Full weapons/equipment and
+paired live soak acceptance remain under work.
 See [the custom-content status](docs/custom-content-system.md#native-rollback-extension-egg0-version-12).
 
 Managed entity scripts can query declared region overlaps using
@@ -1564,3 +1783,133 @@ tick/timer/entity-update callbacks; see [atomic native velocity changes](docs/cu
 
 Map API 19 exposes detached `entity.regions(handle)` geometry and the native
 `map.players()` contact radius. See [region queries and the launch-pad example](docs/custom-content-system.md#authored-region-queries-map-api-19).
+
+Map API 29 provides independent generation-aware object variables through
+`entity.value/set_value/change_value/has_value/value_keys/clear_values`; see
+[handle-owned object variables](docs/custom-content-system.md#handle-owned-object-variables-map-api-29).
+
+Map API 30 adds optional 1-32 byte names to authored entity regions.
+`entity.regions(handle)` exposes `name`, Greggnogg can select a named shape in
+touching blocks, and names participate in entity-package identity. See
+[authored region queries](docs/custom-content-system.md#authored-region-queries-map-apis-19-and-30).
+
+Map API 31 adds rollback-derived player input edges and ground state to
+`map.players()`: `grounded`, `previously_grounded`, and boolean `input`, `pressed`
+and `released` tables for attack, jump, directions and menu. Entity placements may
+start with `"visible": false`; `entity.get/set` expose the same render-only flag.
+Invisible entities still update, collide, deal damage, and activate enabled native
+physics triggers. Greggnogg draws them as faint editor-only ghosts so they remain
+selectable and erasable without changing their in-game visibility.
+The same records expose rollback-owned `spawned`, `respawned`, `room_changed`,
+and `previous_room` lifecycle history. Greggnogg compiles spawn, respawn, enter-room
+and leave-room events from these fields without hidden `map.state` variables.
+See [the API 31 contract and editable double-jump demo](docs/custom-content-system.md#player-input-ground-state-and-visibility-map-api-31).
+
+Map API 32 adds stable post-movement object/object and object/player contact
+callbacks. Map API 33 adds the generic managed-object
+`entity.damage(target, amount [, source])` signal and per-type
+`entity.on_damage` receiver. Objects may opt into managed health with
+`entity.enable_health`; damage then subtracts automatically and
+`entity.on_defeated` fires on the transition to zero. Reaching zero does not
+remove the object, so its defeated logic decides whether to animate, transform,
+disable, or remove it. `entity.on_damage_filter(type, callback)` runs before the
+health change and must return true to accept or false to block each attempt. Its
+record exposes the amount and optional managed-object source/type, allowing
+arbitrary deterministic resistance rules. Native combat sources remain separate
+backlog work. `map.trigger_mine_at(x, y)` provides explicit transaction-gated custom
+object activation of verified native mine cells; automatic collision-driven mine
+participation remains open. Both APIs participate in
+content identity and rollback transactions. See [managed contacts](docs/custom-content-system.md#managed-contact-lifecycle-map-api-32)
+and [managed damage](docs/custom-content-system.md#managed-object-damage-events-map-api-33).
+
+Map API 34 lets `entity.spawn` initialize up to 32 handle-owned scalar values
+through `properties.values`. Initial values exist before `on_spawn`, share the
+512-entry object-value store, and roll back with a rejected spawn transaction.
+See [spawn-time object values](docs/custom-content-system.md#spawn-time-object-values-map-api-34).
+
+Map API 35 adds synchronous general object messages with
+`entity.signal(target, name [, value [, source]])` and one per-type
+`entity.on_signal` receiver. Bounded names and scalar values, exact-generation
+handles, nesting limits and callback failures use the same transactional rules
+as managed damage. See [managed object signals](docs/custom-content-system.md#managed-object-signals-map-api-35).
+
+Map API 36 adds transactional `map.set_player_position(player, x, y)` for
+checkpoints, portals and scripted traversal. Position and velocity writes to both
+players share one native preflight and rollback transaction. See
+[atomic native player positioning](docs/custom-content-system.md#atomic-native-player-positioning-map-api-36).
+
+The Map API 36 presentation extension adds rollback-owned
+`map.set_player_presentation(player, options)` and
+`map.reset_player_presentation(player)`. Scripts can control `body_visible` and
+separate `skin_tint`/`clothing_tint` RGBA multipliers; `map.players()` reports the
+effective values. See [native player color and visibility](docs/custom-content-system.md#native-player-color-and-visibility-map-api-36).
+
+`map.set_player_sprite(player, object_type [, animation [, restart]])` uses a
+validated custom-object visual as a draw-only replacement that follows a native
+player; `map.clear_player_sprite` restores the composite body. The replacement
+inherits the authored picture's animation and transforms without altering native
+collision or combat state. `map.player_sprite(player)` returns a detached
+`{type, animation, sprite, tick, frame, frames, mode, finished, just_finished}` record for conditions and diagnostics, or nil
+while native rendering is active. The same values appear on live `map.players()`
+and player-contact records as `custom_sprite_type`, `custom_sprite_animation`,
+`custom_sprite_cell`, `custom_sprite_tick`, `custom_sprite_frame`,
+`custom_sprite_frames`, `custom_sprite_finished`, and
+`custom_sprite_just_finished` while a replacement is active. The last field is
+true only on the rollback tick when a once animation crosses its end.
+`map.set_player_sprite_transform(player, options)` adds independent draw scale,
+offset, rotation, RGBA tint, authored/behind/front layer, animation speed, visibility, and
+horizontal mirroring. `map.reset_player_sprite_transform` restores the selected
+object picture's authored values. These controls remain visual and do not alter
+the native player's collision or combat state. They persist through player death and room changes until cleared, and map exit, unload, or a script fault restores native drawing.
+
+The same extension provides optional rollback-owned health for either native
+player: `map.enable_player_health`, `map.player_health`, setters, healing, and
+`map.damage_player`. `map.on_player_damage`, `map.on_player_health_changed`, and
+`map.on_player_defeated` receive detached event tables. A transition to zero
+queues the ordinary native defeat in the same atomic player commit.
+Managed objects and players can be made temporarily invulnerable with
+`entity.set_invulnerable` or `map.set_player_invulnerable`; damage events distinguish
+the requested `amount` from `applied` damage and report `blocked`. The corresponding
+`disable_health` functions opt back out of the framework health model.
+
+The Map API 36 presentation extension adds per-instance `scale_x` and `scale_y` to managed object spawn,
+read and update properties. The rollback-owned multipliers affect rendering only;
+authored collision, sensors and combat regions remain unchanged. See
+[per-instance object presentation](docs/custom-content-system.md#per-instance-object-presentation-map-api-36).
+
+`entities.json` placements may initialize that presentation with optional
+`scale_x`, `scale_y`, `visual_offset_x`, `visual_offset_y`,
+`visual_rotation`, `visual_tint: "#RRGGBBAA"`,
+`draw_layer: "behind"|"front"`, and a named
+`animation`. These values compose with the type visual and enter the effective
+package fingerprint after room/side expansion.
+
+On a `room_graph` map, a room-local placement uses `instance` to name the exact
+final room node. `room` remains as the matching source design and coordinates
+stay local to that design. `side` is not used because geometry mirroring comes
+from the selected node. The loader rejects a source-room-only graph placement so
+reusing one design cannot silently put an object in the wrong copy:
+
+```json
+{
+  "name": "upper_switch",
+  "type": "custom:switch",
+  "room": "puzzle_source",
+  "instance": "upper_puzzle",
+  "x": 96,
+  "y": 80
+}
+```
+
+The same presentation extension accepts authored `types[].visual.rotation` and
+per-instance `visual_rotation`, in degrees from -360,000 through 360,000 at
+1/256-degree precision. The values add together and mirrored instances negate
+the result. Rotation changes draw submission only; authored regions retain their
+axis-aligned geometry. The instance value is available through `entity.spawn`,
+`entity.set`, and `entity.get` and is rollback-owned in YEW1/v6. Entity visual
+identity uses YEPM/v6. Map API remains version 36.
+
+The same API 36 extension adds per-instance `animation_speed` from 1/256x through 256x.
+Fractional animation progress is rollback-owned, so slow playback advances exactly
+the same way after restore. See
+[general animation playback](docs/custom-content-system.md#general-animation-playback-map-api-36).

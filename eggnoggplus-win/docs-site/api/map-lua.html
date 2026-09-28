@@ -20,8 +20,10 @@
     <p>Custom objects are framework-owned instances declared in <code>entities.json</code>.
     Their callbacks share this map's Lua VM. They are not native EGGNOGG thing slots:
     they do not automatically inherit native gravity, terrain collision, sword combat,
-    or corpse behavior. Entity-bearing maps remain offline-only.</p>
-    <p><code>entity.on_update(type, callback)</code>, <code>entity.on_spawn</code> and
+    or corpse behavior. Validated packages can play online when both peers advertise
+    the identical map-package signature.</p>
+    <p><code>entity.on_update(type, callback)</code>, <code>entity.on_spawn</code>,
+    <code>entity.on_contact</code>, <code>entity.on_player_contact</code> and
     <code>entity.on_remove</code> register lifecycle callbacks. Use <code>entity.get(handle)</code>
     and <code>entity.set(handle, {x=..., y=..., vx=..., vy=...})</code> for fixed-point
     movement. Live objects integrate velocity once each simulation tick. Coordinates
@@ -48,9 +50,29 @@
     provided by these blocks.</p>
     <p>API 24 adds <code>entity.set(handle, {automatic_motion=false})</code> to
     disable velocity integration while preserving explicit position writes and animation.
-    New Greggnogg designs use this mode. Per-instance block variables use keys
-    <code>o:HANDLE:NAME</code> in map.state and are cleared on removal. Names allow
-    up to 12 characters and share the existing 64-entry state limit.</p>
+    New Greggnogg designs use this mode.</p>
+    <h3>Per-object variables (API 29)</h3>
+    <p>Each managed object has independent rollback-owned values. Use
+    <code>entity.value(handle, name)</code>, <code>entity.set_value(handle, name, value)</code>,
+    <code>entity.change_value(handle, name, delta)</code>,
+    <code>entity.has_value(handle, name)</code>, <code>entity.value_keys(handle)</code>, and
+    <code>entity.clear_values(handle)</code>. Names are 1-32 bytes without NULs. Values are
+    nil, boolean, finite number, or strings up to 63 bytes; assigning nil deletes one value.
+    The package has 512 object-value entries, separate from the 64 shared
+    <code>map.state</code> entries.</p>
+    <p>Values follow the exact generation-aware handle, so two instances can use the same
+    name without sharing data. An <code>on_remove</code> callback may inspect the departing
+    object's values; the runtime clears them after that callback succeeds. Callback failure
+    restores both the entity and its values. <code>value_keys</code> returns a detached,
+    bytewise-sorted list. Greggnogg's <strong>this object</strong> variable scope generates
+    these calls automatically.</p>
+    <h3>Custom solid query (API 27)</h3>
+    <p><code>entity.solid_box(x, y, width, height [, ignored_handle])</code> tests
+    a centered rectangle against custom Solid regions, excluding an optional live
+    instance. It returns a boolean; edge-only contact is false. Dimensions range
+    from 1/256 to 128 pixels. Coordinates and dimensions round to 1/256 pixel.
+    Queries consume execution budget. Greggnogg physics combines this query with
+    native terrain detection and excludes the moving object's own regions.</p>
     <h3>Object point query (API 26)</h3>
     <p><code>entity.at(x, y)</code> returns a detached, stable-order list of handles
     whose authored regions contain the world point. Each instance appears once.
@@ -58,6 +80,166 @@
     participate and mirroring is applied. Empty-region objects do not match.
     Results may include the caller; use <code>entity.type</code> and ordinary
     conditions to filter them. Work is charged to the shared execution budget.</p>
+    <h3>Exact authored tile query (API 28)</h3>
+    <p><code>map.tile_at(x, y)</code> returns the one-character source symbol at a
+    world-space pixel coordinate. It reports custom V2 symbols exactly as authored,
+    rather than substituting their native collision glyph. Mirrored outer rooms map
+    back to their authored source cells. The function returns <code>nil</code> outside
+    the complete map, is available only during gameplay callbacks, and charges each
+    lookup to the shared execution budget.</p>
+    <p>Greggnogg exposes this together with <code>entity.at</code> as one
+    <strong>at x/y is [tile or object]</strong> block. Its picker contains native
+    tiles, custom tiles from the current map, and current-map object designs. Combine
+    several conditions with ordinary OR blocks to match any desired set.</p>
+    <h3>Named detection areas (API 30)</h3>
+    <p>Each object detection area may have an optional local <code>name</code> of 1-32
+    lowercase letters, numbers, underscores, hyphens, or periods. Names must be
+    unique within one object design. <code>entity.regions(handle)</code> includes that
+    name on the returned region, while older unnamed areas omit the field.</p>
+    <p>Names identify a particular shape independently of its purpose. For example,
+    a design can name sensors <code>feet</code> and <code>vision</code>, then test
+    <code>region.name == "vision"</code> even if both use the sensor purpose. Greggnogg's
+    player/object touching block lists the names belonging to the current object.
+    Region names are validated by both the editor and native loader and participate
+    in the package fingerprint.</p>
+    <h3>Player input, ground state and object visibility (API 31)</h3>
+    <p><code>map.players()</code> now includes <code>grounded</code> and
+    <code>previously_grounded</code>, plus detached <code>input</code>,
+    <code>pressed</code> and <code>released</code> tables. Each input table has boolean
+    <code>attack</code>, <code>jump</code>, <code>right</code>, <code>left</code>,
+    <code>up</code>, <code>down</code> and <code>menu</code> fields. Pressed and released
+    are edges between the rollback-owned pre-tick command and the current native tick.
+    Changing these returned tables does not change player input.</p>
+    <p>Managed object placements accept optional <code>visible: false</code> and
+    <code>entity.set(handle, {visible = boolean})</code> can change it later.
+    <code>entity.get(handle).visible</code> reports the current value. Visibility only
+    controls drawing: hidden objects still update, keep state and use their authored
+    sensor or solid regions.</p>
+    <p>A placement can initialize the same general presentation state with
+    <code>animation</code>, <code>scale_x</code>/<code>scale_y</code>,
+    <code>visual_offset_x</code>/<code>visual_offset_y</code>,
+    <code>visual_rotation</code> in degrees,
+    <code>visual_tint: "#RRGGBBAA"</code>, and
+    <code>draw_layer: "behind"</code> or <code>"front"</code>. Greggnogg exposes
+    these settings in the normal map editor's Object inspector after selecting a
+    placed custom tile.</p>
+    <p>The checked-in <code>maps/double_jump_demo</code> package uses these general
+    primitives for one extra airborne jump, a per-player indicator and a collectible
+    recharge. Its map and object behavior are saved as editable Greggnogg blocks; it
+    does not rely on a dedicated double-jump command.</p>
+    <h3>Object and player contacts (API 32)</h3>
+    <p><code>entity.player_contacts([handle [, selector]])</code> returns authored
+    regions touching live players. Limit it to one handle and select
+    <code>any</code>, a purpose such as <code>hitbox</code>, a named area such as
+    <code>name:attack</code>, or a positive region ID. Results are detached and
+    ordered by object slot, region declaration and player number. Each record has
+    <code>entity</code>, <code>region</code>, optional <code>region_name</code>,
+    <code>role</code>, <code>player</code>, motion, radius, ground state and input
+    tables.</p>
+    <p><code>entity.on_contact(type, callback)</code> receives object/object region
+    contacts. Its record includes <code>other</code>, <code>other_type</code>, both
+    region IDs, optional names and purposes. <code>entity.on_player_contact</code>
+    receives the player-contact record. The runtime captures all contacts after
+    movement and before calling either group. A failure restores managed state and
+    discards queued native player velocity/defeat writes.</p>
+    <p>Greggnogg exposes both lifecycle events in Object logic. The current-area,
+    other-area and other-object blocks filter contacts; ordinary this-player blocks
+    refer directly to the player in a player-contact event. Area purposes remain
+    descriptive: scripts decide whether a contact damages, collects, pushes,
+    removes, spawns or changes state.</p>
+    <h3>Managed object damage events (API 33)</h3>
+    <p><code>entity.damage(target, amount [, source])</code> synchronously sends a
+    deterministic attempt to a live managed object. It returns true when the target
+    has a damage filter, managed health, or an <code>entity.on_damage</code> callback.
+    The callback receives <code>(target, damage)</code>. The detached damage record
+    always has a finite positive <code>amount</code> and, when supplied, a live
+    <code>source</code> handle and <code>source_type</code>.</p>
+    <p>Optional managed health supplies current/maximum health, healing,
+    invulnerability and defeat callbacks. Register
+    <code>entity.on_damage_filter(type, callback)</code> to inspect the attempted
+    amount and optional managed-object source before health changes. It must return
+    true to accept the hit or false to reject it. Rejected hits still reach
+    <code>on_damage</code> with <code>blocked = true</code> and
+    <code>applied = 0</code>. Calls are gameplay-only, share the execution budget, preserve
+    deterministic caller order and allow at most 32 nested lifecycle callbacks.
+    Callback failure restores managed state and discards queued player changes.
+    Greggnogg provides before-damage, allow-damage, damage-event, amount and source
+    blocks. Native kicks, swords, spike balls and mines are not yet converted into
+    typed managed damage.</p>
+    <p><code>map.trigger_mine_at(x, y)</code> queues a native mine activation at
+    finite world coordinates. Requests execute only after the complete Lua transaction
+    succeeds, are limited to 32 per tick, and exact duplicates return false. Production
+    verifies that the coordinate currently contains native mine tile <code>0x06</code>
+    before calling EGGNOGG's own trigger path, so another tile action cannot run.
+    Greggnogg provides a matching coordinate action block.</p>
+    <h3>Spawn-time object values (API 34)</h3>
+    <p><code>entity.spawn(type, properties)</code> now accepts
+    <code>values = { name = value, ... }</code>. Up to 32 object variables are
+    installed on the new exact-generation handle before its
+    <code>on_spawn</code> callback. This supports reusable projectiles and
+    equipment-like objects configured with an owner, damage, team, cooldown or
+    other scalar data. Values use the normal object-variable limits and consume
+    the package-wide 512-entry capacity.</p>
+    <p>Spawn returns the new handle. Invalid initial values, capacity exhaustion,
+    or callback failure abort the enclosing transaction without leaving a partial
+    object. Greggnogg provides a configured-create block for one variable plus a
+    <strong>this object's handle</strong> value; Advanced Lua can fill the full
+    table.</p>
+    <h3>Managed object signals (API 35)</h3>
+    <p><code>entity.signal(target, name [, value [, source]])</code> synchronously
+    delivers a general authored message to a live managed object. One
+    <code>entity.on_signal(type, callback)</code> receiver may be registered per
+    type. The callback gets <code>(target, signal)</code>; the detached record has
+    <code>name</code>, optional scalar <code>value</code>, and optional live
+    <code>source</code>/<code>source_type</code> fields.</p>
+    <p>Names start with a lowercase letter and contain at most 32 lowercase
+    letters, numbers, dots, underscores, or hyphens. Calls are gameplay-only,
+    consume shared execution budget, preserve synchronous caller order, and
+    participate in transaction rollback. Use signals for switches, pickups,
+    equipment, weapons and authored state machines. Greggnogg provides receiver,
+    sender, name, value and source blocks, plus text values for name comparisons.</p>
+    <h3>Room doorway locks (API 36)</h3>
+    <p>Room-graph connections are numbered from 1 in the same order as
+    <code>layout.connections</code>. <code>map.set_exit_locked(connection, locked)</code>
+    changes one doorway's deterministic lock state, and
+    <code>map.exit_locked(connection)</code> reports it. A locked connection refuses
+    traversal in both directions; one-way direction still applies after it is unlocked.
+    Locks are available for all 256 connection slots, have their own rollback storage,
+    and do not consume <code>map.state</code> entries. They default to unlocked and fail
+    open if map logic is disabled.</p>
+    <p>Greggnogg numbers the doorway rows in Rooms mode and exposes those same labels
+    in the Game block group as <strong>set Door … to locked/unlocked</strong> and
+    <strong>Door … is locked</strong>. Blocks save the connection's stable editor ID
+    and compile it to the current native number, so deleting an earlier doorway does
+    not silently retarget them. Handwritten Lua uses numbers directly and must be
+    reviewed after connections are reordered.</p>
+    <p><code>map.room_count()</code> reports the immutable placed-room count,
+    <code>map.start_room()</code> returns the zero-based starting room (or nil for
+    an empty layout), and <code>map.room_info(room)</code> returns detached room
+    metadata. Its common fields are <code>room</code>, <code>id</code>,
+    <code>source_room</code>, <code>source_id</code>, <code>placed</code>, and
+    <code>start</code>. Room-graph entries also include normalized world-pixel
+    <code>x</code>, <code>y</code>, <code>width</code>, <code>height</code>, and
+    <code>mirrored</code>. The zero-based number matches player
+    <code>room</code> observations on graph maps, avoiding coordinate-based room
+    guesses in portals, checkpoints, and room-specific rules.</p>
+    <p><code>map.move_player_to_room(player, room, local_x, local_y)</code> moves
+    a player during a tick, timer, or entity-update callback. The room is a
+    zero-based placed-room number and the pixel position is local to that room.
+    Yule validates the point and commits the translated world position and
+    native room number together for consistent transitions, camera state, and
+    rollback.</p>
+    <h3>Camera drawing</h3>
+    <p>In a gameplay callback, <code>map.set_camera_point(x, y, zoom)</code>
+    fixes the rendered camera at a world-pixel point with zoom from 0.25 to 4.
+    Coordinates are bounded and rounded to 1/256 pixel; zoom is rounded to
+    1/256. <code>map.clear_camera()</code> returns to the native camera, while
+    <code>map.camera_override()</code> returns a detached table with
+    <code>x</code>, <code>y</code>, and <code>zoom</code>, or nil when inactive.
+    This changes drawing only, not physics, room transitions, or respawn rules.
+    The camera state participates in rollback. Greggnogg exposes point, release,
+    and readback blocks in Game. Follow targets, animation, bounds, and shake
+    are not yet authored camera features.</p>
     <h3>Solid obstacles (API 25)</h3>
     <p>A region with <code>role: "solid"</code> blocks native players, corpses,
     swords and hazards. Greggnogg exposes this as the area's Solid checkbox.
@@ -71,18 +253,105 @@
     stop movement or damage a player. <code>entity.regions(handle)</code> returns local
     and world bounds; <code>entity.contacts()</code> queries object/object region overlaps.
     <code>map.players()</code> supplies live player positions, speeds and contact radii.
-    Logic must choose the response. Greggnogg's player/object touching block performs
-    a circle/rectangle test against the chosen region role.</p>
-    <p>During tick or entity-update callbacks, <code>map.set_player_velocity(player, vx, vy)</code>
-    queues native velocity changes; <code>map.defeat_player(player)</code> queues native
-    death. Player numbers are 1 and 2. Both commit after successful script execution;
-    callback failure discards the batch. Defeat is a one-hit native action, not a general
-    health, weapon or equipment system.</p>
+    Logic must choose the response. Greggnogg's player/object touching block uses
+    <code>entity.player_contacts</code> against a chosen purpose or named area.</p>
+    <p>During tick, entity-update or entity-contact callbacks, <code>map.set_player_velocity(player, vx, vy)</code>
+    queues native velocity changes, <code>map.set_player_position(player, x, y)</code>
+    queues a checkpoint/portal move, and <code>map.defeat_player(player)</code> queues native
+    death. Player numbers are 1 and 2. All commit after successful script execution;
+    callback failure discards the batch. A position change also translates the native
+    previous position, preventing false one-frame motion after a teleport.</p>
+    <p>Health is optional. Greggnogg's Object designer has a <strong>Health and damage</strong>
+    section for maximum and starting health. Managed objects use <code>entity.enable_health</code>,
+    <code>entity.health</code>, the health setters, <code>entity.heal</code>, and
+    <code>entity.damage</code>. Damage subtracts managed health automatically;
+    <code>entity.on_defeated</code> runs on the transition to zero and chooses whether
+    to animate, transform, disable, or remove the object.
+    <code>entity.set_invulnerable</code> blocks applied damage while preserving damage
+    attempt callbacks, <code>entity.invulnerable</code> queries it, and
+    <code>entity.disable_health</code> opts out of managed health.</p>
+    <p>Verified native attacks use the same object damage pipeline. Punches deal 12,
+    kicks deal 25, and held swords, thrown swords, K spike balls, and mine blasts deal
+    100. Their <code>damage.source_type</code> values are
+    <code>native:punch</code>, <code>native:kick</code>,
+    <code>native:sword</code>, <code>native:thrown_sword</code>,
+    <code>native:spike_ball</code>, and <code>native:mine</code>. The Object designer
+    exposes each source as a checkbox. Attacks test Damage receiver areas and fall back
+    to Body areas. Held-sword damage follows the engine's attacking probes; an idle
+    sword resting or blocking against an object does not deal damage.
+    <code>entity.was_hit_by_player(handle, player)</code> reports an
+    accepted, nonzero player hit during the current tick. Player-owned attacks include
+    <code>damage.source_player</code> as 1 or 2; spike balls and mines omit it.</p>
+    <p>Mine damage is emitted only when the native explosion callback accepts the
+    blast; arming a mine does not deal damage. Call
+    <code>entity.set_mine_knockback(handle, true)</code>, or enable
+    <strong>Knocked away by mine explosions</strong> in the Object designer, to apply
+    EGGNOGG's 32-pixel radial impulse and distance falloff. This setting works without
+    managed health and independently of the mine-damage checkbox.
+    <code>entity.mine_knockback(handle)</code> reads it.</p>
+    <p>Native players use <code>map.enable_player_health</code>,
+    <code>map.player_health</code>, <code>map.set_player_health</code>,
+    <code>map.set_player_max_health</code>, <code>map.damage_player</code>, and
+    <code>map.heal_player</code>. Register <code>map.on_player_damage</code>,
+    <code>map.on_player_health_changed</code>, or <code>map.on_player_defeated</code>
+    for reactions. Lethal damage queues ordinary native defeat. All health state and
+    effects participate in rollback. <code>map.set_player_invulnerable</code>
+    temporarily blocks damage, <code>map.player_invulnerable</code> queries it, and
+    <code>map.disable_player_health</code> restores native unmanaged health behavior.
+    Damage events distinguish requested <code>amount</code> from actual
+    <code>applied</code> damage and report <code>blocked</code>.</p>
+    <p>Player snapshots also expose numeric <code>native_state</code>, <code>room</code>,
+    <code>facing</code> (-1 left, 0 neutral/unknown, 1 right),
+    complete current/previous <code>collision_flags</code>, and the synchronized
+    <code>skin_palette</code>/<code>clothing_palette</code> indices. These are detached,
+    read-only observations suitable for conditions and diagnostics. The boolean
+    <code>has_sword</code> reports native weapon ownership directly.</p>
+    <p><code>map.set_player_presentation(player, options)</code> can set
+    <code>body_visible</code> and separate <code>skin_tint</code>/
+    <code>clothing_tint</code> RGBA multipliers during gameplay callbacks.
+    Use <code>"default"</code> for one field or
+    <code>map.reset_player_presentation(player)</code> for all fields. These
+    draw-only values participate in rollback and are reported by
+    <code>map.players()</code>. Player sprite replacement, animation, scale,
+    offsets and draw layer are available through the dedicated replacement
+    renderer: <code>map.set_player_sprite(player, object_type, animation, restart, restore)</code>
+    reuses any validated custom-object picture and its authored transforms;
+    set <code>restore</code> to true for a once animation to return to the native
+    body on its deterministic completion tick. Loop and ping-pong animations
+    reject automatic restore because they do not finish.
+    <code>map.clear_player_sprite(player)</code> restores the native body. The
+    replacement follows native motion without changing collision or combat.
+    <code>map.player_sprite(player)</code> returns its object type, animation,
+    resolved sprite cell, elapsed animation tick, frame/count, playback mode,
+    completion state, one-tick <code>just_finished</code> edge, and automatic
+    <code>restore</code> policy, or nil for the native body.
+    <code>map.set_player_sprite_transform(player, options)</code> controls independent
+    X/Y scale, offsets, rotation, tint, draw layer, animation speed, visibility and horizontal
+    mirroring; <code>map.reset_player_sprite_transform(player)</code> restores the
+    object picture's authored transform.</p>
     <p>Additional entity controls include <code>animation_tick</code>,
-    <code>animation_paused</code> and <code>mirrored</code>. Visibility, arbitrary per-instance
-    sprite changes and full native rigid-body behavior are not exposed by this version.
-    Use <code>map.state</code> for persistent logic state. Managed entities and script
-    state participate in rollback; this does not make entity maps online-admissible.</p>
+    <code>animation_speed</code>, <code>animation_paused</code>, visual
+    <code>scale_x</code>/<code>scale_y</code>, <code>visual_offset_x</code>/
+    <code>visual_offset_y</code>, <code>visual_rotation</code>,
+    <code>visual_tint</code>, <code>draw_layer</code>,
+    <code>mirrored</code> and <code>visible</code>. Tint accepts
+    <code>#RRGGBBAA</code> or <code>default</code>; draw layer accepts
+    <code>authored</code>, <code>behind</code>, or <code>front</code>.
+    The type's authored <code>visual.rotation</code> and per-instance
+    <code>visual_rotation</code> add together. Mirroring negates the combined angle;
+    rotation changes drawing only and leaves authored regions axis-aligned.
+    Object types can define arbitrary named animation clips with loop, once, or ping-pong
+    playback. Use <code>entity.play_animation(handle, name [, restart])</code>,
+    <code>entity.animation(handle)</code>, and <code>entity.animation_status(handle)</code>.
+    The status table includes the zero-based frame, frame count, mode, tick, and a
+    finished flag for play-once clips. <code>entity.on_animation_finish(type, callback)</code>
+    receives the object and detached status once at that boundary, in stable object order.
+    Full native rigid-body behavior is not exposed by this version.
+    Use <code>map.state</code> for shared persistent logic and the object-value API for
+    per-instance state. Managed entities and script state participate in rollback.
+    Matchmaking compares a 128-bit package signature covering map/config, scripts,
+    entities and external assets; P2P preflight then validates layout and the full
+    managed-content identity before frame zero.</p>
   </section>
 
   <section>
@@ -90,10 +359,11 @@
     <ul>
       <li>The loader discovers one direct non-reparse <code>map.lua</code>; JSON does not name it.</li>
       <li>The retained source and canonical tile bindings are part of map identity and online compatibility.</li>
-      <li>Callbacks cannot capture upvalues. Persist simulation values in <code>map.state</code>.</li>
+      <li>Callbacks cannot capture upvalues. Persist shared values in <code>map.state</code> and instance values with <code>entity.set_value</code>.</li>
       <li>Contact order is deterministic: top-to-bottom, left-to-right map order over one immutable pre-callback physics sample.</li>
       <li>A callback fault restores its partial object/tile/state changes, disables script behavior, and leaves native collision/render fallback active.</li>
       <li>Script state, private RNG, tick clock, contacts, velocity limits, and sprite overrides participate in rollback.</li>
+      <li><code>map.random(min, max)</code> accepts either endpoint order and returns an inclusive deterministic integer.</li>
     </ul>
   </section>
 
@@ -160,7 +430,8 @@ end)</code></pre>
       <tr><th>Source</th><td>One direct file, maximum 256 KiB</td></tr>
       <tr><th>VM memory</th><td>2 MiB default cap</td></tr>
       <tr><th>Execution</th><td>100,000-instruction load/callback budget</td></tr>
-      <tr><th>State</th><td>64 entries; keys 1–31 bytes; string values at most 63 bytes</td></tr>
+      <tr><th>Shared state</th><td>64 entries; keys 1–31 bytes; string values at most 63 bytes</td></tr>
+      <tr><th>Object state</th><td>512 entries across managed objects; names 1-32 bytes; string values at most 63 bytes</td></tr>
       <tr><th>Rejected</th><td>Power operator <code>^</code>; platform libm power is not a rollback-stable primitive</td></tr>
     </tbody></table>
   </section>

@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void) {
@@ -17,6 +18,9 @@ int main(void) {
     unsigned char pixel[4] = {0, 0, 0, 0};
     unsigned char blurred[sizeof(line)];
     unsigned char unchanged[4] = {1, 2, 3, 4};
+    unsigned char* decoded = NULL;
+    int decoded_width = 0;
+    int decoded_height = 0;
 
     rgba_downsample_box(source_2x2, 2, 2, pixel, 1, 1);
     assert(pixel[0] == 138);
@@ -34,6 +38,15 @@ int main(void) {
     assert(memcmp(unchanged, (unsigned char[]){1, 2, 3, 4}, 4) == 0);
     rgba_box_blur(unchanged, unchanged, 1, 1, 1);
     assert(memcmp(unchanged, (unsigned char[]){1, 2, 3, 4}, 4) == 0);
+
+    /* Regression for large, indexed-color PNG sheets exported by ezgif. */
+    assert(rgba_load_image_portable(
+        "tests\\fixtures\\palette-grid-1060x910.png", &decoded,
+        &decoded_width, &decoded_height));
+    assert(decoded != NULL);
+    assert(decoded_width == 1060 && decoded_height == 910);
+    assert(decoded[3] == 0);
+    free(decoded);
 
     puts("image utility tests: OK");
     return 0;

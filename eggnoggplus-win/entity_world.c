@@ -6,13 +6,23 @@
 typedef struct EntitySlot { uint32_t generation, active; EntityValue value; } EntitySlot;
 struct EntityWorld { uint32_t capacity, count; uint64_t tick; EntitySlot* slots; EntityType* types; uint32_t type_count; int spawned; int updating, update_failed; int has_solids; };
 #define EW_HEADER 32u
-#define EW_RECORD 40u
-#define EW_TYPE_BYTES (8u + ENTITY_TYPE_REGIONS_MAX * 32u)
+#define EW_RECORD 80u
+#define EW_TYPE_BYTES (12u + ENTITY_TYPE_REGIONS_MAX * 32u)
 static int valid_value(const EntityValue* v) {
-    return v && v->animation_tick<=ENTITY_ANIMATION_TICK_MAX && v->type_id && v->x >= -ENTITY_WORLD_COORD_LIMIT && v->x <= ENTITY_WORLD_COORD_LIMIT &&
+    return v && !(v->flags & ~ENTITY_FLAG_KNOWN) && v->animation_tick<=ENTITY_ANIMATION_TICK_MAX && v->type_id && v->x >= -ENTITY_WORLD_COORD_LIMIT && v->x <= ENTITY_WORLD_COORD_LIMIT &&
         v->y >= -ENTITY_WORLD_COORD_LIMIT && v->y <= ENTITY_WORLD_COORD_LIMIT &&
         v->vx >= -ENTITY_WORLD_COORD_LIMIT && v->vx <= ENTITY_WORLD_COORD_LIMIT &&
-        v->vy >= -ENTITY_WORLD_COORD_LIMIT && v->vy <= ENTITY_WORLD_COORD_LIMIT;
+        v->vy >= -ENTITY_WORLD_COORD_LIMIT && v->vy <= ENTITY_WORLD_COORD_LIMIT &&
+        v->visual_scale_x >= -65536 && v->visual_scale_x <= 65536 &&
+        v->visual_scale_y >= -65536 && v->visual_scale_y <= 65536 &&
+        v->animation_rate >= 0 && v->animation_rate <= 65536 &&
+        v->animation_subtick < 256u &&
+        v->visual_offset_x>=-ENTITY_WORLD_COORD_LIMIT && v->visual_offset_x<=ENTITY_WORLD_COORD_LIMIT &&
+        v->visual_offset_y>=-ENTITY_WORLD_COORD_LIMIT && v->visual_offset_y<=ENTITY_WORLD_COORD_LIMIT &&
+        ((v->flags&ENTITY_FLAG_TINT_OVERRIDE)||!v->visual_tint) &&
+        ((v->flags&ENTITY_FLAG_LAYER_OVERRIDE)?v->visual_layer<=1u:!v->visual_layer) &&
+        v->visual_rotation>=-INT32_C(92160000) &&
+        v->visual_rotation<=INT32_C(92160000);
 }
 EntityWorld* entity_world_create(uint32_t capacity) {
     EntityWorld* w;
@@ -43,6 +53,13 @@ static const EntityType* find_type(const EntityWorld* w, uint32_t id) {
     }
     return lo<w->type_count && w->types[lo].id==id ? &w->types[lo] : NULL;
 }
+static int valid_world_value(const EntityWorld* w,const EntityValue* value) {
+    const EntityType* type;
+    if(!valid_value(value))return 0;
+    if(!w->types)return value->animation_id==0;
+    type=find_type(w,value->type_id);
+    return type&&value->animation_id<=type->animation_count;
+}
 int entity_world_read_type(const EntityWorld* w,uint32_t id,EntityType* out) {
     const EntityType* type;
     if(!w || !out || !(type=find_type(w,id))) return 0;
@@ -50,7 +67,7 @@ int entity_world_read_type(const EntityWorld* w,uint32_t id,EntityType* out) {
 }
 EntityHandle entity_world_spawn(EntityWorld* w, const EntityValue* value) {
     uint32_t i;
-    if (!w || !valid_value(value) || (w->types && !find_type(w,value->type_id))) return 0;
+    if (!w || !valid_world_value(w,value)) return 0;
     for (i=0; i<w->capacity; ++i) {
         EntitySlot* slot = &w->slots[i];
         /* Exhausted generations retire a slot instead of reviving stale handles. */
@@ -72,7 +89,7 @@ int entity_world_read(const EntityWorld* w, EntityHandle h, EntityValue* out) {
 }
 int entity_world_write(EntityWorld* w, EntityHandle h, const EntityValue* value) {
     EntitySlot* slot=find_slot(w,h);
-    if (!slot || !valid_value(value) || value->type_id != slot->value.type_id) return 0;
+    if (!slot || !valid_world_value(w,value) || value->type_id != slot->value.type_id) return 0;
     slot->value=*value; return 1;
 }
 EntityHandle entity_world_next(const EntityWorld* w, uint32_t* cursor) {
@@ -90,7 +107,11 @@ int entity_world_step(EntityWorld* w) {
     for (i=0; i<w->capacity; ++i) if (w->slots[i].active) {
         const EntityValue* v=&w->slots[i].value;
         int64_t x=(int64_t)v->x+((v->flags & ENTITY_FLAG_MANUAL_MOTION)?0:v->vx), y=(int64_t)v->y+((v->flags & ENTITY_FLAG_MANUAL_MOTION)?0:v->vy);
-        if(!(v->flags & ENTITY_FLAG_ANIMATION_PAUSED) && v->animation_tick==ENTITY_ANIMATION_TICK_MAX)return 0;
+        if(!(v->flags & ENTITY_FLAG_ANIMATION_PAUSED)) {
+            uint32_t rate=v->animation_rate?(uint32_t)v->animation_rate:256u;
+            uint64_t advance=((uint64_t)v->animation_subtick+rate)/256u;
+            if(advance>ENTITY_ANIMATION_TICK_MAX-v->animation_tick)return 0;
+        }
         if (x < -ENTITY_WORLD_COORD_LIMIT || x > ENTITY_WORLD_COORD_LIMIT ||
             y < -ENTITY_WORLD_COORD_LIMIT || y > ENTITY_WORLD_COORD_LIMIT) return 0;
     }
@@ -99,7 +120,12 @@ int entity_world_step(EntityWorld* w) {
             w->slots[i].value.x+=w->slots[i].value.vx;
             w->slots[i].value.y+=w->slots[i].value.vy;
         }
-        if(!(w->slots[i].value.flags & ENTITY_FLAG_ANIMATION_PAUSED))w->slots[i].value.animation_tick++;
+        if(!(w->slots[i].value.flags & ENTITY_FLAG_ANIMATION_PAUSED)) {
+            uint32_t rate=w->slots[i].value.animation_rate?(uint32_t)w->slots[i].value.animation_rate:256u;
+            uint32_t accumulated=w->slots[i].value.animation_subtick+rate;
+            w->slots[i].value.animation_tick+=accumulated/256u;
+            w->slots[i].value.animation_subtick=accumulated%256u;
+        }
     }
     w->tick++; return 1;
 }
@@ -107,9 +133,9 @@ static void put32(unsigned char* p,uint32_t v) { for (int i=0;i<4;++i) p[i]=(uns
 static uint32_t get32(const unsigned char* p) { return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
 static int32_t signed32(uint32_t v) { return v<=INT32_MAX ? (int32_t)v : -1-(int32_t)(UINT32_MAX-v); }
 static void encode_type(unsigned char* p,const EntityType* t) {
-    memset(p,0,EW_TYPE_BYTES); put32(p,t->id); put32(p+4,t->region_count);
+    memset(p,0,EW_TYPE_BYTES); put32(p,t->id); put32(p+4,t->region_count);put32(p+8,t->animation_count);
     for(uint32_t i=0;i<t->region_count;++i) {
-        const EntityRegion* r=&t->regions[i]; unsigned char* q=p+8+i*32;
+        const EntityRegion* r=&t->regions[i]; unsigned char* q=p+12+i*32;
         put32(q,r->id);put32(q+4,r->role);put32(q+8,r->layer);put32(q+12,r->mask);
         put32(q+16,(uint32_t)r->x);put32(q+20,(uint32_t)r->y);
         put32(q+24,(uint32_t)r->width);put32(q+28,(uint32_t)r->height);
@@ -120,7 +146,7 @@ int entity_world_save(const EntityWorld* w,void* bytes,size_t size) {
     unsigned char* p=bytes;
     uint32_t i;
     if (!w || !p || size != entity_world_snapshot_size(w)) return 0;
-    memset(p,0,size); memcpy(p,"YEW1",4); put32(p+4,2); put32(p+8,w->capacity); put32(p+12,w->count);
+    memset(p,0,size); memcpy(p,"YEW1",4); put32(p+4,6); put32(p+8,w->capacity); put32(p+12,w->count);
     put32(p+16,(uint32_t)w->tick); put32(p+20,(uint32_t)(w->tick>>32)); put32(p+24,w->type_count);
     for(uint32_t t=0;t<w->type_count;++t) encode_type(p+EW_HEADER+w->capacity*EW_RECORD+t*EW_TYPE_BYTES,&w->types[t]);
     for(i=0;i<w->capacity;++i) {
@@ -129,6 +155,12 @@ int entity_world_save(const EntityWorld* w,void* bytes,size_t size) {
         put32(r+12,(uint32_t)s->value.x); put32(r+16,(uint32_t)s->value.y);
         put32(r+20,(uint32_t)s->value.vx); put32(r+24,(uint32_t)s->value.vy); put32(r+28,s->value.flags);
         put32(r+32,(uint32_t)s->value.animation_tick);put32(r+36,(uint32_t)(s->value.animation_tick>>32));
+        put32(r+40,(uint32_t)s->value.visual_scale_x);put32(r+44,(uint32_t)s->value.visual_scale_y);
+        put32(r+48,(uint32_t)s->value.animation_rate);put32(r+52,s->value.animation_subtick);
+        put32(r+56,s->value.animation_id);
+        put32(r+60,(uint32_t)s->value.visual_offset_x);put32(r+64,(uint32_t)s->value.visual_offset_y);
+        put32(r+68,s->value.visual_tint);put32(r+72,s->value.visual_layer);
+        put32(r+76,(uint32_t)s->value.visual_rotation);
     }
     return 1;
 }
@@ -138,12 +170,18 @@ static EntitySlot decode_slot(const unsigned char* r) {
     s.value.type_id=get32(r+8); s.value.x=signed32(get32(r+12)); s.value.y=signed32(get32(r+16));
     s.value.vx=signed32(get32(r+20)); s.value.vy=signed32(get32(r+24)); s.value.flags=get32(r+28);
     s.value.animation_tick=(uint64_t)get32(r+32)|((uint64_t)get32(r+36)<<32);
+    s.value.visual_scale_x=signed32(get32(r+40));s.value.visual_scale_y=signed32(get32(r+44));
+    s.value.animation_rate=signed32(get32(r+48));s.value.animation_subtick=get32(r+52);
+    s.value.animation_id=get32(r+56);
+    s.value.visual_offset_x=signed32(get32(r+60));s.value.visual_offset_y=signed32(get32(r+64));
+    s.value.visual_tint=get32(r+68);s.value.visual_layer=get32(r+72);
+    s.value.visual_rotation=signed32(get32(r+76));
     return s;
 }
 int entity_world_validate_snapshot(const EntityWorld* w,const void* bytes,size_t size) {
     const unsigned char* p=bytes; uint32_t count=0,i;
     if (!w || !p || size!=entity_world_snapshot_size(w) || memcmp(p,"YEW1",4) ||
-        get32(p+4)!=2 || get32(p+8)!=w->capacity || get32(p+12)>w->capacity || get32(p+24)!=w->type_count || get32(p+28)) return 0;
+        get32(p+4)!=6 || get32(p+8)!=w->capacity || get32(p+12)>w->capacity || get32(p+24)!=w->type_count || get32(p+28)) return 0;
     for(uint32_t t=0;t<w->type_count;++t) {
         unsigned char expected[EW_TYPE_BYTES]; encode_type(expected,&w->types[t]);
         if(memcmp(expected,p+EW_HEADER+w->capacity*EW_RECORD+t*EW_TYPE_BYTES,EW_TYPE_BYTES)) return 0;
@@ -151,10 +189,23 @@ int entity_world_validate_snapshot(const EntityWorld* w,const void* bytes,size_t
     for(i=0;i<w->capacity;++i) {
         const unsigned char* r=p+EW_HEADER+i*EW_RECORD; EntitySlot s=decode_slot(r);
         if (s.active>1) return 0;
-        if (s.active) { if (!s.generation || !valid_value(&s.value) || (w->types && !find_type(w,s.value.type_id))) return 0; count++; }
+        if (s.active) { if (!s.generation || !valid_world_value(w,&s.value)) return 0; count++; }
         else { for (uint32_t j=8;j<EW_RECORD;++j) if (r[j]) return 0; }
     }
     if (count!=get32(p+12)) return 0;
+    return 1;
+}
+int entity_world_snapshot_contains_handles(const EntityWorld* w,const void* bytes,size_t size,
+                                           const EntityHandle* handles,size_t handle_count) {
+    const unsigned char* p=bytes;
+    if ((handle_count && !handles) || !entity_world_validate_snapshot(w,bytes,size)) return 0;
+    for(size_t i=0;i<handle_count;++i) {
+        uint32_t slot=(uint32_t)handles[i];
+        const unsigned char* record;
+        if(!slot || slot>w->capacity || !(uint32_t)(handles[i]>>32)) return 0;
+        record=p+EW_HEADER+(size_t)(slot-1u)*EW_RECORD;
+        if(get32(record+4)!=1u || get32(record)!=(uint32_t)(handles[i]>>32)) return 0;
+    }
     return 1;
 }
 int entity_world_load(EntityWorld* w,const void* bytes,size_t size) {
@@ -174,7 +225,7 @@ int entity_world_define_types(EntityWorld* w,const EntityType* types,uint32_t co
     if (!w || w->updating || w->types || w->spawned || w->tick || !types || !count || count>ENTITY_WORLD_LIMIT) return 0;
     for(uint32_t i=0;i<count;++i) {
         const EntityType* t=&types[i];
-        if (!t->id || t->region_count>ENTITY_TYPE_REGIONS_MAX) return 0;
+        if (!t->id || t->region_count>ENTITY_TYPE_REGIONS_MAX || t->animation_count>32u) return 0;
         for(uint32_t j=0;j<i;++j) if(types[j].id==t->id) return 0;
         for(uint32_t j=0;j<t->region_count;++j) {
             const EntityRegion* r=&t->regions[j];
@@ -187,7 +238,7 @@ int entity_world_define_types(EntityWorld* w,const EntityType* types,uint32_t co
     }
     copy=calloc(count,sizeof(*copy)); if(!copy) return 0;
     for(uint32_t i=0;i<count;++i) {
-        copy[i].id=types[i].id; copy[i].region_count=types[i].region_count;
+        copy[i].id=types[i].id; copy[i].region_count=types[i].region_count;copy[i].animation_count=types[i].animation_count;
         memcpy(copy[i].regions,types[i].regions,types[i].region_count*sizeof(EntityRegion));
     }
     qsort(copy,count,sizeof(*copy),type_order);

@@ -63,7 +63,7 @@ int main(void){
     staging(token,packet,length);
     assert(preview_bridge_begin(token,error,sizeof(error)));assert(preview_bridge_port()!=0);
     request("GET","1123456789abcdef0123456789abcdef",NULL,0,403,"inactive session");
-    request("OPTIONS",token,NULL,0,200,"Access-Control-Allow-Origin");request("GET",token,NULL,0,200,"waiting");
+    request("OPTIONS",token,NULL,0,200,"Access-Control-Allow-Origin");request("GET",token,NULL,0,200,"\"api\":2");
     request("POST",token,packet,length,202,"ready");assert(preview_bridge_take(received,&bytes,&size));assert(!strcmp(received,token)&&size==length&&!memcmp(bytes,packet,size));free(bytes);
     request("POST",token,packet,length,409,"already submitted");preview_bridge_finish(token,1);request("GET",token,NULL,0,200,"done");
     for(unsigned attempt=0;attempt<16;attempt++){

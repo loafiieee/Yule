@@ -11,12 +11,28 @@ typedef uint64_t EntityHandle;
 #define ENTITY_FLAG_MIRROR_X UINT32_C(1)
 #define ENTITY_FLAG_ANIMATION_PAUSED UINT32_C(2)
 #define ENTITY_FLAG_MANUAL_MOTION UINT32_C(4)
+#define ENTITY_FLAG_HIDDEN UINT32_C(8)
+#define ENTITY_FLAG_TINT_OVERRIDE UINT32_C(16)
+#define ENTITY_FLAG_LAYER_OVERRIDE UINT32_C(32)
+#define ENTITY_FLAG_KNOWN (ENTITY_FLAG_MIRROR_X | ENTITY_FLAG_ANIMATION_PAUSED | ENTITY_FLAG_MANUAL_MOTION | ENTITY_FLAG_HIDDEN | ENTITY_FLAG_TINT_OVERRIDE | ENTITY_FLAG_LAYER_OVERRIDE)
 #define ENTITY_ANIMATION_TICK_MAX UINT64_C(9007199254740991)
 typedef struct EntityValue {
     uint32_t type_id;
     int32_t x, y, vx, vy;
     uint32_t flags;
     uint64_t animation_tick; /* Instance-local simulation clock, exact in Lua. */
+    /* Per-instance visual multipliers in 1/256 units. Zero inherits 1.0.
+     * These never alter authored collision or contact geometry. */
+    int32_t visual_scale_x, visual_scale_y;
+    /* Animation speed in 1/256 tick units; zero inherits 1.0. Subtick is the
+     * rollback-owned fractional accumulator used for rates below one. */
+    int32_t animation_rate;
+    uint32_t animation_subtick;
+    uint32_t animation_id; /* 0 default visual; otherwise 1-based named clip. */
+    int32_t visual_offset_x,visual_offset_y; /* Additive 1/256-pixel draw offsets. */
+    uint32_t visual_tint; /* RRGGBBAA multiplier when TINT_OVERRIDE is set. */
+    uint32_t visual_layer; /* Native layer 0/1 when LAYER_OVERRIDE is set. */
+    int32_t visual_rotation; /* Additive 1/256-degree draw rotation. */
 } EntityValue;
 typedef struct EntityWorld EntityWorld;
 EntityWorld* entity_world_create(uint32_t capacity);
@@ -51,7 +67,7 @@ typedef struct EntityRegion {
 /* Effective local X after instance mirroring; uses 64 bits for wide regions. */
 int64_t entity_region_local_x(const EntityValue* value,const EntityRegion* region);
 typedef struct EntityType {
-    uint32_t id, region_count;
+    uint32_t id, region_count, animation_count;
     EntityRegion regions[ENTITY_TYPE_REGIONS_MAX];
 } EntityType;
 /* Copies definitions atomically. Allowed only before any spawn/tick; once bound,
@@ -81,6 +97,10 @@ int entity_world_update(EntityWorld* world, EntityUpdateFn callback, void* user)
 
 /* Read-only preflight, including immutable definitions, slots and canonical bytes. */
 int entity_world_validate_snapshot(const EntityWorld* world,const void* bytes,size_t size);
+/* Validates once, then proves every opaque handle refers to an active slot and
+ * exact generation in those snapshot bytes. */
+int entity_world_snapshot_contains_handles(const EntityWorld* world,
+    const void* bytes,size_t size,const EntityHandle* handles,size_t handle_count);
 
 /* As above, consuming a shared execution budget for slot visits and region
  * comparisons. Preflights the write pass too; exhaustion leaves output intact.

@@ -51,6 +51,10 @@ static uint8_t g_state[TEST_STATE_BYTES];
 static size_t g_state_size = TEST_DEFAULT_STATE_BYTES;
 static uint32_t g_layout_generation = TEST_LAYOUT_GENERATION;
 static uint32_t g_seed;
+static int g_persistent_desync;
+static uint32_t g_desync_start_frame;
+static uint8_t g_desync_byte;
+static int g_track_simulation_frame;
 static int g_reject_noncanonical_transport;
 static int g_fail_load_remaining;
 static int g_corrupt_load_once;
@@ -287,6 +291,7 @@ int ggpo_ext_load_game_state(const void* src, size_t src_len, char* err, size_t 
 int ggpo_ext_advance_frame(const GgpoFrameInputs* inputs, int arg0,
                            uint32_t* out_checksum, char* err, size_t err_cap) {
     uint32_t v;
+    uint32_t simulation_frame = 0u;
     (void)arg0;
     if (!inputs) return 0;
     if (g_require_pinned_width &&
@@ -303,6 +308,8 @@ int ggpo_ext_advance_frame(const GgpoFrameInputs* inputs, int arg0,
         return 0;
     }
     memcpy(&v, g_state + 16, sizeof(v));
+    if (g_track_simulation_frame)
+        memcpy(&simulation_frame, g_state + 260, sizeof(simulation_frame));
     /* Order-sensitive deterministic recurrence: swapped, omitted, duplicated,
      * or mis-framed inputs cannot accidentally converge as they could under the
      * old additive fixture. The value lives in rollback state, so replay rewinds
@@ -311,6 +318,23 @@ int ggpo_ext_advance_frame(const GgpoFrameInputs* inputs, int arg0,
         (inputs->player_cmd[1] * 0x85EBCA77u) ^ 0xA5A5A5A5u;
     memcpy(g_state + 16, &v, sizeof(v));
     test_state_store_game_geometry();
+#ifdef GGPO_NET_TEST
+    /* A bandwidth-limited link can roll back the joiner immediately after the
+     * deliberate corruption. Keep the same divergent byte on replayed frames
+     * at/after the injection boundary until correction begins, so this test
+     * continues to exercise correction rather than a lost one-shot mutation. */
+    if (g_persistent_desync &&
+        !test_frame_after(g_desync_start_frame, simulation_frame) &&
+        !ggpo_net_awaiting_correction() &&
+        ggpo_net_test_correction_phase() == 0u &&
+        ggpo_net_last_correction_applied_id() == 0u) {
+        g_state[256] = g_desync_byte;
+    }
+#endif
+    if (g_track_simulation_frame) {
+        simulation_frame++;
+        memcpy(g_state + 260, &simulation_frame, sizeof(simulation_frame));
+    }
     if (out_checksum) *out_checksum = test_checksum(g_state, g_state_size);
     return 1;
 }
@@ -1321,6 +1345,9 @@ int main(int argc, char** argv) {
     }
     g_layout_generation = TEST_LAYOUT_GENERATION;
     memset(g_state, is_host ? 0x11 : 0x22, sizeof(g_state));
+    g_track_simulation_frame = gameplay_correction || gameplay_long_correction;
+    if (g_track_simulation_frame)
+        memset(g_state + 260, 0, sizeof(uint32_t));
     g_seed = 1234u;
     g_game_width = is_host ? TEST_AUTHORITATIVE_GAME_WIDTH : 320.0f;
     g_game_height = is_host ? TEST_AUTHORITATIVE_GAME_HEIGHT : 180.0f;
@@ -1511,6 +1538,8 @@ int main(int argc, char** argv) {
                     g_layout_generation = TEST_MISMATCH_LAYOUT_GENERATION;
                 }
                 memset(g_state, is_host ? 0xD5 : 0x6D, g_state_size);
+                if (g_track_simulation_frame)
+                    memset(g_state + 260, 0, sizeof(uint32_t));
                 err[0] = '\0';
                 if (!ggpo_net_finalize_state_layout(err, sizeof(err))) {
                     return fail(role, "finalize state layout", err);
@@ -1585,6 +1614,8 @@ int main(int argc, char** argv) {
             if (tick - connected_tick >= delay) {
                 memset(g_state, is_host ? 0xA5 : 0x5A, g_state_size);
                 memcpy(g_state, "FINAL-HOST-STATE", 16);
+                if (g_track_simulation_frame)
+                    memset(g_state + 260, 0, sizeof(uint32_t));
                 if (finalize_layout && is_host) {
                     memcpy(g_state + TEST_FINAL_STATE_PROBE_OFFSET,
                            "FINAL-LAYOUT-TAIL", 17);
@@ -2198,6 +2229,9 @@ int main(int argc, char** argv) {
             checksum_suppressed = 1;
             injected_frame = ggpo_net_frame_count();
             g_state[256] ^= 0x5Au;
+            g_desync_start_frame = injected_frame;
+            g_desync_byte = g_state[256];
+            g_persistent_desync = 1;
         }
 #endif
 
@@ -2479,7 +2513,8 @@ int main(int argc, char** argv) {
                          ggpo_net_socket_would_block_count() == 0u)) ||
             (is_host && ggpo_net_corrections_sent() == 0u) ||
             (!is_host && (ggpo_net_corrections_received() == 0u ||
-                          snapshot_frame != injected_frame))) {
+                          snapshot_frame < injected_frame ||
+                          snapshot_frame > injected_frame + 32u))) {
             fprintf(stderr,
                     "%s correction invariant detail id=%u current=%u phase=%u snapshot=%u resume=%u transcript=%u injected=%u rx=%u peer=%u requests=%u sent=%u received=%u rejected=%u drop=%u delay=%u\n",
                     role,

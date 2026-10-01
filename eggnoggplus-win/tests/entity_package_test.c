@@ -50,7 +50,7 @@ static void visual_tests(void) {
     const char* good="{\"sheet\":\"builtin:tiles\",\"sprite\":4,\"frames\":3,\"frame_ticks\":2,\"mode\":\"ping_pong\",\"offset_x\":-1.25,\"scale_y\":-2,\"rotation\":-12.5,\"tint\":\"#12Ab34ff\"}";
     const char* invalid[]={"{}","[]","null","{\"sheet\":\"../x.png\",\"sprite\":0}","{\"sheet\":\"builtin:\",\"sprite\":0}","{\"sheet\":\"x.png\",\"sprite\":0,\"frames\":0}","{\"sheet\":\"x.png\",\"sprite\":2147483647,\"frames\":2}","{\"sheet\":\"x.png\",\"sprite\":0,\"scale_x\":0.0001}","{\"sheet\":\"x.png\",\"sprite\":0,\"rotation\":360001}","{\"sheet\":\"x.png\",\"sprite\":0,\"tint\":\"#ggffffff\"}","{\"sheet\":\"x.png\",\"sprite\":0,\"layer\":2}"};
     snprintf(json,sizeof(json),format,good);a=entity_package_decode(json,strlen(json),error,sizeof(error));assert(a);
-    assert(entity_package_visual(a,1,&v));assert(!strcmp(v.sheet,"builtin:tiles") && v.offset_x==-320 && v.scale_x==256 && v.scale_y==-512 && v.rotation==-3200 && v.rgba==0x12ab34ff && v.layer==1);
+    assert(entity_package_visual(a,1,&v));assert(!strcmp(v.sheet,"builtin:tiles") && v.offset_x==-320 && v.scale_x==256 && v.scale_y==-512 && v.rotation==-3200 && v.rgba==0x12ab34ff && v.layer==0);
     assert(entity_visual_frame(&v,0)==4 && entity_visual_frame(&v,2)==5 && entity_visual_frame(&v,6)==5 && entity_visual_frame(&v,8)==4);
     assert(entity_package_resolve_animation(a,1,"open",4)==1&&entity_package_resolve_animation(a,1,"default",7)==UINT32_MAX&&!entity_package_resolve_animation(a,1,"missing",7));
     assert(!strcmp(entity_package_animation_name(a,1,1),"open")&&!strcmp(entity_package_animation_name(a,1,0),"default"));
@@ -152,7 +152,27 @@ static void room_placement_tests(void) {
         assert(!entity_package_decode_layout(graph_json,strlen(graph_json),&graph,error,sizeof(error)) && strstr(error,"does not match"));
     }
 }
+static void terrain_draw_order_test(void) {
+    const char* json="{\"schema\":1,\"capacity\":4,\"types\":["
+        "{\"key\":\"test:solid\",\"regions\":[{\"id\":1,\"role\":\"solid\",\"layer\":1,\"mask\":1,\"width\":16,\"height\":16}],\"visual\":{\"sheet\":\"builtin:tiles\",\"sprite\":30,\"layer\":1}},"
+        "{\"key\":\"test:decor\",\"regions\":[],\"visual\":{\"sheet\":\"builtin:tiles\",\"sprite\":4}},"
+        "{\"key\":\"test:front\",\"regions\":[],\"visual\":{\"sheet\":\"builtin:tiles\",\"sprite\":4,\"layer\":1}}],"
+        "\"placements\":[{\"name\":\"a\",\"type\":\"test:solid\",\"x\":0,\"y\":0},"
+        "{\"name\":\"b\",\"type\":\"test:solid\",\"x\":32,\"y\":0,\"draw_layer\":\"front\"},"
+        "{\"name\":\"c\",\"type\":\"test:decor\",\"x\":64,\"y\":0},"
+        "{\"name\":\"d\",\"type\":\"test:front\",\"x\":96,\"y\":0}]}";
+    char error[256];EntityPackage* p=entity_package_decode(json,strlen(json),error,sizeof(error));assert(p);
+    size_t size=entity_package_snapshot_size(p);void* before=malloc(size);void* after=malloc(size);
+    assert(before&&after&&entity_package_save(p,before,size));
+    uint32_t cursor=0;EntityRenderView view;const unsigned layers[]={0,1,0,1};
+    for(unsigned i=0;i<4;++i)assert(entity_package_render_next(p,&cursor,&view)&&view.visual.layer==layers[i]);
+    assert(!entity_package_render_next(p,&cursor,&view));
+    assert(entity_package_save(p,after,size)&&!memcmp(before,after,size));
+    free(before);free(after);entity_package_free(p);
+    puts("entity rendering: solid terrain order, explicit foreground overrides, default behind, snapshots unchanged");
+}
 int main(void) {
+    terrain_draw_order_test();
     json_tests();visual_tests();editor_export_test();room_placement_tests();
     EntityNamedType types[2]={0},reversed[2];EntityPlacement placements[2]={0},reverse_places[2];
     EntityPackage *a,*b,*changed;char error[256];EntityValue value;size_t size;unsigned char *before,*after;

@@ -29,6 +29,7 @@ parse_process = body(HOOKS, "static void online_launch_parse_process_args")
 launch_pump = body(HOOKS, "static int online_launch_pump")
 main_update = body(HOOKS, "static int __cdecl hooked_main_update_with_buttons")
 hub_update = body(HOOKS, "static void __cdecl online_hub_update(void) {")
+state_update = body(HOOKS, "static void __cdecl hooked_state_update(void) {")
 process_attach = body(DLLMAIN, "BOOL WINAPI DllMain")
 hub_close = body(HOOKS, "static void online_hub_close_to_return_state(void) {")
 disconnect = body(HOOKS, "static void online_server_disconnect(const char* reason) {")
@@ -40,21 +41,17 @@ assert "normalize_process_working_directory();" in process_attach
 assert process_attach.index("normalize_process_working_directory();") < (
     process_attach.index("install_crash_handler();")
 )
-assert "if (online_launch_pump())" in main_update
-assert main_update.index("if (online_launch_pump())") < main_update.index(
-    "int result = real_update"
+# The dispatcher owns launch processing in every state, including warm GAME
+# and the authenticated custom hub. A preview replaces the state before the
+# former callback is chosen; no callback may switch a preview mid-update.
+assert "if (online_launch_pump()) return;" in state_update
+assert state_update.index("online_launch_pump()") < state_update.index(
+    "p_state_update_trampoline()"
 )
-assert main_update.index("if (online_launch_pump())") < main_update.index(
-    "return 0;"
-)
-# Opening the custom hub leaves the native menu update path. The hub must keep
-# ownership of the pending intent and resume it immediately after auth traffic
-# is processed, including when the user had to enter credentials manually.
+assert "online_launch_pump" not in main_update
 assert "online_server_update();" in hub_update
-assert "if (online_launch_pump()) return;" in hub_update
-assert hub_update.index("online_server_update();") < hub_update.index(
-    "if (online_launch_pump())"
-)
+assert "online_launch_pump" not in hub_update
+assert "&g_state_update_detour" in HOOKS
 assert "CommandLineToArgvW(GetCommandLineW(), &argc)" in parse_process
 assert "argc > 128" in parse_process
 assert "launch_request_parse_args" in parse_process

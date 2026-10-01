@@ -13,7 +13,7 @@ typedef struct EntityVisual {
     uint32_t sprite,frames,frame_ticks,animation_mode;
     int32_t offset_x,offset_y,scale_x,scale_y; /* 1/256 pixel / scale units */
     int32_t rotation; /* 1/256 degrees; presentation only. */
-    uint32_t rgba,layer; /* RRGGBBAA; native sprite batch layer 0 or 1 */
+    uint32_t rgba,layer; /* RRGGBBAA; actor-relative order: 0 behind, 1 front. */
 } EntityVisual;
 typedef struct EntityNamedAnimation {
     char name[ENTITY_ANIMATION_NAME_MAX];
@@ -95,7 +95,9 @@ typedef struct EntityRenderView {
     int32_t x,y; /* World position in 1/256 pixels, before visual offsets. */
     uint32_t sprite; /* Animation frame selected from the world tick. */
 } EntityRenderView;
-/* Stable slot order, invisible types omitted. Caller starts cursor at zero.
+/* Stable slot order, invisible types omitted. Solid types use terrain (behind)
+ * ordering unless the instance explicitly overrides draw_layer. Other types
+ * keep their authored order. Caller starts cursor at zero.
  * Copies only; never invokes Lua, advances state or stores graphics handles. */
 int entity_package_render_next(const EntityPackage* package,uint32_t* cursor,EntityRenderView* out);
 

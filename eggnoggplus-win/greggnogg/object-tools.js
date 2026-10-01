@@ -188,23 +188,47 @@ entity.set(handle, {vx = dx, vy = dy})
     }
     return candidate;
   }
-  const images=new Map();
+  const images=new Map(),atlasCache=new WeakMap(),surfaceCache=new WeakMap();
+  function previewAtlas(doc){
+    /* Rendering needs sheet geometry, not a fresh serialization of every room,
+     * particle and callback for every placed object. Detect in-place edits too. */
+    const tileset=doc._preserved&&doc._preserved.dataObject?doc._preserved.dataObject.tileset:doc.tileset;
+    const signature=JSON.stringify({tileset:tileset||{tiles:[]}}),cached=atlasCache.get(doc);
+    if(cached&&cached.signature===signature)return cached.sheets;
+    const sheets=A.parseAtlas(signature);atlasCache.set(doc,{signature,sheets});return sheets;
+  }
   function imageFor(doc,sheet){
     const builtin={'builtin:tiles':'tiles.png','builtin:sprites':'sprites.png','builtin:misc':'misc.png','builtin:glyphs':'font8x8.png'},url=builtin[sheet]?'assets/game/'+builtin[sheet]:(doc.assets||{})[sheet];
     if(!url)return Promise.reject(Error('Missing picture: '+sheet));
-    if(!images.has(url))images.set(url,new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(Error('Picture could not load: '+sheet));image.src=url;}));return images.get(url);
+    if(!images.has(url)){
+      const pending=new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(Error('Picture could not load: '+sheet));image.src=url;});
+      images.set(url,pending);pending.catch(()=>{if(images.get(url)===pending)images.delete(url);});
+      while(images.size>16)images.delete(images.keys().next().value);
+    }
+    const pending=images.get(url);images.delete(url);images.set(url,pending);return pending;
   }
   function multiplyTint(first,second){
     const a=/^#[0-9a-f]{8}$/i.test(first||'')?first:'#FFFFFFFF',b=/^#[0-9a-f]{8}$/i.test(second||'')?second:'#FFFFFFFF';let out='#';
     for(let i=1;i<9;i+=2)out+=Math.round(parseInt(a.slice(i,i+2),16)*parseInt(b.slice(i,i+2),16)/255).toString(16).padStart(2,'0');return out.toUpperCase();
   }
-  async function drawPicture(ctx,doc,type,x,y,tick,mirrored,scale=1,animationName='default',placement,editorOpacity=1){
-    if(!type.visual)return;const v=type.visual,image=await imageFor(doc,v.sheet),data=G.buildDataObject(doc),sheets=data.tileset?A.parseAtlas(JSON.stringify(data)):{};
+  function tintedPicture(image,r,tint){
+    const key=[r.x,r.y,r.w,r.h,tint.slice(0,7)].join(','),bytes=r.w*r.h*4;
+    let cache=surfaceCache.get(image);if(!cache){cache={entries:new Map(),bytes:0};surfaceCache.set(image,cache);}
+    if(cache.entries.has(key)){const entry=cache.entries.get(key);cache.entries.delete(key);cache.entries.set(key,entry);return entry.surface;}
+    const surface=document.createElement('canvas');surface.width=r.w;surface.height=r.h;const c=surface.getContext('2d');
+    c.drawImage(image,r.x,r.y,r.w,r.h,0,0,r.w,r.h);c.globalCompositeOperation='multiply';c.fillStyle=tint.slice(0,7);c.fillRect(0,0,r.w,r.h);c.globalCompositeOperation='destination-in';c.drawImage(image,r.x,r.y,r.w,r.h,0,0,r.w,r.h);
+    while(cache.entries.size&&(cache.entries.size>=128||cache.bytes+bytes>4*1024*1024)){
+      const oldest=cache.entries.keys().next().value;cache.bytes-=cache.entries.get(oldest).bytes;cache.entries.delete(oldest);
+    }
+    if(bytes<=4*1024*1024){cache.entries.set(key,{surface,bytes});cache.bytes+=bytes;}
+    return surface;
+  }
+  async function drawPicture(ctx,doc,type,x,y,tick,mirrored,scale=1,animationName='default',placement,editorOpacity=1,preparedAtlas){
+    if(!type.visual)return;const v=type.visual,image=await imageFor(doc,v.sheet),sheets=preparedAtlas||(!v.sheet.startsWith('builtin:')?previewAtlas(doc):{});
     const clip=animationName==='default'?v:(type.animations||[]).find(animation=>animation.name===animationName)||v;
     const frames=clip.frames||1,raw=Math.floor(tick/(clip.frame_ticks||1)),mode=clip.mode||'loop',period=Math.max(1,frames*2-2);
     const frame=mode==='once'?Math.min(frames-1,raw):mode==='ping_pong'&&frames>1?(raw%period<frames?raw%period:period-raw%period):raw%frames;
-    const r=A.spriteRegion(v.sheet,image,clip.sprite+frame,sheets),surface=document.createElement('canvas');surface.width=r.w;surface.height=r.h;const c=surface.getContext('2d'),tint=multiplyTint(v.tint,placement&&placement.visual_tint);
-    c.drawImage(image,r.x,r.y,r.w,r.h,0,0,r.w,r.h);c.globalCompositeOperation='multiply';c.fillStyle=tint.slice(0,7);c.fillRect(0,0,r.w,r.h);c.globalCompositeOperation='destination-in';c.drawImage(image,r.x,r.y,r.w,r.h,0,0,r.w,r.h);
+    const r=A.spriteRegion(v.sheet,image,clip.sprite+frame,sheets),tint=multiplyTint(v.tint,placement&&placement.visual_tint),surface=tintedPicture(image,r,tint);
     const instanceX=placement&&placement.scale_x!==undefined?placement.scale_x:1,instanceY=placement&&placement.scale_y!==undefined?placement.scale_y:1;
     ctx.save();ctx.imageSmoothingEnabled=false;ctx.translate(x+((v.offset_x||0)*(mirrored?-1:1)+(placement&&placement.visual_offset_x||0))*scale,y+((v.offset_y||0)+(placement&&placement.visual_offset_y||0))*scale);ctx.rotate(((v.rotation||0)+(placement&&placement.visual_rotation||0))*(mirrored?-1:1)*Math.PI/180);ctx.scale((v.scale_x===undefined?1:v.scale_x)*instanceX*scale*(mirrored?-1:1),(v.scale_y===undefined?1:v.scale_y)*instanceY*scale);ctx.globalAlpha=parseInt(tint.slice(7,9),16)/255*Math.max(0,Math.min(1,editorOpacity));ctx.drawImage(surface,-r.w/2,-r.h/2);ctx.restore();
   }
@@ -216,7 +240,9 @@ entity.set(handle, {vx = dx, vy = dy})
     }
     /* Invisible placements still run logic and collision in game. Keep a faint
      * editor-only ghost visible so authors can select, move, or erase them. */
-    for(const p of A.expandPlacements(entities,doc)){if(p.x<x0||p.x>x0+roomPixels||p.y<y0||p.y>y0+roomHeight(source)*16)continue;const type=entities.types.find(t=>t.key===p.type);await drawPicture(ctx,doc,type,p.x-x0,p.y-y0,tick,p.mirrored,1,p.animation||'default',p,p.visible===false?0.28:1);}
+    const sheets=entities.types.some(type=>type.visual&&!type.visual.sheet.startsWith('builtin:'))?previewAtlas(doc):{};
+    const types=new Map(entities.types.map(type=>[type.key,type]));
+    for(const p of A.expandPlacements(entities,doc)){if(p.x<x0||p.x>x0+roomPixels||p.y<y0||p.y>y0+roomHeight(source)*16)continue;const type=types.get(p.type);await drawPicture(ctx,doc,type,p.x-x0,p.y-y0,tick,p.mirrored,1,p.animation||'default',p,p.visible===false?0.28:1,sheets);}
   }
   return {catalog,create,atCell,transformAreaPlacements,paint,duplicateRoom,remove,rename,compileScript,exportFiles,importLogic,prepareForSave,label,imageFor,drawPicture,drawRoom};
 }));

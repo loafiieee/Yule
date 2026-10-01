@@ -122,7 +122,8 @@
     <code>visual_tint: "#RRGGBBAA"</code>, and
     <code>draw_layer: "behind"</code> or <code>"front"</code>. Greggnogg exposes
     these settings in the normal map editor's Object inspector after selecting a
-    placed custom tile.</p>
+    placed custom tile. Solid types draw behind actors as terrain by default;
+    an explicit placement draw order overrides that behavior.</p>
     <p>The checked-in <code>maps/double_jump_demo</code> package uses these general
     primitives for one extra airborne jump, a per-player indicator and a collectible
     recharge. Its map and object behavior are saved as editable Greggnogg blocks; it

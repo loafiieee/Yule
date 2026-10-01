@@ -280,6 +280,16 @@ int entity_package_render_next(const EntityPackage* p,uint32_t* cursor,EntityRen
             ? -value.visual_rotation : value.visual_rotation;
         if(value.flags&ENTITY_FLAG_TINT_OVERRIDE){uint32_t composed=0;for(unsigned channel=0;channel<4;++channel){unsigned shift=24u-channel*8u;unsigned a=(out->visual.rgba>>shift)&255u,b=(value.visual_tint>>shift)&255u;composed|=((a*b+127u)/255u)<<shift;}out->visual.rgba=composed;}
         if(value.flags&ENTITY_FLAG_LAYER_OVERRIDE)out->visual.layer=value.visual_layer;
+        else {
+            const EntityType* type=&p->types[value.type_id-1].definition;
+            /* Solid objects are terrain. Older exports often inherited front
+             * order; don't let that hide the actors standing on the surface.
+             * An explicit instance override still permits foreground scenery. */
+            for(uint32_t region=0;region<type->region_count;++region)
+                if(type->regions[region].role==ENTITY_REGION_SOLID) {
+                    out->visual.layer=0;break;
+                }
+        }
         out->handle=h;out->x=value.x;out->y=value.y;
         out->sprite=entity_visual_frame(&out->visual,value.animation_tick);return 1;
     }

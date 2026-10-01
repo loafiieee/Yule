@@ -70,6 +70,10 @@ try {
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
         'tests\preview_http_test.c', 'preview_http.c', 'launch_request.c', 'online_control.c', '-o', 'build\preview_http_test.exe'
     )
+    & python 'tests\preview_solid_hooks_test.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Preview dispatch and native solid hook regression tests failed.' }
+    & python 'tests\entity_render_hooks_test.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Entity draw order and opacity regression tests failed.' }
     if ($PreviewOnly) {
         Invoke-NativeTest 'preview launch request tests' '.\build\launch_request_test.exe' @(
             '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',

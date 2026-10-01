@@ -1883,6 +1883,9 @@ authored collision, sensors and combat regions remain unchanged. See
 `draw_layer: "behind"|"front"`, and a named
 `animation`. These values compose with the type visual and enter the effective
 package fingerprint after room/side expansion.
+Solid-region types render behind actors as terrain unless an instance explicitly
+sets `draw_layer`. Non-solid visuals default to behind and retain an explicitly
+authored foreground layer. Draw ordering does not change collision or snapshots.
 
 On a `room_graph` map, a room-local placement uses `instance` to name the exact
 final room node. `room` remains as the matching source design and coordinates

@@ -149,7 +149,7 @@ static void visual(lua_State* L,EntityVisual* v,const char* path) {
     v->scale_y=(int32_t)(y<0?ceil(y-0.5):floor(y+0.5));
     if(!v->scale_x || !v->scale_y) fail(L,path,"visual scale rounds to zero");
     v->rotation=rotation(L,"rotation",path);
-    v->layer=(uint32_t)visual_number(L,"layer",path,0,1,1,1);v->rgba=UINT32_MAX;
+    v->layer=(uint32_t)visual_number(L,"layer",path,0,1,0,1);v->rgba=UINT32_MAX;
     lua_getfield(L,-1,"tint");
     if(!lua_isnil(L,-1)) {
         if(lua_type(L,-1)!=LUA_TSTRING) fail(L,path,"tint must be #RRGGBBAA");

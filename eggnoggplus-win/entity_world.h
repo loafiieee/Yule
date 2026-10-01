@@ -31,7 +31,7 @@ typedef struct EntityValue {
     uint32_t animation_id; /* 0 default visual; otherwise 1-based named clip. */
     int32_t visual_offset_x,visual_offset_y; /* Additive 1/256-pixel draw offsets. */
     uint32_t visual_tint; /* RRGGBBAA multiplier when TINT_OVERRIDE is set. */
-    uint32_t visual_layer; /* Native layer 0/1 when LAYER_OVERRIDE is set. */
+    uint32_t visual_layer; /* Actor-relative draw order: 0 behind, 1 front. */
     int32_t visual_rotation; /* Additive 1/256-degree draw rotation. */
 } EntityValue;
 typedef struct EntityWorld EntityWorld;

@@ -172,6 +172,7 @@ extern void SDL_free(void* mem);
 #define ADDR_STATE_CURRENT            0x405DB0u
 #define ADDR_STATE_LAST               0x405DB8u
 #define ADDR_STATE_SWITCH             0x405DC0u
+#define ADDR_STATE_UPDATE             0x405E28u
 #define ADDR_MAD_INIT_AUDIO_STREAM    0x404240u
 #define ADDR_MAIN_UPDATE_WITH_BUTTONS 0x4340E0u
 #define ADDR_GAME_UPDATE              0x42C590u
@@ -260,6 +261,8 @@ extern void SDL_free(void* mem);
 #define ADDR_GAME_RENDER              0x422AD0u
 #define ADDR_FIND_GOOD_SPOT           0x421010u
 #define ADDR_PLAYER_UPDATE_MOVEMENT   0x423A80u
+#define ADDR_PLAYER_UPDATE_LOGIC      0x42A8E0u
+#define ADDR_CHECK_MAP_COLLIDE         0x41DF90u
 #define ADDR_SWORD_UPDATE_MOVEMENT    0x42B830u
 #define ADDR_HAZARD_UPDATE_MOVEMENT   0x42C080u
 #define ADDR_GAME_ROOM_COUNT          0x42F730u
@@ -363,6 +366,7 @@ extern void SDL_free(void* mem);
 #define PLAYER_OFS_VX                 0x34u
 #define PLAYER_OFS_VY                 0x38u
 #define PLAYER_OFS_RESPAWN_UNGROUNDED 0x10u
+#define PLAYER_OFS_RESPAWN_TIMER      0x18u
 #define PLAYER_OFS_STATE_ID           0x78u
 #define PLAYER_OFS_ROOM               0x9Bu
 #define PLAYER_OFS_FACING             0x98u
@@ -904,6 +908,7 @@ typedef void (__cdecl *fn_map_draw_t)(float, float);
 typedef void (__attribute__((regparm(1))) *fn_skeleton_statue_t)(void*);
 typedef int (__attribute__((regparm(2))) *fn_find_good_spot_t)(void*, int);
 typedef void (__attribute__((regparm(1))) *fn_player_update_movement_t)(void*);
+typedef int (__attribute__((regparm(3))) *fn_check_map_collide_t)(void*, int, int, int);
 typedef void (__cdecl *fn_thing_update_movement_t)(void*);
 typedef void (__attribute__((regparm(1))) *fn_thing_free_t)(void*);
 typedef int (__cdecl *fn_int_void_t)(void);
@@ -917,6 +922,9 @@ static fn_void_void_t                p_buttons_draw_trampoline = NULL;
 static fn_map_draw_t                 p_map_draw_trampoline = NULL;
 static fn_find_good_spot_t           p_find_good_spot_trampoline = NULL;
 static fn_player_update_movement_t   p_player_update_movement_trampoline = NULL;
+static fn_player_update_movement_t   p_player_update_logic_trampoline = NULL;
+static fn_check_map_collide_t        p_check_map_collide_trampoline = NULL;
+static fn_void_void_t                p_state_update_trampoline = NULL;
 static fn_thing_update_movement_t    p_sword_update_movement_trampoline = NULL;
 static fn_thing_update_movement_t    p_hazard_update_movement_trampoline = NULL;
 static fn_thing_free_t               p_thing_free =
@@ -1037,6 +1045,7 @@ static volatile LONG g_framework_audio_active_rate = 0;
 static volatile LONG g_framework_music_volume = 100;
 static volatile LONG g_framework_sfx_volume = 100;
 static Detour g_state_switch_detour;
+static Detour g_state_update_detour;
 static Detour g_main_update_with_buttons_detour;
 static Detour g_game_update_detour;
 static Detour g_game_init_detour;
@@ -1056,6 +1065,8 @@ static Detour g_buttons_draw_detour;
 static Detour g_map_draw_detour;
 static Detour g_find_good_spot_detour;
 static Detour g_player_update_movement_detour;
+static Detour g_player_update_logic_detour;
+static Detour g_check_map_collide_detour;
 static Detour g_sword_update_movement_detour;
 static Detour g_hazard_update_movement_detour;
 static Detour g_game_room_count_detour;
@@ -14139,6 +14150,15 @@ static int online_launch_pump(void) {
     return 0;
 }
 
+/* Handle URI launches before the dispatcher chooses a state's callback. A
+ * preview can replace MAIN or an already running local GAME; neither former
+ * callback may continue updating after the replacement has been initialized. */
+static void __cdecl hooked_state_update(void) {
+    g_sim_thread_id = GetCurrentThreadId();
+    if (online_launch_pump()) return;
+    if (p_state_update_trampoline) p_state_update_trampoline();
+}
+
 /* Framework overlays are not stable Back destinations for the online hub. */
 static void* online_hub_sanitize_return_state(void* state) {
     if (!state ||
@@ -14247,15 +14267,7 @@ static void __cdecl online_hub_enter(void) {
 static void __cdecl online_hub_update(void) {
     online_sent_challenge_prune();
     online_server_update();
-    /*
-     * The native menu update hook parses the process URI and opens this custom
-     * state, but custom states do not pass through that hook afterward. Keep
-     * pumping the still-owned launch request here so manual or remembered
-     * authentication resumes requests/queue/challenge instead of stranding the
-     * user at the hub's default Play page. Running after server_update lets an
-     * auth_ok complete the requested action in the same hub tick.
-     */
-    if (online_launch_pump()) return;
+    /* Pending URI actions resume at the next state dispatch after auth_ok. */
     online_match_pump_launch();
     lua_manager_on_tick();
     lua_manager_on_tick_post();
@@ -16752,6 +16764,125 @@ static int hooks_map_script_read_contact_radius(uintptr_t body,
     return 1;
 }
 
+/* Native movement clears collision flags and stashes its final position. Use
+ * the position from entry, then resolve before player logic/animation runs.
+ * This boundary is shared by live play and rollback replay. */
+/* Native sword/K terrain queries use a point six pixels above the body. Entity
+ * regions describe their actual surface, so sweep the body footprint instead.
+ * Keep reporting contact to the original movement routine: it owns restitution,
+ * friction, spin, impact effects and settling. K's zero contact radius is a
+ * gameplay profile, not the size of its centered 13-pixel spike-ball picture. */
+static int __attribute__((regparm(3))) hooked_check_map_collide(
+    void* thing, int x_bits, int y_bits, int vertical) {
+    uintptr_t body = (uintptr_t)thing;
+    int native_hit = p_check_map_collide_trampoline
+        ? p_check_map_collide_trampoline(thing, x_bits, y_bits, vertical) : 0;
+    int kind;
+    float radius;
+    float probe_x;
+    float probe_y;
+    double solid_radius;
+    double old_x;
+    double old_y;
+    double x;
+    double y;
+    unsigned contacts;
+    if (native_hit || !map_script_is_active() || map_script_is_faulted()) return native_hit;
+    kind = hooks_map_script_kind_for_body(body);
+    if ((kind != MAP_SCRIPT_OBJECT_SWORD && kind != MAP_SCRIPT_OBJECT_HAZARD) ||
+        !hooks_map_script_read_contact_radius(body, kind, &radius) ||
+        IsBadWritePtr(thing, THING_SIZE)) return native_hit;
+    memcpy(&probe_x, &x_bits, sizeof(probe_x));
+    memcpy(&probe_y, &y_bits, sizeof(probe_y));
+    solid_radius = kind == MAP_SCRIPT_OBJECT_HAZARD ? 6.0 : radius;
+    x = old_x = probe_x;
+    y = old_y = (double)probe_y + 6.0;
+    if (vertical) old_y -= *(float*)(body + THING_OFS_VY);
+    else old_x -= *(float*)(body + THING_OFS_VX);
+    contacts = map_script_sweep_solids(old_x, old_y, solid_radius, &x, &y);
+    if (!(contacts & (vertical ? 3u : 12u))) return native_hit;
+    /* The caller restores this axis from PREV after applying its impulse.
+     * Stash the resolved surface position, preventing penetration or a hover
+     * at the previous frame's height. Leave the other axis untouched. */
+    if (vertical) {
+        *(float*)(body + THING_OFS_PREV_Y) = (float)y;
+        *(float*)(body + THING_OFS_Y) = (float)y;
+    } else {
+        *(float*)(body + THING_OFS_PREV_X) = (float)x;
+        *(float*)(body + THING_OFS_X) = (float)x;
+    }
+    return 1; /* Ordinary solid contact; never a native spring/mine opcode. */
+}
+
+static unsigned hooks_resolve_native_solid_body(uintptr_t body,
+                                                 float old_x, float old_y) {
+    int object_kind = hooks_map_script_kind_for_body(body);
+    float radius;
+    double x;
+    double y;
+    unsigned contacts;
+    if (!map_script_is_active() || map_script_is_faulted() ||
+        !hooks_map_script_read_contact_radius(body, object_kind, &radius) ||
+        IsBadWritePtr((void*)body, THING_SIZE)) return 0;
+    x = *(float*)(body + THING_OFS_X);
+    y = *(float*)(body + THING_OFS_Y);
+    contacts = map_script_sweep_solids(old_x, old_y, radius, &x, &y);
+    if (!contacts) return 0;
+    *(float*)(body + THING_OFS_X) = (float)x;
+    *(float*)(body + THING_OFS_Y) = (float)y;
+    *(float*)(body + THING_OFS_PREV_X) = (float)x;
+    *(float*)(body + THING_OFS_PREV_Y) = (float)y;
+    if (object_kind == MAP_SCRIPT_OBJECT_PLAYER ||
+        object_kind == MAP_SCRIPT_OBJECT_DEAD_BODY) {
+        uint8_t native_contacts = *(uint8_t*)(body + PLAYER_OFS_COLLISION_FLAGS);
+        /* Native player movement reflects walls by -0.25, ceilings by -0.5,
+         * and falling corpses by -0.5. Live players stop on a floor. Preserve
+         * any response already applied by native terrain on the same axis. */
+        if ((contacts & 12u) && !(native_contacts & 12u))
+            *(float*)(body + THING_OFS_VX) *= -0.25f;
+        if ((contacts & 2u) && !(native_contacts & 2u))
+            *(float*)(body + THING_OFS_VY) *= -0.5f;
+        else if ((contacts & 1u) && !(native_contacts & 1u))
+            *(float*)(body + THING_OFS_VY) =
+                object_kind == MAP_SCRIPT_OBJECT_DEAD_BODY
+                    ? *(float*)(body + THING_OFS_VY) * -0.5f : 0.0f;
+        *(uint8_t*)(body + PLAYER_OFS_COLLISION_FLAGS) |= (uint8_t)contacts;
+    }
+    return contacts;
+}
+
+static void __attribute__((regparm(1))) hooked_player_update_logic(void* player) {
+    uintptr_t body = (uintptr_t)player;
+    int custom_floor_support = 0;
+    float radius;
+    if (!p_player_update_logic_trampoline) return;
+    /* Native corpse logic checks map_coord_tile(x,y+1), which cannot see
+     * entity geometry. Let its existing timer/respawn path finish while this
+     * corpse is actually resting on a custom floor. Keep the allowance local
+     * to this call so falling off a platform cannot permit airborne respawn. */
+    if (hooks_map_script_kind_for_body(body) == MAP_SCRIPT_OBJECT_DEAD_BODY &&
+        !IsBadWritePtr(player, PLAYER_SIZE) &&
+        *(int*)(body + PLAYER_OFS_RESPAWN_TIMER) > 0 &&
+        *(uint8_t*)(body + PLAYER_OFS_RESPAWN_UNGROUNDED) == 0 &&
+        (*(uint8_t*)(body + PLAYER_OFS_COLLISION_FLAGS) & PLAYER_COLLIDE_GROUNDED) &&
+        map_script_is_active() && !map_script_is_faulted() &&
+        hooks_map_script_read_contact_radius(body, MAP_SCRIPT_OBJECT_DEAD_BODY,
+                                             &radius)) {
+        double x = *(float*)(body + THING_OFS_X);
+        double y = *(float*)(body + THING_OFS_Y);
+        double floor_x = x;
+        double floor_y = y;
+        custom_floor_support =
+            (map_script_sweep_solids(x, y, radius, &floor_x, &floor_y) &
+             PLAYER_COLLIDE_GROUNDED) && floor_x == x && floor_y == y;
+    }
+    if (custom_floor_support)
+        *(uint8_t*)(body + PLAYER_OFS_RESPAWN_UNGROUNDED) = 1u;
+    p_player_update_logic_trampoline(player);
+    if (custom_floor_support)
+        *(uint8_t*)(body + PLAYER_OFS_RESPAWN_UNGROUNDED) = 0u;
+}
+
 static void hooks_apply_content_interactions_to_body(uint32_t object_id,
                                                      uint32_t lifecycle_id,
                                                      uintptr_t body,
@@ -16774,20 +16905,6 @@ static void hooks_apply_content_interactions_to_body(uint32_t object_id,
     int sample;
     if (!body || IsBadReadPtr((const void*)body, THING_SIZE) ||
         IsBadWritePtr((void*)(body + THING_OFS_VX), sizeof(float) * 2u)) return;
-    /* Resolve against immutable custom solid geometry before script contacts.
-     * Only the verified player/corpse/sword/hazard body profiles reach this bridge. */
-    float solid_radius;
-    if(hooks_map_script_read_contact_radius(body,object_kind,&solid_radius)){
-        double sx=*(float*)(body+THING_OFS_X),sy=*(float*)(body+THING_OFS_Y);
-        unsigned contact=map_script_sweep_solids(*(float*)(body+THING_OFS_PREV_X),*(float*)(body+THING_OFS_PREV_Y),solid_radius,&sx,&sy);
-        if(contact){
-            *(float*)(body+THING_OFS_X)=(float)sx;*(float*)(body+THING_OFS_Y)=(float)sy;
-            if(contact&12u)*(float*)(body+THING_OFS_VX)=0;
-            if(contact&3u)*(float*)(body+THING_OFS_VY)=0;
-            if(object_kind==MAP_SCRIPT_OBJECT_PLAYER||object_kind==MAP_SCRIPT_OBJECT_DEAD_BODY)
-                *(uint8_t*)(body+0xADu)|=(uint8_t)contact;
-        }
-    }
     x = *(float*)(body + THING_OFS_X);
     y = *(float*)(body + THING_OFS_Y);
     vx = (float*)(body + THING_OFS_VX);
@@ -19998,11 +20115,6 @@ static int __cdecl hooked_main_update_with_buttons(int arg0) {
      * hook. This is the sole destructive window-policy pump, so queued key,
      * launch, and resize transitions cannot recreate a window mid-PollEvent. */
     hooks_window_pump();
-    if (online_launch_pump()) {
-        /* The preview switch happened inside the former state's callback.
-         * Do not resume its native update against the replacement game. */
-        return 0;
-    }
 
     if (p_state_current) state_ptr = p_state_current();
     is_game_state = (state_ptr == (void*)(uintptr_t)ADDR_GAME_STATE);
@@ -20685,7 +20797,9 @@ static void draw_custom_entities_for_order(unsigned draw_order) {
         if(view.visual.layer!=draw_order)continue;
         ContentTileRender render;memset(&render,0,sizeof(render));
         snprintf(render.sprite_sheet,sizeof(render.sprite_sheet),"%s",view.visual.sheet);
-        render.sprite_index=(int)view.sprite;render.layer=(int)view.visual.layer;
+        /* Actor-relative order is selected above. Batch 1 means additive
+         * blending in sprite_batch_draw, not foreground placement. */
+        render.sprite_index=(int)view.sprite;render.layer=0;
         render.offset_x=(float)(((double)view.x+view.visual.offset_x)/256.0-*g_camera_x);
         render.offset_y=(float)(*g_camera_y-((double)view.y+view.visual.offset_y)/256.0);
         render.scale_x=view.visual.scale_x/256.0f;render.scale_y=view.visual.scale_y/256.0f;
@@ -20700,7 +20814,7 @@ static void draw_custom_player_sprites_for_order(unsigned draw_order) {
         MapScriptPlayerSprite view;ContentTileRender render;
         if(!map_script_player_sprite(slot,&view)||!view.visible||view.layer!=draw_order)continue;
         memset(&render,0,sizeof(render));snprintf(render.sprite_sheet,sizeof(render.sprite_sheet),"%s",view.sheet);
-        render.sprite_index=(int)view.sprite;render.layer=(int)view.layer;
+        render.sprite_index=(int)view.sprite;render.layer=0;
         render.offset_x=view.x+(float)view.offset_x/256.0f-*g_camera_x;
         render.offset_y=*g_camera_y-(view.y+(float)view.offset_y/256.0f);
         render.scale_x=(float)view.scale_x/256.0f;render.scale_y=(float)view.scale_y/256.0f;
@@ -20828,7 +20942,12 @@ static void __attribute__((regparm(1))) hooked_entity_draw_things(int native_lay
     uint8_t saved_active[2] = {0, 0};
     int hidden_count = 0;
     /* Verified native call order: 1, 0, -1, -2 at game_render+0x655. */
-    if(native_layer==1){draw_custom_entities_for_order(0);draw_custom_player_sprites_for_order(0);}
+    if(native_layer==1){
+        draw_custom_entities_for_order(0);draw_custom_player_sprites_for_order(0);
+        /* Custom PNGs use another atlas, flushed after the native atlas.
+         * Finish both behind passes before any actor can be queued. */
+        if(p_main_sprite_batches_draw)p_main_sprite_batches_draw();
+    }
     if (g_render_hide_players_drawing && p_player_slots) {
         for (int slot = 0; slot < 2; ++slot) {
             uint8_t* player = (uint8_t*)(uintptr_t)p_player_slots[slot];
@@ -20844,7 +20963,11 @@ static void __attribute__((regparm(1))) hooked_entity_draw_things(int native_lay
     if(p_entity_draw_things_trampoline)p_entity_draw_things_trampoline(native_layer);
     for (int i = 0; i < hidden_count; ++i)
         hidden_players[i][THING_OFS_ACTIVE] = saved_active[i];
-    if(native_layer==-2){draw_custom_entities_for_order(1);draw_custom_player_sprites_for_order(1);}
+    if(native_layer==-2){
+        /* Finish actors first: atlas ownership must not decide draw order. */
+        if(p_main_sprite_batches_draw)p_main_sprite_batches_draw();
+        draw_custom_entities_for_order(1);draw_custom_player_sprites_for_order(1);
+    }
 }
 
 static int content_bridge_map_script_visual_override(
@@ -21557,6 +21680,7 @@ static void __attribute__((regparm(1))) hooked_player_update_movement(void* play
                             (LONG)*(signed char*)((unsigned char*)player +
                                                  PLAYER_OFS_ROOM));
         p_player_update_movement_trampoline(player);
+        hooks_resolve_native_solid_body((uintptr_t)player, old_world_x, old_world_y);
         return;
     }
     InterlockedExchange(&g_variable_room_player_query_room, (LONG)room);
@@ -21571,6 +21695,7 @@ static void __attribute__((regparm(1))) hooked_player_update_movement(void* play
         start_col < 0 || start_row < 0 || start_col + width > saved_tile_w ||
         start_row + height > saved_tile_h) {
         p_player_update_movement_trampoline(player);
+        hooks_resolve_native_solid_body((uintptr_t)player, old_world_x, old_world_y);
         return;
     }
     for (row = 0; row < height; ++row)
@@ -21615,6 +21740,7 @@ static void __attribute__((regparm(1))) hooked_player_update_movement(void* play
     *y += (float)start_y_px;
     *previous_x += (float)start_px;
     *previous_y += (float)start_y_px;
+    hooks_resolve_native_solid_body((uintptr_t)player, old_world_x, old_world_y);
     {
         int destination_room = -1;
         int transition_connection = -1;
@@ -22345,6 +22471,23 @@ void hooks_init(void) {
         p_state_switch_trampoline = (fn_state_switch_t)g_state_switch_detour.trampoline;
     }
 
+    {
+        static const unsigned char state_update_prologue[] = {
+            0xA1, 0x34, 0x80, 0x44, 0x00
+        };
+        if (memcmp((void*)(uintptr_t)ADDR_STATE_UPDATE, state_update_prologue,
+                   sizeof(state_update_prologue)) != 0 ||
+            !install_detour(&g_state_update_detour,
+                            (void*)(uintptr_t)ADDR_STATE_UPDATE,
+                            (void*)&hooked_state_update,
+                            sizeof(state_update_prologue))) {
+            LOG_WARN("hooks_init: URI launch dispatch unavailable; state_update verification failed");
+        } else {
+            p_state_update_trampoline =
+                (fn_void_void_t)g_state_update_detour.trampoline;
+        }
+    }
+
     if (!install_detour(&g_main_update_with_buttons_detour, (void*)(uintptr_t)ADDR_MAIN_UPDATE_WITH_BUTTONS, (void*)&hooked_main_update_with_buttons, 6)) {
         LOG_WARN("hooks_init: failed to detour main_update_with_buttons (game tick API disabled)");
     } else {
@@ -22760,6 +22903,28 @@ void hooks_init(void) {
         } else {
             p_player_update_movement_trampoline =
                 (fn_player_update_movement_t)g_player_update_movement_detour.trampoline;
+        }
+        if (memcmp((void*)(uintptr_t)ADDR_PLAYER_UPDATE_LOGIC,
+                   movement_prologue, sizeof(movement_prologue)) != 0 ||
+            !install_detour(&g_player_update_logic_detour,
+                            (void*)(uintptr_t)ADDR_PLAYER_UPDATE_LOGIC,
+                            (void*)&hooked_player_update_logic,
+                            sizeof(movement_prologue))) {
+            LOG_WARN("hooks_init: custom-floor corpse respawn unavailable; prologue verification failed");
+        } else {
+            p_player_update_logic_trampoline =
+                (fn_player_update_movement_t)g_player_update_logic_detour.trampoline;
+        }
+        if (memcmp((void*)(uintptr_t)ADDR_CHECK_MAP_COLLIDE,
+                   movement_prologue, sizeof(movement_prologue)) != 0 ||
+            !install_detour(&g_check_map_collide_detour,
+                            (void*)(uintptr_t)ADDR_CHECK_MAP_COLLIDE,
+                            (void*)&hooked_check_map_collide,
+                            sizeof(movement_prologue))) {
+            LOG_WARN("hooks_init: custom-solid projectile response unavailable; prologue verification failed");
+        } else {
+            p_check_map_collide_trampoline =
+                (fn_check_map_collide_t)g_check_map_collide_detour.trampoline;
         }
     }
     {

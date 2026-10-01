@@ -912,12 +912,14 @@ Every instance can also add `visual_offset_x` and `visual_offset_y` in pixels,
 add `visual_rotation` in degrees,
 multiply the authored color with `visual_tint = "#RRGGBBAA"`, and select
 `draw_layer = "behind"` or `"front"`. `visual_tint = "default"` and
-`draw_layer = "authored"` restore the type definition. Transparent black is a real
+`draw_layer = "authored"` restore the default ordering: terrain behind actors for
+solid types, and the type's authored ordering for other types. Transparent black is a real
 override rather than being confused with the default. These properties affect draw
 submission only, are bounds checked, serialize with the same world record, and roll
 back with animation selection. Greggnogg supplies numeric offset properties plus
 color set/reset and explicit draw-order blocks. The object designer's base draw-order
-choice still controls all instances that retain `authored`.
+choice controls non-solid instances that retain `authored`. Solids can use an
+explicit per-instance foreground override for deliberate overlays.
 
 The type visual's `rotation` and the instance's `visual_rotation` are additive,
 use 1/256-degree precision, and accept -360,000..360,000 degrees. Mirrored

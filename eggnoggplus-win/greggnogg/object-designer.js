@@ -34,6 +34,7 @@
     const type=current();if(!type){element('p','No custom objects.',properties);preview();return;}
     field('Name',O.label(type.key),properties,changeName);
     element('h3','Appearance',properties);
+    let updateDrawOrder=()=>{};
     if(!type.visual)button('Add picture',properties,()=>{type.visual={sheet:'builtin:tiles',sprite:4};render();});
     if(type.visual){
       const v=type.visual,picker=element('select',undefined,element('label','Sheet',properties));
@@ -62,6 +63,8 @@
       const drawOrder=element('select',undefined,element('label','Draw order',properties));
       for(const [value,text] of [['0','Behind players (default)'],['1','In front of players']]){const option=element('option',text,drawOrder);option.value=value;}
       drawOrder.value=String(v.layer||0);drawOrder.onchange=()=>{v.layer=Number(drawOrder.value);preview();};
+      updateDrawOrder=()=>{drawOrder.disabled=type.regions.some(area=>area.role==='solid');drawOrder.value=drawOrder.disabled?'0':String(v.layer||0);};
+      updateDrawOrder();element('p','Solid objects draw behind players as terrain. To put one in front, select its placement and change Draw order.',properties);
       const extra=element('details',undefined,properties);element('summary','Offsets',extra);for(const key of ['offset_x','offset_y'])field(key,v[key]||0,extra,value=>v[key]=value);
       type.animations=type.animations||[];
       const clips=element('details',undefined,properties);clips.open=type.animations.length>0;element('summary','Animations',clips);
@@ -107,7 +110,7 @@
     element('h3','Logic',properties);working.objectScripts=working.objectScripts||{};
     callbackStudio=GregObjectLogic.mount(element('div',undefined,properties),working,type.key,status);
     const regions=element('details',undefined,dialog.querySelector('[data-object-areas]'));regions.open=true;element('summary','Detection areas',regions);element('p','Enable Solid to block players, swords, corpses and native hazards. Other purposes detect contacts for logic.',regions);
-    function validateAreas(){A.serialize(O.catalog(working));preview();}
+    function validateAreas(){A.serialize(O.catalog(working));updateDrawOrder();preview();}
     type.regions.forEach((area,index)=>{
       const row=element('fieldset',undefined,regions);element('legend',area.name||('Area '+area.id),row);
       const nameLabel=element('label','Name',row),nameInput=element('input',undefined,nameLabel);nameInput.type='text';nameInput.maxLength=32;nameInput.value=area.name||'';

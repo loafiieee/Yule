@@ -1216,54 +1216,55 @@
     var canvas = els["room-render-canvas"];
     var appearance = resolvedAppearance(room, state.appearancePreviewBank);
     var request = ++state.roomRenderRequest;
-    canvas.hidden = false;
-    function fallback() {
-      if (request !== state.roomRenderRequest) return;
-      var context = canvas.getContext("2d");
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = appearance.bg1;
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      document.body.classList.remove("atlas-ready");
-    }
-    if (Atlas && Atlas.renderRoom) {
-      try {
-        var frame=document.createElement("canvas");frame.width=canvas.width;frame.height=canvas.height;
-        var frameDoc=state.document,frameMirrored=state.previewMirrored,frameTick=previewTicks();
-        Promise.resolve(Atlas.renderRoom(frame, room, {
-          grid: room.grid,
-          appearance: appearance,
-          ambient: Object.prototype.hasOwnProperty.call(placedOverrides, "ambient") ? placedOverrides.ambient : room.ambient,
-          eggnoggColor: state.document.rules.eggnoggColor,
-          tileset: state.document && state.document.tileset,
-          nativeTileset: Object.prototype.hasOwnProperty.call(placedOverrides, "native_tileset") ? placedOverrides.native_tileset :
-            (Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(state.document, room) : null),
-          particles: state.document && state.document.particles,
-          ambiances: state.document && state.document.ambiances,
-          mapId: state.document && state.document.id,
-          externalImages: assetSources(),
-          mirrored: state.previewMirrored,
-          /* Native terrain variation is seeded from the destination room and
-           * column, not from the glyph. Source rooms are stored centre-out;
-           * their authored copies run left from centre, while their mirrored
-           * runtime copies run the same distance to the right. */
-          worldRoomIndex: placedNode ? (state.document.layout.nodes || []).findIndex(function (node) { return node.id === placedNode.id; }) : Math.max(0, worldRoomIndex),
-          worldXOffset: placedNode ? placedNode.x : finalRoomWorldOffset(state.roomIndex, state.previewMirrored),
-          time: previewTicks()
-        }))
-          .then(function () {return GregObjects.drawRoom(frame,frameDoc,room.id,frameTick,frameMirrored,state.selectedGraphNode);})
-          .then(function(){if(request!==state.roomRenderRequest)return;var context=canvas.getContext("2d");context.clearRect(0,0,canvas.width,canvas.height);context.drawImage(frame,0,0);document.body.classList.add("atlas-ready");})
-          .catch(function (error) {
-            if (request === state.roomRenderRequest) {
-              fallback();
-              console.warn("Greggnogg atlas preview failed; glyph overlay remains available.", error);
-            }
-          });
-        return;
-      } catch (error) {
-        console.warn("Greggnogg atlas preview failed; glyph overlay remains available.", error);
+    GregPreviewQueue.schedule(canvas, function () {
+      canvas.hidden = false;
+      function fallback() {
+        if (request !== state.roomRenderRequest) return;
+        var context = canvas.getContext("2d");
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = appearance.bg1;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        document.body.classList.remove("atlas-ready");
       }
-    }
-    fallback();
+      if (Atlas && Atlas.renderRoom) {
+        try {
+          var frame=document.createElement("canvas");frame.width=canvas.width;frame.height=canvas.height;
+          var frameDoc=state.document,frameMirrored=state.previewMirrored,frameTick=previewTicks();
+          return Promise.resolve(Atlas.renderRoom(frame, room, {
+            grid: room.grid,
+            appearance: appearance,
+            ambient: Object.prototype.hasOwnProperty.call(placedOverrides, "ambient") ? placedOverrides.ambient : room.ambient,
+            eggnoggColor: state.document.rules.eggnoggColor,
+            tileset: state.document && state.document.tileset,
+            nativeTileset: Object.prototype.hasOwnProperty.call(placedOverrides, "native_tileset") ? placedOverrides.native_tileset :
+              (Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(state.document, room) : null),
+            particles: state.document && state.document.particles,
+            ambiances: state.document && state.document.ambiances,
+            mapId: state.document && state.document.id,
+            externalImages: assetSources(),
+            mirrored: state.previewMirrored,
+            /* Native terrain variation is seeded from the destination room and
+             * column, not from the glyph. Source rooms are stored centre-out;
+             * their authored copies run left from centre, while their mirrored
+             * runtime copies run the same distance to the right. */
+            worldRoomIndex: placedNode ? (state.document.layout.nodes || []).findIndex(function (node) { return node.id === placedNode.id; }) : Math.max(0, worldRoomIndex),
+            worldXOffset: placedNode ? placedNode.x : finalRoomWorldOffset(state.roomIndex, state.previewMirrored),
+            time: previewTicks()
+          }))
+            .then(function () {return GregObjects.drawRoom(frame,frameDoc,room.id,frameTick,frameMirrored,state.selectedGraphNode);})
+            .then(function(){if(request!==state.roomRenderRequest)return;var context=canvas.getContext("2d");context.clearRect(0,0,canvas.width,canvas.height);context.drawImage(frame,0,0);document.body.classList.add("atlas-ready");})
+            .catch(function (error) {
+              if (request === state.roomRenderRequest) {
+                fallback();
+                console.warn("Greggnogg atlas preview failed; glyph overlay remains available.", error);
+              }
+            });
+        } catch (error) {
+          console.warn("Greggnogg atlas preview failed; glyph overlay remains available.", error);
+        }
+      }
+      fallback();
+    });
   }
 
   function renderGrid() {
@@ -2110,34 +2111,36 @@
       (Core.resolveRoomNativeTileset ? Core.resolveRoomNativeTileset(state.document, source) : null);
     var tick = previewTicks();
     var context;
-    canvas.width = node.width * 16;
-    canvas.height = node.height * 16;
-    if (!Atlas || !Atlas.renderRoom) {
-      context = canvas.getContext("2d");
-      context.fillStyle = appearance.bg1;
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
-    Promise.resolve(Atlas.renderRoom(canvas, source, {
-      grid: source.grid,
-      appearance: appearance,
-      ambient: ambient,
-      eggnoggColor: state.document.rules.eggnoggColor,
-      tileset: state.document.tileset,
-      nativeTileset: nativeTileset,
-      particles: state.document.particles,
-      ambiances: state.document.ambiances,
-      mapId: state.document.id,
-      externalImages: assetSources(),
-      mirrored: node.mirrorX,
-      worldRoomIndex: (state.document.layout.nodes || []).findIndex(function (entry) { return entry.id === node.id; }),
-      worldXOffset: node.x,
-      time: tick
-    })).then(function () {
-      if (request !== state.layoutPreviewRequest || !canvas.isConnected) return;
-      return GregObjects.drawRoom(canvas, state.document, source.id, tick, node.mirrorX, node.id);
-    }).catch(function (error) {
-      if (request === state.layoutPreviewRequest) console.warn("Greggnogg full-map room preview failed.", error);
+    GregPreviewQueue.schedule(canvas, function () {
+      canvas.width = node.width * 16;
+      canvas.height = node.height * 16;
+      if (!Atlas || !Atlas.renderRoom) {
+        context = canvas.getContext("2d");
+        context.fillStyle = appearance.bg1;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      return Promise.resolve(Atlas.renderRoom(canvas, source, {
+        grid: source.grid,
+        appearance: appearance,
+        ambient: ambient,
+        eggnoggColor: state.document.rules.eggnoggColor,
+        tileset: state.document.tileset,
+        nativeTileset: nativeTileset,
+        particles: state.document.particles,
+        ambiances: state.document.ambiances,
+        mapId: state.document.id,
+        externalImages: assetSources(),
+        mirrored: node.mirrorX,
+        worldRoomIndex: (state.document.layout.nodes || []).findIndex(function (entry) { return entry.id === node.id; }),
+        worldXOffset: node.x,
+        time: tick
+      })).then(function () {
+        if (request !== state.layoutPreviewRequest || !canvas.isConnected) return;
+        return GregObjects.drawRoom(canvas, state.document, source.id, tick, node.mirrorX, node.id);
+      }).catch(function (error) {
+        if (request === state.layoutPreviewRequest) console.warn("Greggnogg full-map room preview failed.", error);
+      });
     });
   }
 

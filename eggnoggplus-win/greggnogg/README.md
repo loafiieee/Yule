@@ -794,6 +794,10 @@ Appearance now has a **Draw order** selector: **Behind players (default)** or
 **In front of players**. These correspond to visual layer 0 and 1. The runtime
 submits default objects before the first native actor pass, and foreground objects
 after the final actor pass. The old numeric layer control under offsets is removed.
+Solid objects use terrain ordering behind actors, including older exports with a
+foreground type visual. A placement's explicit **In front of players** override
+still permits a deliberate overlay. Native and custom PNG atlases are flushed at
+these boundaries so texture ownership cannot reverse the chosen order.
 The reverse-direction block is no longer in the toolbox; its reader remains for
 existing saved projects. Use arithmetic and position writes for authored movement.
 Only regions marked Solid block native players, swords, corpses and hazards.

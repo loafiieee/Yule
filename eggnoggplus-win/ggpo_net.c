@@ -6,12 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #include <windows.h>
 #include <bcrypt.h>
 
 #include "ggpo_ext.h"
+#include "ggpo_transport.h"
 #include "fp_control.h"
 #include "hooks.h"
 #include "log.h"
@@ -27,8 +26,15 @@
  * the ~1472-byte UDP/MTU payload avoids IP fragmentation, which on real networks
  * (unlike loopback) turns one dropped fragment into a lost packet -> prediction
  * stalls -> "slow/laggy" online play. Summaries are only used for desync DETAIL
- * (diagnostic); detection uses the 4-byte checksums, so 2 is plenty. */
-#define GGPO_NET_PACKET_SUMMARIES 2
+ * (diagnostic); detection uses the 4-byte checksums. One summary keeps the
+ * authenticated v18 packet below the EOS P2P 1170-byte limit. */
+#define GGPO_NET_PACKET_SUMMARIES 1
+#define GGPO_NET_EOS_MAX_PACKET_BYTES 1170u
+#ifdef YULE_ENABLE_EOS
+#include "eos_p2p_types.h"
+_Static_assert(GGPO_NET_EOS_MAX_PACKET_BYTES == EOS_P2P_MAX_PACKET_SIZE,
+               "Yule packet limit must match the pinned EOS C SDK");
+#endif
 #define GGPO_NET_INPUT_ACK_WORDS 16u
 #define GGPO_NET_INPUT_ACK_BITS (GGPO_NET_INPUT_ACK_WORDS * 32u)
 #define GGPO_NET_CHAOS_EVENT_CAP 8192u
@@ -59,11 +65,7 @@
 #define GGPO_NET_STATE_CHUNK_BYTES 900
 #define GGPO_NET_PUNCH_HELLO_BURST 8
 #define GGPO_NET_PUNCH_HELLO_INTERVAL_TICKS 3
-#define GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES 900
-#define GGPO_NET_COSMETIC_ASSET_BURST_CHUNKS 8
 #define GGPO_NET_SIM_QUEUE_PACKETS 512
-#define GGPO_NET_COSMETIC_SYNC_WAIT_TICKS 300
-#define GGPO_NET_ENABLE_COSMETICS 0
 #define GGPO_NET_INITIAL_STATE_EPOCH 1u
 #define GGPO_NET_AUTH_KEY_BYTES 32u
 #define GGPO_NET_AUTH_TAG_BYTES 16u
@@ -95,15 +97,13 @@
 #define GGPO_NET_PACKET_STATE_CHUNK 4u
 #define GGPO_NET_PACKET_STATE_ACK   5u
 #define GGPO_NET_PACKET_RESYNC_REQUEST 6u
-#define GGPO_NET_PACKET_COSMETICS 7u
-#define GGPO_NET_PACKET_COSMETIC_ASSET_CHUNK 8u
 #define GGPO_NET_PACKET_PALETTE 9u
 
 #define GGPO_NET_STATE_FLAG_CORRECTION 1u
 #define GGPO_NET_STATE_FLAG_DELTA      2u
 
 /* Correction control is a repeated, authenticated state machine carried by
- * every ordinary packet.  The numeric values are wire ABI for v17. */
+ * every ordinary packet. The numeric values remain wire ABI in v18. */
 enum {
     GGPO_NET_CORRECTION_NONE = 0u,
     GGPO_NET_CORRECTION_REQUEST = 1u,
@@ -259,46 +259,8 @@ typedef struct GgpoNetStateChunkPacket {
     uint8_t data[GGPO_NET_STATE_CHUNK_BYTES];
 } GgpoNetStateChunkPacket;
 
-typedef struct GgpoNetCosmeticPacket {
-    uint32_t magic;
-    uint16_t version;
-    uint16_t type;
-    uint64_t session_id;
-    uint32_t sender_player;
-    uint64_t auth_sequence;
-    uint8_t auth_tag[GGPO_NET_AUTH_TAG_BYTES];
-    uint32_t build_id;
-    uint32_t exe_id;
-    uint32_t dll_id;
-    uint32_t profile_revision;
-    uint32_t asset_ack_revision;
-    uint32_t profile_len;
-    char profile[GGPO_NET_COSMETIC_PROFILE_BYTES];
-} GgpoNetCosmeticPacket;
-
-typedef struct GgpoNetCosmeticAssetChunkPacket {
-    uint32_t magic;
-    uint16_t version;
-    uint16_t type;
-    uint64_t session_id;
-    uint32_t sender_player;
-    uint64_t auth_sequence;
-    uint8_t auth_tag[GGPO_NET_AUTH_TAG_BYTES];
-    uint32_t build_id;
-    uint32_t exe_id;
-    uint32_t dll_id;
-    uint32_t asset_revision;
-    uint32_t asset_len;
-    uint32_t chunk_index;
-    uint32_t chunk_count;
-    uint32_t chunk_size;
-    char asset_id[GGPO_NET_COSMETIC_ASSET_ID_BYTES];
-    uint8_t data[GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES];
-} GgpoNetCosmeticAssetChunkPacket;
-
-/* Deliberately separate from the disabled generic cosmetic payload. Palette
- * choices are two bounded presentation IDs plus an exact peer echo; no JSON,
- * assets or mod-defined bytes cross this channel. */
+/* Palette choices are two bounded presentation IDs plus an exact peer echo;
+ * no JSON, assets or mod-defined bytes cross this channel. */
 typedef struct GgpoNetPalettePacket {
     uint32_t magic;
     uint16_t version;
@@ -319,17 +281,19 @@ typedef struct GgpoNetPalettePacket {
 
 #define GGPO_NET_MAX2(a, b) ((sizeof(a) > sizeof(b)) ? sizeof(a) : sizeof(b))
 #define GGPO_NET_MAX_PACKET_BYTES \
-    (GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) > GGPO_NET_MAX2(GgpoNetCosmeticPacket, GgpoNetCosmeticAssetChunkPacket) ? \
-        (GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) > sizeof(GgpoNetPalettePacket) ? \
-            GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) : sizeof(GgpoNetPalettePacket)) : \
-        (GGPO_NET_MAX2(GgpoNetCosmeticPacket, GgpoNetCosmeticAssetChunkPacket) > sizeof(GgpoNetPalettePacket) ? \
-            GGPO_NET_MAX2(GgpoNetCosmeticPacket, GgpoNetCosmeticAssetChunkPacket) : sizeof(GgpoNetPalettePacket)))
+    (GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) > sizeof(GgpoNetPalettePacket) ? \
+        GGPO_NET_MAX2(GgpoNetPacket, GgpoNetStateChunkPacket) : sizeof(GgpoNetPalettePacket))
 
 /* Keep the fixed 60 Hz input packet comfortably below the typical 1472-byte
  * IPv4 UDP payload. A protocol edit that crosses this boundary must fail the
  * build instead of silently introducing fragmentation on real networks. */
-typedef char GgpoNetInputPacketMustFitMtu[(sizeof(GgpoNetPacket) <= 1400u) ? 1 : -1];
-typedef char GgpoNetInputPacketSizeIsV17[(sizeof(GgpoNetPacket) == 1292u) ? 1 : -1];
+typedef char GgpoNetInputPacketSizeIsV18[(sizeof(GgpoNetPacket) == 1144u) ? 1 : -1];
+typedef char GgpoNetSummarySizeIsFixed[(sizeof(GgpoNetPacketStateSummary) == 148u) ? 1 : -1];
+typedef char GgpoNetInputPacketFitsEos[(sizeof(GgpoNetPacket) <= GGPO_NET_EOS_MAX_PACKET_BYTES) ? 1 : -1];
+typedef char GgpoNetStateChunkSizeIsFixed[(sizeof(GgpoNetStateChunkPacket) == 1004u) ? 1 : -1];
+typedef char GgpoNetStateChunkFitsEos[(sizeof(GgpoNetStateChunkPacket) <= GGPO_NET_EOS_MAX_PACKET_BYTES) ? 1 : -1];
+typedef char GgpoNetPaletteFitsEos[(sizeof(GgpoNetPalettePacket) <= GGPO_NET_EOS_MAX_PACKET_BYTES) ? 1 : -1];
+typedef char GgpoNetEveryPacketFitsEos[(GGPO_NET_MAX_PACKET_BYTES <= GGPO_NET_EOS_MAX_PACKET_BYTES) ? 1 : -1];
 typedef char GgpoNetPalettePacketSizeIsFixed[(sizeof(GgpoNetPalettePacket) == 72u) ? 1 : -1];
 typedef char GgpoNetAckMustCoverHistory[
     (GGPO_NET_INPUT_ACK_BITS >= GGPO_NET_HISTORY_FRAMES) ? 1 : -1];
@@ -338,7 +302,7 @@ typedef struct GgpoNetQueuedPacket {
     int valid;
     uint32_t send_tick;
     int len;
-    struct sockaddr_in addr;
+    GgpoTransportPeer addr;
     uint8_t bytes[GGPO_NET_MAX_PACKET_BYTES];
 } GgpoNetQueuedPacket;
 
@@ -372,20 +336,11 @@ typedef struct GgpoNetSession {
     int remote_player;
     uint16_t local_port;
     uint16_t remote_port;
-    SOCKET sock;
-    struct sockaddr_in peer_addr;
+    GgpoTransport transport;
+    GgpoTransportPeer peer_addr;
     int has_peer_addr;
-    /* ICE-style hole-punch candidates (LAN + public endpoints). Until connected we
-     * send handshake HELLOs to ALL of them; whichever address actually replies is
-     * adopted as peer_addr (ggpo_net_accept_packet_source). This is what makes
-     * cross-network play work: the server hands us both the peer's LAN address
-     * (works same-LAN) and its public/NAT address (works cross-network). */
-    struct sockaddr_in candidates[6];
-    int candidate_count;
-    struct sockaddr_in probe_server_addr;
-    int has_probe_server_addr;
-    char probe_server_host[128];
-    uint16_t probe_server_port;
+    /* Native hole-punch candidates and the probe destination live in the
+     * native transport. Peer adoption below remains Yule-authenticated. */
     uint64_t session_id;
     uint64_t remote_session_id;
     int has_remote_session_id;
@@ -408,6 +363,7 @@ typedef struct GgpoNetSession {
     uint32_t auth_rejected_packets;
     uint32_t service_tick;
     uint32_t last_rx_tick;
+    uint64_t service_clock_started_ms;
     uint32_t last_handshake_burst_tick;
     uint32_t alternate_endpoint_updates;
     /* Prematch transport lifecycle. While prematch_hold is set, socket
@@ -619,32 +575,6 @@ typedef struct GgpoNetSession {
     uint32_t remote_dll_id;
     int has_remote_fingerprint;
     int warned_fingerprint_mismatch;
-    char local_cosmetic_profile[GGPO_NET_COSMETIC_PROFILE_BYTES];
-    uint32_t local_cosmetic_profile_len;
-    uint32_t local_cosmetic_profile_revision;
-    uint32_t last_cosmetic_profile_send_tick;
-    char local_cosmetic_asset_id[GGPO_NET_COSMETIC_ASSET_ID_BYTES];
-    uint8_t* local_cosmetic_asset;
-    uint32_t local_cosmetic_asset_len;
-    uint32_t local_cosmetic_asset_revision;
-    uint32_t local_cosmetic_asset_next_chunk;
-    uint32_t local_cosmetic_asset_last_send_tick;
-    uint32_t local_cosmetic_asset_peer_applied_revision;
-    char remote_cosmetic_profile[GGPO_NET_COSMETIC_PROFILE_BYTES];
-    uint32_t remote_cosmetic_profile_len;
-    uint32_t remote_cosmetic_profile_revision;
-    uint32_t remote_cosmetic_profile_applied_revision;
-    char remote_cosmetic_asset_id[GGPO_NET_COSMETIC_ASSET_ID_BYTES];
-    uint8_t* remote_cosmetic_asset;
-    uint8_t* remote_cosmetic_asset_chunks_seen;
-    uint32_t remote_cosmetic_asset_len;
-    uint32_t remote_cosmetic_asset_revision;
-    uint32_t remote_cosmetic_asset_applied_revision;
-    uint32_t remote_cosmetic_asset_chunk_count;
-    uint32_t remote_cosmetic_asset_seen_chunk_count;
-    int remote_cosmetic_asset_complete;
-    uint32_t cosmetic_wait_start_tick;
-    int cosmetic_wait_cap_announced;
     uint32_t local_palette_count;
     uint32_t local_palette_skin;
     uint32_t local_palette_clothing;
@@ -659,7 +589,6 @@ typedef struct GgpoNetSession {
 } GgpoNetSession;
 
 static GgpoNetSession g_net;
-static int g_wsa_ready = 0;
 static BCRYPT_ALG_HANDLE g_net_auth_hmac_alg = NULL;
 static ULONG g_net_auth_hash_object_bytes = 0u;
 static uint8_t g_net_pending_auth_root[GGPO_NET_AUTH_KEY_BYTES];
@@ -745,23 +674,6 @@ static void ggpo_net_capture_first_desync_repro(uint32_t frame,
 static uint32_t ggpo_net_state_chunk_count(uint32_t state_size) {
     if (state_size == 0u) return 0u;
     return (state_size + (GGPO_NET_STATE_CHUNK_BYTES - 1u)) / GGPO_NET_STATE_CHUNK_BYTES;
-}
-
-static uint32_t ggpo_net_cosmetic_asset_chunk_count(uint32_t asset_size) {
-    if (asset_size == 0u) return 0u;
-    return (asset_size + (GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES - 1u)) / GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES;
-}
-
-static uint32_t ggpo_net_cosmetic_asset_chunk_offset(uint32_t chunk_index) {
-    return chunk_index * GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES;
-}
-
-static uint32_t ggpo_net_cosmetic_asset_chunk_size(uint32_t asset_len, uint32_t chunk_index) {
-    uint32_t offset = ggpo_net_cosmetic_asset_chunk_offset(chunk_index);
-    uint32_t remaining = 0;
-    if (asset_len == 0u || offset >= asset_len) return 0u;
-    remaining = asset_len - offset;
-    return remaining > GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES ? GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES : remaining;
 }
 
 static uint32_t ggpo_net_state_chunk_offset(uint32_t chunk_index) {
@@ -1177,19 +1089,6 @@ static void ggpo_net_note_remote_fingerprint(uint32_t build_id, uint32_t exe_id,
     }
 }
 
-static int ggpo_net_ensure_wsa(char* err, size_t err_cap) {
-    if (!g_wsa_ready) {
-        WSADATA wd;
-        int rc = WSAStartup(MAKEWORD(2, 2), &wd);
-        if (rc != 0) {
-            ggpo_net_set_err(err, err_cap, "WSAStartup failed");
-            return 0;
-        }
-        g_wsa_ready = 1;
-    }
-    return 1;
-}
-
 static int ggpo_net_make_session_id(uint64_t* out_session_id) {
     uint64_t value = 0u;
     int attempt;
@@ -1227,89 +1126,15 @@ static uint32_t ggpo_net_make_chaos_seed(uint64_t session_id) {
     return seed ? seed : 1u;
 }
 
-static int ggpo_net_make_socket(uint16_t local_port, SOCKET* out_sock, uint16_t* out_bound_port, char* err, size_t err_cap) {
-    SOCKET s;
-    struct sockaddr_in addr;
-    int addr_len = sizeof(addr);
-    u_long nb = 1;
-    int reuse = 1;
-
-    if (!ggpo_net_ensure_wsa(err, err_cap)) return 0;
-    s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (s == INVALID_SOCKET) {
-        ggpo_net_set_err(err, err_cap, "udp socket failed");
-        return 0;
-    }
-
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
-    if (ioctlsocket(s, FIONBIO, &nb) != 0) {
-        closesocket(s);
-        ggpo_net_set_err(err, err_cap, "nonblocking udp setup failed");
-        return 0;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(local_port);
-    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        closesocket(s);
-        ggpo_net_set_err(err, err_cap, "udp bind failed");
-        return 0;
-    }
-    if (getsockname(s, (struct sockaddr*)&addr, &addr_len) == 0 && out_bound_port) {
-        *out_bound_port = ntohs(addr.sin_port);
-    }
-
-    *out_sock = s;
-    return 1;
-}
-
-static int ggpo_net_resolve_peer(const char* host, uint16_t port, struct sockaddr_in* out_addr, char* err, size_t err_cap) {
-    struct addrinfo hints;
-    struct addrinfo* res = NULL;
-    char port_buf[16];
-    int rc;
-
-    if (!host || !host[0]) {
-        ggpo_net_set_err(err, err_cap, "missing host");
-        return 0;
-    }
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-    snprintf(port_buf, sizeof(port_buf), "%u", (unsigned int)port);
-    rc = getaddrinfo(host, port_buf, &hints, &res);
-    if (rc != 0 || !res) {
-        ggpo_net_set_err(err, err_cap, "peer resolve failed");
-        return 0;
-    }
-
-    memcpy(out_addr, res->ai_addr, sizeof(*out_addr));
-    freeaddrinfo(res);
-    return 1;
-}
-
-static int ggpo_net_addr_equal(const struct sockaddr_in* a, const struct sockaddr_in* b) {
-    return a && b &&
-           a->sin_family == b->sin_family &&
-           a->sin_port == b->sin_port &&
-           a->sin_addr.s_addr == b->sin_addr.s_addr;
+static int ggpo_net_addr_equal(const GgpoTransportPeer* a,
+                               const GgpoTransportPeer* b) {
+    return ggpo_transport_peer_equal(a, b);
 }
 
 /* Register a hole-punch candidate endpoint (deduped). Handshake HELLOs are sent
  * to every candidate until the peer replies from one of them. */
-static void ggpo_net_add_candidate_addr(const struct sockaddr_in* addr) {
-    int i;
-    int cap = (int)(sizeof(g_net.candidates) / sizeof(g_net.candidates[0]));
-    if (!addr || addr->sin_port == 0) return;
-    for (i = 0; i < g_net.candidate_count; i++) {
-        if (ggpo_net_addr_equal(&g_net.candidates[i], addr)) return;
-    }
-    if (g_net.candidate_count < cap) {
-        g_net.candidates[g_net.candidate_count++] = *addr;
-    }
+static void ggpo_net_add_candidate_addr(const GgpoTransportPeer* addr) {
+    (void)ggpo_transport_add_native_candidate(&g_net.transport, addr);
 }
 
 static uint32_t ggpo_net_rand_u32(void) {
@@ -1362,8 +1187,9 @@ static uint32_t ggpo_net_sim_pending_count(void) {
     return count;
 }
 
-static GgpoNetRawSendResult ggpo_net_note_socket_send_error(int error_code) {
-    if (error_code == WSAEWOULDBLOCK || error_code == WSAENOBUFS) {
+static GgpoNetRawSendResult ggpo_net_note_socket_send_error(int backpressure,
+                                                            int error_code) {
+    if (backpressure) {
         ggpo_net_saturating_increment(&g_net.socket_would_block_events);
         g_net.socket_backpressured_this_tick = 1;
         return GGPO_NET_RAW_SEND_WOULD_BLOCK;
@@ -1398,41 +1224,37 @@ static int ggpo_net_test_should_block_state_chunk(const void* data, int len) {
 
 static GgpoNetRawSendResult ggpo_net_send_raw_bytes(const void* data,
                                                      int len,
-                                                     const struct sockaddr_in* addr) {
-    int sent;
+                                                     const GgpoTransportPeer* addr) {
+    GgpoTransportSendResult sent;
+    int os_error = 0;
 #ifdef GGPO_NET_TEST
     if (g_net_test_duplicate_pressure_calls >= 0) {
         if (++g_net_test_duplicate_pressure_calls == 2) {
-            return ggpo_net_note_socket_send_error(WSAEWOULDBLOCK);
+            return ggpo_net_note_socket_send_error(1, 0);
         }
         return GGPO_NET_RAW_SEND_SENT;
     }
 #endif
-    if (!data || len <= 0 || !addr || g_net.sock == INVALID_SOCKET) {
+    if (!data || len <= 0 || !addr ||
+        !ggpo_transport_connected(&g_net.transport)) {
         return GGPO_NET_RAW_SEND_HARD_ERROR;
     }
     if (ggpo_net_test_should_block_state_chunk(data, len)) {
-        return ggpo_net_note_socket_send_error(WSAEWOULDBLOCK);
+        return ggpo_net_note_socket_send_error(1, 0);
     }
-    sent = sendto(g_net.sock,
-                  (const char*)data,
-                  len,
-                  0,
-                  (const struct sockaddr*)addr,
-                  sizeof(*addr));
-    if (sent == SOCKET_ERROR) {
-        return ggpo_net_note_socket_send_error(WSAGetLastError());
-    }
-    if (sent != len) {
-        /* UDP is all-or-nothing on Winsock. Treat an impossible short datagram
-         * as a hard local drop instead of advancing a transfer cursor. */
-        return ggpo_net_note_socket_send_error(WSAEMSGSIZE);
+    if (len >= (int)sizeof(GgpoNetPacketPrefix) &&
+        ((const GgpoNetPacketPrefix*)data)->type == GGPO_NET_PACKET_BYE)
+        sent = ggpo_transport_send_goodbye(&g_net.transport, data, len, addr, &os_error);
+    else sent = ggpo_transport_send(&g_net.transport, data, len, addr, &os_error);
+    if (sent != GGPO_TRANSPORT_SEND_OK) {
+        return ggpo_net_note_socket_send_error(
+            sent == GGPO_TRANSPORT_SEND_BACKPRESSURE, os_error);
     }
     g_net.packets_sent++;
     return GGPO_NET_RAW_SEND_SENT;
 }
 
-static int ggpo_net_queue_sim_packet(const void* data, int len, const struct sockaddr_in* addr, uint32_t delay_ticks) {
+static int ggpo_net_queue_sim_packet(const void* data, int len, const GgpoTransportPeer* addr, uint32_t delay_ticks) {
     for (int i = 0; i < GGPO_NET_SIM_QUEUE_PACKETS; i++) {
         GgpoNetQueuedPacket* q = &g_net.sim_queue[i];
         if (q->valid) continue;
@@ -1536,7 +1358,7 @@ static int ggpo_net_sign_packet(void* data, int len) {
     return ok;
 }
 
-static int ggpo_net_send_bytes(const void* data, int len, const struct sockaddr_in* addr, int simulate) {
+static int ggpo_net_send_bytes(const void* data, int len, const GgpoTransportPeer* addr, int simulate) {
     uint8_t signed_packet[GGPO_NET_MAX_PACKET_BYTES];
     uint32_t delay = 0;
     int bypass_test_sim = 0;
@@ -1716,7 +1538,7 @@ static void ggpo_net_reset_confirmed_prematch_peer_attempt(void) {
 /* Adopt session id and source atomically. A different session id is accepted only
  * from a HELLO-equivalent caller while the pre-frame-0 link is still unconfirmed;
  * delayed packets from retired attempts can therefore never flip the session back. */
-static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
+static int ggpo_net_accept_packet_source(const GgpoTransportPeer* from,
                                          uint64_t session_id,
                                          const char* kind,
                                          int allow_attempt_migration) {
@@ -1764,7 +1586,7 @@ static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
         if (!g_net.has_peer_addr) {
             g_net.peer_addr = *from;
             g_net.has_peer_addr = 1;
-            g_net.remote_port = ntohs(from->sin_port);
+            g_net.remote_port = ggpo_transport_peer_native_port(from);
             g_net.last_handshake_burst_tick = 0u;
         }
         return 1;
@@ -1772,7 +1594,7 @@ static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
 
     if (can_migrate) {
         g_net.peer_addr = *from;
-        g_net.remote_port = ntohs(from->sin_port);
+        g_net.remote_port = ggpo_transport_peer_native_port(from);
         g_net.last_handshake_burst_tick = 0u;
         g_net.alternate_endpoint_updates++;
         LOG_INFO("ggpo.net: accepted alternate peer endpoint from %s packet port=%u updates=%u",
@@ -1791,7 +1613,7 @@ static int ggpo_net_accept_packet_source(const struct sockaddr_in* from,
  * into its sender or transplanted between socket attempts. */
 static int ggpo_net_authenticate_received(void* data,
                                           int len,
-                                          const struct sockaddr_in* from) {
+                                          const GgpoTransportPeer* from) {
     GgpoNetPacketPrefix* prefix = (GgpoNetPacketPrefix*)data;
     uint8_t saved_tag[GGPO_NET_AUTH_TAG_BYTES];
     uint8_t direction_key[GGPO_NET_AUTH_KEY_BYTES];
@@ -3819,9 +3641,9 @@ int ggpo_net_test_seed_history(uint32_t frame,
 }
 #endif
 
-static int ggpo_net_send_packet_to(uint16_t type, const struct sockaddr_in* addr) {
+static int ggpo_net_send_packet_to(uint16_t type, const GgpoTransportPeer* addr) {
     GgpoNetPacket p;
-    if (!addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (!addr || !ggpo_transport_connected(&g_net.transport)) return 0;
     ggpo_net_fill_packet(&p, type);
     return ggpo_net_send_bytes(&p, (int)sizeof(p), addr, type != GGPO_NET_PACKET_BYE);
 }
@@ -3836,13 +3658,18 @@ static int ggpo_net_send_packet(uint16_t type) {
  * adopted as peer_addr. Once connected we only talk to the working peer_addr. */
 static void ggpo_net_send_handshake_burst(uint32_t count) {
     if (!g_net.active || ggpo_net_link_confirmed() ||
-        g_net.sock == INVALID_SOCKET) return;
+        !ggpo_transport_connected(&g_net.transport)) return;
     if (count == 0u) count = 1u;
     for (uint32_t i = 0; i < count; i++) {
         int sent_any = 0;
-        for (int c = 0; c < g_net.candidate_count; c++) {
+        for (int c = 0;
+             c < ggpo_transport_native_candidate_count(&g_net.transport); c++) {
+            GgpoTransportPeer candidate;
             if (g_net.socket_backpressured_this_tick) break;
-            if (ggpo_net_send_packet_to(GGPO_NET_PACKET_HELLO, &g_net.candidates[c])) sent_any = 1;
+            if (ggpo_transport_native_candidate(&g_net.transport, c, &candidate) &&
+                ggpo_net_send_packet_to(GGPO_NET_PACKET_HELLO, &candidate)) {
+                sent_any = 1;
+            }
         }
         if (g_net.socket_backpressured_this_tick) break;
         /* Fall back to peer_addr if no candidates were registered (older path). */
@@ -3882,7 +3709,7 @@ static int ggpo_net_palette_ready_internal(void) {
 static int ggpo_net_send_palette(void) {
     GgpoNetPalettePacket p;
     if (!g_net.local_palette_valid || g_net.palette_conflict ||
-        !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET ||
+        !g_net.has_peer_addr || !ggpo_transport_connected(&g_net.transport) ||
         !ggpo_net_link_confirmed()) {
         return 0;
     }
@@ -3920,171 +3747,9 @@ static void ggpo_net_send_palette_periodic(void) {
     (void)ggpo_net_send_palette();
 }
 
-static int ggpo_net_send_cosmetic_profile(void) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    return 0;
-#endif
-    GgpoNetCosmeticPacket p;
-    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
-    if (g_net.local_cosmetic_profile_len == 0u ||
-        g_net.local_cosmetic_profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) {
-        return 0;
-    }
-
-    memset(&p, 0, sizeof(p));
-    p.magic = GGPO_NET_MAGIC;
-    p.version = GGPO_NET_VERSION;
-    p.type = GGPO_NET_PACKET_COSMETICS;
-    p.session_id = g_net.session_id;
-    p.sender_player = (uint32_t)g_net.local_player;
-    p.build_id = g_net.local_build_id;
-    p.exe_id = g_net.local_exe_id;
-    p.dll_id = g_net.local_dll_id;
-    p.profile_revision = g_net.local_cosmetic_profile_revision;
-    p.asset_ack_revision = g_net.remote_cosmetic_asset_applied_revision;
-    p.profile_len = g_net.local_cosmetic_profile_len;
-    memcpy(p.profile, g_net.local_cosmetic_profile, g_net.local_cosmetic_profile_len);
-    if (!ggpo_net_send_bytes(&p,
-                             (int)(offsetof(GgpoNetCosmeticPacket, profile) + p.profile_len),
-                             &g_net.peer_addr,
-                             1)) {
-        return 0;
-    }
-    g_net.last_cosmetic_profile_send_tick = g_net.service_tick;
-    return 1;
-}
-
-static void ggpo_net_send_cosmetic_profile_periodic(void) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    return;
-#endif
-    if (!g_net.active || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
-    if (g_net.local_cosmetic_profile_len == 0u) return;
-    if (g_net.last_cosmetic_profile_send_tick != 0u &&
-        g_net.service_tick - g_net.last_cosmetic_profile_send_tick < 30u) {
-        return;
-    }
-    (void)ggpo_net_send_cosmetic_profile();
-}
-
-static int ggpo_net_send_cosmetic_asset_chunk(uint32_t chunk_index) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    (void)chunk_index;
-    return 0;
-#endif
-    GgpoNetCosmeticAssetChunkPacket p;
-    uint32_t chunk_count = 0;
-    uint32_t chunk_size = 0;
-    uint32_t offset = 0;
-    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
-    if (!g_net.local_cosmetic_asset || g_net.local_cosmetic_asset_len == 0u) return 0;
-    if (g_net.local_cosmetic_asset_peer_applied_revision == g_net.local_cosmetic_asset_revision &&
-        g_net.local_cosmetic_asset_revision != 0u) {
-        return 0;
-    }
-
-    chunk_count = ggpo_net_cosmetic_asset_chunk_count(g_net.local_cosmetic_asset_len);
-    if (chunk_count == 0u) return 0;
-    chunk_index %= chunk_count;
-    chunk_size = ggpo_net_cosmetic_asset_chunk_size(g_net.local_cosmetic_asset_len, chunk_index);
-    if (chunk_size == 0u) return 0;
-    offset = ggpo_net_cosmetic_asset_chunk_offset(chunk_index);
-
-    memset(&p, 0, sizeof(p));
-    p.magic = GGPO_NET_MAGIC;
-    p.version = GGPO_NET_VERSION;
-    p.type = GGPO_NET_PACKET_COSMETIC_ASSET_CHUNK;
-    p.session_id = g_net.session_id;
-    p.sender_player = (uint32_t)g_net.local_player;
-    p.build_id = g_net.local_build_id;
-    p.exe_id = g_net.local_exe_id;
-    p.dll_id = g_net.local_dll_id;
-    p.asset_revision = g_net.local_cosmetic_asset_revision;
-    p.asset_len = g_net.local_cosmetic_asset_len;
-    p.chunk_index = chunk_index;
-    p.chunk_count = chunk_count;
-    p.chunk_size = chunk_size;
-    memcpy(p.asset_id, g_net.local_cosmetic_asset_id, sizeof(p.asset_id));
-    memcpy(p.data, g_net.local_cosmetic_asset + offset, chunk_size);
-    return ggpo_net_send_bytes(&p,
-                               (int)(offsetof(GgpoNetCosmeticAssetChunkPacket, data) + chunk_size),
-                               &g_net.peer_addr,
-                               1);
-}
-
-static void ggpo_net_send_cosmetic_asset_periodic(void) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    return;
-#endif
-    uint32_t chunk_count = 0;
-    if (!g_net.active || !g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return;
-    if (!g_net.local_cosmetic_asset || g_net.local_cosmetic_asset_len == 0u) return;
-    if (g_net.local_cosmetic_asset_peer_applied_revision == g_net.local_cosmetic_asset_revision &&
-        g_net.local_cosmetic_asset_revision != 0u) {
-        return;
-    }
-    if (g_net.local_cosmetic_asset_last_send_tick != 0u &&
-        g_net.service_tick - g_net.local_cosmetic_asset_last_send_tick < 2u) {
-        return;
-    }
-
-    chunk_count = ggpo_net_cosmetic_asset_chunk_count(g_net.local_cosmetic_asset_len);
-    if (chunk_count == 0u) return;
-    for (uint32_t i = 0; i < GGPO_NET_COSMETIC_ASSET_BURST_CHUNKS; i++) {
-        if (g_net.socket_backpressured_this_tick ||
-            !ggpo_net_send_cosmetic_asset_chunk(
-                g_net.local_cosmetic_asset_next_chunk)) {
-            break;
-        }
-        g_net.local_cosmetic_asset_next_chunk = (g_net.local_cosmetic_asset_next_chunk + 1u) % chunk_count;
-        g_net.local_cosmetic_asset_last_send_tick = g_net.service_tick;
-    }
-}
-
-static int ggpo_net_cosmetic_profiles_ready(void) {
-    if (g_net.local_cosmetic_profile_len == 0u) return 1;
-    if (g_net.remote_cosmetic_profile_len == 0u || g_net.remote_cosmetic_profile_revision == 0u) return 0;
-    if (g_net.remote_cosmetic_profile_applied_revision != g_net.remote_cosmetic_profile_revision) return 0;
-    return 1;
-}
-
-static int ggpo_net_wait_for_cosmetic_profiles(uint32_t* out_checksum) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    (void)out_checksum;
-    return 0;
-#endif
-    if (ggpo_net_cosmetic_profiles_ready()) {
-        g_net.cosmetic_wait_start_tick = 0u;
-        g_net.cosmetic_wait_cap_announced = 0;
-        return 0;
-    }
-
-    if (g_net.cosmetic_wait_start_tick == 0u) {
-        g_net.cosmetic_wait_start_tick = ggpo_net_now_tick();
-    }
-    ggpo_net_send_cosmetic_profile_periodic();
-    ggpo_net_send_cosmetic_asset_periodic();
-
-    if (g_net.service_tick - g_net.cosmetic_wait_start_tick < GGPO_NET_COSMETIC_SYNC_WAIT_TICKS) {
-        if (out_checksum) *out_checksum = g_net.last_checksum;
-        return 1;
-    }
-
-    if (!g_net.cosmetic_wait_cap_announced) {
-        LOG_WARN("ggpo.net: cosmetic profile sync wait exceeded %u ticks; starting without confirmed cosmetics local_bytes=%u remote_bytes=%u remote_rev=%u applied_rev=%u",
-                 (unsigned int)GGPO_NET_COSMETIC_SYNC_WAIT_TICKS,
-                 (unsigned int)g_net.local_cosmetic_profile_len,
-                 (unsigned int)g_net.remote_cosmetic_profile_len,
-                 (unsigned int)g_net.remote_cosmetic_profile_revision,
-                 (unsigned int)g_net.remote_cosmetic_profile_applied_revision);
-        g_net.cosmetic_wait_cap_announced = 1;
-    }
-    return 0;
-}
-
 static int ggpo_net_send_state_ack(void) {
     GgpoNetPacket p;
-    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (!g_net.has_peer_addr || !ggpo_transport_connected(&g_net.transport)) return 0;
     ggpo_net_fill_packet(&p, GGPO_NET_PACKET_STATE_ACK);
     return ggpo_net_send_bytes(&p, (int)sizeof(p), &g_net.peer_addr, 1);
 }
@@ -4102,7 +3767,7 @@ static int ggpo_net_send_state_chunk_from(const uint8_t* state,
     uint32_t chunk_index;
     uint32_t chunk_count;
 
-    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (!g_net.has_peer_addr || !ggpo_transport_connected(&g_net.transport)) return 0;
     if (!state || state_len == 0 || state_len > (size_t)UINT_MAX || !inout_offset) return 0;
     if (*inout_offset >= (uint32_t)state_len) {
         *inout_offset = 0;
@@ -4165,7 +3830,7 @@ static int ggpo_net_send_delta_state_chunk_from(const uint8_t* base,
     uint32_t offset = 0;
     uint32_t chunk = 0;
 
-    if (!g_net.has_peer_addr || g_net.sock == INVALID_SOCKET) return 0;
+    if (!g_net.has_peer_addr || !ggpo_transport_connected(&g_net.transport)) return 0;
     if (!base || !state || state_len == 0 || state_len > (size_t)UINT_MAX || !inout_next_chunk) return 0;
     full_chunk_count = ggpo_net_state_chunk_count((uint32_t)state_len);
     if (full_chunk_count == 0u || changed_chunk_count == 0u || changed_chunk_count > full_chunk_count) return 0;
@@ -4494,8 +4159,6 @@ static void ggpo_net_reset_authoritative_state_bookkeeping(void) {
     g_net.desync_frame = 0u;
     g_net.desync_local_checksum = 0u;
     g_net.desync_remote_checksum = 0u;
-    g_net.cosmetic_wait_start_tick = 0u;
-    g_net.cosmetic_wait_cap_announced = 0;
     g_net.auto_input_delay_applied = 0;
     memset(g_rng_ring, 0, sizeof(g_rng_ring));
     g_rng_dump_count = 0u;
@@ -4745,20 +4408,6 @@ static int ggpo_net_prematch_invariants_ok(const char* where) {
     return ok;
 }
 
-static void ggpo_net_reset_remote_cosmetic_asset(void) {
-    free(g_net.remote_cosmetic_asset);
-    free(g_net.remote_cosmetic_asset_chunks_seen);
-    g_net.remote_cosmetic_asset = NULL;
-    g_net.remote_cosmetic_asset_chunks_seen = NULL;
-    memset(g_net.remote_cosmetic_asset_id, 0, sizeof(g_net.remote_cosmetic_asset_id));
-    g_net.remote_cosmetic_asset_len = 0;
-    g_net.remote_cosmetic_asset_revision = 0;
-    g_net.remote_cosmetic_asset_applied_revision = 0;
-    g_net.remote_cosmetic_asset_chunk_count = 0;
-    g_net.remote_cosmetic_asset_seen_chunk_count = 0;
-    g_net.remote_cosmetic_asset_complete = 0;
-}
-
 /* Apply a network-provided rollback blob as a transaction. Validation and the
  * advertised checksum are checked before any live write. If the rollback load
  * itself fails or produces the wrong canonical state, restore the exact raw
@@ -4932,7 +4581,7 @@ int ggpo_net_test_apply_state_transaction(const void* candidate,
 }
 #endif
 
-static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int got_len, const struct sockaddr_in* from) {
+static void ggpo_net_handle_state_chunk(const GgpoNetStateChunkPacket* p, int got_len, const GgpoTransportPeer* from) {
     uint32_t checksum = 0;
     uint32_t flags = 0;
     uint32_t expected_full_chunk_count = 0;
@@ -5283,61 +4932,6 @@ int ggpo_net_test_initial_state_chunk_rejected(uint32_t checksum_xor,
 }
 #endif
 
-static void ggpo_net_handle_cosmetic_packet(const GgpoNetCosmeticPacket* p, int got_len, const struct sockaddr_in* from) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    (void)p;
-    (void)got_len;
-    (void)from;
-    return;
-#endif
-    if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
-    if (p->type != GGPO_NET_PACKET_COSMETICS) return;
-    if (p->sender_player > 1u || (int)p->sender_player == g_net.local_player) return;
-    if (p->profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) return;
-    if (got_len < (int)(offsetof(GgpoNetCosmeticPacket, profile) + p->profile_len)) return;
-
-    if (!ggpo_net_accept_packet_source(from, p->session_id, "cosmetic", 0)) {
-        return;
-    }
-    if (!ggpo_net_link_confirmed()) return;
-
-    ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
-    g_net.remote_player = (int)p->sender_player;
-    g_net.last_rx_tick = g_net.service_tick;
-    g_net.packets_received++;
-    if (p->asset_ack_revision == g_net.local_cosmetic_asset_revision) {
-        g_net.local_cosmetic_asset_peer_applied_revision = p->asset_ack_revision;
-    }
-
-    if (!g_net.connected) {
-        g_net.connected = 1;
-        LOG_INFO("ggpo.net: connected mode=%s local_player=%d remote_player=%d peer_port=%u",
-                 ggpo_net_mode_name(),
-                 g_net.local_player,
-                 g_net.remote_player,
-                 (unsigned int)ntohs(g_net.peer_addr.sin_port));
-    }
-
-    if (p->profile_revision != g_net.remote_cosmetic_profile_revision ||
-        p->profile_len != g_net.remote_cosmetic_profile_len ||
-        memcmp(g_net.remote_cosmetic_profile, p->profile, p->profile_len) != 0) {
-        memset(g_net.remote_cosmetic_profile, 0, sizeof(g_net.remote_cosmetic_profile));
-        if (p->profile_len > 0u) {
-            memcpy(g_net.remote_cosmetic_profile, p->profile, p->profile_len);
-        }
-        g_net.remote_cosmetic_profile_len = p->profile_len;
-        g_net.remote_cosmetic_profile_revision = p->profile_revision ? p->profile_revision : (g_net.remote_cosmetic_profile_revision + 1u);
-        if (g_net.remote_cosmetic_profile_revision == 0u) g_net.remote_cosmetic_profile_revision = 1u;
-        if (g_net.remote_cosmetic_profile_applied_revision != g_net.remote_cosmetic_profile_revision) {
-            g_net.remote_cosmetic_profile_applied_revision = 0u;
-        }
-        LOG_DEBUG("ggpo.net: remote cosmetic profile updated player=%u rev=%u bytes=%u",
-                  (unsigned int)p->sender_player,
-                  (unsigned int)g_net.remote_cosmetic_profile_revision,
-                  (unsigned int)p->profile_len);
-    }
-}
-
 static void ggpo_net_note_palette_conflict(const char* reason,
                                            const GgpoNetPalettePacket* p) {
     if (!g_net.palette_conflict) {
@@ -5354,7 +4948,7 @@ static void ggpo_net_note_palette_conflict(const char* reason,
 }
 
 static void ggpo_net_handle_palette_packet(const GgpoNetPalettePacket* p,
-                                           const struct sockaddr_in* from) {
+                                           const GgpoTransportPeer* from) {
     int newly_received = 0;
     if (!p || !from || p->magic != GGPO_NET_MAGIC ||
         p->version != GGPO_NET_VERSION ||
@@ -5416,91 +5010,6 @@ static void ggpo_net_handle_palette_packet(const GgpoNetPalettePacket* p,
         /* Schedule an exact echo after socket polling. Sending directly from the
          * receive loop could create an unbounded ping-pong on loopback. */
         g_net.last_palette_send_tick = 0u;
-    }
-}
-
-static void ggpo_net_handle_cosmetic_asset_chunk(const GgpoNetCosmeticAssetChunkPacket* p, int got_len, const struct sockaddr_in* from) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    (void)p;
-    (void)got_len;
-    (void)from;
-    return;
-#endif
-    uint32_t expected_chunk_count = 0;
-    uint32_t expected_chunk_size = 0;
-    uint32_t expected_offset = 0;
-    int new_asset = 0;
-    if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
-    if (p->type != GGPO_NET_PACKET_COSMETIC_ASSET_CHUNK) return;
-    if (p->sender_player > 1u || (int)p->sender_player == g_net.local_player) return;
-    if (p->asset_revision == 0u || p->asset_len == 0u || p->asset_len > GGPO_NET_COSMETIC_ASSET_MAX_BYTES) return;
-    if (p->chunk_size > GGPO_NET_COSMETIC_ASSET_CHUNK_BYTES) return;
-    if (got_len < (int)(offsetof(GgpoNetCosmeticAssetChunkPacket, data) + p->chunk_size)) return;
-
-    expected_chunk_count = ggpo_net_cosmetic_asset_chunk_count(p->asset_len);
-    if (expected_chunk_count == 0u || p->chunk_count != expected_chunk_count || p->chunk_index >= expected_chunk_count) return;
-    expected_chunk_size = ggpo_net_cosmetic_asset_chunk_size(p->asset_len, p->chunk_index);
-    expected_offset = ggpo_net_cosmetic_asset_chunk_offset(p->chunk_index);
-    if (p->chunk_size != expected_chunk_size) return;
-    if (expected_offset + expected_chunk_size > p->asset_len) return;
-
-    if (!ggpo_net_accept_packet_source(from, p->session_id, "asset", 0)) {
-        return;
-    }
-    if (!ggpo_net_link_confirmed()) return;
-
-    ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
-    g_net.remote_player = (int)p->sender_player;
-    g_net.last_rx_tick = g_net.service_tick;
-    g_net.packets_received++;
-
-    if (!g_net.connected) {
-        g_net.connected = 1;
-        LOG_INFO("ggpo.net: connected mode=%s local_player=%d remote_player=%d peer_port=%u",
-                 ggpo_net_mode_name(),
-                 g_net.local_player,
-                 g_net.remote_player,
-                 (unsigned int)ntohs(g_net.peer_addr.sin_port));
-    }
-
-    new_asset = (g_net.remote_cosmetic_asset_revision != p->asset_revision ||
-                 g_net.remote_cosmetic_asset_len != p->asset_len ||
-                 strncmp(g_net.remote_cosmetic_asset_id, p->asset_id, GGPO_NET_COSMETIC_ASSET_ID_BYTES) != 0);
-    if (new_asset) {
-        ggpo_net_reset_remote_cosmetic_asset();
-        g_net.remote_cosmetic_asset = (uint8_t*)malloc(p->asset_len);
-        g_net.remote_cosmetic_asset_chunks_seen = (uint8_t*)calloc(1, expected_chunk_count);
-        if (!g_net.remote_cosmetic_asset || !g_net.remote_cosmetic_asset_chunks_seen) {
-            ggpo_net_reset_remote_cosmetic_asset();
-            return;
-        }
-        memcpy(g_net.remote_cosmetic_asset_id, p->asset_id, sizeof(g_net.remote_cosmetic_asset_id));
-        g_net.remote_cosmetic_asset_id[GGPO_NET_COSMETIC_ASSET_ID_BYTES - 1] = '\0';
-        g_net.remote_cosmetic_asset_len = p->asset_len;
-        g_net.remote_cosmetic_asset_revision = p->asset_revision;
-        g_net.remote_cosmetic_asset_chunk_count = expected_chunk_count;
-        g_net.remote_cosmetic_asset_seen_chunk_count = 0;
-        g_net.remote_cosmetic_asset_complete = 0;
-        LOG_DEBUG("ggpo.net: receiving cosmetic asset id=%s rev=%u bytes=%u chunks=%u",
-                  g_net.remote_cosmetic_asset_id,
-                  (unsigned int)p->asset_revision,
-                  (unsigned int)p->asset_len,
-                  (unsigned int)expected_chunk_count);
-    }
-
-    if (!g_net.remote_cosmetic_asset || !g_net.remote_cosmetic_asset_chunks_seen) return;
-    if (g_net.remote_cosmetic_asset_complete) return;
-    memcpy(g_net.remote_cosmetic_asset + expected_offset, p->data, expected_chunk_size);
-    if (!g_net.remote_cosmetic_asset_chunks_seen[p->chunk_index]) {
-        g_net.remote_cosmetic_asset_chunks_seen[p->chunk_index] = 1;
-        g_net.remote_cosmetic_asset_seen_chunk_count++;
-        if (g_net.remote_cosmetic_asset_seen_chunk_count >= g_net.remote_cosmetic_asset_chunk_count) {
-            g_net.remote_cosmetic_asset_complete = 1;
-            LOG_DEBUG("ggpo.net: cosmetic asset complete id=%s rev=%u bytes=%u",
-                      g_net.remote_cosmetic_asset_id,
-                      (unsigned int)g_net.remote_cosmetic_asset_revision,
-                      (unsigned int)g_net.remote_cosmetic_asset_len);
-        }
     }
 }
 
@@ -6174,7 +5683,7 @@ static void ggpo_net_handle_correction_control(const GgpoNetPacket* p) {
     }
 }
 
-static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr_in* from) {
+static void ggpo_net_handle_packet(const GgpoNetPacket* p, const GgpoTransportPeer* from) {
     int is_handshake;
     int was_confirmed;
     if (!p || p->magic != GGPO_NET_MAGIC || p->version != GGPO_NET_VERSION) return;
@@ -6242,7 +5751,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
             LOG_INFO("ggpo.net: peer traffic received mode=%s local_player=%d peer_port=%u; confirming bidirectional link",
                      ggpo_net_mode_name(),
                      g_net.local_player,
-                     (unsigned int)ntohs(g_net.peer_addr.sin_port));
+                     (unsigned int)ggpo_transport_peer_native_port(&g_net.peer_addr));
         }
         if (p->session_echo == g_net.session_id) {
             g_net.session_confirmed = 1;
@@ -6264,7 +5773,7 @@ static void ggpo_net_handle_packet(const GgpoNetPacket* p, const struct sockaddr
                  ggpo_net_mode_name(),
                  g_net.local_player,
                  (unsigned int)p->sender_player,
-                 (unsigned int)ntohs(g_net.peer_addr.sin_port));
+                 (unsigned int)ggpo_transport_peer_native_port(&g_net.peer_addr));
     }
 
     ggpo_net_note_remote_fingerprint(p->build_id, p->exe_id, p->dll_id);
@@ -6463,32 +5972,26 @@ static uint32_t ggpo_net_poll_socket(void) {
         union {
             GgpoNetPacket normal;
             GgpoNetStateChunkPacket state_chunk;
-            GgpoNetCosmeticPacket cosmetics;
-            GgpoNetCosmeticAssetChunkPacket cosmetic_asset;
             GgpoNetPalettePacket palette;
             uint8_t bytes[GGPO_NET_MAX_PACKET_BYTES];
         } packet;
         const GgpoNetPacketPrefix* prefix = (const GgpoNetPacketPrefix*)packet.bytes;
-        struct sockaddr_in from;
-        int from_len = sizeof(from);
+        GgpoTransportPeer from;
+        GgpoTransportReceiveResult receive_result;
         int recognized = 0;
-        int got = recvfrom(g_net.sock, (char*)packet.bytes, sizeof(packet.bytes), 0, (struct sockaddr*)&from, &from_len);
-        if (got == SOCKET_ERROR) {
-            int e = WSAGetLastError();
-            if (e == WSAEWOULDBLOCK) return received;
-            /* Winsock consumes an oversized UDP datagram and may surface an
-             * earlier ICMP error here. Neither should hide the next packet. */
-            if (e == WSAEMSGSIZE || e == WSAECONNRESET) continue;
+        int got = 0;
+        receive_result = ggpo_transport_receive(&g_net.transport,
+                                                packet.bytes, sizeof(packet.bytes),
+                                                &got, &from, NULL);
+        if (receive_result == GGPO_TRANSPORT_RECEIVE_EMPTY ||
+            receive_result == GGPO_TRANSPORT_RECEIVE_ERROR) {
             return received;
         }
+        if (receive_result == GGPO_TRANSPORT_RECEIVE_RETRY) continue;
         if (got < (int)sizeof(GgpoNetPacketPrefix)) continue;
         if (prefix->magic != GGPO_NET_MAGIC || prefix->version != GGPO_NET_VERSION) continue;
         if (prefix->type == GGPO_NET_PACKET_STATE_CHUNK) {
             recognized = got >= (int)offsetof(GgpoNetStateChunkPacket, data);
-        } else if (prefix->type == GGPO_NET_PACKET_COSMETICS) {
-            recognized = got >= (int)offsetof(GgpoNetCosmeticPacket, profile);
-        } else if (prefix->type == GGPO_NET_PACKET_COSMETIC_ASSET_CHUNK) {
-            recognized = got >= (int)offsetof(GgpoNetCosmeticAssetChunkPacket, data);
         } else if (prefix->type == GGPO_NET_PACKET_PALETTE) {
             recognized = got == (int)sizeof(GgpoNetPalettePacket);
         } else if ((prefix->type == GGPO_NET_PACKET_HELLO ||
@@ -6505,10 +6008,6 @@ static uint32_t ggpo_net_poll_socket(void) {
         }
         if (prefix->type == GGPO_NET_PACKET_STATE_CHUNK) {
             ggpo_net_handle_state_chunk(&packet.state_chunk, got, &from);
-        } else if (prefix->type == GGPO_NET_PACKET_COSMETICS) {
-            ggpo_net_handle_cosmetic_packet(&packet.cosmetics, got, &from);
-        } else if (prefix->type == GGPO_NET_PACKET_COSMETIC_ASSET_CHUNK) {
-            ggpo_net_handle_cosmetic_asset_chunk(&packet.cosmetic_asset, got, &from);
         } else if (prefix->type == GGPO_NET_PACKET_PALETTE) {
             ggpo_net_handle_palette_packet(&packet.palette, &from);
         } else {
@@ -6548,8 +6047,17 @@ static void ggpo_net_send_correction_burst(void) {
 
 /* Advance transport time without advancing game time. This is shared by the
  * public prematch service API and the normal gameplay advance path so timeout,
- * handshake, simulated-network, cosmetics, state-sync and correction behavior
+ * handshake, simulated-network, palette, state-sync and correction behavior
  * cannot drift between the two call sites. */
+static uint32_t ggpo_net_service_clock(uint64_t elapsed_ms) {
+    return 1u + (uint32_t)((elapsed_ms * 60u) / 1000u);
+}
+#ifdef GGPO_NET_TEST
+uint32_t ggpo_net_test_service_clock(uint64_t elapsed_ms) {
+    return ggpo_net_service_clock(elapsed_ms);
+}
+#endif
+
 static int ggpo_net_service_transport(uint16_t requested_heartbeat,
                                       char* err,
                                       size_t err_cap) {
@@ -6559,8 +6067,13 @@ static int ggpo_net_service_transport(uint16_t requested_heartbeat,
         return 0;
     }
 
-    g_net.service_tick++;
+    /* A service call is not a unit of elapsed time: catch-up can call us four
+     * times in one update. Keep the authenticated wire clock at 60Hz regardless
+     * of simulation/poll frequency. Tick zero remains the "no sample" sentinel. */
+    g_net.service_tick = ggpo_net_service_clock(
+        GetTickCount64() - g_net.service_clock_started_ms);
     g_net.socket_backpressured_this_tick = 0;
+    ggpo_transport_service(&g_net.transport);
     ggpo_net_poll_socket();
     if (g_net.peer_disconnected) {
         ggpo_net_set_err(err, err_cap, "peer disconnected");
@@ -6619,8 +6132,6 @@ static int ggpo_net_service_transport(uint16_t requested_heartbeat,
     ggpo_net_flush_sim_queue();
     if (!g_net.socket_backpressured_this_tick) {
         ggpo_net_send_palette_periodic();
-        ggpo_net_send_cosmetic_profile_periodic();
-        ggpo_net_send_cosmetic_asset_periodic();
         ggpo_net_send_state_sync_burst();
         ggpo_net_send_correction_burst();
     } else if ((!g_net.remote_state_synced && g_net.mode == GGPO_NET_MODE_HOST) ||
@@ -7894,143 +7405,6 @@ int ggpo_net_remote_palette_preference(uint32_t* out_skin_index,
     return (g_net.active && g_net.remote_palette_valid) ? 1 : 0;
 }
 
-int ggpo_net_set_local_cosmetic_profile(const char* profile, size_t profile_len) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    (void)profile;
-    (void)profile_len;
-    memset(g_net.local_cosmetic_profile, 0, sizeof(g_net.local_cosmetic_profile));
-    g_net.local_cosmetic_profile_len = 0;
-    return 1;
-#endif
-    if (!profile) profile_len = 0;
-    if (profile_len > GGPO_NET_COSMETIC_PROFILE_BYTES) return 0;
-    if (profile_len == g_net.local_cosmetic_profile_len &&
-        (profile_len == 0 || memcmp(g_net.local_cosmetic_profile, profile, profile_len) == 0)) {
-        return 1;
-    }
-
-    memset(g_net.local_cosmetic_profile, 0, sizeof(g_net.local_cosmetic_profile));
-    if (profile_len > 0) {
-        memcpy(g_net.local_cosmetic_profile, profile, profile_len);
-    }
-    g_net.local_cosmetic_profile_len = (uint32_t)profile_len;
-    g_net.local_cosmetic_profile_revision++;
-    if (g_net.local_cosmetic_profile_revision == 0u) g_net.local_cosmetic_profile_revision = 1u;
-    g_net.last_cosmetic_profile_send_tick = 0u;
-    if (g_net.active && g_net.has_peer_addr) {
-        (void)ggpo_net_send_cosmetic_profile();
-    }
-    return 1;
-}
-
-const char* ggpo_net_remote_cosmetic_profile(size_t* out_len, uint32_t* out_revision) {
-    if (out_len) *out_len = (size_t)g_net.remote_cosmetic_profile_len;
-    if (out_revision) *out_revision = g_net.remote_cosmetic_profile_revision;
-    if (g_net.remote_cosmetic_profile_len == 0u) return NULL;
-    return g_net.remote_cosmetic_profile;
-}
-
-void ggpo_net_mark_remote_cosmetic_profile_applied(uint32_t revision) {
-    if (revision != 0u && revision == g_net.remote_cosmetic_profile_revision) {
-        g_net.remote_cosmetic_profile_applied_revision = revision;
-    }
-}
-
-uint32_t ggpo_net_local_cosmetic_profile_revision(void) {
-    return g_net.local_cosmetic_profile_revision;
-}
-
-uint32_t ggpo_net_remote_cosmetic_profile_revision(void) {
-    return g_net.remote_cosmetic_profile_revision;
-}
-
-uint32_t ggpo_net_remote_cosmetic_profile_applied_revision(void) {
-    return g_net.remote_cosmetic_profile_applied_revision;
-}
-
-int ggpo_net_set_local_cosmetic_asset(const char* asset_id, const void* data, size_t data_len) {
-#if !GGPO_NET_ENABLE_COSMETICS
-    (void)asset_id;
-    (void)data;
-    (void)data_len;
-    free(g_net.local_cosmetic_asset);
-    g_net.local_cosmetic_asset = NULL;
-    memset(g_net.local_cosmetic_asset_id, 0, sizeof(g_net.local_cosmetic_asset_id));
-    g_net.local_cosmetic_asset_len = 0;
-    return 1;
-#endif
-    size_t id_len = asset_id ? strlen(asset_id) : 0;
-    if (!asset_id || id_len == 0 || !data || data_len == 0) {
-        free(g_net.local_cosmetic_asset);
-        g_net.local_cosmetic_asset = NULL;
-        memset(g_net.local_cosmetic_asset_id, 0, sizeof(g_net.local_cosmetic_asset_id));
-        g_net.local_cosmetic_asset_len = 0;
-        g_net.local_cosmetic_asset_revision++;
-        if (g_net.local_cosmetic_asset_revision == 0u) g_net.local_cosmetic_asset_revision = 1u;
-        g_net.local_cosmetic_asset_next_chunk = 0;
-        g_net.local_cosmetic_asset_last_send_tick = 0;
-        g_net.local_cosmetic_asset_peer_applied_revision = 0;
-        return 1;
-    }
-    if (id_len >= GGPO_NET_COSMETIC_ASSET_ID_BYTES) return 0;
-    if (data_len > GGPO_NET_COSMETIC_ASSET_MAX_BYTES) return 0;
-    if (g_net.local_cosmetic_asset &&
-        data_len == g_net.local_cosmetic_asset_len &&
-        strcmp(g_net.local_cosmetic_asset_id, asset_id) == 0 &&
-        memcmp(g_net.local_cosmetic_asset, data, data_len) == 0) {
-        return 1;
-    }
-
-    {
-        uint8_t* copy = (uint8_t*)malloc(data_len);
-        if (!copy) return 0;
-        memcpy(copy, data, data_len);
-        free(g_net.local_cosmetic_asset);
-        g_net.local_cosmetic_asset = copy;
-    }
-
-    memset(g_net.local_cosmetic_asset_id, 0, sizeof(g_net.local_cosmetic_asset_id));
-    memcpy(g_net.local_cosmetic_asset_id, asset_id, id_len);
-    g_net.local_cosmetic_asset_len = (uint32_t)data_len;
-    g_net.local_cosmetic_asset_revision++;
-    if (g_net.local_cosmetic_asset_revision == 0u) g_net.local_cosmetic_asset_revision = 1u;
-    g_net.local_cosmetic_asset_next_chunk = 0;
-    g_net.local_cosmetic_asset_last_send_tick = 0;
-    g_net.local_cosmetic_asset_peer_applied_revision = 0;
-    if (g_net.active && g_net.has_peer_addr) {
-        ggpo_net_send_cosmetic_asset_periodic();
-    }
-    return 1;
-}
-
-const void* ggpo_net_remote_cosmetic_asset(const char** out_id, size_t* out_len, uint32_t* out_revision) {
-    if (out_id) *out_id = g_net.remote_cosmetic_asset_id;
-    if (out_len) *out_len = (size_t)g_net.remote_cosmetic_asset_len;
-    if (out_revision) *out_revision = g_net.remote_cosmetic_asset_revision;
-    if (!g_net.remote_cosmetic_asset_complete || !g_net.remote_cosmetic_asset || g_net.remote_cosmetic_asset_len == 0u) {
-        return NULL;
-    }
-    return g_net.remote_cosmetic_asset;
-}
-
-void ggpo_net_mark_remote_cosmetic_asset_applied(uint32_t revision) {
-    if (revision != 0u && revision == g_net.remote_cosmetic_asset_revision) {
-        g_net.remote_cosmetic_asset_applied_revision = revision;
-    }
-}
-
-uint32_t ggpo_net_local_cosmetic_asset_revision(void) {
-    return g_net.local_cosmetic_asset_revision;
-}
-
-uint32_t ggpo_net_remote_cosmetic_asset_revision(void) {
-    return g_net.remote_cosmetic_asset_revision;
-}
-
-uint32_t ggpo_net_remote_cosmetic_asset_applied_revision(void) {
-    return g_net.remote_cosmetic_asset_applied_revision;
-}
-
 int ggpo_net_start_state_loaded(void) {
     if (g_net.prematch_hold ||
         (g_net.remote_prematch_hold_known && g_net.remote_prematch_hold)) return 0;
@@ -8205,7 +7579,6 @@ static int ggpo_net_prime_prematch_frame0(char* err, size_t err_cap) {
     if (!ggpo_net_link_confirmed() ||
         !g_net.state_synced ||
         !g_net.remote_state_synced) return 1;
-    if (ggpo_net_wait_for_cosmetic_profiles(NULL)) return 1;
     if (!ggpo_net_get_input(g_net.local_inputs, 0u, &cmd)) {
         if (!ggpo_net_store_local_input(0u, 0u, err, err_cap)) return 0;
     }
@@ -8230,8 +7603,6 @@ int ggpo_net_prematch_ready(void) {
     if (!ggpo_net_link_confirmed() ||
         !g_net.state_synced ||
         !g_net.remote_state_synced) return 0;
-    if (!ggpo_net_cosmetic_profiles_ready() &&
-        !g_net.cosmetic_wait_cap_announced) return 0;
     if (!ggpo_net_palette_ready_internal()) return 0;
     if (!ggpo_net_get_input(g_net.local_inputs, 0u, &local_cmd) ||
         !ggpo_net_get_input(g_net.remote_inputs, 0u, &remote_cmd)) return 0;
@@ -8278,12 +7649,15 @@ int ggpo_net_prepare_prematch_start(char* err, size_t err_cap) {
 }
 
 static void ggpo_net_stop_internal(int notify_peer) {
-    if (g_net.sock != INVALID_SOCKET && g_net.sock != 0) {
+    int goodbye_sent = 0;
+    if (ggpo_transport_connected(&g_net.transport)) {
         if (notify_peer && g_net.has_peer_addr && ggpo_net_link_confirmed()) {
-            (void)ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
+            goodbye_sent = ggpo_net_send_packet(GGPO_NET_PACKET_BYE);
         }
-        closesocket(g_net.sock);
     }
+    /* Ownership survives loss of Connect authentication. Always release it. */
+    if (goodbye_sent) ggpo_transport_close_graceful(&g_net.transport);
+    else ggpo_transport_close(&g_net.transport);
     /* Repro writes use a copied blob, so gameplay never waits on disk. Session
      * teardown gives the tiny worker a bounded chance to finish its atomic
      * files before tests or the process inspect them. */
@@ -8296,14 +7670,10 @@ static void ggpo_net_stop_internal(int notify_peer) {
     free(g_net.apply_verify_state);
     free(g_net.recv_state);
     free(g_net.recv_state_chunks_seen);
-    free(g_net.local_cosmetic_asset);
-    free(g_net.remote_cosmetic_asset);
-    free(g_net.remote_cosmetic_asset_chunks_seen);
     SecureZeroMemory(g_net.auth_root_key, sizeof(g_net.auth_root_key));
     SecureZeroMemory(g_net.auth_send_key, sizeof(g_net.auth_send_key));
     SecureZeroMemory(g_net.auth_remote_key, sizeof(g_net.auth_remote_key));
     memset(&g_net, 0, sizeof(g_net));
-    g_net.sock = INVALID_SOCKET;
 }
 
 void ggpo_net_stop(void) {
@@ -8317,9 +7687,11 @@ void ggpo_net_stop_for_retry(void) {
 static int ggpo_net_start_common(GgpoNetMode mode,
                                  uint16_t local_port,
                                  int start_held,
+                                 const GgpoTransportPeer* eos_peer,
+                                 int force_eos_relay,
                                  char* err,
                                  size_t err_cap) {
-    SOCKET s = INVALID_SOCKET;
+    GgpoTransport transport = {0};
     uint16_t bound_port = local_port;
     size_t state_len = 0;
     uint32_t checksum = 0;
@@ -8339,7 +7711,6 @@ static int ggpo_net_start_common(GgpoNetMode mode,
         return 0;
     }
     memset(&g_net, 0, sizeof(g_net));
-    g_net.sock = INVALID_SOCKET;
 
     if (!start_held) {
         g_net.state_size = ggpo_ext_game_state_size();
@@ -8351,51 +7722,56 @@ static int ggpo_net_start_common(GgpoNetMode mode,
             return 0;
         }
     }
-    if (!ggpo_net_make_socket(local_port, &s, &bound_port, err, err_cap)) {
+    if (eos_peer ?
+        !ggpo_transport_open_eos(&transport, eos_peer, force_eos_relay,
+                                 err, err_cap) :
+        !ggpo_transport_open_native(&transport, local_port, &bound_port,
+                                    err, err_cap)) {
         return 0;
     }
+    if (eos_peer) bound_port = 0;
 
     if (!start_held) {
     g_net.state_blobs = (uint8_t*)calloc(GGPO_NET_HISTORY_FRAMES, g_net.state_size);
     if (!g_net.state_blobs) {
-        closesocket(s);
+        ggpo_transport_close(&transport);
         ggpo_net_set_err(err, err_cap, "out of memory");
         return 0;
     }
     g_net.initial_state = (uint8_t*)malloc(g_net.state_size);
     if (!g_net.initial_state) {
-        closesocket(s);
+        ggpo_transport_close(&transport);
         free(g_net.state_blobs);
         memset(&g_net, 0, sizeof(g_net));
-        g_net.sock = INVALID_SOCKET;
+
         ggpo_net_set_err(err, err_cap, "out of memory");
         return 0;
     }
     g_net.correction_state = (uint8_t*)malloc(g_net.state_size);
     if (!g_net.correction_state) {
-        closesocket(s);
+        ggpo_transport_close(&transport);
         free(g_net.state_blobs);
         free(g_net.initial_state);
         memset(&g_net, 0, sizeof(g_net));
-        g_net.sock = INVALID_SOCKET;
+
         ggpo_net_set_err(err, err_cap, "out of memory");
         return 0;
     }
     g_net.correction_base_state = (uint8_t*)malloc(g_net.state_size);
     if (!g_net.correction_base_state) {
-        closesocket(s);
+        ggpo_transport_close(&transport);
         free(g_net.state_blobs);
         free(g_net.initial_state);
         free(g_net.correction_state);
         memset(&g_net, 0, sizeof(g_net));
-        g_net.sock = INVALID_SOCKET;
+
         ggpo_net_set_err(err, err_cap, "out of memory");
         return 0;
     }
     g_net.apply_backup_state = (uint8_t*)malloc(g_net.state_size);
     g_net.apply_verify_state = (uint8_t*)malloc(g_net.state_size);
     if (!g_net.apply_backup_state || !g_net.apply_verify_state) {
-        closesocket(s);
+        ggpo_transport_close(&transport);
         free(g_net.state_blobs);
         free(g_net.initial_state);
         free(g_net.correction_state);
@@ -8403,7 +7779,7 @@ static int ggpo_net_start_common(GgpoNetMode mode,
         free(g_net.apply_backup_state);
         free(g_net.apply_verify_state);
         memset(&g_net, 0, sizeof(g_net));
-        g_net.sock = INVALID_SOCKET;
+
         ggpo_net_set_err(err, err_cap, "out of memory");
         return 0;
     }
@@ -8411,7 +7787,7 @@ static int ggpo_net_start_common(GgpoNetMode mode,
         state_len == 0u || state_len > g_net.state_size ||
         ggpo_ext_game_state_size() != g_net.state_size ||
         ggpo_ext_game_state_layout_fingerprint() != layout_id) {
-        closesocket(s);
+        ggpo_transport_close(&transport);
         free(g_net.state_blobs);
         free(g_net.initial_state);
         free(g_net.correction_state);
@@ -8419,7 +7795,7 @@ static int ggpo_net_start_common(GgpoNetMode mode,
         free(g_net.apply_backup_state);
         free(g_net.apply_verify_state);
         memset(&g_net, 0, sizeof(g_net));
-        g_net.sock = INVALID_SOCKET;
+
         if (!err || !err[0]) {
             ggpo_net_set_err(err, err_cap, "game state layout changed during initial capture");
         }
@@ -8432,11 +7808,17 @@ static int ggpo_net_start_common(GgpoNetMode mode,
     ggpo_net_ensure_local_fingerprint();
 
     g_net.active = 1;
+    g_net.service_clock_started_ms = GetTickCount64();
+    g_net.service_tick = 1u;
     g_net.mode = mode;
     g_net.local_player = (mode == GGPO_NET_MODE_HOST) ? 0 : 1;
     g_net.remote_player = (mode == GGPO_NET_MODE_HOST) ? 1 : 0;
     g_net.local_port = bound_port;
-    g_net.sock = s;
+    g_net.transport = transport;
+    if (eos_peer) {
+        g_net.peer_addr = *eos_peer;
+        g_net.has_peer_addr = 1;
+    }
     g_net.session_id = new_session_id;
     memcpy(g_net.auth_root_key,
            g_net_pending_auth_root,
@@ -8509,7 +7891,7 @@ static int ggpo_net_start_common(GgpoNetMode mode,
 }
 
 int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap) {
-    if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, 0, err, err_cap)) {
+    if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, 0, NULL, 0, err, err_cap)) {
         return 0;
     }
     LOG_INFO("ggpo.net: hosting udp port=%u input_delay=%u max_advantage=%u max_prediction=%u state_size=%u checksum=%u",
@@ -8523,7 +7905,7 @@ int ggpo_net_start_host(uint16_t local_port, char* err, size_t err_cap) {
 }
 
 int ggpo_net_start_host_held(uint16_t local_port, char* err, size_t err_cap) {
-    if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, 1, err, err_cap)) {
+    if (!ggpo_net_start_common(GGPO_NET_MODE_HOST, local_port, 1, NULL, 0, err, err_cap)) {
         return 0;
     }
     LOG_INFO("ggpo.net: hosting held udp port=%u; rollback layout deferred",
@@ -8532,7 +7914,7 @@ int ggpo_net_start_host_held(uint16_t local_port, char* err, size_t err_cap) {
 }
 
 int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap) {
-    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, 0, err, err_cap)) {
+    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, 0, NULL, 0, err, err_cap)) {
         return 0;
     }
     LOG_INFO("ggpo.net: joining deferred local_port=%u input_delay=%u max_advantage=%u max_prediction=%u state_size=%u checksum=%u",
@@ -8546,7 +7928,7 @@ int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap)
 }
 
 int ggpo_net_start_join_deferred_held(uint16_t local_port, char* err, size_t err_cap) {
-    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, 1, err, err_cap)) {
+    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, 1, NULL, 0, err, err_cap)) {
         return 0;
     }
     LOG_INFO("ggpo.net: joining held/deferred local_port=%u; rollback layout deferred",
@@ -8554,11 +7936,61 @@ int ggpo_net_start_join_deferred_held(uint16_t local_port, char* err, size_t err
     return 1;
 }
 
+int ggpo_net_start_eos_held(int host, const char* peer_puid,
+                            const char* socket_name, uint8_t channel,
+                            int force_relay, char* err, size_t err_cap) {
+    GgpoTransportPeer peer = {0};
+    size_t i;
+    if (!peer_puid || strlen(peer_puid) != 32u ||
+        !socket_name || !socket_name[0] || strlen(socket_name) > 32u) {
+        ggpo_net_set_err(err, err_cap, "invalid server-matched EOS peer identity");
+        return 0;
+    }
+    for (i = 0; i < 32u; i++) {
+        char c = peer_puid[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+            ggpo_net_set_err(err, err_cap, "invalid server-matched EOS PUID");
+            return 0;
+        }
+    }
+    for (i = 0; socket_name[i]; i++) {
+        char c = socket_name[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z') || c == '_' || c == '-')) {
+            ggpo_net_set_err(err, err_cap, "invalid server-matched EOS socket");
+            return 0;
+        }
+    }
+    peer.kind = GGPO_TRANSPORT_EOS_P2P;
+    snprintf(peer.id.eos.puid, sizeof(peer.id.eos.puid), "%s", peer_puid);
+    snprintf(peer.id.eos.socket_name, sizeof(peer.id.eos.socket_name), "%s", socket_name);
+    peer.id.eos.channel = channel;
+    if (!ggpo_net_start_common(host ? GGPO_NET_MODE_HOST : GGPO_NET_MODE_JOIN,
+                               0, 1, &peer, force_relay, err, err_cap)) return 0;
+    ggpo_net_send_handshake_burst(GGPO_NET_PUNCH_HELLO_BURST * 2u);
+    LOG_INFO("ggpo.net: EOS held match started role=%s relay_policy=%s",
+             host ? "host" : "join", force_relay ? "force" : "auto");
+    return 1;
+}
+
+const char* ggpo_net_transport_name(void) {
+    if (!g_net.active) return "inactive";
+    return g_net.transport.kind == GGPO_TRANSPORT_EOS_P2P ? "eos_p2p" : "native_udp";
+}
+
+const char* ggpo_net_transport_route(void) {
+    if (!g_net.active) return "none";
+    if (g_net.transport.kind == GGPO_TRANSPORT_EOS_P2P) {
+        return ggpo_transport_eos_route(&g_net.transport);
+    }
+    return "native";
+}
+
 int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap) {
-    struct sockaddr_in addr;
+    GgpoTransportPeer addr;
     int changed = 0;
     int replace_stale_prematch_candidates = 0;
-    if (!g_net.active || g_net.sock == INVALID_SOCKET) {
+    if (!g_net.active || !ggpo_transport_connected(&g_net.transport)) {
         ggpo_net_set_err(err, err_cap, "net session is not active");
         return 0;
     }
@@ -8566,7 +7998,7 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
         ggpo_net_set_err(err, err_cap, "missing peer port");
         return 0;
     }
-    if (!ggpo_net_resolve_peer(host, remote_port, &addr, err, err_cap)) {
+    if (!ggpo_transport_resolve_native(host, remote_port, &addr, err, err_cap)) {
         return 0;
     }
     /* A server endpoint update during prematch means the peer rotated to a new
@@ -8578,8 +8010,7 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
         !ggpo_net_addr_equal(&g_net.peer_addr, &addr) &&
         ggpo_net_prematch_recovery_allowed();
     if (replace_stale_prematch_candidates) {
-        memset(g_net.candidates, 0, sizeof(g_net.candidates));
-        g_net.candidate_count = 0;
+        ggpo_transport_clear_native_candidates(&g_net.transport);
         g_net.last_handshake_burst_tick = 0u;
         /* The endpoint belongs to a new socket/session attempt. Its predecessor's
          * authenticated layout proof must not keep release/ready true while we
@@ -8620,7 +8051,7 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
              (unsigned int)remote_port,
              ggpo_net_mode_name(),
              (unsigned int)g_net.local_port,
-             g_net.candidate_count);
+             ggpo_transport_native_candidate_count(&g_net.transport));
     g_net.last_handshake_burst_tick = 0u;
     if (replace_stale_prematch_candidates && ggpo_net_link_confirmed()) {
         /* Keep the confirmed endpoint pinned until this replacement proves a
@@ -8636,13 +8067,13 @@ int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t 
 }
 
 int ggpo_net_add_peer_candidate(const char* host, uint16_t remote_port, char* err, size_t err_cap) {
-    struct sockaddr_in addr;
-    if (!g_net.active || g_net.sock == INVALID_SOCKET) {
+    GgpoTransportPeer addr;
+    if (!g_net.active || !ggpo_transport_connected(&g_net.transport)) {
         ggpo_net_set_err(err, err_cap, "net session is not active");
         return 0;
     }
     if (remote_port == 0 || !host || !host[0]) return 0;
-    if (!ggpo_net_resolve_peer(host, remote_port, &addr, err, err_cap)) return 0;
+    if (!ggpo_transport_resolve_native(host, remote_port, &addr, err, err_cap)) return 0;
     ggpo_net_add_candidate_addr(&addr);
     /* Seed peer_addr if we don't have one yet (so sends have a default target). */
     if (!g_net.has_peer_addr) {
@@ -8657,7 +8088,7 @@ int ggpo_net_add_peer_candidate(const char* host, uint16_t remote_port, char* er
 
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap) {
     if (remote_port == 0) remote_port = GGPO_NET_DEFAULT_PORT;
-    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, 0, err, err_cap)) {
+    if (!ggpo_net_start_common(GGPO_NET_MODE_JOIN, local_port, 0, NULL, 0, err, err_cap)) {
         return 0;
     }
     if (!ggpo_net_set_peer(host, remote_port, err, err_cap)) {
@@ -8686,8 +8117,9 @@ int ggpo_net_send_server_probe(const char* host,
     char user_json[96];
     char token_json[128];
     char line[384];
+    GgpoTransportPeer probe_peer;
     int len;
-    if (!g_net.active || g_net.sock == INVALID_SOCKET) {
+    if (!g_net.active || !ggpo_transport_connected(&g_net.transport)) {
         ggpo_net_set_err(err, err_cap, "net session is not active");
         return 0;
     }
@@ -8699,16 +8131,8 @@ int ggpo_net_send_server_probe(const char* host,
         ggpo_net_set_err(err, err_cap, "missing probe identity");
         return 0;
     }
-    if (!g_net.has_probe_server_addr ||
-        g_net.probe_server_port != port ||
-        strcmp(g_net.probe_server_host, host) != 0) {
-        if (!ggpo_net_resolve_peer(host, port, &g_net.probe_server_addr, err, err_cap)) {
-            return 0;
-        }
-        snprintf(g_net.probe_server_host, sizeof(g_net.probe_server_host), "%s", host);
-        g_net.probe_server_port = port;
-        g_net.has_probe_server_addr = 1;
-    }
+    if (!ggpo_transport_native_probe_peer(&g_net.transport, host, port,
+                                          &probe_peer, err, err_cap)) return 0;
     ggpo_net_json_escape(user_json, sizeof(user_json), username);
     ggpo_net_json_escape(token_json, sizeof(token_json), token);
     len = snprintf(line,
@@ -8722,7 +8146,7 @@ int ggpo_net_send_server_probe(const char* host,
         ggpo_net_set_err(err, err_cap, "probe packet too large");
         return 0;
     }
-    if (ggpo_net_send_raw_bytes(line, len, &g_net.probe_server_addr) !=
+    if (ggpo_net_send_raw_bytes(line, len, &probe_peer) !=
         GGPO_NET_RAW_SEND_SENT) {
         ggpo_net_set_err(err, err_cap, "probe send failed");
         return 0;
@@ -8876,12 +8300,6 @@ int ggpo_net_advance(uint32_t raw_p0,
     if (!ggpo_net_link_confirmed()) {
         if (out_checksum) *out_checksum = g_net.last_checksum;
         return 1;
-    }
-
-    if (g_net.frame == 0u && !g_net.start_state_loaded) {
-        if (ggpo_net_wait_for_cosmetic_profiles(out_checksum)) {
-            return 1;
-        }
     }
 
     if (!ggpo_net_capture_local_render_geometry(err, err_cap)) {
@@ -9038,8 +8456,6 @@ int ggpo_net_advance(uint32_t raw_p0,
         }
     }
     (void)ggpo_net_send_packet(GGPO_NET_PACKET_INPUT);
-    ggpo_net_send_cosmetic_profile_periodic();
-    ggpo_net_send_cosmetic_asset_periodic();
 
     if (!ggpo_net_get_input(g_net.local_inputs, g_net.frame, &local_cmd)) {
         local_cmd = 0u;
@@ -9216,10 +8632,8 @@ uint32_t ggpo_net_auth_rejected_packets(void) {
     return g_net.auth_rejected_packets;
 }
 
-static const char* ggpo_net_addr_str(const struct sockaddr_in* a, char* buf, size_t cap) {
-    /* single-threaded netcode; inet_ntoa's static buffer is fine here. */
-    snprintf(buf, cap, "%s:%u", inet_ntoa(a->sin_addr), (unsigned int)ntohs(a->sin_port));
-    return buf;
+static const char* ggpo_net_addr_str(const GgpoTransportPeer* a, char* buf, size_t cap) {
+    return ggpo_transport_peer_format(a, buf, cap);
 }
 
 /* Human-readable P2P connection troubleshooter. Writes a multi-line report into
@@ -9236,6 +8650,7 @@ void ggpo_net_format_diag(char* out, size_t cap) {
 #define DIAG_LINE(...) do { \
         int _n = snprintf(line, sizeof(line), __VA_ARGS__); \
         if (_n < 0) _n = 0; \
+        if ((size_t)_n >= sizeof(line)) _n = (int)sizeof(line) - 1; \
         if (len + (size_t)_n + 1 < cap) { \
             memcpy(out + len, line, (size_t)_n); len += (size_t)_n; \
             out[len++] = '\n'; out[len] = '\0'; \
@@ -9312,11 +8727,14 @@ void ggpo_net_format_diag(char* out, size_t cap) {
                   ? diag_checksum_horizon : 0u),
               g_net.rollback_pending ? "pending" : "clean");
 
-    DIAG_LINE("candidates: %d", g_net.candidate_count);
-    for (i = 0; i < g_net.candidate_count; i++) {
+    DIAG_LINE("candidates: %d",
+              ggpo_transport_native_candidate_count(&g_net.transport));
+    for (i = 0; i < ggpo_transport_native_candidate_count(&g_net.transport); i++) {
+        GgpoTransportPeer candidate;
+        if (!ggpo_transport_native_candidate(&g_net.transport, i, &candidate)) break;
         int adopted = g_net.has_peer_addr &&
-                      ggpo_net_addr_equal(&g_net.candidates[i], &g_net.peer_addr);
-        ggpo_net_addr_str(&g_net.candidates[i], addr, sizeof(addr));
+                      ggpo_net_addr_equal(&candidate, &g_net.peer_addr);
+        ggpo_net_addr_str(&candidate, addr, sizeof(addr));
         DIAG_LINE("  %s %s", adopted ? "->" : "  ", addr);
     }
 
@@ -9345,7 +8763,7 @@ void ggpo_net_format_diag(char* out, size_t cap) {
     /* Verdict */
     if (ggpo_net_link_confirmed()) {
         DIAG_LINE("VERDICT: connected - the P2P link is up.");
-    } else if (g_net.candidate_count == 0) {
+    } else if (ggpo_transport_native_candidate_count(&g_net.transport) == 0) {
         DIAG_LINE("VERDICT: no opponent address yet from the matchmaking server");
         DIAG_LINE("         (match just started, or a server/matchmaking problem).");
     } else if (g_net.packets_received == 0) {

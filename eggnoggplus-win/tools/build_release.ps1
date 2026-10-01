@@ -1,7 +1,9 @@
 # Yule release builder (owner-side).
 # Produces the uploadable channel tree + the distributable installer zip:
 #   dist/releases/latest.json
-#   dist/releases/<version>/{SDL2.dll, lua51.dll, libgcc_s_dw2-1.dll, SDL2_mixer.dll}
+#   dist/releases/<version>/{SDL2.dll, lua51.dll, libgcc_s_dw2-1.dll,
+#     libwinpthread-1.dll, SDL2_mixer.dll, EOSSDK-Win32-Shipping.dll,
+#     eos_client_secret.txt (EOS builds)}
 #   dist/installer/windows/  (canonical Windows installer sources)
 #   dist/installer/linux/    (canonical Linux/Wine installer sources)
 #   dist/EGGNOGG+_framework_installer_windows.zip
@@ -12,6 +14,10 @@ param(
     [string]$GameDir = '',
     [string]$OutDir = '',
     [string]$ChannelBase = 'https://loafiieee.com/yule/releases',
+    [ValidateSet('stable', 'beta')][string]$ReleaseChannel = 'stable',
+    [string]$MatchHost = '',
+    [int]$MatchPort = 0,
+    [bool]$MatchTls = $true,
     [string]$ArtworkDir = 'C:\Program Files (x86)\Steam\userdata\1423819074\config\grid',
     [string]$ArtworkAppId = '2231133229',
     [string]$IconPath = '',   # default: dist\installer\windows\assets\steam_icon.png
@@ -97,6 +103,28 @@ for ($i = 0; $i -le $bytes.Length - $marker.Length -and -not $found; $i++) {
 }
 if (-not $found) { throw "SDL2.dll in $GameDir does not look like the framework proxy (no marker)" }
 $binaryText = [Text.Encoding]::ASCII.GetString($bytes)
+if ($binaryText.Contains('Px437 Tandy2K')) {
+    foreach ($fontNotice in @('Tandy2K-LICENSE.txt', 'Tandy2K-ATTRIBUTION.txt')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $GameDir $fontNotice) -PathType Leaf)) {
+            throw "The bundled Tandy2K font requires $fontNotice. Run compile.sh before packaging."
+        }
+        $ReleaseFiles += $fontNotice
+    }
+}
+$eosEnabled = $binaryText.Contains('YULE_EOS_P2P=1' + [char]0)
+if ($eosEnabled) {
+    $eosRuntime = Join-Path $GameDir 'EOSSDK-Win32-Shipping.dll'
+    if (-not (Test-Path -LiteralPath $eosRuntime -PathType Leaf)) {
+        throw 'EOS-enabled SDL2.dll requires EOSSDK-Win32-Shipping.dll beside the game executable.'
+    }
+    $ReleaseFiles += 'EOSSDK-Win32-Shipping.dll'
+    $eosClientCredential = Join-Path $GameDir 'eos_client_secret.txt'
+    if (-not (Test-Path -LiteralPath $eosClientCredential -PathType Leaf) -or
+        (Get-Item -LiteralPath $eosClientCredential).Length -lt 16) {
+        throw 'EOS-enabled releases require the restricted GameClient credential in eos_client_secret.txt.'
+    }
+    $ReleaseFiles += 'eos_client_secret.txt'
+}
 $binaryVersionMatch = [regex]::Match(
     $binaryText,
     'YULE_FRAMEWORK_VERSION=([0-9]+(?:\.[0-9]+)*)'
@@ -163,7 +191,8 @@ foreach ($replaceableImport in @(
     'lua51.dll',
     'libgcc_s_dw2-1.dll',
     'libwinpthread-1.dll',
-    'SDL2_mixer.dll'
+    'SDL2_mixer.dll',
+    'EOSSDK-Win32-Shipping.dll'
 )) {
     if ($updaterImports -match
         ('DLL Name:\s*' + [regex]::Escape($replaceableImport))) {
@@ -175,8 +204,25 @@ publishing; otherwise it can lock its own .old backup during an update.
     }
 }
 
+# Channel support must exist in the payload, including a stable bridge release.
+if (-not $binaryText.Contains('YULE_CHANNEL_SWITCH=1')) {
+    throw 'Rebuild SDL2.dll with channel switching support before packaging.'
+}
+if ($ReleaseChannel -eq 'beta') {
+    if (-not $MatchHost) { $MatchHost = 'beta.loafiieee.com' }
+    if (-not $MatchPort) { $MatchPort = 47782 }
+    if (-not $MatchTls -or ($MatchHost -eq 'eggnogg.loafiieee.com' -and $MatchPort -eq 47778)) {
+        throw 'Beta matchmaking requires TLS and an endpoint separate from stable.'
+    }
+}
+if ($MatchHost -and ($MatchHost -notmatch '^[A-Za-z0-9.-]+$' -or $MatchPort -lt 1 -or $MatchPort -gt 65535)) {
+    throw 'MatchHost requires a hostname and a valid MatchPort.'
+}
+if (-not $MatchHost -and $MatchPort) { throw 'MatchPort requires MatchHost.' }
+
 # --- channel tree ------------------------------------------------------------
-$relDir = Join-Path $OutDir "releases\$Version"
+$releaseSubdir = if ($ReleaseChannel -eq 'beta') { "beta/$Version" } else { $Version }
+$relDir = Join-Path $OutDir ("releases/" + $releaseSubdir)
 New-Item -ItemType Directory -Path $relDir -Force | Out-Null
 $fileEntries = @()
 foreach ($name in $ReleaseFiles) {
@@ -195,14 +241,27 @@ foreach ($name in $ReleaseFiles) {
 }
 $latest = [ordered]@{
     channel_version = 1
+    release_channel = $ReleaseChannel
+    channel_switch  = 1
     version         = $Version
     notes           = $Notes
-    base            = "$ChannelBase/$Version/"
+    base            = "$ChannelBase/$releaseSubdir/"
     files           = $fileEntries
 }
-$latestPath = Join-Path $OutDir 'releases\latest.json'
+if ($MatchHost) {
+    $latest.server_host = $MatchHost
+    $latest.server_port = $MatchPort
+    $latest.server_tls = $MatchTls
+}
+$manifestName = if ($ReleaseChannel -eq 'beta') { 'beta.json' } else { 'latest.json' }
+$latestPath = Join-Path $OutDir ("releases/" + $manifestName)
 $latest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $latestPath
 Write-Host "channel:   $latestPath (+ $($fileEntries.Count) files under releases\$Version\)"
+if ($ReleaseChannel -eq 'beta') {
+    Write-Host "Publish releases/beta/$Version first, verify hashes, then atomically publish releases/beta.json."
+    Write-Host 'Stable latest.json and installer archives were not changed.'
+    return
+}
 
 # --- platform-specific installer archives ------------------------------------
 # Canonical templates live below dist/installer/{windows,linux}. Build in a

@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include <string.h>
+#include <share.h>
 
 static FILE* log_file = NULL;
 static int g_log_min_level = 1; // INFO
@@ -84,7 +85,18 @@ void log_init() {
     // Log file (a bare install has no mods/ yet - create it or file logging
     // silently dies and first-boot debugging becomes impossible)
     CreateDirectoryA("mods", NULL);
-    log_file = fopen("mods/modframework.log", "w");
+    /* Two local clients must never truncate/write the same diagnostic log. */
+    log_file = _fsopen("mods/modframework.log", "w", _SH_DENYWR);
+    if (!log_file) {
+        char path[96];
+        snprintf(path, sizeof(path), "mods/modframework.%lu.log",
+                 (unsigned long)GetCurrentProcessId());
+        log_file = _fsopen(path, "w", _SH_DENYWR);
+    }
+    if (log_file) {
+        fprintf(log_file, "Yule instance pid=%lu\n", (unsigned long)GetCurrentProcessId());
+        fflush(log_file);
+    }
 
     // Honor the persisted "show framework log console" setting. We always
     // allocate the console (so logging works and the menu can re-show it live)

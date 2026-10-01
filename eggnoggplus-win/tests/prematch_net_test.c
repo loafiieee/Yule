@@ -10,6 +10,36 @@
 #include "ggpo_net.h"
 #include "hooks.h"
 #include "lua_manager.h"
+#ifdef YULE_EOS_LIVE_TEST
+#include "eos_runtime.h"
+
+static int test_eos_login(char* err, size_t cap) {
+    YuleEosConfig config = {
+        "a90d288fedff4672b082ed3e92a12484",
+        "02dd8fe04e294815881f54986c73629a",
+        "746ee96def484dcc8bbc9806343352b2",
+        "xyza7891PRKu95tnw9S2svEZhSaWbVkn", NULL
+    };
+    DWORD started = GetTickCount();
+    config.client_secret = getenv("YULE_TEST_EOS_CLIENT_SECRET");
+    if (!yule_eos_initialize(&config, err, cap) ||
+        !yule_eos_connect_login(getenv("YULE_TEST_EOS_ACCESS_TOKEN"), err, cap)) return 0;
+    if (atexit(yule_eos_shutdown) != 0) return 0;
+    while (yule_eos_state() == YULE_EOS_CONNECT_PENDING &&
+           (DWORD)(GetTickCount() - started) < 20000u) {
+        yule_eos_tick();
+        Sleep(10);
+    }
+    return yule_eos_state() == YULE_EOS_CONNECT_READY &&
+           getenv("YULE_TEST_EOS_LOCAL_PUID") &&
+           strcmp(yule_eos_puid(), getenv("YULE_TEST_EOS_LOCAL_PUID")) == 0;
+}
+/* Exercise realistic 60 Hz pacing: a service tick is not one millisecond.
+ * Deliberate long pauses remain long pauses. No menu-side SDK pump is used
+ * after login: only the production GGPO transport boundary services EOS. */
+static void test_live_sleep(DWORD ms) { Sleep(ms == 1 ? 16 : ms); }
+#define Sleep test_live_sleep
+#endif
 
 #define TEST_STATE_BYTES 16384u
 #define TEST_DEFAULT_STATE_BYTES 8192u
@@ -1233,6 +1263,15 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "frame-ring") == 0) {
+        /* Catch-up polls do not age a timeout or inflate the RTT clock. */
+        for (int poll = 0; poll < 4; poll++) {
+            if (ggpo_net_test_service_clock(1000u) != 61u ||
+                ggpo_net_test_service_clock(17u) != 2u ||
+                ggpo_net_test_service_clock(16u) != 1u ||
+                ggpo_net_test_service_clock(10000u) != 601u)
+                return fail("service-clock", "clock followed poll count", "");
+        }
+        puts("service-clock PASS wall_time=60Hz catchup_polls=4");
         return run_frame_ring_test();
     }
     if (argc == 2 && strcmp(argv[1], "state-transaction") == 0) {
@@ -1408,8 +1447,16 @@ int main(int argc, char** argv) {
     (void)tamper_outgoing;
     (void)replay_outgoing;
 #endif
+#ifdef YULE_EOS_LIVE_TEST
+    if (!test_eos_login(err, sizeof(err)) ||
+        !ggpo_net_start_eos_held(is_host, getenv("YULE_TEST_EOS_PEER_PUID"),
+                                 getenv("YULE_TEST_EOS_SOCKET"), 0,
+                                 getenv("YULE_TEST_EOS_FORCE_RELAY") != NULL,
+                                 err, sizeof(err))) {
+#else
     if (!(is_host ? ggpo_net_start_host_held(local_port, err, sizeof(err))
                   : ggpo_net_start_join_deferred_held(local_port, err, sizeof(err)))) {
+#endif
         return fail(role, "start", err);
     }
     if (ggpo_net_set_local_palette_preference(0u, 1u, TEST_PALETTE_COUNT)) {
@@ -1433,9 +1480,11 @@ int main(int argc, char** argv) {
             return fail(role, "finalize unchanged state layout", err);
         }
     }
+#ifndef YULE_EOS_LIVE_TEST
     if (!ggpo_net_set_peer("127.0.0.1", remote_port, err, sizeof(err))) {
         return fail(role, "peer", err);
     }
+#endif
 
     if (expect_rejection) {
         for (tick = 0; tick < 700; tick++) {
@@ -2588,6 +2637,7 @@ int main(int argc, char** argv) {
         uint32_t checksum_peer_next = 0u;
         int completed = 0;
         int checksum_drained = 0;
+        int forced_pause_done = 0;
         if (!trace_path || !trace_path[0] ||
             !(trace = fopen(trace_path, "wb")) ||
             !(trace_scratch = (uint8_t*)malloc(g_state_size))) {
@@ -2606,6 +2656,14 @@ int main(int argc, char** argv) {
                           ((f % 23u) == 0u ? 0x08u : 0u);
             uint32_t checksum = 0u;
             int advanced = 0;
+            /* The OS can otherwise keep one peer perpetually behind, so it
+             * never predicts even in a lossy run. Pause each side at a
+             * different history generation to exercise bilateral rollback. */
+            if (!forced_pause_done &&
+                (int32_t)(f - (is_host ? 256u : 768u)) >= 0) {
+                forced_pause_done = 1;
+                Sleep(80);
+            }
             err[0] = '\0';
             if (!ggpo_net_advance(p0, p1, 0, &checksum, &advanced,
                                   err, sizeof(err))) {

@@ -235,6 +235,29 @@ int main(void) {
     assert(!update_path_exists(one.backup, NULL));
 
     assert(update_remove_tree(root));
+    /* Channel metadata and runtime commit together. A crash after the DLL
+     * move, before profile activation, restores both stable originals. */
+    {
+        UpdateApplyEntry channel_entries[2];
+        helper_reset_root(root);
+        helper_entry(&channel_entries[0], root, "SDL2.dll", "stable runtime", "beta runtime");
+        helper_entry(&channel_entries[1], root, UPDATE_ACTIVE_REL, "stable profile", "beta profile");
+        assert(update_journal_write(channel_entries, 2u, 0));
+        assert(update_ext_helper_service(status, sizeof(status)) == UPDATE_HELPER_UPDATED);
+        helper_expect(channel_entries[0].target, "beta runtime");
+        helper_expect(channel_entries[1].target, "beta profile");
+
+        helper_reset_root(root);
+        helper_entry(&channel_entries[0], root, "SDL2.dll", "stable runtime", "beta runtime");
+        helper_entry(&channel_entries[1], root, UPDATE_ACTIVE_REL, "stable profile", "beta profile");
+        assert(update_journal_write(channel_entries, 2u, 0));
+        assert(MoveFileExA(channel_entries[0].target, channel_entries[0].backup, MOVEFILE_WRITE_THROUGH));
+        assert(MoveFileExA(channel_entries[0].staged, channel_entries[0].target, MOVEFILE_WRITE_THROUGH));
+        assert(update_ext_helper_service(status, sizeof(status)) == UPDATE_HELPER_ROLLED_BACK);
+        helper_expect(channel_entries[0].target, "stable runtime");
+        helper_expect(channel_entries[1].target, "stable profile");
+        assert(update_remove_tree(root));
+    }
     printf("update helper tests: ALL OK\n");
     return 0;
 }

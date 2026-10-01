@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -21,6 +22,7 @@ SERVER = SERVER_DIR / "server.js"
 PREFLIGHT = SERVER_DIR / "check_deployment.py"
 TOKEN_RE = re.compile(r"[0-9a-f]{64}")
 PROBE_TOKEN_RE = re.compile(r"[0-9a-f]{32}")
+CLIENT_TLS_CONTEXT = None
 
 
 def reserve_port() -> int:
@@ -60,6 +62,8 @@ class Client:
     def __init__(self, port: int) -> None:
         self.name = "unauthenticated client"
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=3.0)
+        if CLIENT_TLS_CONTEXT:
+            self.sock = CLIENT_TLS_CONTEXT.wrap_socket(self.sock, server_hostname="127.0.0.1")
         self.sock.settimeout(3.0)
         self.stream = self.sock.makefile("rwb", buffering=0)
 
@@ -109,7 +113,7 @@ class Client:
 def assert_protocol(message: dict[str, object]) -> None:
     assert message.get("control_protocol") == 3
     assert message.get("match_protocol") == 4
-    assert message.get("p2p_protocol") == 17
+    assert message.get("p2p_protocol") == 18
     assert message.get("cap_p2p_auth") == 1
     assert message.get("cap_social_controls") == 1
     assert message.get("cap_private_rematch") == 1
@@ -118,6 +122,7 @@ def assert_protocol(message: dict[str, object]) -> None:
 
 
 def main() -> int:
+    global CLIENT_TLS_CONTEXT
     node = shutil.which("node")
     if not node:
         raise RuntimeError("node is required for the online server runtime test")
@@ -129,6 +134,7 @@ def main() -> int:
         env.update(
             {
                 "HOST": "127.0.0.1",
+                "ADMIN_ENABLED": "0",
                 "PORT": str(port),
                 "UDP_HOST": "127.0.0.1",
                 "UDP_PORT": str(port),
@@ -142,6 +148,18 @@ def main() -> int:
                 "REMATCH_TTL_MS": "750",
             }
         )
+        probe_security = ["--local-plaintext"]
+        # This runs the full account/match/result protocol over the real TLS
+        # listener, with temporary certificates and isolated account files.
+        if "--tls" in sys.argv[1:]:
+            from net_tls_integration_test import certificates
+            cert, key = certificates(temp_dir, "control", "IP:127.0.0.1")
+            env.update(TLS_CERT_FILE=str(cert), TLS_KEY_FILE=str(key))
+            CLIENT_TLS_CONTEXT = ssl.create_default_context(cafile=str(temp_dir / "root.pem"))
+            probe_security = ["--cafile", str(temp_dir / "root.pem")]
+        else:
+            env.pop("TLS_CERT_FILE", None)
+            env.pop("TLS_KEY_FILE", None)
         server_log_path = temp_dir / "server.log"
         server_log = server_log_path.open("w", encoding="utf-8")
         process = subprocess.Popen(
@@ -158,7 +176,7 @@ def main() -> int:
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
                 probe = subprocess.run(
-                    [sys.executable, str(PREFLIGHT), "127.0.0.1", str(port), "--timeout", "0.5"],
+                    [sys.executable, str(PREFLIGHT), "127.0.0.1", str(port), "--timeout", "0.5", *probe_security],
                     capture_output=True,
                     text=True,
                 )
@@ -191,7 +209,7 @@ def main() -> int:
                         "framework_version": "1.2-test",
                         "control_protocol": 3,
                         "match_protocol": 4,
-                        "p2p_protocol": 17,
+                        "p2p_protocol": 18,
                         "build_id": 0x1234ABCD,
                         "game_exe_id": 0x2345BCDE,
                         "framework_dll_id": 0x3456CDEF,
@@ -212,7 +230,7 @@ def main() -> int:
                 assert found[0].get("opponent") == pair[1].name
                 assert found[1].get("opponent") == pair[0].name
                 assert all(message.get("match_protocol") == 4 for message in found)
-                assert all(message.get("p2p_protocol") == 17 for message in found)
+                assert all(message.get("p2p_protocol") == 18 for message in found)
                 assert {message.get("p2p_role") for message in found} == {"host", "join"}
                 auth_tokens = [message.get("p2p_auth_token") for message in found]
                 assert all(isinstance(token, str) and TOKEN_RE.fullmatch(token) for token in auth_tokens)
@@ -242,7 +260,7 @@ def main() -> int:
                             "framework_version": "1.2-test",
                             "control_protocol": 3,
                             "match_protocol": 4,
-                            "p2p_protocol": 17,
+                            "p2p_protocol": 18,
                             "build_id": 0x1234ABCD,
                             "game_exe_id": 0x2345BCDE,
                             "framework_dll_id": 0x3456CDEF,
@@ -507,7 +525,7 @@ def main() -> int:
                 relayed_packet = struct.pack(
                     "<IHHQIQ16s",
                     0x50474E45,
-                    17,
+                    18,
                     1,
                     0x1122334455667788,
                     sender_player,
@@ -962,8 +980,8 @@ def main() -> int:
                 for message in unblocked_snapshot
             )
 
-            # A pre-v17 or unadvertised client is rejected before matchmaking;
-            # it must never be silently paired with a v17 peer and left hanging.
+            # A pre-v18 or unadvertised client is rejected before matchmaking;
+            # it must never be silently paired with a v18 peer and left hanging.
             outdated = Client(port)
             clients.append(outdated)
             outdated.name = "protocol_outdated"
@@ -979,9 +997,9 @@ def main() -> int:
             outdated.send({"type": "join_queue", "queue": "casual"})
             mismatch = outdated.receive_type("error")
             assert "Update Eggnogg+" in str(mismatch.get("message", ""))
-            assert "17" in str(mismatch.get("message", ""))
+            assert "18" in str(mismatch.get("message", ""))
 
-            # Two protocol-v17 clients with different deterministic binaries
+            # Two protocol-v18 clients with different deterministic binaries
             # remain in queue and receive a clear notice; they never consume a
             # match merely because their human release labels look compatible.
             build_pair = new_registered_pair("bm")
@@ -991,7 +1009,7 @@ def main() -> int:
                     "framework_version": "1.2-test",
                     "control_protocol": 3,
                     "match_protocol": 4,
-                    "p2p_protocol": 17,
+                    "p2p_protocol": 18,
                     "build_id": 0x1234ABCD,
                     "game_exe_id": 0x2345BCDE,
                     "framework_dll_id": 0x3456CDF0,

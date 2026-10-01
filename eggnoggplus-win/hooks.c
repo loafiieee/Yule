@@ -18,6 +18,7 @@
 #include "preview_bridge.h"
 #include "preview_stage.h"
 #include "content_tiles.h"
+#include "ui_text.h"
 
 /* IsBadReadPtr/IsBadWritePtr are deprecated probing APIs and can themselves
  * fault when an injected process hook instruments their guard-page accesses.
@@ -153,6 +154,7 @@ static int hooks_ptr_accessible(const void* pointer, SIZE_T length, int writable
 #include "update_ext.h"
 #include "credential_ext.h"
 #include "online_control.h"
+#include "eos_runtime.h"
 #include "launch_request.h"
 #include "launch_ipc.h"
 #include "window_policy.h"
@@ -521,6 +523,7 @@ typedef enum RowKind {
 #define FW_SETTING_LOG_CONSOLE 0
 #define FW_SETTING_AUTO_UPDATE 1
 #define FW_SETTING_DISCORD_PRESENCE 2
+#define FW_SETTING_BETA_CHANNEL 3
 #define FW_ACTION_UPDATE       0
 #define FW_VALUE_MUSIC_VOLUME  0
 #define FW_VALUE_SFX_VOLUME    1
@@ -587,6 +590,7 @@ typedef enum OnlineHubAction {
     ONLINE_ACTION_DECLINE_CHALLENGE,
     ONLINE_ACTION_REMOVE_FRIEND,
     ONLINE_ACTION_SAVE_SETTINGS,
+    ONLINE_ACTION_ADVANCED_SETTINGS,
 } OnlineHubAction;
 
 typedef enum OnlineFriendContextAction {
@@ -717,6 +721,7 @@ typedef struct OnlineHubConfig {
     int remember_me;
     char server_host[ONLINE_HUB_TEXT_MAX];
     uint16_t server_port;
+    int server_tls;
     char peer_host[ONLINE_HUB_TEXT_MAX];
     uint16_t peer_port;
     uint16_t local_port;
@@ -1473,6 +1478,9 @@ static int online_advance_net_gameplay_tick(int arg0);
 static int online_state_ticks_via_button_update(void* st);
 static int online_state_is_ingame_menu(void* st);
 static void online_server_update(void);
+static int online_server_send_map_manifest(void);
+static void online_eos_begin_login(void);
+static void online_server_send_queue(const char* queue);
 static void online_troubleshooter_pump(void);
 static void online_server_disconnect(const char* reason);
 static void online_challenge_map_picker_clear(void);
@@ -1544,6 +1552,10 @@ typedef struct OnlinePendingMatch {
     int competitive;
     int queue_mode;
     char p2p_role[12];
+    char transport[16];
+    char peer_eos_puid[65];
+    char eos_socket[33];
+    int eos_channel;
     char peer_host[ONLINE_HUB_TEXT_MAX];
     char p2p_token[96];
     char p2p_auth_token[GGPO_NET_MATCH_TOKEN_HEX_BYTES + 1];
@@ -1559,6 +1571,10 @@ typedef struct OnlineConnectRetry {
     int established;           /* set only once synchronized gameplay begins */
     int match_id;
     char p2p_role[12];
+    char transport[16];
+    char peer_eos_puid[65];
+    char eos_socket[33];
+    int eos_channel;
     int local_port;            /* configured port for attempt 1; retries bind 0 */
     char peer_host[ONLINE_HUB_TEXT_MAX];
     int peer_port;
@@ -1666,6 +1682,24 @@ static int g_online_password_from_credential = 0;
 static OnlineServerState g_online_server_state = ONLINE_SERVER_DISCONNECTED;
 static int g_online_server_slot = -1;
 static int g_online_authed = 0;
+typedef enum OnlineTransportPolicy {
+    ONLINE_TRANSPORT_AUTO = 0,
+    ONLINE_TRANSPORT_EOS = 1,
+    ONLINE_TRANSPORT_NATIVE = 2
+} OnlineTransportPolicy;
+static OnlineTransportPolicy g_online_transport_policy = ONLINE_TRANSPORT_AUTO;
+static int g_online_eos_force_relay = 0;
+static int g_online_eos_token_requested = 0;
+static int g_online_eos_login_requested = 0;
+static int g_online_eos_proof_sent = 0;
+static int g_online_eos_puid_verified = 0;
+static int g_online_eos_bootstrap_failed = 0;
+static int g_online_show_advanced_settings = 0;
+static int g_online_eos_refresh_requested = 0;
+static DWORD g_online_eos_refresh_requested_ms = 0;
+static DWORD g_online_eos_wait_started_ms = 0;
+static char g_online_eos_deferred_queue[16];
+static char g_online_eos_client_secret[256];
 static int g_online_register_after_connect = 0;
 static int g_online_auth_pending = 0;
 static int g_online_server_info_pending = 0;
@@ -3093,7 +3127,7 @@ static float approx_text_width(const char* text, float scale) {
     if (!text) return 0.0f;
     // font8x8 atlas is 145x145 (16x16 cells with 1px gutters):
     // effective advance is 9px per glyph at scale=1.
-    return (float)strlen(text) * 9.0f * scale;
+    return ui_text_width(text, scale);
 }
 
 static void mods_restore_render_state(void) {
@@ -3115,7 +3149,9 @@ static void mods_restore_render_state(void) {
 static void draw_text_scaled_mode_alpha(float x, float y, float scale,
                                         float r, float g, float b, float a,
                                         const char* text, int mode) {
-    if (!text || !p_plot_text) return;
+    if (!text) return;
+    if (ui_text_queue(x, y, scale, r, g, b, a, text, mode)) return;
+    if (!p_plot_text) return;
     p_turtle_set_angle(0.0);
     p_turtle_set_scale((double)scale, (double)scale);
     if (p_turtle_set_rgba) p_turtle_set_rgba(r, g, b, a);
@@ -3126,6 +3162,13 @@ static void draw_text_scaled_mode_alpha(float x, float y, float scale,
 
 static void draw_text_scaled_mode(float x, float y, float scale, float r, float g, float b, const char* text, int mode) {
     draw_text_scaled_mode_alpha(x, y, scale, r, g, b, 1.0f, text, mode);
+}
+
+static void draw_text_emphasis_mode(float x, float y, float scale, float r, float g, float b,
+                                    const char* text, int mode) {
+    if (!ui_text_queue_style(x, y, scale, r, g, b, 1.0f, text, mode, UI_TEXT_EMPHASIS)) {
+        draw_text_scaled_mode(x, y, scale, r, g, b, text, mode);
+    }
 }
 
 static void draw_text_scaled(float x, float y, float scale, float r, float g, float b, const char* text) {
@@ -3171,15 +3214,7 @@ static void mods_calc_layout(ModsLayout* L) {
     L->h = p_mad_h ? p_mad_h() : BASE_UI_H;
     L->ui = calc_ui_scale();
 
-    // Text scale tuned for readability. We also clamp it using the current
-    // window size to avoid going off-screen on tiny windows.
-    {
-        float s = 1.48f * L->ui; // a bit bigger than v2
-        // If the window is very short, shrink slightly to keep rows visible.
-        if (L->h < 520.0f) s *= 0.92f;
-        if (L->h < 420.0f) s *= 0.88f;
-        L->text_scale = clampf(s, 0.98f, 2.20f);
-    }
+    L->text_scale = ui_text_body_scale(L->ui);
 
     L->center_x = L->w * 0.5f;
 
@@ -3236,7 +3271,7 @@ static void mods_calc_layout(ModsLayout* L) {
     }
 
     L->row_h = 34.0f * L->ui;
-    if (L->row_h < 12.0f) L->row_h = 12.0f;
+    if (L->row_h < 28.0f) L->row_h = 28.0f;
 }
 /* The mods list ends with a divider + a "Back" action. Back is rendered as a
  * footer BELOW the panel (not as a scrolling row), so the scroll/selection math
@@ -3470,6 +3505,17 @@ static int console_apply_bind_value(int mod_index, int bind_index, const char* v
                       : lua_manager_set_mod_bind_value(mod_index, bind_index, sym);
 }
 
+static int framework_switch_channel(const char* target) {
+    if (strcmp(target, update_ext_channel()) == 0) return update_ext_switch_channel(target);
+    if (ggpo_net_active() || g_online_pending_match.active) {
+        LOG_WARN("update: finish the current match before switching channels");
+        return 0;
+    }
+    if (!update_ext_switch_channel(target)) return 0;
+    online_server_disconnect(NULL);
+    return 1;
+}
+
 static int console_apply_config_value(int idx, int cfg_idx, const char* value) {
     int type;
     int ok = 0;
@@ -3521,6 +3567,13 @@ static void rebuild_rows(void) {
              "  Enable log console", log_console_visible() ? "ON" : "OFF");
     rows_add(ROW_FW_TOGGLE, 1, -1, FW_SETTING_AUTO_UPDATE,
              "  Automatic updates", update_ext_auto() ? "ON" : "OFF");
+    if (update_ext_beta_unlocked()) {
+        UpdateStatus channel_status = update_ext_status();
+        int switchable = channel_status == UPDATE_IDLE || channel_status == UPDATE_UP_TO_DATE ||
+                         channel_status == UPDATE_ERROR || channel_status == UPDATE_AVAILABLE;
+        rows_add(ROW_FW_TOGGLE, switchable, -1, FW_SETTING_BETA_CHANNEL,
+                 "  Beta testing", strcmp(update_ext_channel(), "beta") == 0 ? "ON" : "OFF");
+    }
     rows_add(ROW_FW_TOGGLE, 1, -1, FW_SETTING_DISCORD_PRESENCE,
              "  Discord Rich Presence",
              discord_rpc_ext_available()
@@ -3776,6 +3829,9 @@ static void apply_adjustment_on_selected(int delta) {
             log_set_console_visible(delta > 0 ? 1 : (delta < 0 ? 0 : !log_console_visible()));
         } else if (row->cfg_index == FW_SETTING_AUTO_UPDATE) {
             update_ext_set_auto(delta > 0 ? 1 : (delta < 0 ? 0 : !update_ext_auto()));
+        } else if (row->cfg_index == FW_SETTING_BETA_CHANNEL) {
+            int beta = strcmp(update_ext_channel(), "beta") == 0;
+            (void)framework_switch_channel((delta > 0 || (delta == 0 && !beta)) ? "beta" : "stable");
         } else if (row->cfg_index == FW_SETTING_DISCORD_PRESENCE &&
                    discord_rpc_ext_available()) {
             int enabled = delta > 0 ? 1 :
@@ -3838,6 +3894,8 @@ static void activate_selected(void) {
             log_set_console_visible(!log_console_visible());
         } else if (row->cfg_index == FW_SETTING_AUTO_UPDATE) {
             update_ext_set_auto(!update_ext_auto());
+        } else if (row->cfg_index == FW_SETTING_BETA_CHANNEL) {
+            (void)framework_switch_channel(strcmp(update_ext_channel(), "beta") == 0 ? "stable" : "beta");
         } else if (row->cfg_index == FW_SETTING_DISCORD_PRESENCE &&
                    discord_rpc_ext_available()) {
             int enabled = !discord_rpc_ext_enabled();
@@ -4078,6 +4136,10 @@ static int console_build_arg_candidates(char cands[][CONSOLE_CAND_LEN], int max,
     if (arg_index == 1 && _stricmp(cmd, "music.output_rate") == 0) {
         CAND_ADD("22050"); CAND_ADD("32000");
         CAND_ADD("44100"); CAND_ADD("48000");
+        return n;
+    }
+    if (arg_index == 1 && _stricmp(cmd, "update.channel") == 0) {
+        CAND_ADD("beta"); CAND_ADD("stable");
         return n;
     }
 
@@ -4512,6 +4574,7 @@ static void console_show_help(const char* topic) {
             console_push_line_rgb("  state.switch <main|main_initial|options|options_paused|mods|mods_entry|online|console|return>", 0.87f, 0.87f, 0.87f);
         }
         console_push_line_rgb("  sys.info", 0.87f, 0.87f, 0.87f);
+        console_push_line_rgb("  update.channel [beta|stable]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  ui.size", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  time.scale [value|auto]", 0.87f, 0.87f, 0.87f);
         console_push_line_rgb("  framework.api", 0.87f, 0.87f, 0.87f);
@@ -4679,7 +4742,7 @@ static void console_show_help(const char* topic) {
         return;
     }
     if (_stricmp(t, "ggpo.net") == 0) {
-        console_push_line_rgb("ggpo.net key: arm a one-shot shared v17 key from the clipboard, then clear the clipboard.", 0.72f, 0.90f, 1.00f);
+        console_push_line_rgb("ggpo.net key: arm a one-shot shared v18 key from the clipboard, then clear the clipboard.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net key clear: discard an armed one-shot key.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net host [port]: host a UDP rollback input session as player 0.", 0.72f, 0.90f, 1.00f);
         console_push_line_rgb("ggpo.net join <host> [port] [local_port]: join as player 1.", 0.72f, 0.90f, 1.00f);
@@ -5862,6 +5925,16 @@ static void print_ggpo_net_status(void) {
     int has_rx_confirmed;
     int has_peer_confirmed;
     int has_checksum_confirmed;
+    snprintf(out, sizeof(out),
+             "ggpo.net.transport: policy=%s selected=%s route=%s eos_state=%s identity=%s relay_policy=%s",
+             g_online_transport_policy == ONLINE_TRANSPORT_EOS ? "eos" :
+             g_online_transport_policy == ONLINE_TRANSPORT_NATIVE ? "native" : "auto",
+             ggpo_net_transport_name(), ggpo_net_transport_route(),
+             yule_eos_state_name(),
+             g_online_eos_puid_verified ? "verified" : "unverified",
+             g_online_eos_force_relay ? "force" : "auto");
+    console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+    LOG_INFO("%s", out);
     if (ggpo_net_active()) {
         snprintf(out,
                  sizeof(out),
@@ -6368,7 +6441,8 @@ static void console_run_online_troubleshooter(void) {
     console_push_line_rgb(error, 0.80f, 0.90f, 1.00f);
 
     test->tcp_slot =
-        net_connect(g_online_cfg.server_host, g_online_cfg.server_port);
+        net_connect_control(g_online_cfg.server_host, g_online_cfg.server_port,
+                            g_online_cfg.server_tls);
     if (test->tcp_slot < 0) {
         test->tcp_done = 1;
         text_copy(test->tcp_error, sizeof(test->tcp_error),
@@ -6462,6 +6536,55 @@ static void console_run_ggpo_net(const char* arg) {
         console_close();
         return;
     }
+    if (_stricmp(action, "transport") == 0) {
+        char* value = console_parse_token(&cursor);
+        char out[CONSOLE_LINE_TEXT];
+        if (value && value[0]) {
+            if (_stricmp(value, "auto") == 0) g_online_transport_policy = ONLINE_TRANSPORT_AUTO;
+            else if (_stricmp(value, "eos") == 0) g_online_transport_policy = ONLINE_TRANSPORT_EOS;
+            else if (_stricmp(value, "native") == 0) g_online_transport_policy = ONLINE_TRANSPORT_NATIVE;
+            else {
+                console_push_line_rgb("Usage: ggpo.net transport [auto|eos|native]", 0.98f, 0.76f, 0.40f);
+                return;
+            }
+            (void)update_ext_config_set("ggpo_transport", value);
+            if (g_online_authed) {
+                if (!g_online_eos_puid_verified && !yule_eos_login_inflight()) {
+                    g_online_eos_bootstrap_failed = 0;
+                    g_online_eos_token_requested = 0;
+                    g_online_eos_login_requested = 0;
+                    g_online_eos_proof_sent = 0;
+                }
+                online_eos_begin_login();
+                (void)online_server_send_map_manifest();
+            }
+        }
+        snprintf(out, sizeof(out), "ggpo.net: transport policy=%s selected=%s EOS state=%s PUID=%s",
+                 g_online_transport_policy == ONLINE_TRANSPORT_EOS ? "eos" :
+                 g_online_transport_policy == ONLINE_TRANSPORT_NATIVE ? "native" : "auto",
+                 ggpo_net_transport_name(), yule_eos_state_name(),
+                 g_online_eos_puid_verified ? "verified" : "unverified");
+        console_push_line_rgb(out, 0.72f, 0.90f, 1.00f);
+        return;
+    }
+    if (_stricmp(action, "eosrelay") == 0) {
+        char* value = console_parse_token(&cursor);
+        if (value && value[0]) {
+            if (_stricmp(value, "force") == 0) g_online_eos_force_relay = 1;
+            else if (_stricmp(value, "auto") == 0) g_online_eos_force_relay = 0;
+            else {
+                console_push_line_rgb("Usage: ggpo.net eosrelay [auto|force]", 0.98f, 0.76f, 0.40f);
+                return;
+            }
+            (void)update_ext_config_set("ggpo_eos_relay",
+                                        g_online_eos_force_relay ? "force" : "auto");
+        }
+        console_push_line_rgb(g_online_eos_force_relay
+            ? "ggpo.net: EOS relay policy=force (next connection)"
+            : "ggpo.net: EOS relay policy=auto (next connection)",
+            0.72f, 0.90f, 1.00f);
+        return;
+    }
     if (_stricmp(action, "hud") == 0 || _stricmp(action, "overlay") == 0) {
         char out[CONSOLE_LINE_TEXT];
         char* tok = console_parse_token(&cursor);
@@ -6538,7 +6661,7 @@ static void console_run_ggpo_net(const char* arg) {
             return;
         }
         credential_ext_secure_zero(err, sizeof(err));
-        console_push_line_rgb("ggpo.net: one-shot v17 match key armed; start host/join next",
+        console_push_line_rgb("ggpo.net: one-shot v18 match key armed; start host/join next",
                               0.64f, 0.92f, 0.66f);
         return;
     }
@@ -8385,6 +8508,19 @@ static void console_execute_input(void) {
 
     if (_stricmp(cmd, "help") == 0 || _stricmp(cmd, "commands") == 0) {
         console_show_help(arg);
+    } else if (_stricmp(cmd, "update.channel") == 0) {
+        if (!arg || !arg[0]) {
+            char line[128];
+            snprintf(line, sizeof(line), "Update channel: %s", update_ext_channel());
+            console_push_line_rgb(line, 0.72f, 0.90f, 1.00f);
+        } else if (_stricmp(arg, "beta") == 0 || _stricmp(arg, "stable") == 0) {
+            const char* target = _stricmp(arg, "beta") == 0 ? "beta" : "stable";
+            if (framework_switch_channel(target)) {
+                console_push_line_rgb("Channel selected. Return to the main menu to finish and restart.", 0.72f, 0.90f, 1.00f);
+            } else {
+                console_push_line_rgb("Finish your match or pending update before switching channels.", 0.98f, 0.76f, 0.40f);
+            }
+        } else console_push_line_rgb("Usage: update.channel [beta|stable]", 0.98f, 0.76f, 0.40f);
     } else if (_stricmp(cmd, "clear") == 0) {
         console_clear_output();
     } else if (_stricmp(cmd, "history") == 0) {
@@ -8599,12 +8735,14 @@ static char keycode_to_char(int sym, int mod) {
 }
 
 static void online_hub_defaults(void) {
+    char setting[32];
     memset(&g_online_cfg, 0, sizeof(g_online_cfg));
     g_online_cfg.username[0] = '\0';
     g_online_cfg.password[0] = '\0';
     g_online_cfg.remember_me = 0;
     text_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), ONLINE_DEFAULT_SERVER_HOST);
     g_online_cfg.server_port = ONLINE_DEFAULT_SERVER_PORT;
+    g_online_cfg.server_tls = 1;
     text_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), "127.0.0.1");
     g_online_cfg.peer_port = GGPO_NET_DEFAULT_PORT;
     g_online_cfg.local_port = 0;
@@ -8619,6 +8757,14 @@ static void online_hub_defaults(void) {
     g_online_cfg.sim_max_delay = 0;
     g_online_cfg.challenge_notifications = 1;
     g_online_cfg.match_hud = 0;
+    g_online_transport_policy = ONLINE_TRANSPORT_AUTO;
+    if (update_ext_config_get("ggpo_transport", setting, sizeof(setting))) {
+        if (_stricmp(setting, "eos") == 0) g_online_transport_policy = ONLINE_TRANSPORT_EOS;
+        else if (_stricmp(setting, "native") == 0) g_online_transport_policy = ONLINE_TRANSPORT_NATIVE;
+    }
+    g_online_eos_force_relay =
+        update_ext_config_get("ggpo_eos_relay", setting, sizeof(setting)) &&
+        _stricmp(setting, "force") == 0;
 }
 
 static int online_parse_long_range(const char* s, long lo, long hi, long* out) {
@@ -8850,6 +8996,16 @@ static int online_hub_add_friend_spec(const char* spec) {
     return 1;
 }
 
+static const char* online_hub_channel_config_path(void) {
+    return strcmp(update_ext_channel(), "beta") == 0
+        ? "mods\\online_hub.beta.cfg" : ONLINE_HUB_CFG_PATH;
+}
+
+static int online_hub_channel_endpoint(void) {
+    return update_ext_channel_server(g_online_cfg.server_host,
+        sizeof(g_online_cfg.server_host), &g_online_cfg.server_port, &g_online_cfg.server_tls);
+}
+
 static void online_hub_load(void) {
     FILE* f;
     char line[512];
@@ -8860,9 +9016,11 @@ static void online_hub_load(void) {
     g_online_request_count = 0;
     g_online_challenge_count = 0;
 
-    f = fopen(ONLINE_HUB_CFG_PATH, "r");
+    f = fopen(online_hub_channel_config_path(), "r");
+    if (!f && strcmp(update_ext_channel(), "beta") == 0) f = fopen(ONLINE_HUB_CFG_PATH, "r");
     if (!f) {
         online_hub_clamp_config();
+        (void)online_hub_channel_endpoint();
         return;
     }
 
@@ -8883,6 +9041,7 @@ static void online_hub_load(void) {
         else if (_stricmp(key, "remember_me") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.remember_me = (int)parsed;
         else if (_stricmp(key, "server_host") == 0) text_copy(g_online_cfg.server_host, sizeof(g_online_cfg.server_host), value);
         else if (_stricmp(key, "server_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.server_port = (uint16_t)parsed;
+        else if (_stricmp(key, "server_tls") == 0 && online_parse_long_range(value, 0, 1, &parsed)) g_online_cfg.server_tls = (int)parsed;
         else if (_stricmp(key, "peer_host") == 0) text_copy(g_online_cfg.peer_host, sizeof(g_online_cfg.peer_host), value);
         else if (_stricmp(key, "peer_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.peer_port = (uint16_t)parsed;
         else if (_stricmp(key, "local_port") == 0 && online_parse_long_range(value, 0, 65535, &parsed)) g_online_cfg.local_port = (uint16_t)parsed;
@@ -8918,6 +9077,7 @@ static void online_hub_load(void) {
     }
     fclose(f);
     online_hub_clamp_config();
+    (void)online_hub_channel_endpoint();
     online_hub_apply_net_settings();
     if (g_online_cfg.remember_me) {
         (void)online_load_remembered_password(0);
@@ -8928,7 +9088,8 @@ static void online_hub_save(void) {
     FILE* f;
     CreateDirectoryA("mods", NULL);
     online_hub_clamp_config();
-    f = fopen(ONLINE_HUB_CFG_PATH, "w");
+    (void)online_hub_channel_endpoint();
+    f = fopen(online_hub_channel_config_path(), "w");
     if (!f) {
         online_hub_set_status("Could not save online settings.");
         return;
@@ -8938,6 +9099,7 @@ static void online_hub_save(void) {
     fprintf(f, "remember_me=%d\n", g_online_cfg.remember_me ? 1 : 0);
     fprintf(f, "server_host=%s\n", g_online_cfg.server_host);
     fprintf(f, "server_port=%u\n", (unsigned int)g_online_cfg.server_port);
+    fprintf(f, "server_tls=%d\n", g_online_cfg.server_tls ? 1 : 0);
     fprintf(f, "local_port=%u\n", (unsigned int)g_online_cfg.local_port);
     fprintf(f, "challenge_notifications=%d\n", g_online_cfg.challenge_notifications ? 1 : 0);
     fprintf(f, "match_hud=%d\n", g_online_cfg.match_hud ? 1 : 0);
@@ -9097,6 +9259,10 @@ static int online_server_send_map_manifest(void) {
     int built;
     int formatted;
     int sent = 0;
+    int transport_caps = g_online_transport_policy == ONLINE_TRANSPORT_NATIVE ? 1 :
+        g_online_transport_policy == ONLINE_TRANSPORT_EOS ?
+            (g_online_eos_puid_verified ? 2 : 0) :
+            (g_online_eos_puid_verified ? 3 : 1);
     size_t line_cap;
 
     /* Count first, then allocate exactly. A truncated JSON prefix must never be
@@ -9137,7 +9303,7 @@ static int online_server_send_map_manifest(void) {
                          "{\"type\":\"map_manifest\",\"framework_version\":\"%s\","
                          "\"control_protocol\":%d,\"match_protocol\":%d,\"p2p_protocol\":%u,"
                          "\"build_id\":%lu,\"game_exe_id\":%lu,\"framework_dll_id\":%lu,"
-                         "\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"maps\":%s}\n",
+                         "\"p2p_port\":%u,\"lan_host\":\"%s\",\"route_version\":2,\"transport_caps\":%d,\"maps\":%s}\n",
                          FRAMEWORK_VERSION,
                          ONLINE_CONTROL_PROTOCOL_VERSION,
                          ONLINE_MATCH_PROTOCOL_VERSION,
@@ -9147,6 +9313,7 @@ static int online_server_send_map_manifest(void) {
                          (unsigned long)ggpo_net_local_dll_id(),
                          (unsigned int)g_online_cfg.local_port,
                          lan_json,
+                         transport_caps,
                          maps_json);
     if (formatted < 0 || (size_t)formatted >= line_cap) {
         LOG_ERROR("online.maps: complete manifest envelope exceeded its checked allocation");
@@ -9165,6 +9332,187 @@ done:
     return sent;
 }
 
+static int online_eos_read_client_secret(const char* path) {
+    FILE* file;
+    size_t length;
+    if (!path || !path[0]) return 0;
+    file = fopen(path, "rb");
+    if (!file) return 0;
+    if (!fgets(g_online_eos_client_secret,
+               sizeof(g_online_eos_client_secret), file) ||
+        fgetc(file) != EOF) {
+        fclose(file);
+        SecureZeroMemory(g_online_eos_client_secret,
+                         sizeof(g_online_eos_client_secret));
+        return 0;
+    }
+    fclose(file);
+    length = strlen(g_online_eos_client_secret);
+    while (length && (g_online_eos_client_secret[length - 1] == '\r' ||
+                      g_online_eos_client_secret[length - 1] == '\n')) {
+        g_online_eos_client_secret[--length] = '\0';
+    }
+    if (length < 16u) {
+        SecureZeroMemory(g_online_eos_client_secret,
+                         sizeof(g_online_eos_client_secret));
+        return 0;
+    }
+    return 1;
+}
+
+static int online_eos_load_client_secret(void) {
+    char appdata[MAX_PATH];
+    char path[MAX_PATH + 80];
+    char* slash;
+    DWORD used;
+    if (update_ext_config_get("eos_client_secret",
+                              g_online_eos_client_secret,
+                              sizeof(g_online_eos_client_secret)) &&
+        g_online_eos_client_secret[0]) return 1;
+    used = GetEnvironmentVariableA("LOCALAPPDATA", appdata, sizeof(appdata));
+    if (used && used < sizeof(appdata) &&
+        snprintf(path, sizeof(path), "%s\\EGGNOGG+\\mods\\eos_client_secret.txt",
+                 appdata) < (int)sizeof(path) &&
+        online_eos_read_client_secret(path)) return 1;
+    used = GetModuleFileNameA(NULL, path, sizeof(path));
+    if (!used || used >= sizeof(path)) return 0;
+    slash = strrchr(path, '\\');
+    if (!slash) slash = strrchr(path, '/');
+    if (!slash || (size_t)(slash - path) +
+                  sizeof("\\eos_client_secret.txt") > sizeof(path)) return 0;
+    strcpy(slash + 1, "eos_client_secret.txt");
+    return online_eos_read_client_secret(path);
+}
+
+static void online_eos_begin_login(void) {
+    static const YuleEosConfig public_config = {
+        "a90d288fedff4672b082ed3e92a12484",
+        "02dd8fe04e294815881f54986c73629a",
+        "746ee96def484dcc8bbc9806343352b2",
+        "xyza7891PRKu95tnw9S2svEZhSaWbVkn",
+        NULL
+    };
+    YuleEosConfig config = public_config;
+    char err[192];
+    if (g_online_transport_policy == ONLINE_TRANSPORT_NATIVE ||
+        !g_online_authed || g_online_eos_token_requested ||
+        g_online_eos_bootstrap_failed) return;
+    /* Connect has no Yule-account logout operation. A fresh account login must
+     * not reuse the previous account's PUID. Release the old platform only
+     * after its gameplay carrier has closed. */
+    if (yule_eos_state() == YULE_EOS_CONNECT_READY && !ggpo_net_active()) {
+        yule_eos_shutdown();
+    }
+    if (yule_eos_state() == YULE_EOS_UNAVAILABLE) {
+        if (!online_eos_load_client_secret()) {
+            LOG_WARN("online.eos: SDK client credential is not configured");
+            g_online_eos_bootstrap_failed = 1;
+            return;
+        }
+        config.client_secret = g_online_eos_client_secret;
+        err[0] = '\0';
+        if (!yule_eos_initialize(&config, err, sizeof(err))) {
+            LOG_WARN("online.eos: initialization unavailable (%s)",
+                     err[0] ? err : "unknown error");
+            g_online_eos_bootstrap_failed = 1;
+            return;
+        }
+        LOG_INFO("online.eos: platform initialized");
+    }
+    if (yule_eos_state() == YULE_EOS_PLATFORM_READY ||
+        yule_eos_state() == YULE_EOS_CONNECT_READY ||
+        yule_eos_state() == YULE_EOS_CONNECT_FAILED) {
+        if (online_server_send_raw("{\"type\":\"eos_connect_token_request\"}\n")) {
+            g_online_eos_token_requested = 1;
+            g_online_eos_wait_started_ms = GetTickCount();
+        }
+    }
+}
+
+static void online_eos_tick(void) {
+    char jwt[16384];
+    char line[16640];
+    const char* puid;
+    size_t i;
+    yule_eos_tick();
+    if (g_online_authed && g_online_eos_puid_verified &&
+        yule_eos_state() == YULE_EOS_CONNECT_FAILED) {
+        LOG_WARN("online.eos: Connect identity expired; requesting a fresh login");
+        g_online_eos_puid_verified = 0;
+        g_online_eos_proof_sent = 0;
+        g_online_eos_token_requested = 0;
+        g_online_eos_login_requested = 0;
+        g_online_eos_refresh_requested = 0;
+        g_online_eos_refresh_requested_ms = 0;
+        (void)online_server_send_map_manifest();
+        online_eos_begin_login();
+    }
+    if (g_online_authed && g_online_eos_puid_verified &&
+        yule_eos_state() == YULE_EOS_CONNECT_READY &&
+        yule_eos_auth_expiring() && !yule_eos_login_inflight() &&
+        (!g_online_eos_refresh_requested ||
+         (DWORD)(GetTickCount() - g_online_eos_refresh_requested_ms) >= 30000u)) {
+        if (online_server_send_raw("{\"type\":\"eos_connect_token_request\"}\n")) {
+            g_online_eos_refresh_requested = 1;
+            g_online_eos_refresh_requested_ms = GetTickCount();
+            LOG_INFO("online.eos: refreshing Connect login");
+        }
+    }
+    if (!yule_eos_auth_expiring()) {
+        g_online_eos_refresh_requested = 0;
+        g_online_eos_refresh_requested_ms = 0;
+    }
+    if (!g_online_eos_puid_verified && g_online_eos_token_requested &&
+        !g_online_eos_bootstrap_failed &&
+        (yule_eos_state() == YULE_EOS_CONNECT_FAILED ||
+         (DWORD)(GetTickCount() - g_online_eos_wait_started_ms) >= 15000u)) {
+        g_online_eos_bootstrap_failed = 1;
+        LOG_WARN("online.eos: account connection failed or timed out state=%s",
+                 yule_eos_state_name());
+        online_hub_set_status(g_online_transport_policy == ONLINE_TRANSPORT_EOS
+            ? "Couldn't prepare online play. Try signing in again."
+            : "Ready to play.");
+    }
+    if (g_online_eos_deferred_queue[0] && !g_online_eos_puid_verified &&
+        g_online_eos_bootstrap_failed) {
+        if (g_online_transport_policy == ONLINE_TRANSPORT_AUTO) {
+            char queue[sizeof(g_online_eos_deferred_queue)];
+            text_copy(queue, sizeof(queue), g_online_eos_deferred_queue);
+            g_online_eos_deferred_queue[0] = '\0';
+            online_server_send_queue(queue);
+        } else {
+            g_online_eos_deferred_queue[0] = '\0';
+            online_hub_set_status("EOS sign-in failed; EOS transport is required.");
+        }
+    }
+    if (!g_online_authed || !g_online_eos_login_requested ||
+        g_online_eos_bootstrap_failed || g_online_eos_proof_sent ||
+        yule_eos_state() != YULE_EOS_CONNECT_READY) return;
+    puid = yule_eos_puid();
+    if (!puid || strlen(puid) != 32u ||
+        !yule_eos_copy_id_token(jwt, sizeof(jwt))) {
+        LOG_WARN("online.eos: Connect ID token is unavailable");
+        return;
+    }
+    for (i = 0; jwt[i]; i++) {
+        char c = jwt[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) {
+            SecureZeroMemory(jwt, sizeof(jwt));
+            LOG_WARN("online.eos: Connect ID token has invalid encoding");
+            return;
+        }
+    }
+    if (snprintf(line, sizeof(line),
+                 "{\"type\":\"eos_puid_proof\",\"puid\":\"%s\",\"id_token\":\"%s\"}\n",
+                 puid, jwt) < (int)sizeof(line) &&
+        online_server_send_raw(line)) {
+        g_online_eos_proof_sent = 1;
+    }
+    SecureZeroMemory(jwt, sizeof(jwt));
+    SecureZeroMemory(line, sizeof(line));
+}
+
 static void online_server_send_auth(int register_account) {
     char user[320];
     char pass[1537];
@@ -9172,8 +9520,8 @@ static void online_server_send_auth(int register_account) {
     int sent;
     online_json_escape(user, sizeof(user), g_online_cfg.username);
     online_json_escape(pass, sizeof(pass), g_online_cfg.password);
-    snprintf(line, sizeof(line), "{\"type\":\"%s\",\"username\":\"%s\",\"password\":\"%s\"}\n",
-             register_account ? "register" : "login", user, pass);
+    snprintf(line, sizeof(line), "{\"type\":\"%s\",\"username\":\"%s\",\"password\":\"%s\",\"release_channel\":\"%s\"}\n",
+             register_account ? "register" : "login", user, pass, update_ext_channel());
     sent = online_server_send_raw(line);
     credential_ext_secure_zero(pass, sizeof(pass));
     credential_ext_secure_zero(line, sizeof(line));
@@ -9195,6 +9543,15 @@ static void online_server_disconnect(const char* reason) {
     g_online_server_slot = -1;
     g_online_server_state = ONLINE_SERVER_DISCONNECTED;
     g_online_authed = 0;
+    g_online_eos_token_requested = 0;
+    g_online_eos_login_requested = 0;
+    g_online_eos_proof_sent = 0;
+    g_online_eos_puid_verified = 0;
+    g_online_eos_bootstrap_failed = 0;
+    g_online_eos_refresh_requested = 0;
+    g_online_eos_refresh_requested_ms = 0;
+    g_online_eos_wait_started_ms = 0;
+    g_online_eos_deferred_queue[0] = '\0';
     g_online_auth_pending = 0;
     g_online_server_info_pending = 0;
     g_online_friend_snapshot_complete = 0;
@@ -9223,6 +9580,10 @@ static void online_server_disconnect(const char* reason) {
 }
 
 static void online_server_connect(int register_account) {
+    if (online_hub_channel_endpoint() < 0 || update_ext_switch_pending()) {
+        online_hub_set_status("Finish the update or repair the installation before signing in.");
+        return;
+    }
     online_hub_save();
     online_server_disconnect(NULL);
     if (!register_account && !g_online_cfg.password[0] && g_online_cfg.remember_me) {
@@ -9234,9 +9595,11 @@ static void online_server_connect(int register_account) {
     }
     g_online_register_after_connect = register_account ? 1 : 0;
     g_online_auth_pending = 1;
-    g_online_server_slot = net_connect(g_online_cfg.server_host, g_online_cfg.server_port);
+    g_online_server_slot = net_connect_control(g_online_cfg.server_host, g_online_cfg.server_port,
+                                               g_online_cfg.server_tls);
     if (g_online_server_slot < 0) {
-        online_server_disconnect("Could not start server connection.");
+        online_server_disconnect(net_last_error()[0] ? net_last_error()
+                                                     : "Could not start server connection.");
         return;
     }
     g_online_server_state = ONLINE_SERVER_CONNECTING;
@@ -9335,6 +9698,24 @@ static void online_server_send_queue(const char* queue) {
         online_hub_set_status("Log in before joining a queue.");
         return;
     }
+    if (!g_online_eos_puid_verified &&
+        g_online_transport_policy != ONLINE_TRANSPORT_NATIVE) {
+        online_eos_begin_login();
+    }
+    if (!g_online_eos_puid_verified &&
+        g_online_transport_policy != ONLINE_TRANSPORT_NATIVE &&
+        g_online_eos_token_requested && !g_online_eos_bootstrap_failed) {
+        text_copy(g_online_eos_deferred_queue,
+                  sizeof(g_online_eos_deferred_queue),
+                  queue ? queue : "casual");
+        online_hub_set_status("Getting ready to play...");
+        return;
+    }
+    if (!g_online_eos_puid_verified &&
+        g_online_transport_policy == ONLINE_TRANSPORT_EOS) {
+        online_hub_set_status("EOS is unavailable. Retry sign-in, or select native transport for testing.");
+        return;
+    }
     if (g_online_result.active && !g_online_result.server_confirmed) {
         online_hub_set_status("Waiting for the server result before requeueing.");
         return;
@@ -9354,6 +9735,7 @@ static void online_server_send_queue(const char* queue) {
 }
 
 static void online_server_leave_queue(void) {
+    g_online_eos_deferred_queue[0] = '\0';
     online_server_send_raw("{\"type\":\"leave_queue\"}\n");
     g_online_queue_mode = 0;
     online_hub_set_status("Left queue.");
@@ -10102,6 +10484,33 @@ static void online_server_begin_pending_match(const char* line) {
      * for the rare valid zero sent by the server. */
     g_online_pending_match.seed = match_seed ? match_seed : UINT32_C(0x6D2B79F5);
     online_json_get_string(line, "p2p_role", g_online_pending_match.p2p_role, sizeof(g_online_pending_match.p2p_role));
+    if (online_control_json_get_string(line, "transport",
+                                       g_online_pending_match.transport,
+                                       sizeof(g_online_pending_match.transport)) != ONLINE_CONTROL_JSON_OK ||
+        (_stricmp(g_online_pending_match.transport, "native_udp") != 0 &&
+         _stricmp(g_online_pending_match.transport, "eos_p2p") != 0)) {
+        online_abort_prematch_setup("server sent an invalid gameplay transport");
+        return;
+    }
+    if (_stricmp(g_online_pending_match.transport, "eos_p2p") == 0) {
+        if (!g_online_eos_puid_verified ||
+            online_control_json_get_string(line, "peer_eos_puid",
+                                           g_online_pending_match.peer_eos_puid,
+                                           sizeof(g_online_pending_match.peer_eos_puid)) != ONLINE_CONTROL_JSON_OK ||
+            online_control_json_get_string(line, "eos_socket",
+                                           g_online_pending_match.eos_socket,
+                                           sizeof(g_online_pending_match.eos_socket)) != ONLINE_CONTROL_JSON_OK ||
+            !online_json_get_int(line, "eos_channel",
+                                 &g_online_pending_match.eos_channel) ||
+            g_online_pending_match.eos_channel < 0 ||
+            g_online_pending_match.eos_channel > 255) {
+            online_abort_prematch_setup("server sent incomplete EOS peer identity");
+            return;
+        }
+    } else if (g_online_transport_policy == ONLINE_TRANSPORT_EOS) {
+        online_abort_prematch_setup("EOS transport was required for this match");
+        return;
+    }
     online_json_get_string(line, "peer_host", g_online_pending_match.peer_host, sizeof(g_online_pending_match.peer_host));
     online_json_get_string(line, "p2p_token", g_online_pending_match.p2p_token, sizeof(g_online_pending_match.p2p_token));
     auth_token_result = online_control_json_get_string(
@@ -10157,6 +10566,14 @@ static void online_server_begin_pending_match(const char* line) {
     text_copy(g_online_connect.p2p_role,
               sizeof(g_online_connect.p2p_role),
               g_online_pending_match.p2p_role);
+    text_copy(g_online_connect.transport, sizeof(g_online_connect.transport),
+              g_online_pending_match.transport);
+    text_copy(g_online_connect.peer_eos_puid,
+              sizeof(g_online_connect.peer_eos_puid),
+              g_online_pending_match.peer_eos_puid);
+    text_copy(g_online_connect.eos_socket, sizeof(g_online_connect.eos_socket),
+              g_online_pending_match.eos_socket);
+    g_online_connect.eos_channel = g_online_pending_match.eos_channel;
     text_copy(g_online_connect.peer_host,
               sizeof(g_online_connect.peer_host),
               g_online_pending_match.peer_host);
@@ -10192,6 +10609,7 @@ static void online_apply_p2p_peer(const char* line) {
     int public_port = 0;
     int lan_port = 0;
     int applies = 0;
+    if (_stricmp(g_online_connect.transport, "eos_p2p") == 0) return;
     if (!online_json_get_int(line, "match_id", &match_id)) return;
     if (!online_json_get_int(line, "peer_port", &port)) return;
     host[0] = '\0';
@@ -10270,6 +10688,7 @@ static void online_apply_p2p_peer(const char* line) {
 
 static void online_pump_p2p_probe(void) {
     char err[256];
+    if (_stricmp(g_online_connect.transport, "eos_p2p") == 0) return;
     /* Keep probing until the session connects. This keeps NAT mappings warm and
      * lets the server resend a changed observed endpoint during hole punching. */
     if (g_online_connect.attempts <= 0 || g_online_connect.established) return;
@@ -10346,7 +10765,23 @@ static void online_connect_start_attempt(int first) {
         return;
     }
 
-    if (_stricmp(g_online_connect.p2p_role, "host") == 0) {
+    if (_stricmp(g_online_connect.transport, "eos_p2p") == 0) {
+        int host = _stricmp(g_online_connect.p2p_role, "host") == 0;
+        if (can_start_ggpo_net("online EOS match") &&
+            configure_online_palette_for_player(host ? 0 : 1,
+                                                "online EOS match")) {
+            err[0] = '\0';
+            if (!ggpo_net_start_eos_held(host,
+                                         g_online_connect.peer_eos_puid,
+                                         g_online_connect.eos_socket,
+                                         (uint8_t)g_online_connect.eos_channel,
+                                         g_online_eos_force_relay,
+                                         err, sizeof(err))) {
+                LOG_ERROR("online.eos: match transport start failed (%s)",
+                          err[0] ? err : "unknown error");
+            }
+        }
+    } else if (_stricmp(g_online_connect.p2p_role, "host") == 0) {
         start_ggpo_net_host((uint16_t)port, "online server match", 1);
     } else {
         start_ggpo_net_join_deferred((uint16_t)port, "online server match", 1);
@@ -10369,7 +10804,8 @@ static void online_connect_start_attempt(int first) {
         g_online_pending_match.prematch_released = 0;
         g_online_pending_match.prematch_start_prepared = 0;
         err[0] = '\0';
-        if (g_online_connect.peer_host[0] && g_online_connect.peer_port > 0 &&
+        if (_stricmp(g_online_connect.transport, "native_udp") == 0 &&
+            g_online_connect.peer_host[0] && g_online_connect.peer_port > 0 &&
             !ggpo_net_set_peer(g_online_connect.peer_host,
                                (uint16_t)g_online_connect.peer_port,
                                err,
@@ -10492,6 +10928,8 @@ static void online_server_handle_line(const char* line) {
             online_server_disconnect("Could not publish the installed map list.");
             return;
         }
+        g_online_eos_bootstrap_failed = 0;
+        online_eos_begin_login();
         if (g_online_cfg.remember_me) {
             credential_error[0] = '\0';
             credential_result = online_store_remembered_password(credential_error,
@@ -10506,7 +10944,7 @@ static void online_server_handle_line(const char* line) {
                                                             g_online_cfg.server_port,
                                                             submitted_username);
                 }
-                online_hub_set_status("Logged in.");
+                online_hub_set_status("Ready to play.");
             } else {
                 LOG_WARN("online.credentials: save failed server=%s:%u user=%s result=%s (%s)",
                          g_online_cfg.server_host,
@@ -10517,12 +10955,60 @@ static void online_server_handle_line(const char* line) {
                 online_hub_set_status("Logged in. Remember me could not be updated.");
             }
         } else {
-            online_hub_set_status("Logged in.");
+            online_hub_set_status("Ready to play.");
+        }
+        if (g_online_eos_token_requested && !g_online_eos_puid_verified) {
+            online_hub_set_status("Getting ready to play...");
+        } else if (g_online_eos_bootstrap_failed) {
+            online_hub_set_status(g_online_transport_policy == ONLINE_TRANSPORT_EOS
+                ? "Couldn't prepare online play. Try signing in again."
+                : "Ready to play.");
         }
         online_clear_password_memory();
         online_hub_save();
+    } else if (_stricmp(type, "eos_connect_token") == 0) {
+        char token[256];
+        char eos_err[192];
+        if (!g_online_authed || !g_online_eos_token_requested ||
+            online_control_json_get_string(line, "token", token,
+                                           sizeof(token)) != ONLINE_CONTROL_JSON_OK) return;
+        eos_err[0] = '\0';
+        g_online_eos_login_requested =
+            yule_eos_connect_login(token, eos_err, sizeof(eos_err));
+        SecureZeroMemory(token, sizeof(token));
+        if (!g_online_eos_login_requested) {
+            LOG_WARN("online.eos: Connect login could not start (%s)",
+                     eos_err[0] ? eos_err : "unknown error");
+            if (!g_online_eos_puid_verified) g_online_eos_bootstrap_failed = 1;
+        }
+    } else if (_stricmp(type, "eos_puid_verified") == 0) {
+        char puid[65];
+        if (!g_online_authed || !g_online_eos_proof_sent ||
+            online_control_json_get_string(line, "puid", puid,
+                                           sizeof(puid)) != ONLINE_CONTROL_JSON_OK ||
+            strcmp(puid, yule_eos_puid()) != 0) return;
+        g_online_eos_puid_verified = 1;
+        g_online_eos_bootstrap_failed = 0;
+        online_hub_set_status("Ready to play.");
+        LOG_INFO("online.eos: Connect identity verified by Yule server");
+        (void)online_server_send_map_manifest();
+        if (g_online_eos_deferred_queue[0]) {
+            char deferred[sizeof(g_online_eos_deferred_queue)];
+            text_copy(deferred, sizeof(deferred), g_online_eos_deferred_queue);
+            g_online_eos_deferred_queue[0] = '\0';
+            online_server_send_queue(deferred);
+        }
     } else if (_stricmp(type, "server_info") == 0) {
         if (!g_online_server_info_pending || !g_online_auth_pending) return;
+        {
+            char channel[16] = "stable";
+            if (online_control_json_get_string(line, "release_channel", channel,
+                    sizeof(channel)) != ONLINE_CONTROL_JSON_OK) text_copy(channel, sizeof(channel), "stable");
+            if (strcmp(channel, update_ext_channel()) != 0) {
+                online_server_disconnect("This server belongs to a different release channel.");
+                return;
+            }
+        }
         if (!online_server_protocol_compatible(line)) {
             LOG_WARN("online.server: server_info is missing required control/match/P2P capabilities");
             online_server_disconnect("Online server update required; matchmaking protocol is incompatible.");
@@ -10565,6 +11051,11 @@ static void online_server_handle_line(const char* line) {
             return;
         }
         online_json_get_string(line, "message", text, sizeof(text));
+        if (!g_online_eos_puid_verified && g_online_eos_token_requested &&
+            (_strnicmp(text, "EOS ", 4) == 0 ||
+             _strnicmp(text, "Invalid EOS ", 12) == 0)) {
+            g_online_eos_bootstrap_failed = 1;
+        }
         if (g_online_result.active && g_online_result.server_confirmed &&
             _stricmp(text, "invalid or stale match result") == 0) {
             /* Older servers can emit this after first sending the authoritative
@@ -11045,6 +11536,7 @@ static void online_server_handle_line(const char* line) {
 static void online_server_update(void) {
     char prematch_err[256];
     uint32_t now;
+    online_eos_tick();
     online_pump_p2p_probe();
     /* Pending matches are transport-only. Poll the held/released socket here so
      * hole punching, RTT/cosmetics and authoritative state sync happen while the
@@ -11100,7 +11592,8 @@ after_pending_transport:
                 }
             }
         } else if (r < 0) {
-            online_server_disconnect("Server connection failed.");
+            online_server_disconnect(net_last_error()[0] ? net_last_error()
+                                                         : "Server connection failed.");
         } else if (online_control_deadline_reached(
                        now, (uint32_t)g_online_server_deadline_ms)) {
             online_server_disconnect("Server connection timed out.");
@@ -11330,36 +11823,45 @@ static void online_calc_layout(OnlineLayout* L) {
     L->w = p_mad_w ? p_mad_w() : BASE_UI_W;
     L->h = p_mad_h ? p_mad_h() : BASE_UI_H;
     L->ui = online_hub_ui_scale();
-    L->text_scale = L->ui;
+    L->text_scale = ui_text_body_scale(L->ui);
     margin = 28.0f * L->ui;
-    L->panel_w = clampf(860.0f * L->ui, L->w * 0.72f, L->w - margin * 2.0f);
+    L->panel_w = fminf(760.0f * L->ui, L->w - margin * 2.0f);
     if (L->panel_w > L->w - margin * 2.0f) L->panel_w = L->w - margin * 2.0f;
-    L->panel_h = clampf(560.0f * L->ui, L->h * 0.60f, L->h - margin * 2.0f);
+    L->panel_h = fminf(440.0f * L->ui, L->h - margin * 2.0f);
     if (L->panel_h > L->h - margin * 2.0f) L->panel_h = L->h - margin * 2.0f;
     if (L->panel_w < 360.0f) L->panel_w = L->w - 20.0f;
     if (L->panel_h < 280.0f) L->panel_h = L->h - 20.0f;
     L->panel_x = (L->w - L->panel_w) * 0.5f;
     L->panel_y = (L->h - L->panel_h) * 0.5f;
-    L->header_h = 78.0f * L->ui;
-    L->footer_h = 50.0f * L->ui;
+    L->header_h = 72.0f * L->ui;
+    L->footer_h = 36.0f * L->ui;
     L->content_x = L->panel_x + 28.0f * L->ui;
-    L->content_y = L->panel_y + L->header_h + 28.0f * L->ui;
+    L->content_y = L->panel_y + L->header_h + 20.0f * L->ui;
     L->content_w = L->panel_w - 56.0f * L->ui;
     L->content_h = L->panel_h - L->header_h - L->footer_h - 56.0f * L->ui;
-    L->row_h = 48.0f * L->ui;
+    L->row_h = 44.0f * L->ui;
     if (L->row_h < 32.0f) L->row_h = 32.0f;
     L->list_top = L->content_y;
-    L->list_bottom = L->panel_y + L->panel_h - L->footer_h - 20.0f * L->ui;
+    L->list_bottom = L->panel_y + L->panel_h - L->footer_h - 8.0f * L->ui;
     L->left_x = L->content_x + 18.0f * L->ui;
     L->right_x = L->content_x + L->content_w - 18.0f * L->ui;
     L->center_x = L->panel_x + L->panel_w * 0.5f;
+}
+
+static int online_hub_status_visible(void) {
+    return g_online_status[0] && !g_online_queue_mode && !g_online_pending_match.active &&
+           (g_online_tab == ONLINE_TAB_PLAY || strcmp(g_online_status, "Ready to play.") != 0);
+}
+
+static float online_hub_rows_top(const OnlineLayout* L) {
+    return L->list_top + (online_hub_status_visible() ? 38.0f : 8.0f) * L->ui;
 }
 
 static int online_visible_rows_capacity(void) {
     OnlineLayout L;
     int cap;
     online_calc_layout(&L);
-    cap = (int)((L.list_bottom - L.list_top) / L.row_h);
+    cap = (int)((L.list_bottom - online_hub_rows_top(&L)) / L.row_h);
     if (cap < 4) cap = 4;
     return cap;
 }
@@ -11412,10 +11914,6 @@ static void online_hub_rebuild_rows(void) {
     online_rows_clear();
     if (g_online_tab == ONLINE_TAB_PLAY) {
         char line[192];
-        snprintf(line, sizeof(line), "%s  Elo %d",
-                 g_online_cfg.username[0] ? g_online_cfg.username : "not signed in",
-                 g_online_public_elo);
-        online_rows_add(ONLINE_ROW_INFO, 0, 0, 0, "Account", line);
         if (!g_online_authed) {
             if (online_remembered_login_in_progress()) {
                 online_rows_add(ONLINE_ROW_INFO, 0, 0, 0,
@@ -11436,8 +11934,10 @@ static void online_hub_rebuild_rows(void) {
             online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_QUEUE_CASUAL, 0, "CASUAL QUEUE", line);
             snprintf(line, sizeof(line), "%d waiting", g_online_queue_competitive_count);
             online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_QUEUE_COMPETITIVE, 0, "COMPETITIVE QUEUE", line);
-            if (g_online_queue_mode) {
-                online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_LEAVE_QUEUE, 0, "LEAVE QUEUE", g_online_queue_mode == 2 ? "competitive" : "casual");
+            if (g_online_queue_mode || g_online_eos_deferred_queue[0]) {
+                online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_LEAVE_QUEUE, 0, "LEAVE QUEUE",
+                    g_online_eos_deferred_queue[0] ? "preparing connection" :
+                    g_online_queue_mode == 2 ? "competitive" : "casual");
             }
             if (ggpo_net_active()) {
                 online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_STOP, 0, "STOP SESSION", ggpo_net_mode_name());
@@ -11509,19 +12009,29 @@ static void online_hub_rebuild_rows(void) {
         }
     } else if (g_online_tab == ONLINE_TAB_SETTINGS) {
         struct SettingRow { OnlineHubSetting id; const char* label; } settings[] = {
-            { ONLINE_SETTING_SERVER_HOST, "Server Address" },
-            { ONLINE_SETTING_LOCAL_PORT, "P2P UDP Port" },
-            { ONLINE_SETTING_CHALLENGE_NOTIFICATIONS, "Challenge Notifications" },
-            { ONLINE_SETTING_MATCH_HUD, "Match Network HUD" },
-            { ONLINE_SETTING_DISCORD_PRESENCE, "Discord Rich Presence" },
+            { ONLINE_SETTING_CHALLENGE_NOTIFICATIONS, "Challenge notifications" },
+            { ONLINE_SETTING_DISCORD_PRESENCE, "Discord presence" },
         };
-        online_rows_add(ONLINE_ROW_INFO, 0, 0, 0, "Settings", "online and privacy");
         for (int i = 0; i < (int)(sizeof(settings) / sizeof(settings[0])); i++) {
             char value[192];
             online_format_setting_value(settings[i].id, value, sizeof(value));
             online_rows_add(ONLINE_ROW_SETTING, 1, settings[i].id, 0, settings[i].label, value);
         }
-        online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_SAVE_SETTINGS, 0, "Save Settings", ONLINE_HUB_CFG_PATH);
+        online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_ADVANCED_SETTINGS, 0,
+                        "Advanced settings", g_online_show_advanced_settings ? "Hide" : "Show");
+        if (g_online_show_advanced_settings) {
+            struct SettingRow advanced[] = {
+                { ONLINE_SETTING_SERVER_HOST, "Server Address" },
+                { ONLINE_SETTING_LOCAL_PORT, "P2P UDP Port" },
+                { ONLINE_SETTING_MATCH_HUD, "Match Network HUD" },
+            };
+            for (int i = 0; i < (int)(sizeof(advanced) / sizeof(advanced[0])); i++) {
+                char value[192];
+                online_format_setting_value(advanced[i].id, value, sizeof(value));
+                online_rows_add(ONLINE_ROW_SETTING, 1, advanced[i].id, 0, advanced[i].label, value);
+            }
+        }
+        online_rows_add(ONLINE_ROW_ACTION, 1, ONLINE_ACTION_SAVE_SETTINGS, 0, "Save settings", "");
     }
 
     online_rows_add(ONLINE_ROW_BACK, 1, 0, 0, "BACK", "");
@@ -12039,6 +12549,10 @@ static void online_activate_action(OnlineHubAction action) {
             online_hub_set_status("Settings saved and applied.");
             online_hub_rebuild_rows();
             break;
+        case ONLINE_ACTION_ADVANCED_SETTINGS:
+            g_online_show_advanced_settings = !g_online_show_advanced_settings;
+            online_hub_rebuild_rows();
+            break;
         default:
             break;
     }
@@ -12286,9 +12800,9 @@ static void online_adjust_selected(int delta) {
 
 static const char* online_tab_name(OnlineHubTab tab) {
     switch (tab) {
-        case ONLINE_TAB_PLAY: return "PLAY";
-        case ONLINE_TAB_FRIENDS: return "FRIENDS";
-        case ONLINE_TAB_SETTINGS: return "SETTINGS";
+        case ONLINE_TAB_PLAY: return "Play";
+        case ONLINE_TAB_FRIENDS: return "Friends";
+        case ONLINE_TAB_SETTINGS: return "Settings";
         default: return "?";
     }
 }
@@ -12302,12 +12816,10 @@ static void online_hub_draw_border(float x, float y, float w, float h, float lin
 }
 
 static void online_hub_text_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text) {
-    scale = clampf(scale, 0.76f, 3.00f);
+    scale = clampf(scale, 0.90f, 3.00f);
+    y += 10.0f * online_hub_ui_scale();
     a = clampf(a, 0.0f, 1.0f);
     if (a <= 0.01f) return;
-    float o = clampf(2.0f * scale, 2.0f, 4.0f);
-    draw_text_scaled_mode_alpha(x + o, y + o, scale, 0.0f, 0.0f, 0.0f, a * 0.80f, text, 0);
-    draw_text_scaled_mode_alpha(x + 1.0f, y + o + 1.0f, scale, 0.0f, 0.0f, 0.0f, a * 0.70f, text, 0);
     draw_text_scaled_mode_alpha(x, y, scale, r, g, b, a, text, 0);
 }
 
@@ -12316,12 +12828,10 @@ static void online_hub_text(float x, float y, float scale, float r, float g, flo
 }
 
 static void online_hub_text_center_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text) {
-    scale = clampf(scale, 0.76f, 3.00f);
+    scale = clampf(scale, 0.90f, 3.00f);
+    y += 10.0f * online_hub_ui_scale();
     a = clampf(a, 0.0f, 1.0f);
     if (a <= 0.01f) return;
-    float o = clampf(2.0f * scale, 2.0f, 4.0f);
-    draw_text_scaled_mode_alpha(x + o, y + o, scale, 0.0f, 0.0f, 0.0f, a * 0.80f, text, 1);
-    draw_text_scaled_mode_alpha(x + 1.0f, y + o + 1.0f, scale, 0.0f, 0.0f, 0.0f, a * 0.70f, text, 1);
     draw_text_scaled_mode_alpha(x, y, scale, r, g, b, a, text, 1);
 }
 
@@ -12330,17 +12840,25 @@ static void online_hub_text_center(float x, float y, float scale, float r, float
 }
 
 static void online_hub_text_right_alpha(float x, float y, float scale, float r, float g, float b, float a, const char* text) {
-    scale = clampf(scale, 0.76f, 3.00f);
+    scale = clampf(scale, 0.90f, 3.00f);
+    y += 10.0f * online_hub_ui_scale();
     a = clampf(a, 0.0f, 1.0f);
     if (a <= 0.01f) return;
-    float o = clampf(2.0f * scale, 2.0f, 4.0f);
-    draw_text_scaled_mode_alpha(x + o, y + o, scale, 0.0f, 0.0f, 0.0f, a * 0.80f, text, 2);
-    draw_text_scaled_mode_alpha(x + 1.0f, y + o + 1.0f, scale, 0.0f, 0.0f, 0.0f, a * 0.70f, text, 2);
     draw_text_scaled_mode_alpha(x, y, scale, r, g, b, a, text, 2);
 }
 
 static void online_hub_text_right(float x, float y, float scale, float r, float g, float b, const char* text) {
     online_hub_text_right_alpha(x, y, scale, r, g, b, 1.0f, text);
+}
+
+static void online_hub_text_emphasis(float x, float y, float scale, float r, float g, float b,
+                                     const char* text, int align) {
+    scale = clampf(scale, 0.90f, 3.00f);
+    if (!ui_text_queue_style(x, y + 10.0f * online_hub_ui_scale(), scale,
+                             r, g, b, 1.0f, text, align, UI_TEXT_EMPHASIS)) {
+        draw_text_scaled_mode_alpha(x, y + 10.0f * online_hub_ui_scale(), scale,
+                                    r, g, b, 1.0f, text, align);
+    }
 }
 
 static int online_hub_row_primary(const OnlineHubRow* row) {
@@ -12363,73 +12881,62 @@ static int online_hub_row_boxed(const OnlineHubRow* row) {
            row->kind == ONLINE_ROW_BACK;
 }
 
+static const char* online_hub_display_label(const char* label) {
+    if (!label) return "";
+    if (strcmp(label, "CASUAL QUEUE") == 0) return "Casual match";
+    if (strcmp(label, "COMPETITIVE QUEUE") == 0) return "Ranked match";
+    if (strcmp(label, "DISCONNECT") == 0) return "Sign out";
+    if (strcmp(label, "BACK") == 0) return "Back";
+    if (strcmp(label, "LOG IN") == 0) return "Sign in";
+    if (strcmp(label, "REGISTER") == 0) return "Create account";
+    if (strcmp(label, "CANCEL") == 0) return "Cancel";
+    return label;
+}
+
 static void online_hub_draw_button_box(float x, float y, float w, float h,
                                        const char* label, const char* detail,
                                        int selected, int primary, float s) {
-    float br = primary ? 0.06f : 0.075f;
-    float bg = primary ? 0.24f : 0.095f;
-    float bb = primary ? 0.21f : 0.125f;
-    float ba = primary ? 0.98f : 0.94f;
-    float tr = primary ? 0.82f : 0.90f;
-    float tg = primary ? 1.00f : 0.94f;
-    float tb = primary ? 0.94f : 0.98f;
+    int filled = primary && selected;
+    float br = filled ? 0.62f : primary ? 0.070f : selected ? 0.13f : 0.075f;
+    float bg = filled ? 0.91f : primary ? 0.19f : selected ? 0.16f : 0.090f;
+    float bb = filled ? 0.82f : primary ? 0.16f : selected ? 0.20f : 0.115f;
+    float tr = filled ? 0.055f : 0.92f;
+    float tg = filled ? 0.15f : 0.95f;
+    float tb = filled ? 0.13f : 0.97f;
 
-    if (selected) {
-        br += 0.05f;
-        bg += 0.05f;
-        bb += 0.05f;
-    }
-
-    online_hub_draw_rect(x, y, w, h, br, bg, bb, ba);
+    online_hub_draw_rect(x, y, w, h, br, bg, bb, 1.0f);
     online_hub_draw_border(x, y, w, h, selected ? 2.0f : 1.0f,
-                           selected ? 0.48f : 0.30f,
-                           selected ? 0.94f : 0.52f,
-                           selected ? 0.86f : 0.62f,
-                           selected ? 1.0f : 0.84f);
+                           selected ? 0.62f : 0.20f,
+                           selected ? 0.91f : primary ? 0.34f : 0.24f,
+                           selected ? 0.82f : primary ? 0.29f : 0.30f, 1.0f);
 
     mods_restore_render_state();
-    online_hub_text_center(x + w * 0.5f, y + h * 0.5f - 12.0f * s,
-                           1.12f * s, tr, tg, tb, label ? label : "");
+    online_hub_text_emphasis(x + w * 0.5f, y + h * 0.5f - 10.0f * s,
+                             ui_text_body_scale(s), tr, tg, tb, online_hub_display_label(label), 1);
     if (detail && detail[0]) {
-        online_hub_text_right(x + w - 16.0f * s, y + h * 0.5f - 9.0f * s,
-                              0.68f * s, 0.62f, 0.72f, 0.88f, detail);
+        online_hub_text_right(x + w - 18.0f * s, y + h * 0.5f - 10.0f * s,
+                              ui_text_caption_scale(s), filled ? 0.13f : 0.60f,
+                              filled ? 0.29f : 0.69f, filled ? 0.25f : 0.76f, detail);
     }
 }
 
 static void online_hub_draw_panel(const OnlineLayout* L) {
     float s;
-    uint32_t tick;
-    float pulse;
     if (!L) return;
     s = L->ui;
-    tick = hooks_player_colour_tick();
-    pulse = 0.5f + 0.5f * hooks_triangle01(tick, 96u);
 
     online_hub_draw_rect(0.0f, 0.0f, L->w, L->h, 0.01f, 0.015f, 0.02f, 0.16f);
 
-    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->panel_h, 0.022f, 0.026f, 0.034f, 0.90f);
-    online_hub_draw_rect(L->panel_x + 3.0f, L->panel_y + 3.0f,
-                         L->panel_w - 6.0f, L->panel_h - 6.0f, 0.050f, 0.058f, 0.074f, 0.62f);
-    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->header_h, 0.042f, 0.050f, 0.064f, 0.98f);
+    online_hub_draw_rect(L->panel_x + 5.0f * s, L->panel_y + 8.0f * s,
+                         L->panel_w, L->panel_h, 0.0f, 0.0f, 0.0f, 0.35f);
+    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->panel_h, 0.040f, 0.048f, 0.062f, 0.98f);
+    online_hub_draw_rect(L->panel_x, L->panel_y, L->panel_w, L->header_h, 0.059f, 0.070f, 0.087f, 1.0f);
     online_hub_draw_rect(L->panel_x, L->panel_y + L->panel_h - L->footer_h,
-                         L->panel_w, L->footer_h, 0.025f, 0.032f, 0.045f, 0.96f);
-    online_hub_draw_rect(L->content_x, L->content_y, L->content_w, L->content_h,
-                         0.035f, 0.044f, 0.058f, 0.60f);
-
-    online_hub_draw_border(L->panel_x, L->panel_y, L->panel_w, L->panel_h, 2.0f,
-                           0.22f + pulse * 0.14f,
-                           0.72f + pulse * 0.18f,
-                           0.66f + pulse * 0.16f,
-                           1.0f);
-    online_hub_draw_border(L->panel_x + 4.0f, L->panel_y + 4.0f,
-                           L->panel_w - 8.0f, L->panel_h - 8.0f, 1.0f,
-                           0.21f, 0.26f, 0.36f, 0.94f);
-    online_hub_draw_rect(L->panel_x + 4.0f, L->panel_y + L->header_h - 2.0f * s,
-                         L->panel_w - 8.0f, 2.0f * s,
-                         0.18f + pulse * 0.12f,
-                         0.70f + pulse * 0.18f,
-                         0.64f + pulse * 0.16f,
-                         0.88f);
+                         L->panel_w, L->footer_h, 0.032f, 0.040f, 0.053f, 1.0f);
+    online_hub_draw_border(L->panel_x, L->panel_y, L->panel_w, L->panel_h,
+                           1.0f, 0.20f, 0.24f, 0.29f, 1.0f);
+    online_hub_draw_rect(L->panel_x, L->panel_y + L->header_h,
+                         L->panel_w, 1.0f, 0.15f, 0.19f, 0.23f, 1.0f);
 }
 
 static void online_hub_draw_tabs(const OnlineLayout* L) {
@@ -12443,32 +12950,27 @@ static void online_hub_draw_tabs(const OnlineLayout* L) {
     if (!L) return;
     s = L->ui;
     gap = 6.0f * s;
-    total_w = clampf(250.0f * s, 205.0f * s, L->panel_w * 0.34f);
+    total_w = fminf(280.0f * s, L->panel_w - 230.0f * s);
     tab_w = (total_w - gap * 2.0f) / 3.0f;
-    tab_h = 30.0f * s;
+    tab_h = 28.0f * s;
     tab_x = L->panel_x + L->panel_w - total_w - 14.0f * s;
-    tab_y = L->panel_y + (L->header_h - tab_h) * 0.5f;
+    tab_y = L->panel_y + 12.0f * s;
 
     for (int i = 0; i < ONLINE_TAB_COUNT; i++) {
         int selected = (i == (int)g_online_tab);
         float x = tab_x + (tab_w + gap) * (float)i;
-        online_hub_draw_rect(x, tab_y, tab_w, tab_h,
-                             selected ? 0.055f : 0.055f,
-                             selected ? 0.205f : 0.075f,
-                             selected ? 0.185f : 0.105f,
-                             selected ? 0.96f : 0.80f);
-        online_hub_draw_border(x, tab_y, tab_w, tab_h, selected ? 2.0f : 1.0f,
-                               selected ? 0.36f : 0.24f,
-                               selected ? 0.92f : 0.44f,
-                               selected ? 0.82f : 0.54f,
-                               selected ? 1.0f : 0.90f);
+        if (selected) {
+            online_hub_draw_rect(x, tab_y, tab_w, tab_h, 0.12f, 0.18f, 0.19f, 1.0f);
+            online_hub_draw_rect(x + 12.0f * s, tab_y + tab_h - 2.0f * s,
+                                 tab_w - 24.0f * s, 2.0f * s, 0.62f, 0.91f, 0.82f, 1.0f);
+        }
         mods_restore_render_state();
-        online_hub_text_center(x + tab_w * 0.5f, tab_y + tab_h * 0.5f - 9.0f * s,
-                               0.62f * s,
+        online_hub_text_emphasis(x + tab_w * 0.5f, tab_y + tab_h * 0.5f - 10.0f * s,
+                               ui_text_body_scale(s),
                                selected ? 0.82f : 0.72f,
                                selected ? 1.00f : 0.82f,
                                selected ? 0.94f : 0.92f,
-                               online_tab_name((OnlineHubTab)i));
+                               online_tab_name((OnlineHubTab)i), 1);
         if (i == ONLINE_TAB_FRIENDS && (g_online_request_count + g_online_challenge_count) > 0) {
             char badge[16];
             int pending = g_online_request_count + g_online_challenge_count;
@@ -12505,7 +13007,7 @@ static void online_login_gateway_metrics(const OnlineLayout* L,
     float* out_gap) {
     float s = L ? L->ui : online_hub_ui_scale();
     float form_w = 540.0f;
-    float row_h = 52.0f * s;
+    float row_h = fmaxf(32.0f, 44.0f * s);
     float gap = 12.0f * s;
     float checkbox_h = online_login_checkbox_height(L);
     float form_y = 0.0f;
@@ -12515,14 +13017,14 @@ static void online_login_gateway_metrics(const OnlineLayout* L,
         float bottom_limit;
         float reserve;
         if (max_w < 240.0f) max_w = L->panel_w - 20.0f;
-        min_w = max_w < 420.0f ? max_w : 420.0f;
-        form_w = clampf(500.0f * s, min_w, max_w);
-        form_y = L->content_y + 78.0f * s;
+        min_w = fminf(max_w, 360.0f * s);
+        form_w = clampf(460.0f * s, min_w, max_w);
+        form_y = L->panel_y + L->header_h + 44.0f * s;
 
         /* Two fields, a compact checkbox, buttons, and server/status copy must remain above the footer.
          * Compact and lift the form only when the current window needs it. */
         bottom_limit = L->panel_y + L->panel_h - L->footer_h - 4.0f * s;
-        reserve = 70.0f * s;
+        reserve = 46.0f * s;
         if (form_y + row_h * 3.0f + checkbox_h + gap * 3.0f + reserve > bottom_limit) {
             float available;
             gap = clampf(7.0f * s, 5.0f, 12.0f * s);
@@ -12595,11 +13097,11 @@ static int online_tab_at_point(float x, float y) {
     online_calc_layout(&L);
     s = L.ui;
     gap = 6.0f * s;
-    total_w = clampf(250.0f * s, 205.0f * s, L.panel_w * 0.34f);
+    total_w = fminf(280.0f * s, L.panel_w - 230.0f * s);
     tab_w = (total_w - gap * 2.0f) / 3.0f;
-    tab_h = 30.0f * s;
+    tab_h = 28.0f * s;
     tab_x = L.panel_x + L.panel_w - total_w - 14.0f * s;
-    tab_y = L.panel_y + (L.header_h - tab_h) * 0.5f;
+    tab_y = L.panel_y + 12.0f * s;
     if (y < tab_y || y > tab_y + tab_h) return -1;
     for (int i = 0; i < ONLINE_TAB_COUNT; i++) {
         float tx = tab_x + (tab_w + gap) * (float)i;
@@ -12619,8 +13121,7 @@ static int online_row_at_point(float x, float y) {
         return online_login_row_at_point(x, y);
     }
     online_calc_layout(&L);
-    rows_top = L.list_top + 14.0f * L.ui;
-    if (g_online_status[0] && !g_online_queue_mode && !g_online_pending_match.active) rows_top += 32.0f * L.ui;
+    rows_top = online_hub_rows_top(&L);
     cap = (int)((L.list_bottom - rows_top) / L.row_h);
     if (cap < 4) cap = 4;
     start = clampi(g_online_scroll_row, 0, g_online_row_count);
@@ -12857,15 +13358,15 @@ static void online_hub_render_matchmaking_panel(const OnlineLayout* L, int match
         int seconds = (g_online_pending_match.launch_countdown_frames + 59) / 60;
         if (seconds < 1) seconds = 1;
         online_hub_text(card_x + 26.0f * s, card_y + 25.0f * s,
-                        1.28f * s, 0.96f, 0.98f, 1.00f, "MATCH FOUND");
+                        ui_text_title_scale(s), 0.96f, 0.98f, 1.00f, "Match found");
         snprintf(line, sizeof(line), "vs %s",
                  g_online_pending_match.opponent[0] ? g_online_pending_match.opponent : "opponent");
         online_hub_text(card_x + 26.0f * s, card_y + 70.0f * s,
-                        0.98f * s, 0.76f, 0.98f, 0.86f, line);
+                        ui_text_body_scale(s), 0.76f, 0.98f, 0.86f, line);
         snprintf(line, sizeof(line), "%s",
                  g_online_pending_match.map_label[0] ? g_online_pending_match.map_label : "selected map");
         online_hub_text(card_x + 26.0f * s, card_y + 106.0f * s,
-                        0.88f * s, 0.74f, 0.82f, 0.94f, line);
+                        ui_text_caption_scale(s), 0.74f, 0.82f, 0.94f, line);
         if (!ggpo_net_active() || !ggpo_net_connected()) {
             snprintf(line, sizeof(line), "Connecting to opponent...");
         } else if (!ggpo_net_link_ready()) {
@@ -12885,18 +13386,18 @@ static void online_hub_render_matchmaking_panel(const OnlineLayout* L, int match
             snprintf(line, sizeof(line), "Starting match...");
         }
         online_hub_text(card_x + 26.0f * s, card_y + 144.0f * s,
-                        1.00f * s, 1.00f, 0.86f, 0.44f, line);
+                        ui_text_body_scale(s), 1.00f, 0.86f, 0.44f, line);
     } else {
         online_hub_text(card_x + 26.0f * s, card_y + 25.0f * s,
-                        1.28f * s, 0.94f, 0.98f, 1.00f, "SEARCHING");
+                        ui_text_title_scale(s), 0.94f, 0.98f, 1.00f, "Finding a match");
         snprintf(line, sizeof(line), "%s queue",
                  g_online_queue_mode == 2 ? "Competitive" : "Casual");
         online_hub_text(card_x + 26.0f * s, card_y + 70.0f * s,
-                        0.98f * s, 0.72f, 0.92f, 0.88f, line);
+                        ui_text_body_scale(s), 0.72f, 0.92f, 0.88f, line);
         snprintf(line, sizeof(line), "%d waiting",
                  g_online_queue_mode == 2 ? g_online_queue_competitive_count : g_online_queue_casual_count);
         online_hub_text(card_x + 26.0f * s, card_y + 106.0f * s,
-                        0.90f * s, 0.78f, 0.84f, 0.92f, line);
+                        ui_text_caption_scale(s), 0.78f, 0.84f, 0.92f, line);
         online_hub_draw_wait_dots(card_x + 86.0f * s, card_y + 157.0f * s, s);
     }
 
@@ -12945,10 +13446,11 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     float checkbox_box_y;
     float button_y;
     float stack_end;
+    float body;
+    float caption;
     float button_w;
     char username[ONLINE_HUB_TEXT_MAX];
     char password[ONLINE_HUB_TEXT_MAX];
-    char server[192];
     int user_selected;
     int pass_selected;
     int remember_selected;
@@ -12956,10 +13458,12 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     int register_selected;
     if (!L) return;
     s = L->ui;
+    body = ui_text_body_scale(s);
+    caption = ui_text_caption_scale(s);
     online_login_gateway_metrics(L, &form_x, &form_y, &form_w, &row_h, &gap);
     checkbox_h = online_login_checkbox_height(L);
     checkbox_y = form_y + row_h * 2.0f + gap * 2.0f;
-    checkbox_size = clampf(22.0f * s, 18.0f, checkbox_h - 2.0f);
+    checkbox_size = clampf(16.0f * s, 14.0f, checkbox_h - 2.0f);
     checkbox_x = form_x + 12.0f * s;
     checkbox_box_y = checkbox_y + (checkbox_h - checkbox_size) * 0.5f;
     button_y = form_y + row_h * 2.0f + checkbox_h + gap * 3.0f;
@@ -12970,7 +13474,7 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     online_format_setting_value(ONLINE_SETTING_PASSWORD, password, sizeof(password));
     if (g_online_capture_active && g_online_capture_kind == ONLINE_CAPTURE_SETTING) {
         if (g_online_capture_target == ONLINE_SETTING_USERNAME) {
-            snprintf(username, sizeof(username), "%s_", g_online_capture_buf);
+            snprintf(username, sizeof(username), "%.*s_", (int)sizeof(username) - 2, g_online_capture_buf);
         } else if (g_online_capture_target == ONLINE_SETTING_PASSWORD) {
             size_t n = strlen(g_online_capture_buf);
             if (n > sizeof(password) - 2) n = sizeof(password) - 2;
@@ -12979,7 +13483,8 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
             password[n + 1] = '\0';
         }
     }
-    snprintf(server, sizeof(server), "%s:%u", g_online_cfg.server_host, (unsigned int)g_online_cfg.server_port);
+    ui_text_fit(username, form_w - 48.0f * s - ui_text_width("Username", caption), body);
+    ui_text_fit(password, form_w - 48.0f * s - ui_text_width("Password", caption), body);
     user_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_USERNAME));
     pass_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_PASSWORD));
     remember_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_SETTING, ONLINE_SETTING_REMEMBER_ME));
@@ -12987,18 +13492,11 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     register_selected = (g_online_selected_row == online_find_row_by_kind_id(ONLINE_ROW_ACTION, ONLINE_ACTION_REGISTER));
 
     mods_restore_render_state();
-    online_hub_text_center(L->center_x, L->panel_y + 48.0f * s,
-                           2.05f * s, 0.94f, 0.98f, 1.00f, "EGGNOGG+ ONLINE");
-    online_hub_text_center(L->center_x, L->panel_y + 91.0f * s,
-                           1.00f * s, 0.70f, 0.94f, 0.90f,
+    online_hub_text_center(L->center_x, L->panel_y + 16.0f * s,
+                           ui_text_title_scale(s), 0.94f, 0.98f, 1.00f, "Play online");
+    online_hub_text_center(L->center_x, L->panel_y + 41.0f * s,
+                           caption, 0.70f, 0.94f, 0.90f,
                            g_online_server_state == ONLINE_SERVER_CONNECTED ? "Connected. Sign in to continue." : "Sign in to play online.");
-
-    online_hub_draw_rect(form_x - 30.0f * s, form_y - 42.0f * s,
-                         form_w + 60.0f * s, stack_end - form_y + 106.0f * s,
-                         0.030f, 0.038f, 0.050f, 0.90f);
-    online_hub_draw_border(form_x - 30.0f * s, form_y - 42.0f * s,
-                           form_w + 60.0f * s, stack_end - form_y + 106.0f * s,
-                           1.0f, 0.22f, 0.70f, 0.66f, 0.72f);
 
     online_hub_draw_rect(form_x, form_y, form_w, row_h,
                          user_selected ? 0.060f : 0.045f,
@@ -13011,10 +13509,10 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
                            user_selected ? 0.82f : 0.62f,
                            0.92f);
     mods_restore_render_state();
-    online_hub_text(form_x + 18.0f * s, form_y + 14.0f * s,
-                    0.98f * s, 0.70f, 0.82f, 0.90f, "USERNAME");
-    online_hub_text_right(form_x + form_w - 18.0f * s, form_y + 14.0f * s,
-                          1.04f * s, 0.94f, 0.98f, 1.00f, username[0] ? username : " ");
+    online_hub_text(form_x + 18.0f * s, form_y + row_h * 0.5f - 10.0f * s,
+                    caption, 0.70f, 0.82f, 0.90f, "Username");
+    online_hub_text_right(form_x + form_w - 18.0f * s, form_y + row_h * 0.5f - 10.0f * s,
+                          body, 0.94f, 0.98f, 1.00f, username[0] ? username : " ");
 
     online_hub_draw_rect(form_x, form_y + row_h + gap, form_w, row_h,
                          pass_selected ? 0.060f : 0.045f,
@@ -13027,10 +13525,10 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
                            pass_selected ? 0.82f : 0.62f,
                            0.92f);
     mods_restore_render_state();
-    online_hub_text(form_x + 18.0f * s, form_y + row_h + gap + 14.0f * s,
-                    0.98f * s, 0.70f, 0.82f, 0.90f, "PASSWORD");
-    online_hub_text_right(form_x + form_w - 18.0f * s, form_y + row_h + gap + 14.0f * s,
-                          1.04f * s, 0.94f, 0.98f, 1.00f, password[0] ? password : " ");
+    online_hub_text(form_x + 18.0f * s, form_y + row_h + gap + row_h * 0.5f - 10.0f * s,
+                    caption, 0.70f, 0.82f, 0.90f, "Password");
+    online_hub_text_right(form_x + form_w - 18.0f * s, form_y + row_h + gap + row_h * 0.5f - 10.0f * s,
+                          body, 0.94f, 0.98f, 1.00f, password[0] ? password : " ");
 
     /* Compact, conventional checkbox: the whole label line is clickable, but
      * only the square communicates the boolean state. */
@@ -13061,8 +13559,8 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
     }
     mods_restore_render_state();
     online_hub_text(checkbox_x + checkbox_size + 10.0f * s,
-                    checkbox_y + (checkbox_h - 12.0f * s) * 0.5f,
-                    0.92f * s,
+                    checkbox_y + checkbox_h * 0.5f - 10.0f * s,
+                    caption,
                     remember_selected ? 0.88f : 0.70f,
                     remember_selected ? 0.98f : 0.82f,
                     remember_selected ? 0.94f : 0.90f,
@@ -13075,11 +13573,9 @@ static void online_hub_render_login_gateway(const OnlineLayout* L) {
                                register_selected, 0, s);
 
     mods_restore_render_state();
-    online_hub_text_center(L->center_x, stack_end + 28.0f * s,
-                           0.92f * s, 0.66f, 0.76f, 0.86f, server);
     if (g_online_status[0]) {
-        online_hub_text_center(L->center_x, stack_end + 58.0f * s,
-                               0.98f * s, 0.84f, 0.94f, 1.00f, g_online_status);
+        online_hub_text_center(L->center_x, stack_end + 22.0f * s,
+                               caption, 0.84f, 0.94f, 1.00f, g_online_status);
     }
     online_hub_text(L->panel_x + 18.0f * s, L->panel_y + L->panel_h - L->footer_h + 12.0f * s,
                     0.92f * s, 0.54f, 0.66f, 0.74f, g_online_capture_active ? "ESC CANCEL" : "ESC");
@@ -13109,23 +13605,27 @@ static void online_hub_render_ui(void) {
     }
 
     mods_restore_render_state();
-    online_hub_text_center(L.center_x, L.panel_y + 18.0f * s, 1.90f * s, 0.96f, 0.98f, 1.00f, "ONLINE HUB");
+    online_hub_text_emphasis(L.left_x, L.panel_y + 16.0f * s, ui_text_title_scale(s),
+                             0.96f, 0.98f, 1.00f, "Online", 0);
     {
         char subtitle[256];
         if (g_online_authed) {
-            snprintf(subtitle, sizeof(subtitle), "%s  Elo %d", g_online_cfg.username, g_online_public_elo);
+            snprintf(subtitle, sizeof(subtitle), "%s  /  Rating %d", g_online_cfg.username, g_online_public_elo);
         } else {
             snprintf(subtitle, sizeof(subtitle), "%s", online_server_state_text());
         }
-        online_hub_text_center(L.center_x, L.panel_y + 52.0f * s, 1.10f * s, 0.70f, 0.96f, 0.90f, subtitle);
+        ui_text_fit(subtitle, L.content_w - 36.0f * s, ui_text_caption_scale(s));
+        online_hub_text(L.left_x, L.panel_y + 41.0f * s, ui_text_caption_scale(s), 0.63f, 0.69f, 0.75f, subtitle);
     }
     online_hub_draw_tabs(&L);
 
-    rows_top = L.list_top + 14.0f * s;
-    if (g_online_status[0] && !g_online_queue_mode && !g_online_pending_match.active) {
-        online_hub_text_center(L.center_x, L.panel_y + L.header_h + 34.0f * s,
-                               1.04f * s, 0.82f, 0.94f, 1.00f, g_online_status);
-        rows_top += 32.0f * s;
+    rows_top = online_hub_rows_top(&L);
+    if (online_hub_status_visible()) {
+        char status[256];
+        text_copy(status, sizeof(status), g_online_status);
+        ui_text_fit(status, L.content_w, ui_text_body_scale(s));
+        online_hub_text_center(L.center_x, L.panel_y + L.header_h + 16.0f * s,
+                               ui_text_body_scale(s), 0.67f, 0.76f, 0.80f, status);
     }
 
     if (g_online_pending_match.active) {
@@ -13153,8 +13653,10 @@ static void online_hub_render_ui(void) {
         float box_w = L.content_w - 36.0f * s;
         float box_h = L.row_h - 8.0f * s;
         char right[224];
+        char left[ONLINE_HUB_TEXT_MAX];
 
         text_copy(right, sizeof(right), row->right);
+        text_copy(left, sizeof(left), row->left);
         if (g_online_capture_active && row->kind == ONLINE_ROW_SETTING &&
             g_online_capture_kind == ONLINE_CAPTURE_SETTING &&
             row->id == g_online_capture_target) {
@@ -13173,12 +13675,24 @@ static void online_hub_render_ui(void) {
             snprintf(right, sizeof(right), "%s_", g_online_capture_buf);
         }
 
+        ui_text_fit(right, box_w * 0.42f, ui_text_caption_scale(s));
+        {
+            float available = box_w - 36.0f * s;
+            if (row->kind == ONLINE_ROW_SETTING || row->kind == ONLINE_ROW_FRIEND || row->kind == ONLINE_ROW_INFO) {
+                available -= ui_text_width(right, ui_text_caption_scale(s)) + 18.0f * s;
+                if (row->kind == ONLINE_ROW_FRIEND && row->id >= 0 && row->id < g_online_friend_count &&
+                    online_friend_can_challenge(&g_online_friends[row->id])) available -= 126.0f * s;
+            } else if (row->kind == ONLINE_ROW_FRIEND_REQUEST || row->kind == ONLINE_ROW_CHALLENGE) {
+                available -= 206.0f * s + ui_text_width(right, ui_text_caption_scale(s));
+            }
+            ui_text_fit(left, available, ui_text_body_scale(s));
+        }
         if (row->kind == ONLINE_ROW_INFO) {
-            float label_scale = (_stricmp(row->left, "Players in queue") == 0) ? 1.10f * s : 0.90f * s;
-            float value_scale = (_stricmp(row->left, "Players in queue") == 0) ? 1.44f * s : 0.86f * s;
-            online_hub_text(box_x, y + 8.0f * s, label_scale, 0.72f, 0.80f, 0.92f, row->left);
+            float label_scale = ui_text_body_scale(s);
+            float value_scale = ui_text_caption_scale(s);
+            online_hub_text(box_x, y + box_h * 0.5f - 10.0f * s, label_scale, 0.72f, 0.80f, 0.92f, left);
             if (right[0]) {
-                online_hub_text_right(box_x + box_w, y + 7.0f * s, value_scale, 0.96f, 0.88f, 0.42f, right);
+                online_hub_text_right(box_x + box_w, y + box_h * 0.5f - 10.0f * s, value_scale, 0.63f, 0.69f, 0.75f, right);
             }
         } else if (online_hub_row_boxed(row)) {
             if (row->kind == ONLINE_ROW_FRIEND_REQUEST || row->kind == ONLINE_ROW_CHALLENGE) {
@@ -13198,10 +13712,10 @@ static void online_hub_render_ui(void) {
                                        selected ? 0.82f : 0.58f,
                                        selected ? 1.0f : 0.88f);
                 mods_restore_render_state();
-                online_hub_text(box_x + 16.0f * s, y + box_h * 0.5f - 11.0f * s,
-                                0.98f * s, 0.92f, 0.98f, 1.00f, row->left);
+                online_hub_text(box_x + 16.0f * s, y + box_h * 0.5f - 10.0f * s,
+                                ui_text_body_scale(s), 0.92f, 0.98f, 1.00f, left);
                 online_hub_text_right(accept_x - 14.0f * s, y + box_h * 0.5f - 10.0f * s,
-                                      0.76f * s, 0.84f, 0.90f, 0.98f, right);
+                                      ui_text_caption_scale(s), 0.84f, 0.90f, 0.98f, right);
 
                 online_hub_draw_rect(accept_x, action_y, accept_w, action_h,
                                      0.08f, 0.22f, 0.15f, selected ? 0.98f : 0.92f);
@@ -13213,9 +13727,9 @@ static void online_hub_render_ui(void) {
                                        0.90f, 0.42f, 0.44f, 0.95f);
                 mods_restore_render_state();
                 online_hub_text_center(accept_x + accept_w * 0.5f, action_y + action_h * 0.5f - 8.0f * s,
-                                       0.68f * s, 0.78f, 1.0f, 0.82f, "ACCEPT");
+                                       ui_text_caption_scale(s), 0.78f, 1.0f, 0.82f, "Accept");
                 online_hub_text_center(decline_x + decline_w * 0.5f, action_y + action_h * 0.5f - 8.0f * s,
-                                       0.68f * s, 1.0f, 0.74f, 0.76f, "DECLINE");
+                                       ui_text_caption_scale(s), 1.0f, 0.74f, 0.76f, "Decline");
             } else if (row->kind == ONLINE_ROW_SETTING || row->kind == ONLINE_ROW_FRIEND) {
                 float br = selected ? 0.070f : 0.045f;
                 float bg = selected ? 0.125f : 0.070f;
@@ -13228,17 +13742,17 @@ static void online_hub_render_ui(void) {
                 }
                 online_hub_draw_rect(box_x, y, box_w, box_h, br, bg, bb, selected ? 0.98f : 0.92f);
                 online_hub_draw_border(box_x, y, box_w, box_h, selected ? 2.0f : 1.0f,
-                                       selected ? 0.40f : 0.32f,
-                                       selected ? 0.92f : 0.48f,
-                                       selected ? 0.82f : 0.58f,
+                                       selected ? 0.62f : 0.20f,
+                                       selected ? 0.91f : 0.24f,
+                                       selected ? 0.82f : 0.30f,
                                        selected ? 1.0f : 0.86f);
                 mods_restore_render_state();
-                online_hub_text(box_x + 18.0f * s, y + box_h * 0.5f - 11.0f * s,
-                                1.00f * s,
+                online_hub_text(box_x + 18.0f * s, y + box_h * 0.5f - 10.0f * s,
+                                ui_text_body_scale(s),
                                 selected ? 0.92f : 0.78f,
                                 selected ? 0.98f : 0.86f,
                                 selected ? 1.00f : 0.96f,
-                                row->left);
+                                left);
                 if (right[0]) {
                     float rr = 0.84f;
                     float rg = 0.90f;
@@ -13280,17 +13794,17 @@ static void online_hub_render_ui(void) {
                         online_hub_draw_border(bx, by, bw, bh, 1.0f, 0.34f, 0.86f, 0.74f, 0.95f);
                         mods_restore_render_state();
                         online_hub_text_center(bx + bw * 0.5f, by + bh * 0.5f - 8.0f * s,
-                                               0.66f * s,
+                                               ui_text_caption_scale(s),
                                                sent ? 0.72f : 0.76f,
                                                sent ? 0.82f : 1.0f,
                                                sent ? 0.94f : 0.92f,
-                                               sent ? "SENT!" : "CHALLENGE");
+                                               sent ? "Sent" : "Challenge");
                     }
                     online_hub_text_right(right_edge, y + box_h * 0.5f - 10.0f * s,
-                                          0.90f * s, rr, rg, rb, right);
+                                          ui_text_caption_scale(s), rr, rg, rb, right);
                 }
             } else {
-                online_hub_draw_button_box(box_x, y, box_w, box_h, row->left, right,
+                online_hub_draw_button_box(box_x, y, box_w, box_h, left, right,
                                            selected, online_hub_row_primary(row), s);
             }
         }
@@ -14389,10 +14903,15 @@ static void online_draw_nametag(float cx, float cy, const char* text, int oppone
 
 static void online_draw_match_network_hud(void) {
     char text[96];
+    char metrics[64];
+    const char* transport = strcmp(ggpo_net_transport_name(), "eos_p2p") == 0
+        ? "EOS" : "UDP";
+    const char* route = strcmp(transport, "EOS") == 0
+        ? ggpo_net_transport_route() : "";
     uint32_t rtt_ticks = ggpo_net_rtt_ticks();
     uint32_t rollbacks = ggpo_net_rollback_count();
     float sw = p_mad_w ? p_mad_w() : BASE_UI_W;
-    float s = clampf(0.70f * online_hub_ui_scale(), 0.76f, 0.94f);
+    float s = clampf(0.70f * online_hub_ui_scale(), 0.90f, 1.00f);
     float pad_x = 8.0f * s;
     float pad_y = 5.0f * s;
     float text_w;
@@ -14405,19 +14924,21 @@ static void online_draw_match_network_hud(void) {
     if (rtt_ticks) {
         unsigned int rtt_ms =
             (unsigned int)(((uint64_t)rtt_ticks * UINT64_C(1000) + 30u) / 60u);
-        snprintf(text, sizeof(text), "PING %ums   D %uf   RB %u",
+        snprintf(metrics, sizeof(metrics), "PING %ums   D %uf   RB %u",
                  rtt_ms,
                  (unsigned int)ggpo_net_input_delay(),
                  (unsigned int)rollbacks);
     } else {
-        snprintf(text, sizeof(text), "PING --   D %uf   RB %u",
+        snprintf(metrics, sizeof(metrics), "PING --   D %uf   RB %u",
                  (unsigned int)ggpo_net_input_delay(),
                  (unsigned int)rollbacks);
     }
+    snprintf(text, sizeof(text), "%s%s%s   %s", transport,
+             route[0] ? " " : "", route, metrics);
 
     text_w = approx_text_width(text, s);
     box_w = text_w + pad_x * 2.0f;
-    box_h = 12.0f * s + pad_y * 2.0f;
+    box_h = UI_TEXT_HEIGHT * s + pad_y * 2.0f;
     x = sw - box_w - 8.0f * s;
     if (x < 4.0f) x = 4.0f;
 
@@ -14426,7 +14947,7 @@ static void online_draw_match_network_hud(void) {
                          0.018f, 0.025f, 0.032f, 0.62f);
     online_hub_draw_border(x, y, box_w, box_h, 1.0f,
                            0.30f, 0.56f, 0.62f, 0.52f);
-    online_hub_text_alpha(x + pad_x, y + pad_y - 1.0f * s, s,
+    online_hub_text_alpha(x + pad_x, y + box_h * 0.5f - 10.0f * online_hub_ui_scale(), s,
                           0.72f, 0.88f, 0.90f, 0.92f, text);
 }
 
@@ -15427,12 +15948,7 @@ int hooks_console_mousebutton(int x, int y, int button, int down) {
     panel_y = h - panel_h - (26.0f * ui);
     if (panel_y < 20.0f * ui) panel_y = 20.0f * ui;
 
-    text_scale = clampf(0.92f * ui, 1.00f, 1.25f);
-    {
-        int text_q = (int)(text_scale * 4.0f + 0.5f);
-        if (text_q < 1) text_q = 1;
-        text_scale = (float)text_q / 4.0f;
-    }
+    text_scale = ui_text_body_scale(ui);
     line_h = (10.0f * text_scale) + (9.0f * ui);
     input_y = panel_y + panel_h - (27.0f * ui);
     if ((float)y < input_y - (8.0f * ui) || (float)y > input_y + line_h) {
@@ -15442,7 +15958,7 @@ int hooks_console_mousebutton(int x, int y, int button, int down) {
     in_len = strlen(g_console_input);
     if ((size_t)g_console_cursor > in_len) g_console_cursor = (int)in_len;
     {
-        int avail_chars = (int)((panel_w - (36.0f * ui)) / (6.0f * text_scale));
+        int avail_chars = (int)((panel_w - (36.0f * ui)) / (UI_TEXT_ADVANCE * text_scale));
         int start_idx = 0;
         float text_x = panel_x + (14.0f * ui);
         int clicked_col;
@@ -15451,7 +15967,7 @@ int hooks_console_mousebutton(int x, int y, int button, int down) {
         if (g_console_cursor > avail_chars - 4) {
             start_idx = g_console_cursor - (avail_chars - 4);
         }
-        clicked_col = (int)(((float)x - text_x - (18.0f * text_scale)) / (9.0f * text_scale) + 0.5f);
+        clicked_col = (int)(((float)x - text_x - (2.0f * UI_TEXT_ADVANCE * text_scale)) / (UI_TEXT_ADVANCE * text_scale) + 0.5f);
         if (clicked_col < 0) clicked_col = 0;
         cursor = start_idx + clicked_col;
         if (cursor < 0) cursor = 0;
@@ -17015,8 +17531,8 @@ static void render_rows(void) {
     mods_restore_render_state();
 
     float header_cx = L.center_x;
-    float title_y   = 28.0f * ui;
-    float help_y    = 60.0f * ui;
+    float title_y   = fmaxf(32.0f, 32.0f * ui);
+    float help_y    = title_y + 26.0f * ui;
 
     /* Readable backdrop panel behind the content. The sword cursors sit ~22px
      * OUTSIDE [L.left, L.right] with their blades pointing inward, so the panel is
@@ -17028,32 +17544,32 @@ static void render_rows(void) {
         const float PANEL_SIDE_INSET = 16.0f; /* * ui; keep clear of the swords */
         float px = L.left + (PANEL_SIDE_INSET * ui);
         float pw = (L.right - L.left) - (2.0f * PANEL_SIDE_INSET * ui);
-        float pt = title_y - (16.0f * ui);
+        float pt = title_y - 18.0f * ui;
         float pb = L.list_bottom + (10.0f * ui);
         if (pw < 80.0f * ui) { px = L.left; pw = L.right - L.left; } /* safety */
         if (pt < 6.0f * ui) pt = 6.0f * ui;
         hooks_ui_fill_rect(px, pt, pw, pb - pt, 0.030f, 0.038f, 0.052f, PANEL_A);    /* panel   */
-        hooks_ui_fill_rect(px, pt, pw, (help_y - title_y) + (30.0f*ui),
+        hooks_ui_fill_rect(px, pt, pw, (help_y - pt) + 16.0f,
                            0.055f, 0.066f, 0.088f, HEADER_BAND_A);                   /* header  */
         hooks_ui_stroke_rect(px, pt, pw, pb - pt, 1.5f, 0.32f, 0.42f, 0.58f, 0.45f); /* border  */
     }
     mods_restore_render_state();
 
-    draw_text_centered_scaled(header_cx, title_y, g_ui_scale * 1.16f,
+    draw_text_emphasis_mode(header_cx, title_y, ui_text_title_scale(ui),
                               0.90f, 0.94f, 0.98f,
-                              "MOD MANAGER");
+                              "Mod manager", 1);
     if (g_capture_active && g_capture_kind == CAPTURE_CONFIG_STRING) {
         draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 0.92f,
                                   0.90f, 0.80f, 0.40f,
-                                  "Editing text (Enter = apply, Esc = cancel)");
+                                  "Enter apply   Esc cancel");
     } else if (g_capture_active && g_capture_kind == CAPTURE_BIND) {
         draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 0.92f,
                                   0.90f, 0.80f, 0.40f,
-                                  "Binding key (press key, Backspace/Delete = clear, Esc = cancel)");
+                                  "Press key / Delete clear / Esc cancel");
     } else {
         draw_text_centered_scaled(header_cx, help_y, g_ui_scale * 0.88f,
                                   0.58f, 0.64f, 0.72f,
-                                  "Enter expand/collapse or edit   Left/Right adjust   Esc back");
+                                  "Enter edit / Arrows / Esc back");
     }
 
     int cap = visible_rows_capacity();
@@ -17068,12 +17584,12 @@ static void render_rows(void) {
      * Aligned to the inset panel and lifted up to sit on the row text. Tunables: */
     if (g_selected_row >= start_row && g_selected_row < end_row) {
         const float HL_INSET = 16.0f;   /* * ui; match the panel side inset */
-        const float HL_Y_OFF = -12.5f;   /* * ui; move the bar up onto the text */
+        const float HL_Y_OFF = -12.0f;   /* * ui; move the bar up onto the text */
         float sy = L.list_top + (float)(g_selected_row - start_row) * L.row_h;
         float hx = L.left + (HL_INSET * ui);
         float hw = (L.right - L.left) - (2.0f * HL_INSET * ui);
         float hy = sy + (HL_Y_OFF * ui);
-        float hh = L.row_h - (10.0f * ui);
+        float hh = 24.0f * ui;
         if (hw < 80.0f * ui) { hx = L.left; hw = L.right - L.left; }
         hooks_ui_fill_rect(hx, hy, hw, hh, 0.11f, 0.14f, 0.21f, 0.88f);   /* row lift  */
         hooks_ui_fill_rect(hx, hy, 3.0f*ui, hh, 0.96f, 0.80f, 0.34f, 0.95f); /* gold edge */
@@ -17090,9 +17606,9 @@ static void render_rows(void) {
            text tint. Use a warm gold instead of subtle near-white. */
         float sel_r  = 0.96f, sel_g  = 0.86f, sel_b  = 0.42f;
         float muted_r = 0.42f, muted_g = 0.48f, muted_b = 0.56f;
-        float label_x = L.left + (24.0f * ui);
-        float option_x = L.left + (44.0f * ui);
-        float right_x = L.right - (20.0f * ui);
+        float label_x = L.left + (36.0f * ui);
+        float option_x = L.left + (52.0f * ui);
+        float right_x = L.right - (36.0f * ui);
 
         if (row->kind == ROW_INFO && row->left[0] == '\0' && row->right[0] == '\0') continue;
 
@@ -17225,8 +17741,6 @@ static void render_rows(void) {
             float gg = back_sel ? 0.86f : 0.84f;
             float bb = back_sel ? 0.42f : 0.90f;
             const char* label = g_rows[back_i].left;
-            draw_text_centered_scaled(L.center_x + (2.0f * ui), fy + (2.0f * ui),
-                                      g_ui_scale * 1.00f, 0.0f, 0.0f, 0.0f, label); /* shadow */
             draw_text_centered_scaled(L.center_x, fy, g_ui_scale * 1.00f, rr, gg, bb, label);
         }
     }
@@ -17496,6 +18010,13 @@ static void mods_draw_background(const ModsLayout* L) {
     glPopAttrib();
 }
 
+static void draw_console_text_scaled(float x, float y, float scale,
+                                      float r, float g, float b, const char* text) {
+    if (!ui_text_queue_mono(x, y, scale, r, g, b, 1.0f, text, 0)) {
+        draw_text_scaled(x, y, scale, r, g, b, text);
+    }
+}
+
 static void console_render_ui(void) {
     float w = p_mad_w ? p_mad_w() : BASE_UI_W;
     float h = p_mad_h ? p_mad_h() : BASE_UI_H;
@@ -17514,7 +18035,6 @@ static void console_render_ui(void) {
     int newest;
     int first;
     int line_no;
-    int text_q;
 
     if (w < 640.0f) margin = 12.0f;
     else if (w < 900.0f) margin = 20.0f * ui;
@@ -17569,44 +18089,62 @@ static void console_render_ui(void) {
     glMatrixMode(prev_matrix_mode);
     glPopAttrib();
 
-    title_scale = clampf(1.00f * ui, 0.95f, 1.55f);
-    text_scale = clampf(0.92f * ui, 1.00f, 1.25f);
-    text_q = (int)(text_scale * 4.0f + 0.5f);
-    if (text_q < 1) text_q = 1;
-    text_scale = (float)text_q / 4.0f;
-    title_scale = text_scale * 1.18f;
+    text_scale = ui_text_body_scale(ui);
+    title_scale = text_scale;
     line_h = (10.0f * text_scale) + (9.0f * ui);
-    lines_top = panel_y + (48.0f * ui);
+    lines_top = panel_y + (32.0f * ui) + 18.0f * ui;
     input_y = panel_y + panel_h - (27.0f * ui);
     visible_lines = (int)((input_y - lines_top - (8.0f * ui)) / line_h);
     if (visible_lines < 3) visible_lines = 3;
 
-    draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (22.0f * ui) + 0.5f)),
-                     title_scale, 0.94f, 0.96f, 0.99f, "DEV CONSOLE");
+    draw_text_emphasis_mode((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (17.0f * ui) + 0.5f)),
+                            title_scale, 0.94f, 0.96f, 0.99f, "Console", 0);
     {
         char hdr[192];
         snprintf(hdr, sizeof(hdr), "ret=%s  hist=%d  scroll=%d",
                  state_name_from_ptr(g_console_return_state),
                  (int)command_history_count(&g_console_history),
                  g_console_scroll);
-        draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (22.0f * ui) + 0.5f)),
+        draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(panel_y + (17.0f * ui) + 0.5f)),
                                text_scale, 0.66f, 0.74f, 0.86f, hdr);
     }
 
     newest = g_console_line_count - 1 - g_console_scroll;
     if (newest >= 0) {
-        first = newest - visible_lines + 1;
-        if (first < 0) first = 0;
+        int columns = (int)((panel_w - 28.0f * ui) / (UI_TEXT_ADVANCE * text_scale));
+        int rows = 0;
+        int skip_rows;
+        if (columns < 12) columns = 12;
+        /* Wrap output to the actual monospace advance. Keep scroll/history in
+         * messages, showing the final visible wrapped rows of that selection. */
+        first = newest;
+        while (first >= 0) {
+            ConsoleLine* line = console_line_at_oldest_index(first);
+            int length = line ? (int)strlen(line->text) : 0;
+            rows += length ? (length + columns - 1) / columns : 1;
+            if (rows >= visible_lines || first == 0) break;
+            first--;
+        }
+        skip_rows = rows > visible_lines ? rows - visible_lines : 0;
         line_no = 0;
         for (int i = first; i <= newest; i++) {
             ConsoleLine* line = console_line_at_oldest_index(i);
-            float y = (float)((int)(lines_top + (line_no * line_h) + 0.5f));
+            int length;
             if (!line) continue;
-            draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), y, text_scale, line->r, line->g, line->b, line->text);
-            line_no++;
+            length = (int)strlen(line->text);
+            for (int start = 0; start < length || start == 0; start += columns) {
+                char wrapped[CONSOLE_LINE_TEXT];
+                float y;
+                if (skip_rows > 0) { skip_rows--; continue; }
+                snprintf(wrapped, sizeof(wrapped), "%.*s", columns, line->text + start);
+                y = (float)((int)(lines_top + (line_no * line_h) + 0.5f));
+                draw_console_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)),
+                                 y, text_scale, line->r, line->g, line->b, wrapped);
+                line_no++;
+            }
         }
     } else {
-        draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(lines_top + 0.5f)), text_scale, 0.62f, 0.70f, 0.82f,
+        draw_console_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(lines_top + 0.5f)), text_scale, 0.62f, 0.70f, 0.82f,
                          "No output yet. Type 'help'.");
     }
 
@@ -17617,7 +18155,7 @@ static void console_render_ui(void) {
         int start_idx = 0;
         if (g_console_cursor < 0) g_console_cursor = 0;
         if ((size_t)g_console_cursor > in_len) g_console_cursor = (int)in_len;
-        avail_chars = (int)((panel_w - (36.0f * ui)) / (6.0f * text_scale));
+        avail_chars = (int)((panel_w - (36.0f * ui)) / (UI_TEXT_ADVANCE * text_scale));
         if (avail_chars < 12) avail_chars = 12;
         if (g_console_cursor > avail_chars - 4) {
             start_idx = g_console_cursor - (avail_chars - 4);
@@ -17628,12 +18166,9 @@ static void console_render_ui(void) {
         if ((int)strlen(input_line) > avail_chars + 2) {
             input_line[avail_chars + 2] = '\0';
         }
-        draw_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
+        draw_console_text_scaled((float)((int)(panel_x + (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
                          0.95f, 0.88f, 0.40f, input_line);
-        if (panel_w > 640.0f) {
-            draw_text_right_scaled((float)((int)(panel_x + panel_w - (14.0f * ui) + 0.5f)), (float)((int)(input_y + 0.5f)), text_scale,
-                                   0.66f, 0.74f, 0.86f, "Tab=complete  Ctrl+C/V=copy/paste  Wheel=scroll");
-        }
+        /* Keep shortcuts out of the editable input line. */
     }
 }
 
@@ -18328,6 +18863,19 @@ static void online_abort_prematch_setup(const char* reason) {
 
 static void online_resolve_p2p_transport_failure(const char* reason) {
     const char* status = "P2P connection lost; resolving as no contest.";
+    char diag[3072];
+    ggpo_net_format_diag(diag, sizeof(diag));
+    LOG_ERROR("online.p2p: match=%d failure=%s transport=%s route=%s frame=%u silence_ticks=%u",
+              g_online_active_match.match_id, reason && reason[0] ? reason : "unknown",
+              ggpo_net_transport_name(), ggpo_net_transport_route(),
+              (unsigned)ggpo_net_frame_count(), (unsigned)ggpo_net_peer_silence_ticks());
+    /* Keep each line below log_write's cap so the useful counters survive. */
+    for (char* p = diag; p && *p;) {
+        char* end = strchr(p, '\n');
+        if (end) *end = '\0';
+        LOG_ERROR("online.p2p: %s", p);
+        p = end ? end + 1 : NULL;
+    }
     if (!g_online_active_match.active) {
         /* Console-started/manual GGPO sessions do not have a server match to
          * resolve, but their failed socket still must be closed. */
@@ -19526,6 +20074,10 @@ void hooks_runtime_shutdown(void) {
     online_troubleshooter_reset();
     framework_tune_shutdown();
     discord_rpc_ext_shutdown();
+    if (ggpo_net_active()) ggpo_net_stop();
+    yule_eos_shutdown();
+    ui_text_shutdown();
+    SecureZeroMemory(g_online_eos_client_secret, sizeof(g_online_eos_client_secret));
     update_ext_shutdown();
 }
 
@@ -19833,6 +20385,17 @@ static void __cdecl hooked_game_update(int arg0) {
         return;
     }
 
+    /* GAME bypasses the menu/console online pump. Service the control channel,
+     * EOS login/refresh and SDK here once per live update, even while gameplay
+     * waits for remote input. Replays call the native trampoline directly.
+     * A control callback may end the match and switch to the hub. */
+    online_server_update();
+    state_ptr = p_state_current ? p_state_current() : NULL;
+    if (state_ptr != (void*)(uintptr_t)ADDR_GAME_STATE) {
+        hooks_finish_game_tick();
+        return;
+    }
+
     /* Defensive invariant: a server-managed pending match is prepared and
      * synchronized entirely in the hub. If another path enters GAME early,
      * never expose native simulation while the prematch barrier is active. */
@@ -19964,6 +20527,8 @@ static void __cdecl hooked_main_sprite_batches_draw(void) {
         p_main_sprite_batches_draw_trampoline;
     if (real) real();
     lua_manager_draw_custom_atlas();
+    ui_text_flush(p_mad_w ? p_mad_w() : BASE_UI_W,
+                   p_mad_h ? p_mad_h() : BASE_UI_H);
 }
 
 static void __cdecl hooked_mapgen_init(void) {

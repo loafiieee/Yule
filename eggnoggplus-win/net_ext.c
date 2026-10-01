@@ -4,6 +4,7 @@
 
 #include "net_ext.h"
 #include "online_control.h"
+#include "net_tls.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -22,6 +23,8 @@ typedef struct {
     int    used;
     int    connecting; /* async connect in progress */
     int    connected;
+    int    tcp_connected;
+    NetTls* tls;
     int    send_offset;
     int    send_length;
     char   send_queue[NET_SEND_QUEUE_CAPACITY];
@@ -29,6 +32,15 @@ typedef struct {
 
 static NetConn g_net[NET_MAX_CONN];
 static int     g_wsa_ready = 0;
+static char g_net_last_error[160];
+const char* net_last_error(void) { return g_net_last_error; }
+
+static void tls_failure(int slot) {
+    snprintf(g_net_last_error, sizeof(g_net_last_error),
+        "TLS connection or certificate verification failed (0x%08lx).",
+        net_tls_error(g_net[slot].tls));
+    net_close(slot);
+}
 
 typedef struct NetUdpProbe {
     SOCKET fd;
@@ -50,11 +62,13 @@ static int net_flush_send_queue(int slot) {
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].connected) return -1;
     c = &g_net[slot];
     while (c->send_length > 0) {
-        int r = send(c->fd, c->send_queue + c->send_offset, c->send_length, 0);
+        int r = c->tls
+            ? net_tls_send(c->tls, c->fd, c->send_queue + c->send_offset, c->send_length)
+            : send(c->fd, c->send_queue + c->send_offset, c->send_length, 0);
+        if (c->tls && r < 0) { tls_failure(slot); return -1; }
         if (r == SOCKET_ERROR) {
             if (WSAGetLastError() == WSAEWOULDBLOCK) return 1;
-            closesocket(c->fd);
-            SecureZeroMemory(c, sizeof(*c));
+            net_close(slot);
             return -1;
         }
         if (r <= 0) return 1;
@@ -62,6 +76,10 @@ static int net_flush_send_queue(int slot) {
         c->send_length -= r;
     }
     c->send_offset = 0;
+    if (c->tls && net_tls_flush(c->tls, c->fd) < 0) {
+        tls_failure(slot);
+        return -1;
+    }
     return 1;
 }
 
@@ -75,6 +93,7 @@ static int ensure_wsa(void) {
 }
 
 int net_connect(const char *host, int port) {
+    g_net_last_error[0] = '\0';
     if (!host || !host[0] || port <= 0 || port > 65535 || !ensure_wsa()) return -1;
 
     /* Find a free slot */
@@ -120,6 +139,29 @@ int net_connect(const char *host, int port) {
     c->used       = 1;
     c->connecting = (cr == SOCKET_ERROR) ? 1 : 0;
     c->connected  = (cr == 0)            ? 1 : 0;
+    c->tcp_connected = c->connected;
+    return slot;
+}
+
+int net_connect_control(const char* host, int port, int require_tls) {
+    int slot;
+    if (!require_tls && (!host || (strcmp(host, "127.0.0.1") != 0 &&
+                                  _stricmp(host, "localhost") != 0))) {
+        strcpy(g_net_last_error, "Plaintext account connections are restricted to localhost.");
+        return -1;
+    }
+    /* Canonicalize localhost so a hosts-file/DNS mapping cannot turn the
+     * development exception into a plaintext connection to a remote server. */
+    slot = net_connect(!require_tls ? "127.0.0.1" : host, port);
+    if (slot < 0 || !require_tls) return slot;
+    g_net[slot].tls = net_tls_create(host);
+    if (!g_net[slot].tls) {
+        strcpy(g_net_last_error, "Could not initialize Windows TLS.");
+        net_close(slot);
+        return -1;
+    }
+    g_net[slot].connected = 0;
+    g_net[slot].connecting = 1;
     return slot;
 }
 
@@ -128,6 +170,15 @@ int net_check_connect(int slot) {
     NetConn *c = &g_net[slot];
     if (c->connected)  return 1;
     if (!c->connecting) return -1;
+
+    if (c->tcp_connected) {
+        int ready = c->tls ? net_tls_handshake(c->tls, c->fd) : 1;
+        if (ready < 0) { tls_failure(slot); return -1; }
+        if (!ready) return 0;
+        c->connecting = 0;
+        c->connected = 1;
+        return 1;
+    }
 
     fd_set wfds, efds;
     FD_ZERO(&wfds); FD_SET(c->fd, &wfds);
@@ -152,9 +203,8 @@ int net_check_connect(int slot) {
             net_close(slot);
             return -1;
         }
-        c->connecting = 0;
-        c->connected  = 1;
-        return 1;
+        c->tcp_connected = 1;
+        return net_check_connect(slot);
     }
     return 0;
 }
@@ -190,7 +240,13 @@ int net_recv(int slot, char *buf, int maxlen) {
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].connected) return -1;
     if (!buf || maxlen <= 0) return -1;
     if (net_flush_send_queue(slot) < 0) return -1;
-    int r = recv(g_net[slot].fd, buf, maxlen, 0);
+    int r = g_net[slot].tls
+        ? net_tls_recv(g_net[slot].tls, g_net[slot].fd, buf, maxlen)
+        : recv(g_net[slot].fd, buf, maxlen, 0);
+    if (g_net[slot].tls) {
+        if (r < 0) tls_failure(slot);
+        return r;
+    }
     if (r == 0) { net_close(slot); return -1; } /* clean close */
     if (r == SOCKET_ERROR) {
         if (WSAGetLastError() == WSAEWOULDBLOCK) return 0;
@@ -213,6 +269,7 @@ int net_connecting(int slot) {
 void net_close(int slot) {
     if (slot < 0 || slot >= NET_MAX_CONN || !g_net[slot].used) return;
     closesocket(g_net[slot].fd);
+    net_tls_free(g_net[slot].tls);
     /* The copied queue may still contain authentication JSON. Ensure teardown
      * is not optimized away as a dead ordinary memset. */
     SecureZeroMemory(&g_net[slot], sizeof(g_net[slot]));

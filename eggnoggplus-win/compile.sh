@@ -22,10 +22,11 @@ sources=(
   credential_ext.c online_control.c launch_request.c launch_ipc.c
   preview_bridge.c preview_http.c preview_package.c preview_stage.c
   lua_manager.c mod_api.c mod_callbacks.c mod_fs.c mod_http.c mod_json.c
-  ggpo_ext.c ggpo_loopback.c ggpo_local.c ggpo_net.c
+  ggpo_ext.c ggpo_loopback.c ggpo_local.c ggpo_net.c ggpo_transport_native.c
+  eos_runtime.c ggpo_transport_eos.c
   fp_control.c rollback_schema.c
   image_util.c text_util.c console_catalog.c console_parse.c command_history.c
-  font_ext.c texture_ext.c log.c net_ext.c update_ext.c
+  font_ext.c ui_text.c texture_ext.c log.c net_ext.c net_tls.c update_ext.c
   discord_rpc_ext.c bytebeat_ext.c bytebeat_chakra.c bytebeat_js.c
   bytebeat_stream.c
 )
@@ -35,10 +36,29 @@ vendor_sources=(
 )
 
 libraries=(
-  -lkernel32 -luser32 -ladvapi32 -lopengl32 -lluajit-5.1
-  -lws2_32 -liphlpapi -lwinhttp -lbcrypt -lcomdlg32 -lshell32 -lole32
+  -lkernel32 -luser32 -lgdi32 -ladvapi32 -lopengl32 -lluajit-5.1
+  -lws2_32 -liphlpapi -lwinhttp -lbcrypt -lcomdlg32 -lshell32 -lole32 -lsecur32
   -I/mingw32/include
 )
+
+# EOS is optional during development. The runtime is loaded beside the game
+# executable, so an absent SDK DLL leaves native UDP available in auto mode.
+eos_flags=()
+if [[ -n "${EOS_SDK_DIR:-}" ]]; then
+  if [[ ! -f "$EOS_SDK_DIR/Include/eos_sdk.h" ]]; then
+    printf 'error: EOS_SDK_DIR does not contain Include/eos_sdk.h\n' >&2
+    exit 1
+  fi
+  if [[ ! -f "$EOS_SDK_DIR/Bin/EOSSDK-Win32-Shipping.dll" ]]; then
+    printf 'error: EOS_SDK_DIR does not contain Bin/EOSSDK-Win32-Shipping.dll\n' >&2
+    exit 1
+  fi
+  if [[ -n "${EOS_CLIENT_SECRET_FILE:-}" && ! -s "$EOS_CLIENT_SECRET_FILE" ]]; then
+    printf 'error: EOS_CLIENT_SECRET_FILE is missing or empty\n' >&2
+    exit 1
+  fi
+  eos_flags=(-DYULE_ENABLE_EOS "-I$EOS_SDK_DIR/Include")
+fi
 
 # Build the one-shot updater separately. The framework starts it only after a
 # verified transaction is staged; it waits for Eggnogg to close before swapping
@@ -48,7 +68,8 @@ gcc -m32 -std=c11 -Wall -Wextra -Werror -pedantic \
   -o build/YuleUpdater.exe updater_helper.c update_ext.c \
   -lwinhttp -lbcrypt -lws2_32 -lshell32 -luser32
 for replaceable_dll in \
-  SDL2.dll lua51.dll libgcc_s_dw2-1.dll libwinpthread-1.dll SDL2_mixer.dll
+  SDL2.dll lua51.dll libgcc_s_dw2-1.dll libwinpthread-1.dll SDL2_mixer.dll \
+  EOSSDK-Win32-Shipping.dll
 do
   if objdump -p build/YuleUpdater.exe |
       grep -Fqi "DLL Name: ${replaceable_dll}"; then
@@ -64,5 +85,13 @@ cp -f build/YuleUpdater.exe YuleUpdater.exe
 # a second time) keeps the installed DLL byte-identical to the build output and
 # still fails cleanly if a running game has SDL2.dll mapped.
 gcc -m32 -shared -O2 -o build/SDL2_test.dll \
-  "${sources[@]}" "${vendor_sources[@]}" "${libraries[@]}"
+  "${eos_flags[@]}" "${sources[@]}" "${vendor_sources[@]}" "${libraries[@]}"
+if [[ -n "${EOS_SDK_DIR:-}" ]]; then
+  cp -f "$EOS_SDK_DIR/Bin/EOSSDK-Win32-Shipping.dll" EOSSDK-Win32-Shipping.dll
+  if [[ -n "${EOS_CLIENT_SECRET_FILE:-}" ]]; then
+    cp -f "$EOS_CLIENT_SECRET_FILE" eos_client_secret.txt
+  fi
+fi
 cp -f build/SDL2_test.dll SDL2.dll
+cp -f third_party/tandy2k/LICENSE.txt Tandy2K-LICENSE.txt
+cp -f third_party/tandy2k/README.md Tandy2K-ATTRIBUTION.txt

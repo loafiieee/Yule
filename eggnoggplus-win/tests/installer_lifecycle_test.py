@@ -114,7 +114,7 @@ def main() -> int:
 
         game_exe = game / "eggnoggplus.exe"
         vanilla_sdl = b"vanilla SDL fixture"
-        proxy_sdl = b"proxy fixture with modframework marker"
+        proxy_sdl = b"proxy fixture with modframework marker\0YULE_CHANNEL_SWITCH=1\0YULE_FRAMEWORK_VERSION=1.931\0"
         runtime_name = "libgcc_s_dw2-1.dll"
         runtime_bytes = b"managed runtime fixture"
         updater_name = "YuleUpdater.exe"
@@ -122,6 +122,8 @@ def main() -> int:
         (installer_payload / updater_name).write_bytes(updater_bytes)
         game_exe.write_bytes(b"fake game executable")
         (game / "SDL2.dll").write_bytes(vanilla_sdl)
+        (game / "mods").mkdir(exist_ok=True)
+        (game / "mods/update_channel.json").write_text('{"release_channel":"beta","version":"obsolete"}')
         (game / "keep-user-file.txt").write_text("keep me", encoding="utf-8")
         (channel / "SDL2.dll").write_bytes(proxy_sdl)
         (channel / runtime_name).write_bytes(runtime_bytes)
@@ -135,7 +137,9 @@ def main() -> int:
         base = f"http://127.0.0.1:{server.server_port}/"
         latest = {
             "channel_version": 1,
-            "version": "installer-test",
+            "version": "1.931",
+            "release_channel": "stable",
+            "channel_switch": 1,
             "base": base,
             "files": [
                 {
@@ -204,9 +208,10 @@ def main() -> int:
             or not manifest["deep_link_protocol"]["applied"]
             or str(game_exe) not in manifest["deep_link_protocol"]["command"]
             or "--yule-uri=%1" not in manifest["deep_link_protocol"]["command"]
-            or set(managed) != {"SDL2.dll", runtime_name, updater_name}
+            or set(managed) != {"SDL2.dll", runtime_name, updater_name, "mods/update_channel.json"}
         ):
             raise AssertionError("v2 uninstall manifest was incomplete")
+        assert json.loads((game / "mods/update_channel.json").read_text())["release_channel"] == "stable"
         try:
             with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
@@ -244,6 +249,7 @@ def main() -> int:
             or not (game / "keep-user-file.txt").is_file()
             or manifest_path.exists()
             or (game / "install.json").exists()
+            or (game / "mods/update_channel.json").exists()
         ):
             raise AssertionError(
                 "uninstall did not restore vanilla or preserve modified/user files"

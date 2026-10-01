@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NET = (ROOT / "ggpo_net.c").read_text(encoding="utf-8")
 HEADER = (ROOT / "ggpo_net.h").read_text(encoding="utf-8")
+NATIVE = (ROOT / "ggpo_transport_native.c").read_text(encoding="utf-8")
 
 
 def section(start: str, end: str) -> str:
@@ -16,7 +17,8 @@ error_classifier = section(
     "static GgpoNetRawSendResult ggpo_net_note_socket_send_error",
     "static int ggpo_net_test_state_chunk_block_matches",
 )
-assert "error_code == WSAEWOULDBLOCK || error_code == WSAENOBUFS" in error_classifier
+assert "if (backpressure)" in error_classifier
+assert "code == WSAEWOULDBLOCK || code == WSAENOBUFS" in NATIVE
 assert "GGPO_NET_RAW_SEND_WOULD_BLOCK" in error_classifier
 assert "socket_would_block_events" in error_classifier
 assert "socket_send_errors" in error_classifier
@@ -25,8 +27,9 @@ raw_send = section(
     "static GgpoNetRawSendResult ggpo_net_send_raw_bytes",
     "static int ggpo_net_queue_sim_packet",
 )
-raw_send = raw_send[raw_send.index("sent = sendto("):]
-assert "sent != len" in raw_send
+raw_send = raw_send[raw_send.index("sent = ggpo_transport_send("):]
+assert "sent != GGPO_TRANSPORT_SEND_OK" in raw_send
+assert "sent != len" in NATIVE
 assert "g_net.packets_sent++" in raw_send
 assert raw_send.index("g_net.packets_sent++") < raw_send.index(
     "return GGPO_NET_RAW_SEND_SENT"
@@ -70,22 +73,6 @@ correction_send = service.index("ggpo_net_send_correction_burst()")
 assert fresh_send < queued_send < bulk_send < correction_send
 assert "g_net.socket_backpressured_this_tick = 0" in service
 assert "if (!g_net.socket_backpressured_this_tick)" in service
-
-profile = section(
-    "static int ggpo_net_send_cosmetic_profile",
-    "static void ggpo_net_send_cosmetic_profile_periodic",
-)
-assert profile.index("if (!ggpo_net_send_bytes") < profile.index(
-    "g_net.last_cosmetic_profile_send_tick = g_net.service_tick"
-)
-
-asset = section(
-    "static void ggpo_net_send_cosmetic_asset_periodic",
-    "static int ggpo_net_cosmetic_profiles_ready",
-)
-assert asset.index("!ggpo_net_send_cosmetic_asset_chunk") < asset.index(
-    "g_net.local_cosmetic_asset_next_chunk ="
-)
 
 request = section(
     "static int ggpo_net_request_host_correction",

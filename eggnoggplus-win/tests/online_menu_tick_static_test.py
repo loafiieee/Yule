@@ -90,6 +90,18 @@ assert "g_main_cursors_disabled[1] = cursor_disabled[1]" in button_update
 # not advance a second time from its state update.
 console_update = function_body("console_update")
 assert console_update.count("online_advance_net_gameplay_tick(0)") == 1
+assert "online_server_update();" in console_update
+assert "online_server_update();" in button_update
+game_update = function_body("hooked_game_update")
+pump = game_update.index("online_server_update();")
+assert pump < game_update.index("g_online_pending_match.active")
+assert pump < game_update.index("hooks_consume_block_game_tick()")
+assert pump < game_update.index("online_advance_net_gameplay_tick(arg0)")
+assert "p_state_current()" in game_update[pump:game_update.index("g_online_pending_match.active")]
+# Replayed deterministic simulation must never run online control callbacks.
+assert "online_server_update" not in function_body("hooks_run_native_game_tick")
+transport = (ROOT / "ggpo_transport_native.c").read_text(encoding="utf-8")
+assert "transport->kind == GGPO_TRANSPORT_EOS_P2P) yule_eos_tick();" in transport
 mods_update = function_body("mods_update")
 assert "p_main_update_with_buttons(0);" in mods_update
 assert "online_advance_net_gameplay_tick" not in mods_update

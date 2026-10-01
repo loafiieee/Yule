@@ -228,6 +228,57 @@ function Download-Verified([string]$url, [string]$dest, [string]$sha256, [long]$
     return $false
 }
 
+function Set-InstalledChannelProfile($release, [string]$root) {
+    $dest = Resolve-SafeManagedPath $root 'mods/update_channel.json'
+    if (-not $dest) { throw 'Unsafe installed channel profile path.' }
+    if (-not $release.release_channel -and -not $release.channel_switch) {
+        # An explicitly installed legacy stable release cannot use this metadata.
+        if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }
+        return $null
+    }
+    if ($release.release_channel -cnotin @('stable', 'beta') -or
+        $release.channel_switch -ne 1 -or
+        ([string]$release.version) -notmatch '^[0-9]+(?:\.[0-9]+)*$' -or
+        @($release.files).Count -ge 32) { throw 'Unsupported release channel profile.' }
+    foreach ($file in $release.files) {
+        if ($file.overwrite -ne $true) { throw 'Channel runtimes require complete file replacement.' }
+    }
+    $strings = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $root 'SDL2.dll'))).Split([char]0)
+    if ($strings -cnotcontains 'YULE_CHANNEL_SWITCH=1' -or
+        $strings -cnotcontains ("YULE_FRAMEWORK_VERSION=" + $release.version)) {
+        throw 'Installed SDL2.dll does not match the channel/version profile.'
+    }
+    $profile = [ordered]@{channel_version=1; version=$release.version; base=$release.base
+        release_channel=$release.release_channel; channel_switch=1; files=$release.files}
+    if ($release.server_host) {
+        if (([string]$release.server_host) -notmatch '^[A-Za-z0-9.-]+$' -or
+            $release.server_port -lt 1 -or $release.server_port -gt 65535 -or
+            $release.server_tls -isnot [bool]) { throw 'Invalid channel server endpoint.' }
+        $profile.server_host = $release.server_host
+        $profile.server_port = $release.server_port
+        $profile.server_tls = $release.server_tls
+    }
+    if ($release.release_channel -ceq 'beta' -and
+        (-not $release.server_host -or $release.server_tls -ne $true -or
+         ($release.server_host -ieq 'eggnogg.loafiieee.com' -and $release.server_port -eq 47778))) {
+        throw 'Beta requires its own TLS matchmaking endpoint.'
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($profile | ConvertTo-Json -Depth 5 -Compress))
+    if ($bytes.Length -gt 16384) { throw 'Channel profile is too large.' }
+    Ensure-Dir (Split-Path -Parent $dest)
+    $temporary = $dest + '.tmp-' + [Guid]::NewGuid().ToString('N')
+    $previous = $temporary + '.previous'
+    try {
+        [IO.File]::WriteAllBytes($temporary, $bytes)
+        if (Test-Path -LiteralPath $dest) { [IO.File]::Replace($temporary, $dest, $previous) }
+        else { [IO.File]::Move($temporary, $dest) }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Force }
+    }
+    return [ordered]@{path='mods/update_channel.json'; sha256=(Get-Sha256 $dest); size=$bytes.Length}
+}
+
 function Install-VerifiedLocalFile([string]$source, [string]$dest) {
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
         throw "required installer payload is missing: $source"
@@ -828,7 +879,8 @@ $legacyUpdateBackups = @(
     (Join-Path $gameDir 'lua51.dll.old'),
     (Join-Path $gameDir 'libgcc_s_dw2-1.dll.old'),
     (Join-Path $gameDir 'libwinpthread-1.dll.old'),
-    (Join-Path $gameDir 'SDL2_mixer.dll.old')
+    (Join-Path $gameDir 'SDL2_mixer.dll.old'),
+    (Join-Path $gameDir 'EOSSDK-Win32-Shipping.dll.old')
 )
 $hasLegacyUpdateBackup = @($legacyUpdateBackups | Where-Object {
     Test-Path -LiteralPath $_
@@ -992,6 +1044,9 @@ if ($syncOk) {
             size = $updaterReceipt.size
         }
         Say "One-shot update helper verified." 'Green'
+        $profileReceipt = Set-InstalledChannelProfile $latest $gameDir
+        if ($profileReceipt) { $managedFileMap['mods/update_channel.json'] = $profileReceipt }
+        else { $managedFileMap.Remove('mods/update_channel.json') }
     } catch {
         Say "Couldn't install the update helper ($($_.Exception.Message))." 'Red'
         $steps['sync'] = 'error-updater'

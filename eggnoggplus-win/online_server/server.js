@@ -6,19 +6,33 @@ const dgram = require("dgram");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { loadUserStore, atomicWriteFile, updateUserRecord } = require("./storage");
+const { loadUserStore, atomicWriteFile, updateUserRecord, makeAccountId, ensureAccountIds } = require("./storage");
 const { startAdminServerFromEnv } = require("./admin_server");
 const { createAuditWriter } = require("./admin_audit");
 const { createDiscordLfgBotFromEnv } = require("./discord_lfg_bot");
 const { startRedirectServerFromEnv } = require("./lfg_redirect");
+const { startEosUserInfoServerFromEnv } = require("./eos_userinfo");
+const {configured: eosVerifierConfigured, verifyConnectIdToken} = require("./eos_verify");
+const {NATIVE_UDP, sanitizeTransportCaps, selectTransport} = require("./transport_selection");
+const {listenerConfig, createControlServer} = require("./control_tls");
+const {releaseChannel, acceptsReleaseChannel} = require("./release_channel");
+const RELEASE_CHANNEL = releaseChannel();
 
 const PORT = Number.parseInt(process.env.PORT || "47778", 10);
-const HOST = process.env.HOST || "0.0.0.0";
+const controlListener = listenerConfig();
+const HOST = controlListener.host;
 const UDP_PORT = Number.parseInt(process.env.UDP_PORT || `${PORT}`, 10);
 const UDP_HOST = process.env.UDP_HOST || HOST;
 const DB_FILE = process.env.DB || path.join(__dirname, "users.json");
 const RATINGS_FILE = process.env.RATINGS || path.join(__dirname, "ratings.json");
 const SECRET_FILE = process.env.SECRET_FILE || path.join(__dirname, "server_secret.key");
+if (RELEASE_CHANNEL === "beta") {
+  for (const [key, filename] of [["DB", "users.json"], ["RATINGS", "ratings.json"], ["SECRET_FILE", "server_secret.key"]]) {
+    if (!process.env[key] || path.resolve(process.env[key]) === path.join(__dirname, filename)) {
+      throw new Error(`Beta requires an explicit, isolated ${key} path`);
+    }
+  }
+}
 const DEFAULT_ELO = Number.parseInt(process.env.DEFAULT_ELO || "1000", 10);
 const DEFAULT_MMR = Number.parseInt(process.env.DEFAULT_MMR || "1000", 10);
 const DEFAULT_INPUT_DELAY = Number.parseInt(process.env.INPUT_DELAY || "1", 10);
@@ -34,7 +48,7 @@ const MAX_MANIFEST_MAPS = 4096;
  * cancel without a winner or rating change. */
 const CONTROL_PROTOCOL_VERSION = 3;
 const MATCH_PROTOCOL_VERSION = 4;
-const P2P_PROTOCOL_VERSION = 17;
+const P2P_PROTOCOL_VERSION = 18;
 const COMPETITIVE_BLOCKED_MAP_KEYS = new Set(["vanilla:4"]);
 // Recently chosen map keys (most-recent last). Used to even out random map
 // selection so the pool cycles through every option before any repeats, instead
@@ -147,12 +161,15 @@ function loadDB() {
   return loadUserStore(DB_FILE);
 }
 
-function saveDB() {
+function saveDB(required = false) {
   try {
     fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
     atomicWriteFile(DB_FILE, JSON.stringify(db, null, 2));
+    return true;
   } catch (err) {
     console.error("[db] save failed:", err.message);
+    if (required) throw err;
+    return false;
   }
 }
 
@@ -444,7 +461,15 @@ function notifyIncompatibleQueuePair(a, b) {
 }
 
 function clientsCanQueueMatch(a, b) {
-  if (clientsProtocolCompatible(a, b)) return true;
+  if (clientsProtocolCompatible(a, b)) {
+    if (selectTransport(a, b)) return true;
+    const key = `${b.username}:${b.transport_caps}:${b.verified_eos_puid || ""}`;
+    if (a.last_incompatible_transport !== key) {
+      a.last_incompatible_transport = key;
+      sendError(a, "A queued player has no compatible gameplay transport with this client.");
+    }
+    return false;
+  }
   if (clientProtocolReady(a) && clientProtocolReady(b) &&
       clientBuildReady(a) && clientBuildReady(b)) {
     notifyIncompatibleQueuePair(a, b);
@@ -455,6 +480,7 @@ function clientsCanQueueMatch(a, b) {
 function sendServerInfo(client) {
   send(client, {
     type: "server_info",
+    release_channel: RELEASE_CHANNEL,
     control_protocol: CONTROL_PROTOCOL_VERSION,
     match_protocol: MATCH_PROTOCOL_VERSION,
     p2p_protocol: P2P_PROTOCOL_VERSION,
@@ -694,6 +720,12 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     sendError(b, "Opponent is using a different or incompatible Eggnogg+ build. Both players must update to the same build.");
     return false;
   }
+  const transport = selectTransport(a, b);
+  if (!transport) {
+    sendError(a, "No compatible gameplay transport with opponent.");
+    sendError(b, "No compatible gameplay transport with opponent.");
+    return false;
+  }
   const competitive = queueName === "competitive";
   const forcedKey = String(forcedMapKey || "").trim().toLowerCase();
   const shared = forcedKey
@@ -732,6 +764,9 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     control_protocol: a.control_protocol,
     match_protocol: a.match_protocol,
     p2p_protocol: a.p2p_protocol,
+    transport,
+    eos_socket: transport === "eos_p2p"
+      ? `Yule_${crypto.randomBytes(18).toString("base64url")}` : "",
     build_id: a.build_id,
     game_exe_id: a.game_exe_id,
     framework_dll_id: a.framework_dll_id,
@@ -760,6 +795,10 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     type: "match_found",
     match_protocol: match.match_protocol,
     p2p_protocol: match.p2p_protocol,
+    transport: match.transport,
+    peer_eos_puid: match.transport === "eos_p2p" ? joinClient.verified_eos_puid : "",
+    eos_socket: match.eos_socket,
+    eos_channel: 0,
     opponent_framework_version: joinClient.framework_version,
     opponent_build_id: joinClient.build_id,
     match_id: match.id,
@@ -785,6 +824,10 @@ function makeMatch(a, b, source, queueName, challengeId = 0, forcedMapKey = "") 
     type: "match_found",
     match_protocol: match.match_protocol,
     p2p_protocol: match.p2p_protocol,
+    transport: match.transport,
+    peer_eos_puid: match.transport === "eos_p2p" ? hostClient.verified_eos_puid : "",
+    eos_socket: match.eos_socket,
+    eos_channel: 0,
     opponent_framework_version: hostClient.framework_version,
     opponent_build_id: hostClient.build_id,
     match_id: match.id,
@@ -897,6 +940,7 @@ function relayAddressFor(peerEndpoint) {
 }
 
 function sendP2pPeerIfReady(match, username) {
+  if (match && match.transport !== "native_udp") return;
   const peer = p2pPeerUsername(match, username);
   if (!peer) return;
 
@@ -941,6 +985,7 @@ function registerP2pEndpoint(matchId, username, token, host, port, localPort, so
   }
 
   const match = activeMatches.get(matchId);
+  if (match && match.transport !== "native_udp") return;
   if (!match || match.finished || !matchHasUser(match, username)) {
     udpDiag(`[p2p#${matchId}] ignored ${source} probe: no active match for ${username} from=${host || "?"}:${port || 0}`);
     return;
@@ -1202,6 +1247,7 @@ function handleRegister(client, msg) {
   if (db.users[username]) return send(client, { type: "auth_fail", reason: "username taken" });
   const salt = crypto.randomBytes(16).toString("hex");
   db.users[username] = {
+    account_id: makeAccountId(new Set(Object.values(db.users).map((rec) => rec.account_id))),
     salt,
     hash: hashPassword(password, salt),
     friends: [],
@@ -1210,8 +1256,11 @@ function handleRegister(client, msg) {
     muted_users: [],
     created_at: new Date().toISOString(),
   };
+  if (!saveDB()) {
+    delete db.users[username];
+    return send(client, {type: "auth_fail", reason: "account storage unavailable"});
+  }
   setRating(username, DEFAULT_ELO, DEFAULT_MMR);
-  saveDB();
   saveRatings();
   authOk(client, username);
   console.log(`[auth] registered ${username}`);
@@ -1237,6 +1286,59 @@ function handleLogin(client, msg) {
   console.log(`[auth] login ${username}`);
 }
 
+function handleEosConnectTokenRequest(client) {
+  if (!client.username) return sendError(client, "Sign in to Yule before requesting EOS Connect");
+  if (!eosUserInfo) return sendError(client, "EOS Connect is unavailable");
+  const rec = ensureUserShape(client.username);
+  if (!rec || !rec.account_id) return sendError(client, "Yule account identity is unavailable");
+  try {
+    const {token, expiresAt} = eosUserInfo.issue(rec.account_id, client.username);
+    send(client, {type: "eos_connect_token", token, expires_at: expiresAt});
+  } catch (err) {
+    sendError(client, err.message);
+  }
+}
+
+let eosVerificationsInFlight = 0;
+async function handleEosPuidProof(client, msg) {
+  if (!client.username || !eosVerifierConfigured() ||
+      client.eos_verify_pending || eosVerificationsInFlight >= 8) {
+    return sendError(client, "EOS identity verification is unavailable");
+  }
+  const username = client.username;
+  const rec = ensureUserShape(username);
+  const accountId = rec && rec.account_id;
+  const puid = msg && msg.puid;
+  const idToken = msg && msg.id_token;
+  // Reauthentication may renew the already-bound identity during gameplay.
+  // It must never replace the opponent identity of an active match.
+  if (client.match_id && puid !== client.verified_eos_puid) {
+    return sendError(client, "EOS identity cannot change during a match");
+  }
+  if (!accountId || typeof puid !== "string" ||
+      typeof idToken !== "string") {
+    return sendError(client, "Invalid EOS identity proof");
+  }
+  client.eos_verify_pending = true;
+  eosVerificationsInFlight++;
+  try {
+    const proof = await verifyConnectIdToken(puid, idToken);
+    if (connectedClient(username) !== client ||
+        (client.match_id && proof.puid !== client.verified_eos_puid) ||
+        client.username !== username || proof.accountId !== accountId) {
+      return sendError(client, "EOS identity does not match this Yule account");
+    }
+    client.verified_eos_puid = proof.puid;
+    send(client, {type: "eos_puid_verified", puid: proof.puid});
+    tryMatchmaking();
+  } catch (_err) {
+    sendError(client, "EOS Connect identity verification failed");
+  } finally {
+    eosVerificationsInFlight--;
+    client.eos_verify_pending = false;
+  }
+}
+
 function handleMapManifest(client, msg) {
   client.maps = sanitizeManifest(msg.maps);
   client.mapIndex = mapIndex(client.maps);
@@ -1250,6 +1352,8 @@ function handleMapManifest(client, msg) {
   if (Object.prototype.hasOwnProperty.call(msg, "p2p_protocol")) {
     client.p2p_protocol = sanitizeProtocolVersion(msg.p2p_protocol);
   }
+  client.transport_caps = Object.prototype.hasOwnProperty.call(msg, "transport_caps")
+    ? sanitizeTransportCaps(msg.transport_caps, 0) : NATIVE_UDP;
   if (Object.prototype.hasOwnProperty.call(msg, "build_id")) {
     client.build_id = sanitizeFingerprint(msg.build_id);
   }
@@ -1970,10 +2074,16 @@ function handleMatchTransportFailure(client, msg) {
 }
 
 function dispatch(client, msg) {
+  if ((msg.type === "login" || msg.type === "register") &&
+      !acceptsReleaseChannel(RELEASE_CHANNEL, msg.release_channel)) {
+    return send(client, {type: "auth_fail", reason: "This server belongs to a different release channel."});
+  }
   switch (msg.type) {
     case "server_info": sendServerInfo(client); break;
     case "register": handleRegister(client, msg); break;
     case "login": handleLogin(client, msg); break;
+    case "eos_connect_token_request": handleEosConnectTokenRequest(client); break;
+    case "eos_puid_proof": void handleEosPuidProof(client, msg); break;
     case "map_manifest": handleMapManifest(client, msg); break;
     case "join_queue": handleJoinQueue(client, msg); break;
     case "leave_queue": handleLeaveQueue(client); break;
@@ -2048,12 +2158,14 @@ function destroyClient(client) {
 const db = loadDB();
 const ratings = loadRatings();
 const ratingSecret = loadServerSecret();
+ensureAccountIds(db.users);
 for (const username of Object.keys(db.users)) {
   ensureRating(username);
   ensureUserShape(username);
 }
-saveDB();
+saveDB(true);
 saveRatings();
+const eosUserInfo = startEosUserInfoServerFromEnv(process.env);
 
 const clients = new Set();
 const onlineByUser = new Map();
@@ -2337,7 +2449,7 @@ const matchSweepTimer = setInterval(() => {
   tryMatchmaking();
 }, MATCH_SWEEP_INTERVAL_MS);
 
-const server = net.createServer((socket) => {
+const server = createControlServer(controlListener, (socket) => {
   const client = {
     socket,
     buf: "",
@@ -2350,6 +2462,10 @@ const server = net.createServer((socket) => {
     control_protocol: 0,
     match_protocol: 0,
     p2p_protocol: 0,
+    transport_caps: NATIVE_UDP,
+    verified_eos_puid: "",
+    eos_verify_pending: false,
+    last_incompatible_transport: "",
     build_id: 0,
     game_exe_id: 0,
     framework_dll_id: 0,
@@ -2410,7 +2526,7 @@ const server = net.createServer((socket) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Eggnogg+ online server listening on ${HOST}:${PORT}`);
+  console.log(`Eggnogg+ online server ${controlListener.encrypted ? "TLS" : "LOCAL DEVELOPMENT TCP"} listening on ${HOST}:${PORT}`);
   console.log(`DB: ${DB_FILE}`);
   console.log(`Ratings: ${RATINGS_FILE}`);
 });
@@ -2418,6 +2534,20 @@ server.listen(PORT, HOST, () => {
 server.on("error", (err) => {
   console.error("Server error:", err.message);
   process.exit(1);
+});
+
+// Certificate renewal changes future handshakes without dropping accounts or
+// gameplay. Invalid replacement files do not replace the running TLS context.
+process.on("SIGHUP", () => {
+  if (!controlListener.encrypted) return;
+  try {
+    const updated = listenerConfig();
+    if (!updated.encrypted) throw new Error("TLS configuration removed");
+    server.setSecureContext(updated.options);
+    console.log("[control] TLS certificate reloaded");
+  } catch (_) {
+    console.error("[control] TLS certificate reload failed; retaining current context");
+  }
 });
 
 const udpServer = dgram.createSocket("udp4");

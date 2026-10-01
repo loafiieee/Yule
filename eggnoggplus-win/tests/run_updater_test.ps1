@@ -52,6 +52,29 @@ try {
     $port = ([System.Net.IPEndPoint]$probe.LocalEndpoint).Port
     $probe.Stop()
 
+    # Include a newly introduced DLL name; the updater must install files
+    # that were absent from older releases, without a filename allowlist.
+    $channelFixture = Join-Path $repo 'build\eos_update_channel'
+    New-Item -ItemType Directory -Force -Path $channelFixture | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'README.txt') -Destination $channelFixture -Force
+    [IO.File]::WriteAllText((Join-Path $channelFixture 'EOSSDK-Win32-Shipping.dll'),
+        'Updater fixture only; this is not an executable SDK binary.')
+    $betaFixture = Join-Path $channelFixture 'beta_runtime'
+    New-Item -ItemType Directory -Force -Path $betaFixture | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $betaFixture 'SDL2.dll'),
+        [Text.Encoding]::ASCII.GetBytes("YULE_CHANNEL_SWITCH=1`0YULE_FRAMEWORK_VERSION=99.0`0beta fixture"))
+    [IO.File]::WriteAllText((Join-Path $betaFixture 'NewTransportRuntime.dll'), 'New beta runtime fixture.')
+    $betaManifest = [ordered]@{
+        channel_version = 1; release_channel = 'beta'; channel_switch = 1
+        version = '99.0'; base = "http://127.0.0.1:$port/beta_runtime/"
+        server_host = 'beta.loafiieee.com'; server_port = 47782; server_tls = $true
+        files = @('SDL2.dll', 'NewTransportRuntime.dll') | ForEach-Object {
+            $fixturePath = Join-Path $betaFixture $_
+            [ordered]@{path=$_; sha256=(Get-FileHash $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                size=(Get-Item $fixturePath).Length; overwrite=$true}
+        }
+    }
+    [IO.File]::WriteAllText((Join-Path $channelFixture 'beta.json'), ($betaManifest | ConvertTo-Json -Depth 5))
     $server = Start-Job -ScriptBlock {
         param($pythonPath, $listenPort, $workingDirectory)
         Set-Location -LiteralPath $workingDirectory
@@ -59,7 +82,7 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "Temporary loopback server exited with code $LASTEXITCODE."
         }
-    } -ArgumentList $python.Source, $port, $repo
+    } -ArgumentList $python.Source, $port, $channelFixture
     $base = "http://127.0.0.1:$port/"
     $ready = $false
     for ($attempt = 0; $attempt -lt 50; $attempt++) {
@@ -103,7 +126,8 @@ try {
         Get-ChildItem -LiteralPath $buildRoot -Directory -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.Name -like 'update_ext_test_tmp_*' -or
-                $_.Name -like 'update_ext_http_tmp_*'
+                $_.Name -like 'update_ext_http_tmp_*' -or
+                $_.Name -eq 'eos_update_channel'
             } |
             ForEach-Object {
                 $candidate = [System.IO.Path]::GetFullPath($_.FullName)

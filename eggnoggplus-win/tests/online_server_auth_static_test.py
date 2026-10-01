@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "online_server" / "server.js").read_text(encoding="utf-8")
 
 assert "const MATCH_PROTOCOL_VERSION = 4;" in SOURCE
-assert "const P2P_PROTOCOL_VERSION = 17;" in SOURCE
+assert "const P2P_PROTOCOL_VERSION = 18;" in SOURCE
 assert 'process.env.CLIENT_IDLE_TIMEOUT_MS || "120000"' in SOURCE
 assert "socket.setTimeout(CLIENT_IDLE_TIMEOUT_MS);" in SOURCE
 assert 'case "ping": send(client, { type: "pong", seq: msg.seq || 0 }); break;' in SOURCE
@@ -59,7 +59,7 @@ for body in (server_info, auth_ok):
     assert "cap_p2p_relay: P2P_RELAY_ENABLED ? 1 : 0" in body
     assert "cap_client_build_gate: 1" in body
 assert 'case "server_info": sendServerInfo(client); break;' in SOURCE
-assert "sendServerInfo(client);" in SOURCE[SOURCE.index("const server = net.createServer") :]
+assert "sendServerInfo(client);" in SOURCE[SOURCE.index("const server = createControlServer") :]
 assert "clientProtocolReady" in SOURCE
 assert "clientBuildReady" in SOURCE
 assert "clientsProtocolCompatible" in SOURCE

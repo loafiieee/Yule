@@ -15,6 +15,7 @@ eggnoggplus-win/dist/installer/windows/assets/*
 !eggnoggplus-win/dist/installer/windows/assets/steam_icon.png
 eggnoggplus-win/dist/installer/linux/*
 !eggnoggplus-win/dist/installer/linux/install-linux.sh
+!eggnoggplus-win/dist/installer/linux/install-linux.py
 !eggnoggplus-win/dist/installer/linux/UNINSTALL-LINUX.sh
 !eggnoggplus-win/dist/installer/linux/README.md
 !eggnoggplus-win/dist/installer/linux/assets/
@@ -31,7 +32,7 @@ eggnoggplus-win/build/command_history_test.tmp
 yule-src/
 yule-src-public/
 .claude/
-.github/
+/.github/
 .vscode/
 eggnoggplus-win.zip
 eggnoggplus-win/eggnoggplus.exe
@@ -45,3 +46,29 @@ eggnoggplus-win/data/tune.txt
 eggnoggplus-win/data/tune[1-7].txt
 eggnoggplus-win/data/tune-work.txt
 
+# Private credentials, local service configuration and runtime diagnostics.
+.env
+.env.*
+*.env
+*.env.*
+*.key
+*.key.*
+*.pem
+*.pem.*
+*.pfx
+*.pfx.*
+*.p12
+*.p12.*
+*.keystore
+*_secret.txt*
+credentials*.json
+credentials*.ini
+!*.env.example
+!.env.example
+__pycache__/
+*.py[cod]
+*.log
+*.jsonl
+*.dmp
+node_modules/
+.yule-update-backups/

@@ -226,7 +226,7 @@ In normal gameplay there should not be a gameplay-authoritative host. Both clien
 Recommended backend stack:
 
 - Go service for the first backend because it can handle HTTP/WebSocket control traffic and UDP relay/signaling in one deployable binary.
-- PostgreSQL for accounts, player profile data, MMR, match history, cosmetics ownership, and friend data.
+- PostgreSQL for accounts, player profile data, MMR, match history, and friend data.
 - In-memory queue state at first, with Redis later if queues need to span multiple backend instances.
 - HTTPS REST for account/profile operations.
 - WebSocket for live queue, matchmaking, match found, ready checks, and post-match result flow.
@@ -342,7 +342,7 @@ Both players must run a build using the server's advertised tuple. The human-fac
 release label is diagnostic only; safe pairing requires both the numeric protocol tuple
 and exact build fingerprint tuple.
 
-The current client requires control v3/match v4/P2P v17 plus relay and client-build-gate
+The current client requires control v3/match v4/P2P v18 plus relay and client-build-gate
 capabilities. Deploy and restart this matching server revision before launching the
 rebuilt client, then require the TCP/UDP deployment preflight to report both build gating
 and UDP relay support.
@@ -380,14 +380,14 @@ it reports READY and still waits until the server has received READY from both
 clients and broadcasts the gameplay-start commit. Pre-commit failure is an
 explicit no-contest setup abort with no win/loss screen or Elo change. Setup has
 a bounded timeout and never exposes a frozen GAME frame. Generic cosmetic profile/asset
-packets are compile-disabled in `ggpo_net`. The only presentation preference exchanged is
+packets have been removed from `ggpo_net`. The only presentation preference exchanged is
 the fixed-size player palette tuple described below.
 
-GGPO UDP v17 authenticates every peer datagram. The server supplies both peers one
+GGPO P2P v18 authenticates every peer datagram. The server supplies both peers one
 identical 256-bit `p2p_auth_token` as exactly 64 hexadecimal characters; the older
 per-user `p2p_token` remains only server-probe authorization. `ggpo_net_set_match_token`
 decodes and domain-separates the match secret. Each packet uses HMAC-SHA-256 truncated to
-128 bits, with a direction key binding v17, sender role, and a 64-bit CSPRNG session ID.
+128 bits, with a direction key binding the protocol, sender role, and a 64-bit CSPRNG session ID.
 The receiver verifies the role and tag in constant time before source/session adoption,
 then applies an exact 4,096-packet replay window. Endpoint or session migration is
 permitted only through an authenticated HELLO at frame zero before confirmation. Missing
@@ -490,7 +490,7 @@ not unilateral late-snapshot application.
 
 ## Rollback Correctness Status
 
-The current authenticated v17 transport still has known desync and recovery hazards. The
+The current authenticated v18 transport still has known desync and recovery hazards. The
 full design and acceptance contract are in
 `docs/superpowers/specs/2026-07-17-online-rollback-correctness-design.md`; prioritized work
 is tracked in `TODO.txt`.
@@ -664,7 +664,7 @@ Still-open UX work includes:
 - ping and direct/relay route display on the player-facing match card;
 - live small-window, DPI, mouse-hitbox, native-cursor, and two-client acceptance.
 
-## Player Identity And Cosmetics
+## Player Identity And Palette
 
 Arbitrary cosmetics and character customization remain outside the online protocol. Online
 match setup must not send cosmetic profiles, assets, hats, outfits, or mod-defined
@@ -678,13 +678,13 @@ authoritative frame-zero restore, the client applies each tuple to its server-as
 player slot. The palette array is presentation-only and is not in rollback state or
 gameplay checksums. Socket retries keep the local choice but discard stale peer proof.
 
-Current online cosmetic rules:
+Current online palette rules:
 
 - usernames and player indicators can be UI-only overlays
 - gameplay match setup exchanges only the two fixed built-in palette IDs
 - the palette tuple is repeated only through the frame-zero prematch barrier
-- cosmetics do not affect gameplay simulation
-- cosmetics are not included in rollback state checksums or desync decisions
+- palette choices do not affect gameplay simulation
+- palette choices are not included in rollback state checksums or desync decisions
 - generic cosmetic assets are never transferred and cannot block a match
 - a malformed, conflicting, or one-sided palette tuple does block prematch rather than
   silently assigning the wrong player's colors
@@ -765,7 +765,7 @@ roadmap item.
 The following prototype milestones are implemented in source and covered by focused
 tests: data/control messages, account/queue/friend/challenge server flow, authoritative
 friend-challenge map picking, built-in hub,
-strict client control transport, map manifests, symmetric direct signaling, v17 packet
+strict client control transport, map manifests, symmetric direct signaling, v18 packet
  authentication, bounded direct-to-relay P2P retry, canonical winner-slot reporting with
  native win-sequence preservation, post-content rollback-layout freeze/proof, monotonic
 contiguous input confirmation and selective resend, hard input/checksum recovery,
@@ -833,7 +833,7 @@ Existing debug/manual probes:
 4. F6/F7 authenticated localhost host/join session after `ggpo.net key`.
 
 Focused automated coverage now includes the strict control parser and hook lifecycle,
-real-socket send-queue behavior, v17 packet authentication/replay rejection and paired
+real-socket send-queue behavior, v18 packet authentication/replay rejection and paired
 prematch flow/layout finalization and mismatch/retry guards, server auth/token generation,
 result-toast routing, gameplay-mod guards,
 credential storage, map V2/content bridge and map-script sandbox/snapshot behavior,

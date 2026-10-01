@@ -147,8 +147,8 @@ try {
     )
     Invoke-NativeTest 'nonblocking TCP transport tests' '.\build\net_ext_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
-        '-D_WIN32_WINNT=0x0601', 'tests\net_ext_test.c', 'net_ext.c', 'online_control.c',
-        '-o', 'build\net_ext_test.exe', '-lws2_32', '-liphlpapi'
+        '-D_WIN32_WINNT=0x0601', 'tests\net_ext_test.c', 'net_ext.c', 'net_tls.c', 'online_control.c',
+        '-o', 'build\net_ext_test.exe', '-lws2_32', '-liphlpapi', '-lsecur32'
     )
     Invoke-NativeTest 'online control parser/lifecycle tests' '.\build\online_control_test.exe' @(
         '-m32', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
@@ -273,13 +273,14 @@ try {
         'preview_bridge.c', 'preview_http.c', 'preview_package.c', 'preview_stage.c',
         'lua_manager.c', 'mod_api.c', 'mod_callbacks.c', 'mod_fs.c', 'mod_http.c', 'mod_json.c',
         'ggpo_ext.c',
-        'ggpo_loopback.c', 'ggpo_local.c', 'ggpo_net.c',
+        'ggpo_loopback.c', 'ggpo_local.c', 'ggpo_net.c', 'ggpo_transport_native.c',
+        'ggpo_transport_eos.c', 'eos_runtime.c',
         'fp_control.c', 'rollback_schema.c',
-        'font_ext.c', 'texture_ext.c', 'log.c', 'net_ext.c', 'update_ext.c',
+        'font_ext.c', 'ui_text.c', 'texture_ext.c', 'log.c', 'net_ext.c', 'net_tls.c', 'update_ext.c',
         '-o', 'build\state_serializer_test.exe',
         '-Wl,--gc-sections',
-        '-lkernel32', '-luser32', '-ladvapi32', '-lopengl32',
-        '-lluajit-5.1', '-lws2_32', '-liphlpapi', '-lwinhttp', '-lbcrypt',
+        '-lkernel32', '-luser32', '-lgdi32', '-ladvapi32', '-lopengl32',
+        '-lluajit-5.1', '-lws2_32', '-liphlpapi', '-lwinhttp', '-lbcrypt', '-lsecur32',
         '-lcomdlg32', '-lshell32', '-lole32', '-lm'
     )
 
@@ -290,6 +291,7 @@ try {
 
     foreach ($script in @(
         'tools\embed_ui_helpers.py',
+        'tools\embed_ui_fonts.py',
         'tests\compile_sources_static_test.py',
         'tests\entity_render_source_test.py',
         'tests\release_packaging_static_test.py',

@@ -4,7 +4,19 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const {loadUserStore, atomicWriteFile, updateUserRecord} = require("../online_server/storage");
+const {loadUserStore, atomicWriteFile, updateUserRecord, ensureAccountIds} = require("../online_server/storage");
+
+test("legacy account IDs are stable, unique, and reject corrupt mappings", () => {
+  const users = {alice: {}, bob: {}, carol: {account_id: "a".repeat(32)}};
+  ensureAccountIds(users);
+  const ids = Object.values(users).map((rec) => rec.account_id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.every((id) => /^[0-9a-f]{32}$/.test(id)));
+  ensureAccountIds(users);
+  assert.deepEqual(Object.values(users).map((rec) => rec.account_id), ids);
+  assert.throws(() => ensureAccountIds({alice: {account_id: ids[0]}, bob: {account_id: ids[0]}}), /duplicate/);
+  assert.throws(() => ensureAccountIds({alice: {account_id: "bad"}}), /Invalid/);
+});
 
 test("stores reject damaged existing files and have no inherited users", t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eggnogg-store-"));

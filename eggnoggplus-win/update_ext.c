@@ -23,6 +23,7 @@
  */
 const char g_yule_framework_version_marker[] =
     "YULE_FRAMEWORK_VERSION=" FRAMEWORK_VERSION;
+const char g_yule_channel_switch_marker[] = "YULE_CHANNEL_SWITCH=1";
 
 #if defined(UPDATE_EXT_TEST) || defined(UPDATE_EXT_HELPER)
 #define LOG_DEBUG(...) ((void)0)
@@ -39,6 +40,11 @@ const char g_yule_framework_version_marker[] =
 
 #define UPDATE_DEFAULT_CHANNEL \
     "https://loafiieee.com/yule/releases/latest.json"
+#define UPDATE_BETA_CHANNEL \
+    "https://loafiieee.com/yule/releases/beta.json"
+#define UPDATE_ACTIVE_REL "mods/update_channel.json"
+#define UPDATE_CACHE_REL "mods/update_channels"
+#define UPDATE_PROFILE_CAP 16384
 #define UPDATE_CFG_REL              "mods\\modframework.cfg"
 #define UPDATE_STAGING_REL          "mods\\update_staging"
 #define UPDATE_JOURNAL_REL          "mods\\update_staging\\transaction.journal"
@@ -65,6 +71,11 @@ typedef struct UpdateManifest {
     char base[UPDATE_URL_CAP];
     UpdateFileSpec files[UPDATE_MAX_FILES];
     size_t file_count;
+    char release_channel[16];
+    int channel_switch;
+    char server_host[128];
+    uint16_t server_port;
+    int server_tls;
 } UpdateManifest;
 
 typedef struct UpdateState {
@@ -78,7 +89,13 @@ typedef struct UpdateState {
     UpdateManifest manifest;
     HANDLE worker;
     int worker_active;
+    UpdateManifest active;
+    int active_invalid;
+    char switch_target[16];
 } UpdateState;
+
+static void update_load_active(void);
+static void update_ensure_channel(void);
 
 static INIT_ONCE g_update_once = INIT_ONCE_STATIC_INIT;
 static UpdateState g_update;
@@ -991,6 +1008,7 @@ static int update_manifest_parse(const char* json, UpdateManifest* manifest) {
     int have_files = 0;
     uint64_t channel_version = 0;
     uint64_t total = 0;
+    unsigned channel_fields = 0;
     size_t i;
     if (!manifest || !update_json_reader_init(&r, json) ||
         !update_json_take(&r, '{')) return 0;
@@ -1016,6 +1034,28 @@ static int update_manifest_parse(const char* json, UpdateManifest* manifest) {
                 !update_json_files_array(&r, parsed.files, UPDATE_MAX_FILES,
                                          &parsed.file_count)) return 0;
             have_files = 1;
+        } else if (strcmp(key, "release_channel") == 0) {
+            if ((channel_fields & 1u) || !update_json_string(&r,
+                    parsed.release_channel, sizeof(parsed.release_channel))) return 0;
+            channel_fields |= 1u;
+        } else if (strcmp(key, "channel_switch") == 0) {
+            uint64_t api;
+            if ((channel_fields & 2u) || !update_json_uint64(&r, &api) || api != 1) return 0;
+            parsed.channel_switch = 1;
+            channel_fields |= 2u;
+        } else if (strcmp(key, "server_host") == 0) {
+            if ((channel_fields & 4u) || !update_json_string(&r,
+                    parsed.server_host, sizeof(parsed.server_host))) return 0;
+            channel_fields |= 4u;
+        } else if (strcmp(key, "server_port") == 0) {
+            uint64_t port;
+            if ((channel_fields & 8u) || !update_json_uint64(&r, &port) ||
+                    !port || port > 65535) return 0;
+            parsed.server_port = (uint16_t)port;
+            channel_fields |= 8u;
+        } else if (strcmp(key, "server_tls") == 0) {
+            if ((channel_fields & 16u) || !update_json_bool(&r, &parsed.server_tls)) return 0;
+            channel_fields |= 16u;
         } else if (!update_json_skip_value(&r, 1)) {
             return 0;
         }
@@ -1036,6 +1076,36 @@ static int update_manifest_parse(const char* json, UpdateManifest* manifest) {
         total += parsed.files[i].size;
     }
     if (total > UPDATE_TOTAL_MAX_BYTES) return 0;
+    if (channel_fields) {
+        if (!(channel_fields & 1u) || !(channel_fields & 2u) ||
+            (strcmp(parsed.release_channel, "stable") != 0 &&
+             strcmp(parsed.release_channel, "beta") != 0) ||
+            parsed.file_count >= UPDATE_MAX_FILES) return 0;
+        for (i = 0; i < parsed.file_count; i++) if (!parsed.files[i].overwrite) return 0;
+        if (channel_fields & 28u) {
+            const unsigned char* p = (const unsigned char*)parsed.server_host;
+            if ((channel_fields & 28u) != 28u || !*p) return 0;
+            while (*p) {
+                if (!(isalnum(*p) || *p == '-' || *p == '.')) return 0;
+                p++;
+            }
+        }
+        if (strcmp(parsed.release_channel, "beta") == 0 &&
+            (!parsed.server_tls || !parsed.server_host[0] ||
+             (_stricmp(parsed.server_host, "eggnogg.loafiieee.com") == 0 &&
+              parsed.server_port == 47778))) return 0;
+    }
+    /* The updater owns channel metadata and caches. A remote payload cannot
+     * overwrite these or the player's saved configuration. */
+    for (i = 0; i < parsed.file_count; i++) {
+        const char* p = parsed.files[i].path;
+        if (_stricmp(p, UPDATE_ACTIVE_REL) == 0 ||
+            _strnicmp(p, UPDATE_CACHE_REL, strlen(UPDATE_CACHE_REL)) == 0 ||
+            _strnicmp(p, "mods/update_staging", 19) == 0 ||
+            _stricmp(p, "mods/modframework.cfg") == 0 ||
+            _stricmp(p, "mods/online_hub.cfg") == 0 ||
+            _stricmp(p, "mods/online_hub.beta.cfg") == 0) return 0;
+    }
     *manifest = parsed;
     return 1;
 }
@@ -1405,6 +1475,7 @@ int update_ext_config_get(const char* key, char* out, size_t cap) {
 static void update_read_config(void) {
     char value[UPDATE_URL_CAP];
     int auto_update = 1;
+    update_ensure_channel();
     EnterCriticalSection(&g_update.cfg_lock);
     if (update_cfg_get("auto_update", value, sizeof(value))) {
         char* end = NULL;
@@ -1413,7 +1484,13 @@ static void update_read_config(void) {
         if (end && *end == '\0') auto_update = parsed != 0;
     }
     InterlockedExchange(&g_update_auto, auto_update);
-    if (update_cfg_get("update_channel_url", value, sizeof(value))) {
+    EnterCriticalSection(&g_update.lock);
+    update_copy_trunc(g_update.channel_url, sizeof(g_update.channel_url),
+        strcmp(g_update.active.release_channel, "beta") == 0
+            ? UPDATE_BETA_CHANNEL : UPDATE_DEFAULT_CHANNEL);
+    LeaveCriticalSection(&g_update.lock);
+    if (update_cfg_get(strcmp(g_update.active.release_channel, "beta") == 0
+            ? "update_beta_url" : "update_channel_url", value, sizeof(value))) {
         if (update_url_allowed(value, 0)) {
             EnterCriticalSection(&g_update.lock);
             update_copy_trunc(g_update.channel_url, sizeof(g_update.channel_url), value);
@@ -1816,6 +1893,8 @@ static int update_download_verified(const UpdateManifest* manifest,
     }
     return 0;
 }
+
+#include "update_channels.inc"
 
 /* ---- Crash-safe transaction journal ----------------------------------- */
 
@@ -2780,7 +2859,8 @@ static int update_recover_journal(void) {
 static void update_reconcile_legacy_backups(void) {
     static const char* const files[] = {
         "SDL2.dll", "lua51.dll", "libgcc_s_dw2-1.dll",
-        "libwinpthread-1.dll", "SDL2_mixer.dll"
+        "libwinpthread-1.dll", "SDL2_mixer.dll",
+        "EOSSDK-Win32-Shipping.dll"
     };
     size_t i;
     for (i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
@@ -3068,6 +3148,9 @@ static int update_apply_manifest(const UpdateManifest* manifest,
     int journal_written = 0;
     int mutex_locked = 0;
     int ok = 0;
+    char profile[UPDATE_PROFILE_CAP];
+    UpdateFileSpec profile_spec;
+    size_t payload_count;
     if (!manifest || !error || error_cap == 0) return 0;
     error[0] = '\0';
     mutex = update_named_mutex("Install");
@@ -3086,7 +3169,25 @@ static int update_apply_manifest(const UpdateManifest* manifest,
         goto done;
     }
     update_reconcile_legacy_backups();
-    if (update_targets_match(manifest)) {
+    payload_count = manifest->file_count;
+    memset(&profile_spec, 0, sizeof(profile_spec));
+    if (manifest->channel_switch) {
+        if (payload_count >= UPDATE_MAX_FILES ||
+            !update_manifest_encode(manifest, profile, sizeof(profile)) ||
+            !update_snapshot_current(manifest)) {
+            snprintf(error, error_cap, "cannot preserve current channel runtime");
+            goto done;
+        }
+        update_copy_trunc(profile_spec.path, sizeof(profile_spec.path), UPDATE_ACTIVE_REL);
+        profile_spec.size = strlen(profile);
+        profile_spec.overwrite = 1;
+        if (!update_sha256_hex(profile, (size_t)profile_spec.size, profile_spec.sha256)) {
+            snprintf(error, error_cap, "cannot fingerprint channel profile");
+            goto done;
+        }
+        payload_count++;
+    }
+    if (!manifest->channel_switch && update_targets_match(manifest)) {
         LOG_INFO("update: release %s is already staged by another process",
                  manifest->version);
         ok = 1;
@@ -3104,8 +3205,9 @@ static int update_apply_manifest(const UpdateManifest* manifest,
         goto done;
     }
     memset(entries, 0, sizeof(entries));
-    for (i = 0; i < manifest->file_count; i++) {
-        const UpdateFileSpec* spec = &manifest->files[i];
+    for (i = 0; i < payload_count; i++) {
+        const int is_profile = i == manifest->file_count;
+        const UpdateFileSpec* spec = is_profile ? &profile_spec : &manifest->files[i];
         DWORD attrs;
         int exists;
         UpdateApplyEntry* entry;
@@ -3195,9 +3297,16 @@ static int update_apply_manifest(const UpdateManifest* manifest,
         update_set_status(UPDATE_APPLYING, "downloading %s (%lu/%lu)",
                           spec->path, (unsigned long)(i + 1),
                           (unsigned long)manifest->file_count);
-        if (!update_download_verified(manifest, spec, staging_root,
-                                      entry->staged, sizeof(entry->staged),
-                                      download_error, sizeof(download_error))) {
+        download_error[0] = '\0';
+        if (!(is_profile
+                ? (update_prepare_relative_path(staging_root, spec->path,
+                       entry->staged, sizeof(entry->staged), 1) &&
+                   update_write_bytes_atomic(entry->staged, profile, strlen(profile)))
+                : (manifest->channel_switch
+                    ? update_stage_channel_file(manifest, spec, staging_root,
+                         entry->staged, sizeof(entry->staged), download_error, sizeof(download_error))
+                    : update_download_verified(manifest, spec, staging_root,
+                         entry->staged, sizeof(entry->staged), download_error, sizeof(download_error))))) {
             snprintf(error, error_cap, "%s", download_error);
             goto fail;
         }
@@ -3213,6 +3322,10 @@ static int update_apply_manifest(const UpdateManifest* manifest,
     if (count == 0) {
         ok = 1;
         goto done;
+    }
+    if (manifest->channel_switch && !update_cache_publish(manifest, staging_root)) {
+        snprintf(error, error_cap, "channel cache or runtime marker failed verification");
+        goto fail;
     }
     for (i = 0; i < count; i++) {
         if (!update_file_matches(entries[i].staged, &entries[i].spec)) {
@@ -3582,6 +3695,10 @@ static int update_run_check(void) {
         LOG_WARN("update: restart the game to finish recovery");
         return 0;
     }
+    if (g_update.active_invalid) {
+        update_set_error("channel state is invalid; repair the installation with its installer");
+        return 0;
+    }
     if (update_cancelled()) return 0;
     EnterCriticalSection(&g_update.lock);
     update_copy_trunc(channel, sizeof(channel), g_update.channel_url);
@@ -3603,6 +3720,12 @@ static int update_run_check(void) {
         return 0;
     }
     free(json);
+    if ((manifest.release_channel[0] &&
+         strcmp(manifest.release_channel, update_ext_channel()) != 0) ||
+        (update_ext_beta_unlocked() && !manifest.channel_switch)) {
+        update_set_error("release manifest does not support the selected channel");
+        return 0;
+    }
     comparison = update_version_cmp(manifest.version, FRAMEWORK_VERSION);
     EnterCriticalSection(&g_update.lock);
     update_copy_trunc(g_update.latest_version,
@@ -3624,6 +3747,51 @@ static int update_run_check(void) {
     return 1;
 }
 
+static void update_run_switch(void) {
+    UpdateManifest manifest;
+    char target[16], url[UPDATE_URL_CAP], value[UPDATE_URL_CAP], error[UPDATE_STATUS_CAP];
+    unsigned char* json = NULL;
+    size_t length = 0;
+    EnterCriticalSection(&g_update.lock);
+    update_copy_trunc(target, sizeof(target), g_update.switch_target);
+    LeaveCriticalSection(&g_update.lock);
+    if (!update_recover_under_mutex() ||
+        InterlockedCompareExchange(&g_update_recovery_restart, 0, 0)) {
+        update_set_error("finish the pending update before switching channels");
+        return;
+    }
+    update_set_status(UPDATE_CHECKING, "preparing %s channel...", target);
+    if (!update_cache_load(target, &manifest)) {
+        update_copy_trunc(url, sizeof(url), strcmp(target, "beta") == 0
+            ? UPDATE_BETA_CHANNEL : UPDATE_DEFAULT_CHANNEL);
+        if (update_ext_config_get(strcmp(target, "beta") == 0
+                ? "update_beta_url" : "update_channel_url", value, sizeof(value)) &&
+            update_url_allowed(value, 0)) update_copy_trunc(url, sizeof(url), value);
+        if (!update_http_get(url, UPDATE_MANIFEST_MAX_BYTES, &json, &length, error, sizeof(error))) {
+            update_set_error("%s", error);
+            LOG_WARN("update: %s channel unavailable: %s", target, error);
+            return;
+        }
+        if (!length || !update_manifest_parse((const char*)json, &manifest)) {
+            free(json);
+            update_set_error("invalid channel manifest");
+            return;
+        }
+        free(json);
+    }
+    if (!manifest.channel_switch || strcmp(manifest.release_channel, target) != 0) {
+        update_set_error("target needs a release with channel switching support");
+        return;
+    }
+    /* A channel switch is explicit. Never compare its version with the other
+     * channel: returning to stable usually is a numeric downgrade. */
+    EnterCriticalSection(&g_update.lock);
+    g_update.manifest = manifest;
+    update_copy_trunc(g_update.latest_version, sizeof(g_update.latest_version), manifest.version);
+    LeaveCriticalSection(&g_update.lock);
+    (void)update_run_apply();
+}
+
 static DWORD WINAPI update_worker_thread(LPVOID parameter) {
     int mode = (int)(uintptr_t)parameter;
     if (mode == UPDATE_WORK_CHECK) {
@@ -3633,6 +3801,8 @@ static DWORD WINAPI update_worker_thread(LPVOID parameter) {
              InterlockedExchange(&g_update_apply_requested, 0) != 0)) {
             (void)update_run_apply();
         }
+    } else if (mode == 3) {
+        update_run_switch();
     } else if (mode == UPDATE_WORK_APPLY) {
         InterlockedExchange(&g_update_apply_requested, 0);
         (void)update_run_apply();
@@ -3654,6 +3824,7 @@ static DWORD WINAPI update_worker_thread(LPVOID parameter) {
         LeaveCriticalSection(&g_update.lock);
     } else {
         EnterCriticalSection(&g_update.lock);
+        g_update.switch_target[0] = '\0';
         g_update.worker_active = 0;
         LeaveCriticalSection(&g_update.lock);
     }
@@ -3699,6 +3870,41 @@ void update_ext_boot(void) {
 static int update_check_status_allows_start(UpdateStatus status) {
     return status == UPDATE_IDLE || status == UPDATE_UP_TO_DATE ||
            status == UPDATE_ERROR;
+}
+
+int update_ext_switch_channel(const char* channel) {
+    int started = 0;
+    update_ensure_channel();
+    if (!update_channel_name_valid(channel) || g_update.active_invalid) return 0;
+    if (strcmp(channel, update_ext_channel()) == 0) {
+        int idle;
+        EnterCriticalSection(&g_update.lock);
+        idle = !g_update.worker_active && update_ext_status() != UPDATE_RESTART_PENDING;
+        LeaveCriticalSection(&g_update.lock);
+        return idle;
+    }
+    if (strcmp(channel, "beta") == 0 && !update_ext_config_set("beta_unlocked", "1")) return 0;
+    EnterCriticalSection(&g_update.lock);
+    if (!g_update.worker_active && update_ext_status() != UPDATE_RESTART_PENDING &&
+        !update_cancelled()) {
+        update_copy_trunc(g_update.switch_target, sizeof(g_update.switch_target), channel);
+        InterlockedExchange(&g_update_apply_requested, 0);
+        update_copy_trunc(g_update.status_line, sizeof(g_update.status_line), "preparing channel switch...");
+        InterlockedExchange(&g_update_status, UPDATE_CHECKING);
+        started = update_start_worker_locked(3);
+        if (!started) g_update.switch_target[0] = '\0';
+    }
+    LeaveCriticalSection(&g_update.lock);
+    return started;
+}
+
+int update_ext_switch_pending(void) {
+    int pending;
+    update_ensure_init();
+    EnterCriticalSection(&g_update.lock);
+    pending = g_update.switch_target[0] != '\0';
+    LeaveCriticalSection(&g_update.lock);
+    return pending || update_ext_status() == UPDATE_RESTART_PENDING;
 }
 
 void update_ext_begin_check(void) {
@@ -4456,12 +4662,15 @@ static void update_test_http_apply(const char* base) {
     char root[UPDATE_ABS_CAP];
     char mods[UPDATE_ABS_CAP];
     char target[UPDATE_ABS_CAP];
+    char eos_target[UPDATE_ABS_CAP];
     char url[UPDATE_URL_CAP];
     char error[UPDATE_STATUS_CAP];
     unsigned char* expected = NULL;
     unsigned char* installed = NULL;
+    unsigned char* expected_eos = NULL;
     size_t expected_len = 0;
     size_t installed_len = 0;
+    size_t expected_eos_len = 0;
     UpdateManifest manifest;
     DWORD cwd_len;
     if (!base || !*base) return;
@@ -4469,6 +4678,10 @@ static void update_test_http_apply(const char* base) {
     assert(update_http_get(url, UPDATE_FILE_MAX_BYTES,
                            &expected, &expected_len, error, sizeof(error)));
     assert(expected_len > 0);
+    assert(update_build_download_url(base, "EOSSDK-Win32-Shipping.dll", url, sizeof(url)));
+    assert(update_http_get(url, UPDATE_FILE_MAX_BYTES,
+                           &expected_eos, &expected_eos_len, error, sizeof(error)));
+    assert(expected_eos_len > 0);
     cwd_len = GetCurrentDirectoryA(sizeof(cwd), cwd);
     assert(cwd_len > 0 && cwd_len < sizeof(cwd));
     assert(snprintf(root, sizeof(root), "%s\\build\\update_ext_http_tmp_%lu",
@@ -4482,17 +4695,26 @@ static void update_test_http_apply(const char* base) {
     assert(update_create_directory(mods));
     assert(update_join_path(target, sizeof(target), root, "README.txt"));
     update_test_write(target, "old");
+    assert(update_join_path(eos_target, sizeof(eos_target), root,
+                            "EOSSDK-Win32-Shipping.dll"));
+    assert(GetFileAttributesA(eos_target) == INVALID_FILE_ATTRIBUTES);
 
     memset(&manifest, 0, sizeof(manifest));
     assert(update_copy(manifest.version, sizeof(manifest.version), "9.0"));
     assert(update_copy(manifest.base, sizeof(manifest.base), base));
-    manifest.file_count = 1;
+    manifest.file_count = 2;
     assert(update_copy(manifest.files[0].path,
                        sizeof(manifest.files[0].path), "README.txt"));
     assert(update_sha256_hex(expected, expected_len,
                              manifest.files[0].sha256));
     manifest.files[0].size = expected_len;
     manifest.files[0].overwrite = 1;
+    assert(update_copy(manifest.files[1].path, sizeof(manifest.files[1].path),
+                       "EOSSDK-Win32-Shipping.dll"));
+    assert(update_sha256_hex(expected_eos, expected_eos_len,
+                             manifest.files[1].sha256));
+    manifest.files[1].size = expected_eos_len;
+    manifest.files[1].overwrite = 1;
     InterlockedExchange(&g_update_cancel, 0);
     assert(update_apply_manifest(&manifest, error, sizeof(error)));
     assert(update_read_file_bounded(target, UPDATE_FILE_MAX_BYTES,
@@ -4500,10 +4722,19 @@ static void update_test_http_apply(const char* base) {
     assert(installed_len == expected_len);
     assert(memcmp(installed, expected, expected_len) == 0);
     free(installed);
+    installed = NULL;
+    assert(update_read_file_bounded(eos_target, UPDATE_FILE_MAX_BYTES,
+                                    &installed, &installed_len));
+    assert(installed_len == expected_eos_len);
+    assert(memcmp(installed, expected_eos, expected_eos_len) == 0);
+    free(installed);
+    free(expected_eos);
     free(expected);
     assert(update_recover_journal());
     assert(update_remove_tree(root));
 }
+
+#include "tests/update_channels_test.inc"
 
 int main(void) {
     char hex[65];
@@ -4532,9 +4763,11 @@ int main(void) {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == 0);
     update_test_json();
     update_test_storage();
+    update_test_channels();
     integration_base = getenv("UPDATE_EXT_TEST_CHANNEL_BASE");
     if (integration_base && *integration_base) {
         update_test_http_apply(integration_base);
+        update_test_beta_http(integration_base);
     }
     printf("ALL OK\n");
     return 0;

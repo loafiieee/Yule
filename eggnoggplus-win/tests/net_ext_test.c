@@ -305,6 +305,9 @@ int main(void) {
     CHECK(net_connect("127.0.0.1", 0) == -1);
     CHECK(net_connect("127.0.0.1", -1) == -1);
     CHECK(net_connect("127.0.0.1", 65536) == -1);
+    CHECK(net_connect_control("example.invalid", 47778, 0) == -1);
+    CHECK(strstr(net_last_error(), "restricted to localhost") != NULL);
+    CHECK(net_connect_control("192.168.0.143", 47778, 0) == -1);
     test_large_copied_send();
     test_refused_connect_never_reports_success();
     test_udp_reachability_probe();

@@ -472,7 +472,7 @@ def uninstall(receipt_path: Path) -> int:
     desktop_remove(receipt)
     for item in receipt.get("managed_files", []):
         name = item.get("path", "")
-        if not re.fullmatch(r"[A-Za-z0-9._+-]+", name):
+        if name != "mods/update_channel.json" and not re.fullmatch(r"[A-Za-z0-9._+-]+", name):
             fail(f"unsafe managed filename in receipt: {name!r}")
         path = game / name
         if regular(path) and digest(path) == item.get("sha256"):
@@ -581,6 +581,37 @@ def install(args: argparse.Namespace, p: dict[str, Path]) -> int:
             lines = config_old.decode("utf-8", errors="replace").splitlines() if config_old else []
             lines = [line for line in lines if not re.match(r"\s*show_log_console\s*=", line)]
             atomic(config, ("\n".join(lines + ["show_log_console=0"]) + "\n").encode())
+            release = json.loads((work / "latest.json").read_text(encoding="utf-8"))
+            profile_path = game / "mods/update_channel.json"
+            if profile_path.exists() and not regular(profile_path):
+                fail("installed channel profile is not a regular file")
+            prior.append((profile_path, profile_path.read_bytes() if profile_path.exists() else None))
+            if "release_channel" in release or "channel_switch" in release:
+                channel = release.get("release_channel")
+                if (channel not in ("stable", "beta") or type(release.get("channel_switch")) is not int
+                        or release.get("channel_switch") != 1 or len(files) >= 32):
+                    fail("unsupported release channel profile")
+                strings = (game / "SDL2.dll").read_bytes().split(b"\0")
+                if b"YULE_CHANNEL_SWITCH=1" not in strings or f"YULE_FRAMEWORK_VERSION={version}".encode() not in strings:
+                    fail("installed runtime does not match its channel profile")
+                profile = {key: release[key] for key in ("channel_version", "version", "base", "release_channel", "channel_switch", "files")}
+                host = release.get("server_host")
+                if host:
+                    port, tls = release.get("server_port"), release.get("server_tls")
+                    if (not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", host) or
+                            not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535 or not isinstance(tls, bool)):
+                        fail("invalid channel server endpoint")
+                    profile.update(server_host=host, server_port=port, server_tls=tls)
+                if channel == "beta" and (not host or release.get("server_tls") is not True or
+                        (host.lower() == "eggnogg.loafiieee.com" and release.get("server_port") == 47778)):
+                    fail("beta requires its own TLS matchmaking endpoint")
+                payload = json.dumps(profile, separators=(",", ":")).encode()
+                if len(payload) > 16384:
+                    fail("channel profile is too large")
+                atomic(profile_path, payload)
+                managed.append({"path": "mods/update_channel.json", "sha256": digest(profile_path), "size": len(payload)})
+            else:
+                profile_path.unlink(missing_ok=True)
         except Exception:
             for target, original in reversed(prior):
                 if original is None:

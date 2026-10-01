@@ -1,4 +1,4 @@
-"""Build and adversarially exercise the authenticated v17 prematch transport."""
+"""Build and adversarially exercise the authenticated v18 prematch transport."""
 
 from __future__ import annotations
 
@@ -324,6 +324,9 @@ def build() -> dict[str, str]:
         "-DGGPO_NET_TEST",
         str(SOURCE),
         str(ROOT / "ggpo_net.c"),
+        str(ROOT / "ggpo_transport_native.c"),
+        str(ROOT / "ggpo_transport_eos.c"),
+        str(ROOT / "eos_runtime.c"),
         str(ROOT / "fp_control.c"),
         f"-I{ROOT}",
         "-lws2_32",

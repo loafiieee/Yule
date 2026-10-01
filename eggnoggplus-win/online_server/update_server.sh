@@ -5,6 +5,7 @@ REPOSITORY_URL="${YULE_REPOSITORY_URL:-https://github.com/loafiieee/Yule.git}"
 REPOSITORY_REF="${YULE_REPOSITORY_REF:-main}"
 SERVICE_NAME="${YULE_SERVICE_NAME:-eggnogg}"
 SERVER_PORT="${YULE_SERVER_PORT:-47778}"
+TLS_SERVER_NAME="${YULE_TLS_SERVER_NAME:-eggnogg.loafiieee.com}"
 READINESS_TIMEOUT_SECONDS="${YULE_READINESS_TIMEOUT_SECONDS:-30}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 TARGET_ROOT="${YULE_TARGET_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd -P)}"
@@ -46,9 +47,13 @@ systemctl_yule() {
 wait_for_protocol_ready() {
   local deadline=$((SECONDS + READINESS_TIMEOUT_SECONDS))
   local probe_log="$TEMP_ROOT/readiness-probe.log"
+  local -a security_options=(--server-name "$TLS_SERVER_NAME")
+  if [[ "${YULE_LOCAL_PLAINTEXT:-0}" == "1" ]]; then
+    security_options=(--local-plaintext)
+  fi
   while (( SECONDS < deadline )); do
     if python3 "$TARGET_SERVER/check_deployment.py" \
-        127.0.0.1 "$SERVER_PORT" --timeout 1 >"$probe_log" 2>&1; then
+        127.0.0.1 "$SERVER_PORT" --timeout 1 "${security_options[@]}" >"$probe_log" 2>&1; then
       cat -- "$probe_log"
       return 0
     fi
@@ -89,7 +94,7 @@ protected_runtime_path() {
       ;;
   esac
   case "$base" in
-    *.log|*.jsonl|*.key|*.env|*.pid|*.sock)
+    *.log|*.jsonl|*.key|*.pem|*.crt|*.cer|*.env|*.pid|*.sock)
       return 0
       ;;
   esac

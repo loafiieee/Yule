@@ -14661,6 +14661,7 @@ static int mods_dir_name_ignored(const char* name) {
     if (name[0] == '_') return 1;
     if (_stricmp(name, "profiles") == 0) return 1;
     if (_stricmp(name, "update_staging") == 0) return 1;
+    if (_stricmp(name, "update_channels") == 0) return 1;
     return 0;
 }
 

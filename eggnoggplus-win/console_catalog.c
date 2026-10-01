@@ -7,6 +7,7 @@ static const char* const k_commands[] = {
     "console.find", "console.stats", "console.copy",
     "state", "state.last", "state.return", "state.switch", "sys.info",
     "ui.size", "time.scale", "framework.api", "discord.app",
+    "update.channel",
     "music.status", "music.scan", "music.rescan", "music.play",
     "music.output_rate",
     "mods.count", "mods.list", "mods.find", "mods.info", "mods.trace",

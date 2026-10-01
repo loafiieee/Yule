@@ -1,6 +1,9 @@
 # Eggnogg+ Online Server
 
-Dependency-free Node server for the built-in online hub. TCP handles accounts,
+For separate stable/beta services and the opt-in update channel, see
+[Beta releases and server setup](../BETA_RELEASES.md).
+
+Dependency-free Node server for the built-in online hub. TLS over TCP handles accounts,
 friends, queues, challenges, and results. UDP handles direct P2P endpoint
 discovery and a bounded match-owned relay fallback when direct traversal fails.
 
@@ -11,7 +14,15 @@ $env:PORT='47778'
 npm start
 ```
 
-Main protocol is newline-delimited JSON over TCP. The server handles:
+The command above starts a localhost development listener when no TLS files are
+configured. In the development client's `online_hub.cfg`, use
+`server_host=127.0.0.1` and `server_tls=0` for this listener. Remote plaintext
+account connections are refused. Normal clients default to `server_tls=1`.
+
+For the existing Linux service, certificate setup, renewal, coordinated rollout,
+and rollback instructions, see [TLS deployment](TLS_DEPLOYMENT.md).
+
+Main protocol is newline-delimited JSON over authenticated TLS. The server handles:
 
 - account registration and login
 - public Elo and private server-only MMR
@@ -24,7 +35,7 @@ Main protocol is newline-delimited JSON over TCP. The server handles:
 - shared-map selection from each client's submitted map manifest
 - symmetric P2P candidate publication/hole-punch discovery, followed by a bounded
   match-owned UDP relay when a fresh direct-path socket generation is required
-- one random 256-bit `p2p_auth_token` per match for GGPO UDP v17 packet MACs
+- one random 256-bit `p2p_auth_token` per match for GGPO UDP v18 packet MACs
 
 ## Admin audit records
 
@@ -79,6 +90,113 @@ transaction: keep the server stopped and restore the recovery snapshot before
 restarting. `--offline` is your assertion that the service is stopped; the tool
 cannot detect every supervisor or remote process. Existing backup directories
 are never overwritten.
+
+## EOS Connect UserInfo endpoint (staging)
+
+EOS Connect will use Yule accounts as its external identity. The server assigns
+each account an immutable random `account_id` and can issue a three-minute
+opaque bearer token to an authenticated client through
+`eos_connect_token_request`. EOS verifies that token by requesting
+`GET /eos/userinfo` and reading the JSON `sub` and `nickname` fields. This
+endpoint is disabled unless `EOS_USERINFO_PORT` is set. The existing game
+control socket is raw TCP, so this token bootstrap must not be released to
+normal players until the control channel has authenticated TLS.
+
+For the existing `loaf-server1` Cloudflare tunnel, use a free loopback port:
+
+```ini
+EOS_USERINFO_HOST=127.0.0.1
+EOS_USERINFO_PORT=47781
+```
+
+Add this ingress rule to `/etc/cloudflared/config.yml` **before** its final
+`http_status:404` rule:
+
+```yaml
+  - hostname: auth.loafiieee.com
+    service: http://localhost:47781
+```
+
+The proxied tunnel DNS record and ingress rule for `auth.loafiieee.com` are
+configured on `loaf-server1`; the public endpoint returned HTTP 401 without a
+bearer token. The EOS Developer Portal has the `Yule Account` OpenID
+**UserInfo Endpoint** provider associated with the Live sandbox, URL
+`https://auth.loafiieee.com/eos/userinfo`, method `GET`, account ID field
+`sub`, and display name field `nickname`. A live test account completed EOS
+Connect Login/CreateUser and signed ID-token verification. An attempt to bind
+that PUID to another Yule account was rejected. Keep this loopback port closed
+to the public firewall. Full rollout and rollback steps are in
+`../EOS_TRANSPORT_MIGRATION.md`.
+
+The server-side proof requires `EOS_VERIFY_BINARY` (the Linux or Windows verifier built
+from `eos_verify_token.c`) plus `EOS_PRODUCT_ID`, `EOS_SANDBOX_ID`,
+`EOS_DEPLOYMENT_ID`, `EOS_CLIENT_ID`, and `EOS_CLIENT_SECRET`. The verifier
+loads `libEOSSDK-Linux-Shipping.so` from the matching EOS C SDK. Keep the
+restricted GameClient credential in a private systemd environment file; never
+put it on a command line, in Git, or in logs. The stable staged runtime on
+`loaf-server1` is `/home/loaf/yule-eos-runtime/`; its `eos.env` is mode 0600.
+The live `eggnogg.service` has **not** been changed to load that file. The
+isolated v18 server listens on loopback ports 47782 (control/UDP) and 47781
+(UserInfo), while the existing v17 service stays on 47778.
+
+### Testing EOS with the server on your Windows PC
+
+Use this command from `online_server` instead of plain `node server.js`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start_eos_local.ps1
+```
+
+The launcher builds the Win32 verifier in the ignored `eos_runtime` directory,
+loads the restricted credential from `..\eos_client_secret.txt`, and starts the
+same server with EOS environment settings. Existing accounts and server ports
+are preserved. `-SdkDir` and `-ClientSecretFile` override the local paths.
+The UserInfo listener is on **127.0.0.1:47781**. Game clients still connect to
+**localhost:47778**. A plain `node server.js` without these settings leaves
+EOS Connect disabled, which causes the "EOS Connect is unavailable" message.
+
+Epic must query the same process that issued the bearer token. The public auth
+hostname normally points to `loaf-server1`, so local tests use an SSH reverse
+forward from that host to your PC. Keep this command running in another terminal:
+
+```powershell
+ssh -NT -i "$env:USERPROFILE\.ssh\yule_eos_deploy" -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -R 127.0.0.1:47781:127.0.0.1:47781 loaf@192.168.0.143
+```
+
+The isolated Linux staging server must be stopped first because it owns the
+same auth port. For the current local test session, that staging process has
+already been stopped, the local EOS server and SSH forward are running hidden,
+and their PIDs/logs are in `online_server/eos_runtime`. The production
+`eggnogg.service` continues to run on `loaf-server1`.
+Reconnect the game clients after restarting the local server.
+
+The opt-in guarded test `python tests/eos_connect_local_test.py --live` from
+the repository root verifies local login, public UserInfo routing, EOS Connect,
+and server-side PUID binding with one reusable test account. Its credentials
+and SDK proof output are kept out of logs and Git.
+
+For an actual EOS gameplay-protocol regression without launching the game:
+
+```powershell
+python tests/eos_gameplay_live_test.py --live --route relay --case chaos
+python tests/eos_gameplay_live_test.py --live --route auto --case chaos
+python tests/eos_gameplay_live_test.py --live --route relay --case longcorrection
+python tests/eos_gameplay_live_test.py --live --route relay --case disconnect
+python tests/eos_gameplay_live_test.py --live --route relay --case reject
+```
+
+Run one case at a time; each uses the same two reusable **local test accounts**.
+The runner sends real authenticated v18 packets through EOS and compares
+confirmed state histories. It keeps credentials private in ignored build files.
+Same-PC forced relay is useful for exercising the carrier; separate networks
+are still required to evaluate NAT traversal and geographically distributed RTT.
+Normal Yule sign-in automatically performs EOS Connect. Players need no Epic
+login or manual PUID entry. Keep the native relay enabled during this migration.
+
+After local testing, stop this specific SSH forward and restore the isolated
+stage with `/home/loaf/yule-eos-build/eos_stage_start.sh` on `loaf-server1`.
+Check that port 47781 is free before starting it; never stop the production
+service to manage staging. The Cloudflare ingress itself does not need changing.
 
 ## Optional Discord LFG bridge
 
@@ -175,7 +293,9 @@ setting. The UI still uses an automatic private-client session and CSRF token so
 unrelated webpage cannot submit maintenance actions. Set `ADMIN_COOKIE_SECURE=1` when
 the browser always reaches the UI through HTTPS.
 
-Default bind is `0.0.0.0:47778` for TCP and UDP. For public internet play, the
+With `TLS_CERT_FILE` and `TLS_KEY_FILE`, default bind is `0.0.0.0:47778` for TLS/TCP
+and UDP. Without a certificate, default bind is loopback only; an explicit public
+plaintext bind is rejected at startup. For public internet play, the
 host must allow inbound TCP `47778` and inbound UDP `47778`; set `UDP_PORT` or
 `UDP_HOST` only if the discovery socket needs a different bind.
 
@@ -263,7 +383,7 @@ protocol 3 adds the counted friend-challenge map-intersection stream and
 server-revalidated selected map. Match protocol 4 advertises:
 
 ```json
-{"type":"server_info","control_protocol":3,"match_protocol":4,"p2p_protocol":17,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1,"cap_client_build_gate":1}
+{"type":"server_info","control_protocol":3,"match_protocol":4,"p2p_protocol":18,"cap_p2p_auth":1,"cap_social_controls":1,"cap_private_rematch":1,"cap_p2p_relay":1,"cap_client_build_gate":1}
 ```
 
 The same scalar version/capability fields are repeated in `auth_ok`, and each
@@ -318,22 +438,23 @@ an arbitrary presence string. Friends receive refreshed snapshots at every queue
 lifecycle boundary. A busy friend cannot be challenged, and blocked-user entries continue
 to omit all presence.
 
-P2P v17 is a wire-breaking client requirement, even though the control server only
-advertises the number and relays match metadata. Its authenticated INPUT packet adds a
+P2P v18 is a wire-breaking client requirement, even though the control server only
+advertises the number and relays match metadata. Its authenticated INPUT packet retains a
 monotonic cumulative input ACK, a 512-bit selective input ACK, selective resend within 64
 input slots, a generation-scoped cumulative checksum-comparison ACK, and the repeated
 correction phase/snapshot/resume tuple used by the bilateral replay/release barrier.
 Checksums send the live edge first and then retry from the oldest unacknowledged frame;
-history retirement requires comparison proof from both peers. The fixed packet is 1,292
-bytes and is compile-time limited to at most 1,400 bytes. A v16 client must therefore be
-rejected instead of being matched with a v17 client.
+history retirement requires comparison proof from both peers. V18 reduces diagnostic
+summaries from two to one; the fixed packet is exactly 1,144 bytes, with an enforced
+1,170-byte maximum for every active P2P packet. A v17 client must be rejected instead
+of being matched with a v18 client.
 
 Correction coordination and canonical x87/MXCSR tick controls are client runtime features;
 the server neither performs rollback nor validates game-state blobs. The standalone
 canonical rollback envelope in the client is foundation-only. Production still needs its
 native typed capture/reconstruction/transaction adapter and remaining checksum-field audit.
 
-The checked-out server source advertises v17 plus the required relay capability. Every
+The checked-out server source advertises v18 plus the required relay capability. Every
 deployment must restart the service and pass the TCP+UDP deployment preflight; replacing
 files without restarting is not sufficient.
 
@@ -376,7 +497,8 @@ arguments), or name another host and port:
 
 ```powershell
 python check_deployment.py
-python check_deployment.py 127.0.0.1 47778
+python check_deployment.py 127.0.0.1 47778 --server-name eggnogg.loafiieee.com
+python check_deployment.py 127.0.0.1 47778 --local-plaintext
 python ..\tests\online_server_match_protocol_test.py
 python ..\tests\discord_lfg_server_static_test.py
 npm test

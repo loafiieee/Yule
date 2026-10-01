@@ -51,7 +51,7 @@ def main() -> int:
         malformed_vdf.write_bytes(b"\x03broken\0")
 
         vanilla = b"vanilla SDL"
-        proxy = b"verified modframework proxy"
+        proxy = b"verified modframework proxy\0YULE_CHANNEL_SWITCH=1\0YULE_FRAMEWORK_VERSION=99.1\0"
         runtime = b"verified runtime"
         (source / "eggnoggplus.exe").write_bytes(b"fake Windows game")
         (source / "SDL2.dll").write_bytes(vanilla)
@@ -105,6 +105,8 @@ def main() -> int:
         latest = {
             "channel_version": 1,
             "version": "99.1",
+            "release_channel": "stable",
+            "channel_switch": 1,
             "base": base,
             "files": [
                 {
@@ -240,6 +242,7 @@ def main() -> int:
         user_map.mkdir()
         (user_map / "data.map").write_bytes(b"user map content")
         assert (installed / "SDL2.dll").read_bytes() == proxy
+        assert json.loads((installed / "mods/update_channel.json").read_text())["release_channel"] == "stable"
         assert (installed / "SDL2_real.dll").read_bytes() == vanilla
         assert (installed / "libgcc_s_dw2-1.dll").read_bytes() == runtime
         assert (installed / "YuleUpdater.exe").is_file()
@@ -288,6 +291,7 @@ def main() -> int:
         assert removed.returncode == 0, removed.stdout + removed.stderr
         assert (user_map / "data.map").read_bytes() == b"user map content"
         assert (installed / "SDL2.dll").read_bytes() == vanilla
+        assert not (installed / "mods/update_channel.json").exists()
         assert not (installed / "SDL2_real.dll").exists()
         assert (installed / "libgcc_s_dw2-1.dll").read_bytes() == changed
         assert (installed / "keep-user-file.txt").is_file()

@@ -4,6 +4,37 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
+function validAccountId(value) {
+  return typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
+}
+
+function makeAccountId(used) {
+  let id;
+  do { id = crypto.randomBytes(16).toString("hex"); }
+  while (used.has(id));
+  used.add(id);
+  return id;
+}
+
+/* Assign once to legacy records before Connect can use account subjects.
+ * Existing IDs are immutable: malformed or duplicate IDs stop startup rather
+ * than silently changing the EOS identity associated with an account. */
+function ensureAccountIds(users) {
+  const used = new Set();
+  for (const rec of Object.values(users)) {
+    if (!Object.prototype.hasOwnProperty.call(rec, "account_id")) continue;
+    if (!validAccountId(rec.account_id) || used.has(rec.account_id)) {
+      throw new Error("Invalid or duplicate account_id in user store");
+    }
+    used.add(rec.account_id);
+  }
+  for (const rec of Object.values(users)) {
+    if (!Object.prototype.hasOwnProperty.call(rec, "account_id")) {
+      rec.account_id = makeAccountId(used);
+    }
+  }
+}
+
 // A missing store is a first launch; unreadable or malformed data is not.
 // Fail startup before any persistence can overwrite the operator's evidence.
 function loadUserStore(filename) {
@@ -65,4 +96,4 @@ function updateUserRecord(filename, store, username, update, write = atomicWrite
   return replacement;
 }
 
-module.exports = { loadUserStore, atomicWriteFile, updateUserRecord };
+module.exports = { loadUserStore, atomicWriteFile, updateUserRecord, makeAccountId, ensureAccountIds };

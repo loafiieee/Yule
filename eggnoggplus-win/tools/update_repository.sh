@@ -151,6 +151,9 @@ protected_path() {
       ;;
     "$PROJECT_MODS/modframework.cfg"|\
     "$PROJECT_MODS/online_hub.cfg"|\
+    "$PROJECT_MODS/online_hub.beta.cfg"|\
+    "$PROJECT_MODS/update_channel.json"|\
+    "$PROJECT_MODS/update_channels"|"$PROJECT_MODS/update_channels"/*|\
     "$PROJECT_MODS/console_history.txt"|\
     "$PROJECT_MODS/crash.log"|\
     "$PROJECT_MODS/desync_dump.log"|\

@@ -6,12 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import ssl
 import sys
 
 
 REQUIRED_CONTROL_PROTOCOL = 3
 REQUIRED_MATCH_PROTOCOL = 4
-REQUIRED_P2P_PROTOCOL = 17
+REQUIRED_P2P_PROTOCOL = 18
 MAX_REPLY_BYTES = 8192
 UDP_PROBE_SEQUENCE = 0x45504750
 
@@ -23,6 +24,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("host", nargs="?", default="eggnogg.loafiieee.com")
     parser.add_argument("port", nargs="?", type=int, default=47778)
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--local-plaintext", action="store_true",
+                        help="Explicit localhost-only development probe; never downgrade TLS")
+    parser.add_argument("--server-name", help="TLS certificate hostname when connecting to a local address")
+    parser.add_argument("--cafile", help="Optional CA certificate for a private staging/test server")
     return parser.parse_args()
 
 
@@ -84,9 +89,15 @@ def main() -> int:
     if not 0.1 <= args.timeout <= 60.0:
         raise RuntimeError("timeout must be in 0.1..60 seconds")
 
-    with socket.create_connection((args.host, args.port), timeout=args.timeout) as sock:
-        sock.settimeout(args.timeout)
-        info = read_server_info(sock)
+    if args.local_plaintext and args.host not in ("127.0.0.1", "::1", "localhost"):
+        raise RuntimeError("plaintext probes are restricted to localhost")
+    with socket.create_connection((args.host, args.port), timeout=args.timeout) as raw:
+        raw.settimeout(args.timeout)
+        if args.local_plaintext:
+            info = read_server_info(raw)
+        else:
+            with ssl.create_default_context(cafile=args.cafile).wrap_socket(raw, server_hostname=args.server_name or args.host) as sock:
+                info = read_server_info(sock)
 
     require_exact_int(info, "control_protocol", REQUIRED_CONTROL_PROTOCOL)
     require_exact_int(info, "match_protocol", REQUIRED_MATCH_PROTOCOL)

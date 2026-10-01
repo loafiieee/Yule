@@ -12,11 +12,8 @@ extern "C" {
 #define GGPO_NET_MAX_FRAME_ADVANTAGE_LIMIT 220
 #define GGPO_NET_MAX_PREDICTION_LIMIT 220
 #define GGPO_NET_SIM_MAX_DELAY_TICKS 120
-#define GGPO_NET_COSMETIC_PROFILE_BYTES 2048
-#define GGPO_NET_COSMETIC_ASSET_ID_BYTES 65
-#define GGPO_NET_COSMETIC_ASSET_MAX_BYTES 1048576
 #define GGPO_NET_MATCH_TOKEN_HEX_BYTES 64
-#define GGPO_NET_PROTOCOL_VERSION 17u
+#define GGPO_NET_PROTOCOL_VERSION 18u
 #define GGPO_NET_PALETTE_MAX_ENTRIES 256u
 
 typedef enum GgpoNetMode {
@@ -94,22 +91,6 @@ int ggpo_net_remote_palette_preference(uint32_t* out_skin_index,
                                        uint32_t* out_clothing_index,
                                        uint32_t* out_palette_count);
 
-/* Legacy cosmetic transport surface. The current online build compiles peer
- * cosmetics off: setters reject/clear payloads and getters remain empty. Keep
- * these declarations for source compatibility; do not treat them as an active
- * online customization API. */
-int ggpo_net_set_local_cosmetic_profile(const char* profile, size_t profile_len);
-const char* ggpo_net_remote_cosmetic_profile(size_t* out_len, uint32_t* out_revision);
-void ggpo_net_mark_remote_cosmetic_profile_applied(uint32_t revision);
-uint32_t ggpo_net_local_cosmetic_profile_revision(void);
-uint32_t ggpo_net_remote_cosmetic_profile_revision(void);
-uint32_t ggpo_net_remote_cosmetic_profile_applied_revision(void);
-int ggpo_net_set_local_cosmetic_asset(const char* asset_id, const void* data, size_t data_len);
-const void* ggpo_net_remote_cosmetic_asset(const char** out_id, size_t* out_len, uint32_t* out_revision);
-void ggpo_net_mark_remote_cosmetic_asset_applied(uint32_t revision);
-uint32_t ggpo_net_local_cosmetic_asset_revision(void);
-uint32_t ggpo_net_remote_cosmetic_asset_revision(void);
-uint32_t ggpo_net_remote_cosmetic_asset_applied_revision(void);
 int ggpo_net_start_state_loaded(void);
 int ggpo_net_state_synced(void);
 int ggpo_net_remote_state_synced(void);
@@ -133,8 +114,7 @@ uint32_t ggpo_net_state_layout_fingerprint(void);
  * frame. Intended for the online hub/countdown and setup transition. */
 int ggpo_net_service(char* err, size_t err_cap);
 /* True once the released prematch session has completed authoritative state
- * and neutral frame-0 input exchange. (Cosmetics are compile-disabled in this
- * build.) This is a query only;
+ * and neutral frame-0 input exchange. This is a query only;
  * callers must keep invoking ggpo_net_service while it is false. */
 int ggpo_net_prematch_ready(void);
 /* Atomically restore the synchronized frame-0 state immediately before the
@@ -160,6 +140,11 @@ int ggpo_net_start_host_held(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join(const char* host, uint16_t remote_port, uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join_deferred(uint16_t local_port, char* err, size_t err_cap);
 int ggpo_net_start_join_deferred_held(uint16_t local_port, char* err, size_t err_cap);
+int ggpo_net_start_eos_held(int host, const char* peer_puid,
+                            const char* socket_name, uint8_t channel,
+                            int force_relay, char* err, size_t err_cap);
+const char* ggpo_net_transport_name(void);
+const char* ggpo_net_transport_route(void);
 int ggpo_net_set_peer(const char* host, uint16_t remote_port, char* err, size_t err_cap);
 /* Register an additional hole-punch candidate endpoint (e.g. the peer's public
  * NAT address alongside its LAN address). Handshake HELLOs go to all candidates;
@@ -218,6 +203,7 @@ int ggpo_net_peer_input_confirmed_frame(uint32_t* out_frame);
 int ggpo_net_checksum_confirmed_frame(uint32_t* out_frame);
 
 #ifdef GGPO_NET_TEST
+uint32_t ggpo_net_test_service_clock(uint64_t elapsed_ms);
 uint32_t ggpo_net_test_poll_socket(void);
 int ggpo_net_test_delayed_duplicate_backpressure(void);
 int ggpo_net_test_initial_state_chunk_rejected(uint32_t checksum_xor,

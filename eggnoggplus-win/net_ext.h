@@ -8,6 +8,10 @@
 /* Open a non-blocking TCP connection.  Returns a slot index (>= 0) on
    success, or -1 if no slot is free or the name could not be resolved. */
 int  net_connect      (const char *host, int port);
+/* Online account traffic requires TLS. The explicit development opt-out is
+ * accepted only for a literal loopback address (127.0.0.1 or localhost). */
+int net_connect_control(const char* host, int port, int require_tls);
+const char* net_last_error(void);
 
 /* Poll an in-progress async connect.
    Returns  1 = now connected,  0 = still pending,  -1 = failed/closed. */

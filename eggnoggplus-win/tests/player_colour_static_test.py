@@ -34,7 +34,7 @@ for red, green, blue in solid_colours:
 
 # Online colors use a dedicated fixed-size authenticated tuple. Do not re-enable
 # the old arbitrary profile/asset transport to move two palette IDs.
-assert "#define GGPO_NET_ENABLE_COSMETICS 0" in NET
+assert "GGPO_NET_PACKET_COSMETICS" not in NET
 assert "#define GGPO_NET_PACKET_PALETTE 9u" in NET
 assert "typedef struct GgpoNetPalettePacket" in NET
 assert "GgpoNetPalettePacketSizeIsFixed" in NET

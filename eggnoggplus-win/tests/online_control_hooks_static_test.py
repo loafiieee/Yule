@@ -59,7 +59,8 @@ connect = function_body("online_server_connect")
 assert "g_online_auth_pending = 1" in connect
 assert "online_control_deadline_after" in connect
 assert "ONLINE_SERVER_CONNECT_TIMEOUT_MS" in connect
-assert connect.index("g_online_auth_pending = 1") < connect.index("net_connect(")
+assert connect.index("g_online_auth_pending = 1") < connect.index("net_connect_control(")
+assert "g_online_cfg.server_tls" in connect
 
 disconnect = function_body("online_server_disconnect")
 assert "discard_auth_secret" in disconnect

@@ -54,12 +54,13 @@ finish = function_body(HOOKS, "online_troubleshooter_finish")
 diag = function_body(HOOKS, "online_build_net_diag")
 main_update = function_body(HOOKS, "hooked_main_update_with_buttons")
 
-assert "net_connect(g_online_cfg.server_host" in start
+assert "net_connect_control(g_online_cfg.server_host" in start
+assert "g_online_cfg.server_tls" in start
 assert "net_udp_probe_start(g_online_cfg.server_host" in start
 load_config = start.index("online_hub_load();")
 validate_target = start.index("!g_online_cfg.server_host[0]")
 profile_target = start.index("net_network_profile(g_online_cfg.server_host")
-tcp_target = start.index("net_connect(g_online_cfg.server_host")
+tcp_target = start.index("net_connect_control(g_online_cfg.server_host")
 udp_target = start.index("net_udp_probe_start(g_online_cfg.server_host")
 assert load_config < validate_target < profile_target < tcp_target < udp_target
 assert "net_check_connect(test->tcp_slot)" in pump

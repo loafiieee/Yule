@@ -3,6 +3,21 @@ online.cfg
 online_server_data.json
 online_server_data.json.tmp
 online_server/__pycache__/
+eos_client_secret.txt
+EOSSDK-Win32-Shipping.dll
+/build/eos_*
+/build/ui_text_test/
+/build/net_tls_test/
+/build/beta_release_*/
+/mods/update_channels/
+/mods/update_channel.json
+/build/private_beta/
+/mods/online_hub.beta.cfg
+/build/font_source/
+/Tandy2K-LICENSE.txt
+/Tandy2K-ATTRIBUTION.txt
+/mods/modframework.*.log
+/online_server/eos_runtime/
 
 online_server/*.jsonl
 
@@ -13,3 +28,24 @@ build/online_capture_under_test.h
 
 /build/rng_cosmetic_under_test.h
 /build/rng_cosmetic_test.exe
+
+# Generated artifacts can contain credentials or private test/runtime state.
+/build/
+/SDL2.dll
+/YuleUpdater.exe
+/install.json
+/log
+/mods/modframework.cfg
+/mods/online_hub*.cfg
+/mods/console_history.txt
+/mods/desync_repros/
+/mods/profiles/
+/mods/update_staging/
+/mods/*/storage.cfg
+/mods/*/storage.json
+/online_server/users.json*
+/online_server/ratings.json*
+/online_server/server_secret.key*
+/online_server/backups/
+/online_server/*.env*
+!/online_server/*.env.example

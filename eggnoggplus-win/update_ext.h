@@ -5,7 +5,7 @@
 
 /* This is the version of the injected framework, not the base game.  Release
  * manifests use dot-separated numeric versions (for example 1.12.3). */
-#define FRAMEWORK_VERSION "1.931"
+#define FRAMEWORK_VERSION "2.0.0"
 
 #define UPDATE_MAX_FILES 32
 #define UPDATE_MAX_PATH  240
@@ -56,6 +56,15 @@ const char* update_ext_status_line(void);
 int update_ext_auto(void);
 void update_ext_set_auto(int enabled);
 void update_ext_begin_apply(void);
+
+/* Channel selection changes only when the verified runtime transaction commits.
+ * A switch accepts older versions of the other channel and reuses its cache. */
+const char* update_ext_channel(void);
+int update_ext_beta_unlocked(void);
+int update_ext_switch_channel(const char* channel);
+int update_ext_switch_pending(void);
+/* 1: channel endpoint, 0: use saved stable settings, -1: invalid channel state. */
+int update_ext_channel_server(char* host, size_t cap, uint16_t* port, int* tls);
 
 /* Atomically updates one installation-rooted modframework.cfg key while
  * preserving unrelated lines/comments. Keys are 1..63 ASCII bytes limited to
